@@ -1,0 +1,115 @@
+package main
+
+function start
+	call main
+	mov rdi rax
+	// MacOS Exit syscall
+	mov rax 0x2000001
+	syscall
+
+function main
+	// no prologue necessary. 
+	// Only modifying rdi and rax (by way of calling fib)
+	mov rdi 7
+	call fib
+	ret
+
+function fib
+	// Register use declarations
+	// These will not be overwritten by the local allocator
+	use rdi
+	use rax
+	// Local variable declaration
+	// N is the 64-bit argument to fib (populated from rdi below)
+	// f1 will be the 64-bit value of fib(n-1)
+	// f2 will be the 64-bit value of fib(n-2)
+	local n 64
+	local f1 64
+	local f2 64
+
+	prologue
+
+	// Argument goes in RDI
+	mov n rdi
+	
+	// Base cases
+	cmp n 3
+	jge recursive
+	mov rax 1
+	jmp end
+
+	label recursive
+	// f1 = fib(n - 1)
+	mov rdi n
+	sub rdi 1
+	call fib
+	mov f1 rax
+
+	// f2 = fib(n - 2)
+	mov rdi n
+	sub rdi 2
+	call fib
+	mov f2 rax
+
+	// rax = f1 + f2
+	add f1 f2
+	mov rax f1
+	
+	label end
+	epilogue
+	ret
+
+// Output:
+// start:
+// 0:  e8 0c 00 00 00          call   0x11
+// 5:  48 89 c7                mov    rdi,rax
+// 8:  48 c7 c0 01 00 00 02    mov    rax,0x2000001
+// f:  0f 05                   syscall
+// main:
+// 11: 48 c7 c7 07 00 00 00    mov    rdi,0x7
+// 18: e8 01 00 00 00          call   0x1e
+// 1d: c3                      ret
+// fib:
+// 1e: 55                      push   rbp
+// 1f: 53                      push   rbx
+// 20: 47 54                   rex.RXB push r12
+// 22: 47 55                   rex.RXB push r13
+// 24: 47 56                   rex.RXB push r14
+// 26: 47 57                   rex.RXB push r15
+// 28: 48 89 e5                mov    rbp,rsp
+// 2b: 48 81 ec 18 00 00 00    sub    rsp,0x18
+// 32: 48 8b 9d f8 ff ff ff    mov    rbx,QWORD PTR [rbp-0x8]
+// 39: 48 89 fb                mov    rbx,rdi
+// 3c: 48 83 fb 03             cmp    rbx,0x3
+// 40: 48 89 9d f8 ff ff ff    mov    QWORD PTR [rbp-0x8],rbx
+// 47: 0f 8d 0c 00 00 00       jge    0x59
+// 4d: 48 c7 c0 01 00 00 00    mov    rax,0x1
+// 54: e9 6a 00 00 00          jmp    0xc3
+// 59: 48 8b 9d f8 ff ff ff    mov    rbx,QWORD PTR [rbp-0x8]
+// 60: 48 89 df                mov    rdi,rbx
+// 63: 48 83 ef 01             sub    rdi,0x1
+// 67: 48 89 9d f8 ff ff ff    mov    QWORD PTR [rbp-0x8],rbx
+// 6e: e8 ab ff ff ff          call   0x1e
+// 73: 48 8b 9d f0 ff ff ff    mov    rbx,QWORD PTR [rbp-0x10]
+// 7a: 48 89 c3                mov    rbx,rax
+// 7d: 48 8b 8d f8 ff ff ff    mov    rcx,QWORD PTR [rbp-0x8]
+// 84: 48 89 cf                mov    rdi,rcx
+// 87: 48 83 ef 02             sub    rdi,0x2
+// 8b: 48 89 9d f0 ff ff ff    mov    QWORD PTR [rbp-0x10],rbx
+// 92: 48 89 8d f8 ff ff ff    mov    QWORD PTR [rbp-0x8],rcx
+// 99: e8 80 ff ff ff          call   0x1e
+// 9e: 48 8b 9d e8 ff ff ff    mov    rbx,QWORD PTR [rbp-0x18]
+// a5: 48 89 c3                mov    rbx,rax
+// a8: 48 8b 8d f0 ff ff ff    mov    rcx,QWORD PTR [rbp-0x10]
+// af: 48 01 d9                add    rcx,rbx
+// b2: 48 89 c8                mov    rax,rcx
+// b5: 48 89 9d e8 ff ff ff    mov    QWORD PTR [rbp-0x18],rbx
+// bc: 48 89 8d f0 ff ff ff    mov    QWORD PTR [rbp-0x10],rcx
+// c3: 48 89 ec                mov    rsp,rbp
+// c6: 47 5f                   rex.RXB pop r15
+// c8: 47 5e                   rex.RXB pop r14
+// ca: 47 5d                   rex.RXB pop r13
+// cc: 47 5c                   rex.RXB pop r12
+// ce: 5b                      pop    rbx
+// cf: 5d                      pop    rbp
+// d0: c3                      ret 
