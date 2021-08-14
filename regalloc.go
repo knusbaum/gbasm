@@ -1,4 +1,4 @@
-package gbasm2
+package gbasm
 
 type rstate struct {
 	inuse bool

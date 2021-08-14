@@ -1,4 +1,4 @@
-package gbasm2
+package gbasm
 
 import (
 	"encoding/xml"

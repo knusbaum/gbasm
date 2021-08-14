@@ -1,11 +1,11 @@
-package gbasm2
+package gbasm
 
 import (
 	"bytes"
 	"fmt"
 	"log"
 
-	"github.com/knusbaum/gbasm2/macho"
+	"github.com/knusbaum/gbasm/macho"
 )
 
 type platform int

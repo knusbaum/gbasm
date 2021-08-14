@@ -1,4 +1,4 @@
-module github.com/knusbaum/gbasm2
+module github.com/knusbaum/gbasm
 
 go 1.16
 

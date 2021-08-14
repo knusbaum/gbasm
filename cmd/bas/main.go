@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/knusbaum/gbasm2"
+	"github.com/knusbaum/gbasm"
 )
 
 var jumps = []string{
@@ -96,9 +96,9 @@ func main() {
 		out = os.Args[2]
 	}
 
-	var o *gbasm2.OFile
-	var f *gbasm2.Function
-	var locals map[string]*gbasm2.Ralloc
+	var o *gbasm.OFile
+	var f *gbasm.Function
+	var locals map[string]*gbasm.Ralloc
 	scanner := bufio.NewScanner(file)
 	ln := 0
 lines:
@@ -116,7 +116,7 @@ lines:
 			if out == "" {
 				out = pkgname + ".bo"
 			}
-			o, err = gbasm2.NewOFile(out, pkgname)
+			o, err = gbasm.NewOFile(out, pkgname)
 			if err != nil {
 				fmt.Printf("Failed to create ofile: %s\n", err)
 				os.Exit(1)
@@ -137,7 +137,7 @@ lines:
 				fmt.Printf("Fatal: Failed to create function \"%s\": %s\n", fname, err)
 				os.Exit(1)
 			}
-			locals = make(map[string]*gbasm2.Ralloc)
+			locals = make(map[string]*gbasm.Ralloc)
 			continue
 		}
 
@@ -167,7 +167,7 @@ lines:
 		}
 		if strings.HasPrefix(line, "use") {
 			rname := strings.TrimSpace(strings.TrimPrefix(line, "use"))
-			reg, err := gbasm2.ParseReg(rname)
+			reg, err := gbasm.ParseReg(rname)
 			if err != nil {
 				fmt.Printf("Fatal: Failed to use register %s: %s\n", rname, err)
 				os.Exit(1)
@@ -228,7 +228,7 @@ lines:
 				continue
 			}
 
-			if reg, err := gbasm2.ParseReg(parts[i]); err == nil {
+			if reg, err := gbasm.ParseReg(parts[i]); err == nil {
 				args[i-1] = reg
 				continue
 			}
@@ -262,12 +262,12 @@ lines:
 	}
 
 	// This part should be moved to the linker, but for now we'll put it here for testing.
-	text := gbasm2.Link([]*gbasm2.OFile{o})
+	text := gbasm.Link([]*gbasm.OFile{o})
 	for _, b := range text {
 		fmt.Printf("%02x ", b)
 	}
 	fmt.Printf("\n")
-	err = gbasm2.WriteExe("out.o", gbasm2.MACHO, text)
+	err = gbasm.WriteExe("out.o", gbasm.MACHO, text)
 	if err != nil {
 		log.Fatalf("Failed to write exe: %s", err)
 	}
