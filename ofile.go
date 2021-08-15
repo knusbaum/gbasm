@@ -59,13 +59,13 @@ func (r *Relocation) Apply(bs []byte, value int32) {
 }
 
 type OFile struct {
-	filename  string
-	pkgname   string
+	Filename  string
+	Pkgname   string
 	exeformat string
 	types     map[string]*TypeDescr
 	data      map[string]*Var
 	vars      map[string]*Var
-	funcs     map[string]*Function
+	Funcs     map[string]*Function
 
 	// Not written
 	a *Asm
@@ -77,12 +77,12 @@ func NewOFile(name string, pkgname string) (*OFile, error) {
 		return nil, err
 	}
 	return &OFile{
-		filename: name,
-		pkgname:  pkgname,
+		Filename: name,
+		Pkgname:  pkgname,
 		types:    make(map[string]*TypeDescr),
 		data:     make(map[string]*Var),
 		vars:     make(map[string]*Var),
-		funcs:    make(map[string]*Function),
+		Funcs:    make(map[string]*Function),
 		a:        a, // TODO: Hard coded for now. This should be a parameter and written to the ofile.
 	}, nil
 }
@@ -100,7 +100,7 @@ func (o *OFile) Type(name string, properties []string, description []byte) error
 }
 
 func (o *OFile) Var(name, vtype string) error {
-	if o.vars[name] != nil || o.data[name] != nil || o.funcs[name] != nil {
+	if o.vars[name] != nil || o.data[name] != nil || o.Funcs[name] != nil {
 		return fmt.Errorf("Name %s already declared.", name)
 	}
 	o.vars[name] = &Var{name, vtype}
@@ -108,7 +108,7 @@ func (o *OFile) Var(name, vtype string) error {
 }
 
 func (o *OFile) Data(name, vtype string) error {
-	if o.vars[name] != nil || o.data[name] != nil || o.funcs[name] != nil {
+	if o.vars[name] != nil || o.data[name] != nil || o.Funcs[name] != nil {
 		return fmt.Errorf("Name %s already declared.", name)
 	}
 	o.data[name] = &Var{name, vtype}
@@ -125,12 +125,12 @@ func ReadOFile(filename string) (*OFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	o.filename = filename
+	o.Filename = filename
 	return o, nil
 }
 
 func (o *OFile) Output() error {
-	f, err := os.Create(o.filename)
+	f, err := os.Create(o.Filename)
 	if err != nil {
 		return err
 	}

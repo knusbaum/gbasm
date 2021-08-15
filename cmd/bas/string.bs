@@ -1,0 +1,104 @@
+package string
+
+// Parameters to functions are passed in the registers rdi, rsi, rdx, rcx, r8, r9
+// Functions preserve the registers rbx, rsp, rbp, r12, r13, r14, and r15; 
+// while rax, rdi, rsi, rdx, rcx, r8, r9, r10, r11 are scratch registers. 
+
+function strlen
+	prologue
+	
+	mov rax -1
+	dec rdi
+label loop
+	inc rax
+	inc rdi
+	cmp [rdi] 0
+	jne loop
+
+	epilogue
+	ret
+
+// countdigits(i int64) -> int64 
+// determines the minimum number of characters needed to
+// represent the integer i
+function countdigits
+	prologue
+	mov rax 0
+	mov rbx 0
+	
+label loop
+	inc rax
+	imul rbx rbx 10
+	add rbx 9
+	cmp rbx rdi
+	jl loop
+
+	epilogue
+	ret
+
+
+// itoa(i int64, b [?]byte)
+function itoa
+	prologue
+
+	// lazy save
+	push rdi
+	push rsi
+	call countdigits
+	pop rsi
+	pop rdi
+
+	// Add countdigits to rsi index so we can 
+	// add characters to the array backwards.
+	add rsi rax
+	mov [rsi] 0
+	dec rsi
+
+	// Integer is in rdi
+	// Target buffer is in rsi
+	mov rax rdi
+label loop
+	mov rdx 0
+	mov rbx 10
+	idiv rbx
+	// Remainder (mod) is in rdx
+	// quotient remains in rax.
+	// mod = mod + '0'
+	add rdx 0x30
+	mov [rsi] dl
+	dec rsi
+	test rax rax
+	jnz loop
+	//mov al 0
+	//mov [rsi] al
+	
+	epilogue
+	ret
+
+// function uitoa
+
+// puts(str [?]byte) str must be a null-terminated string.
+function puts
+	prologue
+
+	// rbx is preserved across function calls
+	mov rbx rdi
+	
+	call strlen
+	// message length for syscall
+	mov rdx rax
+	
+	// message pointer goes into rsi
+	mov rsi rbx
+
+	// For syscall, call number goes in rax
+	// fd goes into rdi
+	// message ptr goes into rsi
+	// message length goes into rdx
+	mov rax 0x2000004
+	// stdout
+	mov     rdi 1
+	syscall
+
+	epilogue
+	ret

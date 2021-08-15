@@ -440,7 +440,7 @@ func readFunction(r io.Reader) (*Function, error) {
 }
 
 func writeOFile(w io.Writer, o *OFile) error {
-	err := writeString(w, o.pkgname)
+	err := writeString(w, o.Pkgname)
 	if err != nil {
 		return err
 	}
@@ -460,7 +460,7 @@ func writeOFile(w io.Writer, o *OFile) error {
 	if err != nil {
 		return err
 	}
-	err = writeFunctions(w, o.funcs)
+	err = writeFunctions(w, o.Funcs)
 	if err != nil {
 		return err
 	}
@@ -493,11 +493,11 @@ func readOFile(r io.Reader) (*OFile, error) {
 		return nil, err
 	}
 	return &OFile{
-		pkgname:   pkgname,
+		Pkgname:   pkgname,
 		exeformat: exeformat,
 		types:     types,
 		data:      data,
 		vars:      vars,
-		funcs:     funcs,
+		Funcs:     funcs,
 	}, nil
 }

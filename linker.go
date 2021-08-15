@@ -35,7 +35,7 @@ func WriteExe(exename string, p platform, text []byte) error {
 func Link(os []*OFile) []byte {
 	funcs := make(map[string]*Function)
 	for _, o := range os {
-		for fname, f := range o.funcs {
+		for fname, f := range o.Funcs {
 			if _, ok := funcs[fname]; ok {
 				log.Fatalf("Duplicate definitions of function %s", fname)
 			}

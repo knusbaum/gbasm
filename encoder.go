@@ -153,55 +153,70 @@ type immediate struct {
 }
 
 func (x *immediate) Encode(w io.Writer, os ...interface{}) error {
-
 	if int(x.value) >= len(os) {
 		return fmt.Errorf("[immediate] Not enough args. Expected at least %d\n", x.value)
 	}
-	var (
-		b16 uint16
-		b32 uint32
-		b64 uint64
-	)
 	switch x.size {
 	case 1:
-		b, ok := os[x.value].(uint8)
-		if !ok {
-			return fmt.Errorf("Expected op %d to be a uint8, but found %v\n", x.value, os[x.value])
+		switch b := os[x.value].(type) {
+		case uint8:
+			return binary.Write(w, binary.LittleEndian, b)
+		case int8:
+			return binary.Write(w, binary.LittleEndian, b)
+		default:
+			return fmt.Errorf("Expected op %d to be a (u)int8, but found %v\n", x.value, os[x.value])
 		}
-		return writeByte(w, b)
 	case 2:
-		if b, ok := os[x.value].(uint16); ok {
-			b16 = b
-		} else if b, ok := os[x.value].(uint8); ok {
-			b16 = uint16(b)
-		} else {
-			return fmt.Errorf("Expected op %d to be a uint16 or uint8, but found %v\n", x.value, os[x.value])
+		switch b := os[x.value].(type) {
+		case uint8:
+			return binary.Write(w, binary.LittleEndian, uint16(b))
+		case int8:
+			return binary.Write(w, binary.LittleEndian, int16(b))
+		case uint16:
+			return binary.Write(w, binary.LittleEndian, b)
+		case int16:
+			return binary.Write(w, binary.LittleEndian, b)
+		default:
+			return fmt.Errorf("Expected op %d to be a (u)int16 or (u)int8, but found %v\n", x.value, os[x.value])
 		}
-		return binary.Write(w, binary.LittleEndian, b16)
 	case 4:
-		if b, ok := os[x.value].(uint32); ok {
-			b32 = b
-		} else if b, ok := os[x.value].(uint16); ok {
-			b32 = uint32(b)
-		} else if b, ok := os[x.value].(uint8); ok {
-			b32 = uint32(b)
-		} else {
-			return fmt.Errorf("Expected op %d to be a uint32, uint16 or uint8, but found %v\n", x.value, os[x.value])
+		switch b := os[x.value].(type) {
+		case uint8:
+			return binary.Write(w, binary.LittleEndian, uint32(b))
+		case int8:
+			return binary.Write(w, binary.LittleEndian, int32(b))
+		case uint16:
+			return binary.Write(w, binary.LittleEndian, uint32(b))
+		case int16:
+			return binary.Write(w, binary.LittleEndian, int32(b))
+		case uint32:
+			return binary.Write(w, binary.LittleEndian, b)
+		case int32:
+			return binary.Write(w, binary.LittleEndian, b)
+		default:
+			return fmt.Errorf("Expected op %d to be a (u)int32, (u)int16 or (u)int8, but found %v\n", x.value, os[x.value])
 		}
-		return binary.Write(w, binary.LittleEndian, b32)
 	case 8:
-		if b, ok := os[x.value].(uint64); ok {
-			b64 = b
-		} else if b, ok := os[x.value].(uint32); ok {
-			b64 = uint64(b)
-		} else if b, ok := os[x.value].(uint16); ok {
-			b64 = uint64(b)
-		} else if b, ok := os[x.value].(uint8); ok {
-			b64 = uint64(b)
-		} else {
-			return fmt.Errorf("Expected op %d to be a uint64, uint32, uint16 or uint8, but found %v\n", x.value, os[x.value])
+		switch b := os[x.value].(type) {
+		case uint8:
+			return binary.Write(w, binary.LittleEndian, uint64(b))
+		case int8:
+			return binary.Write(w, binary.LittleEndian, int64(b))
+		case uint16:
+			return binary.Write(w, binary.LittleEndian, uint64(b))
+		case int16:
+			return binary.Write(w, binary.LittleEndian, int64(b))
+		case uint32:
+			return binary.Write(w, binary.LittleEndian, uint64(b))
+		case int32:
+			return binary.Write(w, binary.LittleEndian, int64(b))
+		case uint64:
+			return binary.Write(w, binary.LittleEndian, b)
+		case int64:
+			return binary.Write(w, binary.LittleEndian, b)
+		default:
+			return fmt.Errorf("Expected op %d to be a (u)int64, (u)int32, (u)int16 or (u)int8, but found %v\n", x.value, os[x.value])
 		}
-		return binary.Write(w, binary.LittleEndian, b64)
 	default:
 		return fmt.Errorf("Cannot encode immediate of size %d", x.size)
 	}
@@ -458,17 +473,28 @@ func (o *Op) Match(op interface{}) bool {
 	}
 	switch o.TN {
 	case "imm4":
-		_, ok := op.(uint8)
-		return ok
+		//		_, ok := op.(uint8)
+		//		return ok
 	case "imm8":
-		_, ok := op.(uint8)
-		return ok
+		if _, ok := op.(uint8); ok {
+			return ok
+		}
+		if _, ok := op.(int8); ok {
+			return ok
+		}
 	case "imm16":
 		if _, ok := op.(uint8); ok {
 			return ok
 		}
-		_, ok := op.(uint16)
-		return ok
+		if _, ok := op.(uint16); ok {
+			return ok
+		}
+		if _, ok := op.(int8); ok {
+			return ok
+		}
+		if _, ok := op.(int16); ok {
+			return ok
+		}
 	case "imm32":
 		if _, ok := op.(uint8); ok {
 			return ok
@@ -476,8 +502,19 @@ func (o *Op) Match(op interface{}) bool {
 		if _, ok := op.(uint16); ok {
 			return ok
 		}
-		_, ok := op.(uint32)
-		return ok
+		if _, ok := op.(uint32); ok {
+			return ok
+		}
+		if _, ok := op.(int8); ok {
+			return ok
+		}
+		if _, ok := op.(int16); ok {
+			return ok
+		}
+		if _, ok := op.(int32); ok {
+			return ok
+		}
+
 	case "imm64":
 		if _, ok := op.(uint8); ok {
 			return ok
@@ -488,8 +525,21 @@ func (o *Op) Match(op interface{}) bool {
 		if _, ok := op.(uint32); ok {
 			return ok
 		}
-		_, ok := op.(uint64)
-		return ok
+		if _, ok := op.(uint64); ok {
+			return ok
+		}
+		if _, ok := op.(int8); ok {
+			return ok
+		}
+		if _, ok := op.(int16); ok {
+			return ok
+		}
+		if _, ok := op.(int32); ok {
+			return ok
+		}
+		if _, ok := op.(int64); ok {
+			return ok
+		}
 	//case "al":
 	//case "cl":
 	case "r8":

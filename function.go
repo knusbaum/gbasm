@@ -34,9 +34,9 @@ func (r *Ralloc) Register() Register {
 			panic("Failed to load register") // TODO: Better error handling
 			return 0
 		}
-		log.Printf("HAD TO EVICT REGISTER. EVICTED REGISTER %v", reg)
+		//log.Printf("HAD TO EVICT REGISTER. EVICTED REGISTER %v", reg)
 	} else {
-		log.Printf("RALLOCS ALLOCATED REGISTER %v", reg)
+		//log.Printf("RALLOCS ALLOCATED REGISTER %v", reg)
 	}
 	r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset})
 	r.reg = reg
@@ -196,7 +196,7 @@ type Function struct {
 }
 
 func (o *OFile) NewFunction(srcFile string, srcLine int, name string, args ...*Var) (*Function, error) {
-	if f, ok := o.funcs[name]; ok {
+	if f, ok := o.Funcs[name]; ok {
 		return nil, fmt.Errorf("Function %s declared at %s:%d\n\tPreviously declared here: %s:%d",
 			name, srcFile, srcLine, f.srcFile, f.srcLine)
 	}
@@ -211,7 +211,7 @@ func (o *OFile) NewFunction(srcFile string, srcLine int, name string, args ...*V
 		rs:      NewRegisters(),
 	}
 	f.Rallocs = NewRallocs(f.rs, f)
-	o.funcs[name] = f
+	o.Funcs[name] = f
 	return f, nil
 }
 

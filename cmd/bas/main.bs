@@ -10,8 +10,11 @@ function start
 function main
 	// no prologue necessary. 
 	// Only modifying rdi and rax (by way of calling fib)
-	mov rdi 7
+	mov rdi 5
 	call fib
+
+	call print
+	mov rax 0
 	ret
 
 function fib

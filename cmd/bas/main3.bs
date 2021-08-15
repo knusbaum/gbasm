@@ -1,0 +1,42 @@
+package main
+
+function print
+	prologue
+	sub rsp 132
+//0x1000
+//
+
+
+	// Hello world ascii
+	mov [rsp+12] 0x0
+	mov [rsp+11] 0x0a
+	mov [rsp+10] 0x64
+	mov [rsp+9] 0x6c 
+	mov [rsp+8] 0x72  
+	mov [rsp+7] 0x6f
+	mov [rsp+6] 0x77 
+	mov [rsp+5] 0x20
+	mov [rsp+4] 0x6f
+	mov [rsp+3] 0x6c
+	mov [rsp+2] 0x6c  
+	mov [rsp+1] 0x65
+	mov [rsp] 0x68
+
+	// Write hello world
+	mov rdi rsp
+	call puts
+
+	mov rdi 1000
+	mov rsi rsp
+	call itoa
+	// rsp now contains "1000\x0..."
+	
+	mov rdi rsp
+	call puts
+
+	// newline and terminating zero
+	lea rdi [rsp+11]
+	call puts
+
+	epilogue
+	ret
