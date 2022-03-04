@@ -1,11 +1,5 @@
 package main
 
-function start
-	call main
-	mov rdi rax
-	// MacOS Exit syscall
-	mov rax 0x2000001
-	syscall
 
 function main
 	// no prologue necessary. 

@@ -6,6 +6,9 @@ function print
 //0x1000
 //
 
+	// For the longer integer
+	mov [rsp+101] 0x00
+	mov [rsp+100] 0x0a
 
 	// Hello world ascii
 	mov [rsp+12] 0x0
@@ -26,7 +29,15 @@ function print
 	mov rdi rsp
 	call puts
 
-	mov rdi 1000
+// 	mov rdi -10
+// 	call ucountdigits
+// 	mov rdi rax
+// 	mov rsi rsp
+// 	call uitoa
+// 	mov rdi rsp
+// 	call puts
+
+	mov rdi -1000
 	mov rsi rsp
 	call itoa
 	// rsp now contains "1000\x0..."
@@ -35,8 +46,20 @@ function print
 	call puts
 
 	// newline and terminating zero
-	lea rdi [rsp+11]
+	lea rdi [rsp+100]
 	call puts
 
+	mov rdi -1000
+	mov rsi rsp
+	call uitoa
+	mov rdi rsp
+	call puts
+	lea rdi [rsp+100]
+	call puts
+
+
+	mov rdi -102020
+	call puti
+	
 	epilogue
 	ret

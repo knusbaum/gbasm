@@ -1,0 +1,27 @@
+package string
+
+// puts(str [?]byte) str must be a null-terminated string.
+function puts
+	prologue
+
+	// rbx is preserved across function calls
+	mov rbx rdi
+	
+	call strlen
+	// message length for syscall
+	mov rdx rax
+	
+	// message pointer goes into rsi
+	mov rsi rbx
+
+	// For syscall, call number goes in rax
+	// fd goes into rdi
+	// message ptr goes into rsi
+	// message length goes into rdx
+	mov rax 0x2000004
+	// stdout
+	mov     rdi 1
+	syscall
+
+	epilogue
+	ret

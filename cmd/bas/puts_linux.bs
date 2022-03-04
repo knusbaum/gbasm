@@ -1,0 +1,35 @@
+package string
+
+// Arch/ABI 	Instruction 	System 	Ret 	Ret 	Error 	Notes
+// 		                    call # 	val 	val2
+// x86-64 	    syscall 	    rax 	rax 	rdx 	- 	    5
+// 
+// Arch/ABI 	arg1 	arg2 	arg3 	arg4 	arg5 	arg6 	arg7 	Notes
+// x86-64		rdi 	rsi 	rdx 	r10 	r8 		r9 		-
+
+// puts(str [?]byte) str must be a null-terminated string.
+function puts
+	prologue
+
+	// rbx is preserved across function calls
+	mov rbx rdi
+	
+	call strlen
+	// message length for syscall
+	mov rdx rax
+	
+	// message pointer goes into rsi
+	mov rsi rbx
+
+	// 1 SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf, size_t, count)
+	// For syscall, call number goes in rax
+	// fd goes into rdi
+	// message ptr goes into rsi
+	// message length goes into rdx
+	mov rax 0x1
+	// stdout
+	mov     rdi 1
+	syscall
+
+	epilogue
+	ret

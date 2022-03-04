@@ -6,7 +6,8 @@ package string
 
 function strlen
 	prologue
-	
+	//mov rax 0
+	//mov [rax] 0
 	mov rax -1
 	dec rdi
 label loop
@@ -18,35 +19,67 @@ label loop
 	epilogue
 	ret
 
-// countdigits(i int64) -> int64 
+// Countdigits does not work for negative numbers.
+// Instead we convert negative numbers to positive numbers,
+// call ucountdigits and add 1 for the negative sign.
+// // countdigits(i int64) -> int64 
+// // determines the minimum number of characters needed to
+// // represent the integer i
+// function countdigits
+// 	prologue
+// 	mov rax 0
+// 	mov rbx 0
+// 	
+// label loop
+// 	inc rax
+// 	imul rbx rbx 10
+// 	add rbx 9
+// 	cmp rbx rdi
+// 	jl loop
+// 
+// 	epilogue
+// 	ret
+
+// ucountdigits(i uint64) -> uint64 
 // determines the minimum number of characters needed to
 // represent the integer i
-function countdigits
-	prologue
+function ucountdigits
+	// skip prologue and epilogue.
+	// We aren't using stack or preserved registers.
+	// prologue
+	mov rcx 0
+	mov rdx 0
 	mov rax 0
-	mov rbx 0
+	mov r8 10
 	
 label loop
-	inc rax
-	imul rbx rbx 10
-	add rbx 9
-	cmp rbx rdi
-	jl loop
-
-	epilogue
+	inc rcx
+	mul r8
+	add rax 9
+	cmp rdx 0
+	ja end
+	cmp rax rdi
+	jb loop
+	
+label end
+	mov rax rcx
+	// epilogue
 	ret
+	
 
-
-// itoa(i int64, b [?]byte)
-function itoa
-	prologue
+// uitoa(i uint64, b [?]byte)
+function uitoa
+	// No saved registers used and stack use is trivial.
+	// We can skip the prologue.
+	//prologue
 
 	// lazy save
 	push rdi
 	push rsi
-	call countdigits
+	call ucountdigits
 	pop rsi
 	pop rdi
+
 
 	// Add countdigits to rsi index so we can 
 	// add characters to the array backwards.
@@ -59,8 +92,8 @@ function itoa
 	mov rax rdi
 label loop
 	mov rdx 0
-	mov rbx 10
-	idiv rbx
+	mov rcx 10
+	div rcx
 	// Remainder (mod) is in rdx
 	// quotient remains in rax.
 	// mod = mod + '0'
@@ -69,36 +102,62 @@ label loop
 	dec rsi
 	test rax rax
 	jnz loop
-	//mov al 0
-	//mov [rsi] al
 	
-	epilogue
+	//epilogue
 	ret
 
-// function uitoa
-
-// puts(str [?]byte) str must be a null-terminated string.
-function puts
+// function itoa
+function itoa
 	prologue
 
-	// rbx is preserved across function calls
-	mov rbx rdi
+	cmp rdi 0
+	jge skipconvert
+	// convert negative to positive
+	neg rdi
+	mov [rsi] 0x2d
+	inc rsi
 	
-	call strlen
-	// message length for syscall
-	mov rdx rax
-	
-	// message pointer goes into rsi
-	mov rsi rbx
-
-	// For syscall, call number goes in rax
-	// fd goes into rdi
-	// message ptr goes into rsi
-	// message length goes into rdx
-	mov rax 0x2000004
-	// stdout
-	mov     rdi 1
-	syscall
+label skipconvert
+	call uitoa
 
 	epilogue
 	ret
+
+// puti(i int64)
+function puti
+	prologue
+	sub rsp 22
+	mov [rsp+22] 0x00
+	mov [rsp+21] 0x0a
+	
+	mov rsi rsp
+	call itoa
+	
+	mov rdi rsp
+	call puts
+	
+	lea rdi [rsp+21]
+	call puts	
+	
+	epilogue
+	ret
+
+// puti(i uint64)
+function uputi
+	prologue
+	sub rsp 22
+	mov [rsp+22] 0x00
+	mov [rsp+21] 0x0a
+	
+	mov rsi rsp
+	call uitoa
+	
+	mov rdi rsp
+	call puts
+	
+	lea rdi [rsp+21]
+	call puts	
+	
+	epilogue
+	ret
+	

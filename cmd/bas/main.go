@@ -318,6 +318,10 @@ func main() {
 			}
 		}
 	}
+	if o == nil {
+		fmt.Printf("Fatal: No non-empty files found.\n")
+		os.Exit(1)
+	}
 
 	err := o.Output()
 	if err != nil {

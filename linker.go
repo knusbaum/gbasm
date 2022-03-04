@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/knusbaum/gbasm/elf"
 	"github.com/knusbaum/gbasm/macho"
 )
 
@@ -21,12 +22,15 @@ func (p platform) String() string {
 
 const (
 	MACHO platform = iota
+	ELF
 )
 
 func WriteExe(exename string, p platform, text []byte) error {
 	switch p {
 	case MACHO:
 		return macho.WriteMacho(exename, text)
+	case ELF:
+		return elf.WriteELF(exename, text)
 	default:
 		return fmt.Errorf("Cannot write executable for platform %s", p)
 	}
