@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 )
 
 const MaxUint = ^uint(0)
@@ -187,7 +186,11 @@ func writeVar(w io.Writer, v *Var) error {
 	if err != nil {
 		return err
 	}
-	return nil
+	err = writeSize(w, len(v.val))
+	if err != nil {
+		return err
+	}
+	return binary.Write(w, binary.LittleEndian, v.val)
 }
 
 func readVar(r io.Reader) (*Var, error) {
@@ -199,7 +202,16 @@ func readVar(r io.Reader) (*Var, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Var{name: name, vtype: vtype}, nil
+	size, err := readSize(r)
+	if err != nil {
+		return nil, err
+	}
+	bs := make([]byte, size)
+	err = binary.Read(r, binary.LittleEndian, &bs)
+	if err != nil {
+		return nil, err
+	}
+	return &Var{name: name, vtype: vtype, val: bs}, nil
 }
 
 func writeSymbol(w io.Writer, v *Symbol) error {
@@ -347,7 +359,7 @@ func writeFunction(w io.Writer, f *Function) error {
 		return err
 	}
 	for _, r := range f.relocations {
-		log.Printf("Writing relocation: %#v\n", r)
+		//log.Printf("Writing relocation: %#v\n", r)
 		err := writeRelocation(w, &r)
 		if err != nil {
 			return err
@@ -416,7 +428,7 @@ func readFunction(r io.Reader) (*Function, error) {
 		if err != nil {
 			return nil, err
 		}
-		log.Printf("Reading relocation: %#v\n", rr)
+		//log.Printf("Reading relocation: %#v\n", rr)
 		relocations[i] = rr
 	}
 	size, err = readSize(r)

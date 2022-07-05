@@ -17,7 +17,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 -->
 <!-- 
 This is taken from https://github.com/Maratyszcza/Opcodes
-It contains several modificationsc namely, the Operands containing register literals have been switched to ImplicitOperands. It is not clear to me why these were not ImplicitOperands originally.
+It contains several modifications, namely the Operands containing register literals have been switched to ImplicitOperands. It is not clear to me why these were not ImplicitOperands originally.
 -->
 <?xml version='1.0' encoding='utf-8'?>
 <InstructionSet name="x86-64">

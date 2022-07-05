@@ -1,5 +1,7 @@
 package main
 
+data hello string "Hello World!\n"
+
 function print
 	prologue
 	sub rsp 132
@@ -26,7 +28,8 @@ function print
 	mov [rsp] 0x68
 
 	// Write hello world
-	mov rdi rsp
+	//mov rdi rsp
+	mov rdi hello
 	call puts
 
 // 	mov rdi -10

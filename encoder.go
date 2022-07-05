@@ -46,7 +46,7 @@ forms:
 				continue
 			}
 			o := os[i]
-			//log.Printf("Checking %#v matches %#v: %t\n", fop, o, fop.Match(o))
+			log.Printf("Checking %#v matches %#v: %t\n", fop, o, fop.Match(o))
 			if !fop.Match(o) {
 				continue forms
 			}

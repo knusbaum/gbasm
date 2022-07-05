@@ -2,6 +2,8 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"errors"
 	"fmt"
 	"math"
 	"math/bits"
@@ -86,6 +88,21 @@ func smallestI(i int64) interface{} {
 		return int32(i)
 	}
 	return int64(i)
+}
+
+func SplitNSpace(s string, n int) []string {
+	s = strings.ReplaceAll(s, "\t", " ")
+	ss := strings.SplitN(s, " ", n)
+	var k int
+	for i := range ss {
+		if ss[i] == "" {
+			continue
+		}
+		ss[k] = ss[i]
+		k++
+	}
+	ss = ss[:k]
+	return ss
 }
 
 func SplitSpace(s string) []string {
@@ -190,6 +207,22 @@ func main() {
 					os.Exit(1)
 				}
 				locals = make(map[string]*gbasm.Ralloc)
+				continue
+			}
+
+			if strings.HasPrefix(line, "data") {
+				f = nil // A new data declaration ends any current function
+				parts := SplitNSpace(strings.TrimSpace(strings.TrimPrefix(line, "data")), 3)
+				if len(parts) != 3 {
+					fmt.Printf("Fatal: data declaration requires a name, type, and initial data, but got: %v\n", parts)
+					os.Exit(1)
+				}
+				data, err := parseData(parts[2])
+				if err != nil {
+					fmt.Printf("Fatal: failed to parse data for data declaration %s: %v", parts[0], err)
+					os.Exit(1)
+				}
+				o.Data(parts[0], parts[1], data)
 				continue
 			}
 
@@ -331,15 +364,15 @@ func main() {
 
 	for k, f := range o.Funcs {
 		fmt.Printf("Function %s\n", k)
-		text, err := f.Body()
+		_, err := f.Body()
 		if err != nil {
 			fmt.Printf("Can't get function %s body: %s\n", k, err)
 			os.Exit(1)
 		}
-		for _, b := range text {
-			fmt.Printf("%02x ", b)
-		}
-		fmt.Printf("\n")
+		// 		for _, b := range text {
+		// 			fmt.Printf("%02x ", b)
+		// 		}
+		// 		fmt.Printf("\n")
 	}
 
 	// 	// This part should be moved to the linker, but for now we'll put it here for testing.
@@ -352,4 +385,42 @@ func main() {
 	// 	if err != nil {
 	// 		log.Fatalf("Failed to write exe: %s", err)
 	// 	}
+}
+
+func parseData(s string) ([]byte, error) {
+	if strings.HasPrefix(s, `"`) {
+		return parseString(s)
+	}
+	return nil, fmt.Errorf("Could not parse '%s'", s)
+}
+
+func parseString(s string) ([]byte, error) {
+	fmt.Printf("Parsing string [%s]\n", s)
+	if !strings.HasPrefix(s, `"`) {
+		return nil, fmt.Errorf("Expected string to begin with '\"'")
+	}
+	//var closed bool
+	var bs bytes.Buffer
+	for s = s[1:]; len(s) > 0; s = s[1:] {
+		fmt.Printf("Parsing string [%s]\n", s)
+		if s[0] == '\\' {
+			switch s[1] {
+			case 'n':
+				bs.Write([]byte("\n"))
+			case '\\':
+				bs.Write([]byte("\\"))
+			case '"':
+				bs.Write([]byte("\""))
+			}
+			s = s[1:] // Skip the slash and the escaped character will be skipped by the loop.
+		} else if s[0] == '"' {
+			//closed = true
+			break
+		}
+		bs.Write([]byte{s[0]})
+	}
+	if len(s) != 1 || s[0] != '"' {
+		return nil, errors.New("String did not endwith a double quote.")
+	}
+	return bs.Bytes(), nil
 }

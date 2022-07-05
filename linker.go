@@ -44,8 +44,13 @@ func Link(os []*OFile) []byte {
 				log.Fatalf("Duplicate definitions of function %s", fname)
 			}
 			funcs[fname] = f
+			fmt.Printf("FUNCTION %s.%s\n", o.Pkgname, fname)
+		}
+		for dname, v := range o.data {
+			fmt.Printf("DATA %s %s (%d bytes)\n", dname, v.vtype, len(v.val))
 		}
 	}
+
 	to_write := make([]*Function, 1)
 	main, ok := funcs["start"]
 	if !ok {
@@ -65,7 +70,7 @@ func Link(os []*OFile) []byte {
 		foffset := uint32(bs.Len())
 		funclocs[current.name] = foffset
 		for _, r := range current.relocations {
-			log.Printf("LINKER FOUND RELOCATION AT OFFSET %d to symbol %s", r.offset, r.symbol)
+			//log.Printf("LINKER FOUND RELOCATION AT OFFSET %d to symbol %s", r.offset, r.symbol)
 			r.offset += foffset
 			relocations = append(relocations, r)
 			if _, ok := funclocs[r.symbol]; !ok {
@@ -81,14 +86,14 @@ func Link(os []*OFile) []byte {
 			log.Fatalf("Failed to write body: %s", err)
 		}
 	}
-	bss := bs.Bytes()
+	text := bs.Bytes()
 	for _, r := range relocations {
 		value, ok := funclocs[r.symbol]
 		if !ok {
 			log.Fatalf("THIS SHOULD NEVER HAPPEN. WE CHECKED ABOVE.")
 		}
-		log.Printf("APPLYING RELOCATION AT OFFSET 0x%02x to symbol %s at offset 0x%02x", r.offset, r.symbol, value)
-		r.Apply(bss, int32(value))
+		//log.Printf("APPLYING RELOCATION AT OFFSET 0x%02x to symbol %s at offset 0x%02x", r.offset, r.symbol, value)
+		r.Apply(text, int32(value))
 	}
-	return bss
+	return text
 }

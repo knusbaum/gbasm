@@ -22,6 +22,7 @@ type Var struct {
 	// vtype is a string and must be parsed by the compiler/linker to ensure it matches some
 	// TypeDescr.
 	vtype string
+	val   []byte
 }
 
 type Symbol struct {
@@ -99,19 +100,33 @@ func (o *OFile) Type(name string, properties []string, description []byte) error
 	return nil
 }
 
-func (o *OFile) Var(name, vtype string) error {
+// Var declares a mutable variable of type vtype at package scope.
+func (o *OFile) Var(name, vtype string, val interface{}) error {
 	if o.vars[name] != nil || o.data[name] != nil || o.Funcs[name] != nil {
 		return fmt.Errorf("Name %s already declared.", name)
 	}
-	o.vars[name] = &Var{name, vtype}
+	switch v := val.(type) {
+	case string:
+		val = []byte(v)
+	}
+	var bs bytes.Buffer
+	binary.Write(&bs, binary.LittleEndian, val)
+	o.vars[name] = &Var{name, vtype, bs.Bytes()}
 	return nil
 }
 
-func (o *OFile) Data(name, vtype string) error {
+// Data declares a piece of immutable data of type vtype at package scope.
+func (o *OFile) Data(name, vtype string, val interface{}) error {
 	if o.vars[name] != nil || o.data[name] != nil || o.Funcs[name] != nil {
 		return fmt.Errorf("Name %s already declared.", name)
 	}
-	o.data[name] = &Var{name, vtype}
+	switch v := val.(type) {
+	case string:
+		val = []byte(v)
+	}
+	var bs bytes.Buffer
+	binary.Write(&bs, binary.LittleEndian, val)
+	o.data[name] = &Var{name, vtype, bs.Bytes()}
 	return nil
 }
 

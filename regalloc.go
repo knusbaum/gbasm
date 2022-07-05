@@ -102,8 +102,8 @@ func (rs *Registers) Release(r Register) {
 	}
 }
 
-// Use requests the use of a specific register.
-// Used registers should be Released when they are no longer needed.
+// Use requests the use of a specific register. Used registers should be Released when they are no
+// longer needed.
 func (rs *Registers) Use(r Register) bool {
 	if r.width() == 8 {
 		if !rs.rs[r].inuse {

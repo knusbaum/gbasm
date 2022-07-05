@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"log"
 )
 
 type Ralloc struct {
@@ -215,14 +214,20 @@ func (o *OFile) NewFunction(srcFile string, srcLine int, name string, args ...*V
 	return f, nil
 }
 
+// Use marks a register as in-use. It will not be allocated by the register allocator. Returns true
+// if the register could be allocated and false if it is already in use.
 func (f *Function) Use(r Register) bool {
 	return f.rs.Use(r)
 }
 
+// Release returns a register to the pool for use by the register allocator. Registers that are
+// marked as in-use with the Use method should be Released when they are no longer needed.
 func (f *Function) Release(r Register) {
 	f.rs.Release(r)
 }
 
+// Get finds an unused register of size and marks it as in-use. When the register is no longer
+// needed it should be Released.
 func (f *Function) Get(size int) (Register, bool) {
 	return f.rs.Get(size)
 }
@@ -315,7 +320,7 @@ func (f *Function) Instr(instr string, ops ...interface{}) error {
 
 func (f *Function) Resolve() error {
 	if f.bodyBs != nil {
-		log.Printf("Function %s already resolved.", f.name)
+		//log.Printf("Function %s already resolved.", f.name)
 		return nil
 	}
 	bs := f.bs.Bytes()
@@ -324,14 +329,14 @@ func (f *Function) Resolve() error {
 			//log.Printf("APPLYING RELOCATION AT OFFSET 0x%02x to symbol %s at offset 0x%02x", rel.offset, rel.symbol, loff)
 			rel.Apply(bs, int32(loff))
 		} else {
-			log.Printf("Adding Relocation for symbol %s at offset 0x%02x", rel.symbol, rel.offset)
+			//log.Printf("Adding Relocation for symbol %s at offset 0x%02x", rel.symbol, rel.offset)
 			rel.rel_type = R_386_PC32
 			f.relocations = append(f.relocations, rel)
 		}
 	}
 	f.jumps = make([]Relocation, 0)
 	f.bodyBs = bs
-	log.Printf("FUNCTION %s BODYBS LEN: %d", f.name, len(f.bodyBs))
+	//log.Printf("FUNCTION %s BODYBS LEN: %d", f.name, len(f.bodyBs))
 	return nil
 }
 
@@ -345,6 +350,6 @@ func (f *Function) Body() ([]byte, error) {
 		}
 		return nil, fmt.Errorf("Multiple errors: %v", f.errors)
 	}
-	log.Printf("RETURNING BODY LEN: %d", len(f.bodyBs))
+	//log.Printf("RETURNING BODY LEN: %d", len(f.bodyBs))
 	return f.bodyBs, nil
 }
