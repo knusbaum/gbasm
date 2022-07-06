@@ -35,7 +35,7 @@ func main() {
 	// 		fmt.Printf("%02x ", b)
 	// 	}
 	// 	fmt.Printf("\n")
-	err := gbasm.WriteExe("out.o", gbasm.MACHO, text)
+	err := gbasm.WriteExe("out.o", gbasm.ELF, text)
 	if err != nil {
 		log.Fatalf("Failed to write exe: %s", err)
 	}

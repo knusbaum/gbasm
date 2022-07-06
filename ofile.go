@@ -25,6 +25,10 @@ type Var struct {
 	val   []byte
 }
 
+func (v *Var) Offset() int32 {
+	return 0x0CAFEF0D
+}
+
 type Symbol struct {
 	name   string
 	offset uint32
@@ -128,6 +132,13 @@ func (o *OFile) Data(name, vtype string, val interface{}) error {
 	binary.Write(&bs, binary.LittleEndian, val)
 	o.data[name] = &Var{name, vtype, bs.Bytes()}
 	return nil
+}
+
+func (o *OFile) VarFor(name string) *Var {
+	if v := o.vars[name]; v != nil {
+		return v
+	}
+	return o.data[name]
 }
 
 func ReadOFile(filename string) (*OFile, error) {

@@ -73,7 +73,7 @@ func (r *Ralloc) MarkNotInreg() {
 
 type Rallocs struct {
 	regs     map[Register]*Ralloc
-	rallocs  map[string]*Ralloc
+	names    map[string]*Ralloc
 	rs       *Registers
 	f        *Function
 	lru      []Register
@@ -82,15 +82,15 @@ type Rallocs struct {
 
 func NewRallocs(rs *Registers, f *Function) *Rallocs {
 	return &Rallocs{
-		regs:    make(map[Register]*Ralloc),
-		rallocs: make(map[string]*Ralloc),
-		rs:      rs,
-		f:       f,
+		regs:  make(map[Register]*Ralloc),
+		names: make(map[string]*Ralloc),
+		rs:    rs,
+		f:     f,
 	}
 }
 
 func (ra *Rallocs) NewLocal(name string, size int) (*Ralloc, error) {
-	if _, ok := ra.rallocs[name]; ok {
+	if _, ok := ra.names[name]; ok {
 		return nil, fmt.Errorf("Ralloc %s already declared.", name)
 	}
 	r := &Ralloc{
@@ -101,8 +101,12 @@ func (ra *Rallocs) NewLocal(name string, size int) (*Ralloc, error) {
 		rallocs: ra,
 	}
 	ra.localoff += int32(size) / 8
-	ra.rallocs[name] = r
+	ra.names[name] = r
 	return r, nil
+}
+
+func (ra *Rallocs) AllocFor(name string) *Ralloc {
+	return ra.names[name]
 }
 
 func (ra *Rallocs) updateLRU(r Register) {
@@ -155,20 +159,20 @@ func (ra *Rallocs) MarkAllNotInreg() {
 	}
 }
 
-func (ra *Rallocs) NewGlobal(name string, size int, addr uint64) (*Ralloc, error) {
-	if _, ok := ra.rallocs[name]; ok {
-		return nil, fmt.Errorf("Ralloc %s already declared.", name)
-	}
-	r := &Ralloc{
-		sym:     name,
-		size:    size,
-		local:   false,
-		addr:    addr,
-		rallocs: ra,
-	}
-	ra.rallocs[name] = r
-	return r, nil
-}
+// func (ra *Rallocs) NewGlobal(name string, size int, addr uint64) (*Ralloc, error) {
+// 	if _, ok := ra.names[name]; ok {
+// 		return nil, fmt.Errorf("Ralloc %s already declared.", name)
+// 	}
+// 	r := &Ralloc{
+// 		sym:     name,
+// 		size:    size,
+// 		local:   false,
+// 		addr:    addr,
+// 		rallocs: ra,
+// 	}
+// 	ra.names[name] = r
+// 	return r, nil
+// }
 
 type Function struct {
 	name        string
@@ -198,6 +202,8 @@ func (o *OFile) NewFunction(srcFile string, srcLine int, name string, args ...*V
 	if f, ok := o.Funcs[name]; ok {
 		return nil, fmt.Errorf("Function %s declared at %s:%d\n\tPreviously declared here: %s:%d",
 			name, srcFile, srcLine, f.srcFile, f.srcLine)
+	} else if o.vars[name] != nil || o.data[name] != nil {
+		return nil, fmt.Errorf("Name %s already declared.", name)
 	}
 
 	f := &Function{
@@ -301,7 +307,7 @@ func (f *Function) Jump(instr string, label string) error {
 	// 		}
 	// 		return err
 	// 	}
-	err := f.a.Encode(&f.bs, instr, int32(0))
+	_, err := f.a.Encode(&f.bs, instr, int32(0))
 	if err != nil {
 		f.errors = append(f.errors, err)
 		return err
@@ -311,10 +317,18 @@ func (f *Function) Jump(instr string, label string) error {
 }
 
 func (f *Function) Instr(instr string, ops ...interface{}) error {
-	err := f.a.Encode(&f.bs, instr, ops...)
+	fmt.Printf("INSTRUCTION [%#v] OPS [%#v]\n", instr, ops)
+	for i := range ops {
+		switch v := ops[i].(type) {
+		case string:
+			fmt.Printf("GOT A STRING ARG: %v\n", v)
+		}
+	}
+	rs, err := f.a.Encode(&f.bs, instr, ops...)
 	if err != nil {
 		f.errors = append(f.errors, err)
 	}
+	f.relocations = append(f.relocations, rs...)
 	return err
 }
 

@@ -57,6 +57,8 @@ const (
 	R13
 	R14
 	R15
+
+	R_RIP
 )
 
 func ParseReg(r string) (Register, error) {
@@ -284,6 +286,8 @@ func (r Register) byte() byte {
 		return 0b1110
 	case R15:
 		return 0b1111
+	case R_RIP:
+		return 0b101
 	default:
 		log.Fatalf("No such register: %d", r) // TODO: better error handling
 		return 0

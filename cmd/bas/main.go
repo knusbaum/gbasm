@@ -52,7 +52,7 @@ var jumps = []string{
 	"CALL",
 }
 
-// smallestUi returns the smallestUi integer representation possible for i
+// smallestUi returns the smallest unsigned integer representation possible for i
 func smallestUi(i uint64) interface{} {
 	n := bits.Len64(i)
 	if n <= 8 {
@@ -67,7 +67,7 @@ func smallestUi(i uint64) interface{} {
 	return i
 }
 
-// smallestUi returns the smallestUi integer representation possible for i
+// smallestI returns the smallest signed integer representation possible for i
 func smallestI(i int64) interface{} {
 	if i >= math.MaxInt32 {
 		return int64(i)
@@ -160,7 +160,7 @@ func main() {
 		defer file.Close()
 
 		var f *gbasm.Function
-		var locals map[string]*gbasm.Ralloc
+		//var locals map[string]*gbasm.Ralloc
 		scanner := bufio.NewScanner(file)
 		ln := 0
 	lines:
@@ -206,7 +206,7 @@ func main() {
 					fmt.Printf("Fatal: Failed to create function \"%s\": %s\n", fname, err)
 					os.Exit(1)
 				}
-				locals = make(map[string]*gbasm.Ralloc)
+				//locals = make(map[string]*gbasm.Ralloc)
 				continue
 			}
 
@@ -242,12 +242,12 @@ func main() {
 					fmt.Printf("Expected local size to be an integer, but have: %s\n", lnamesize[1])
 					os.Exit(1)
 				}
-				l, err := f.NewLocal(lnamesize[0], size)
+				_, err = f.NewLocal(lnamesize[0], size)
 				if err != nil {
 					fmt.Printf("Fatal: Failed to declare local %s: %s\n", lnamesize[1], err)
 					os.Exit(1)
 				}
-				locals[lnamesize[0]] = l
+				//locals[lnamesize[0]] = l
 				continue
 			}
 			if strings.HasPrefix(line, "use") {
@@ -308,10 +308,18 @@ func main() {
 
 			args := make([]interface{}, len(parts)-1)
 			for i := 1; i < len(parts); i++ {
-				if local, ok := locals[parts[i]]; ok {
-					args[i-1] = local.Register()
+				if alloc := f.AllocFor(parts[i]); alloc != nil {
+					args[i-1] = alloc.Register()
 					continue
 				}
+				if v := o.VarFor(parts[i]); v != nil {
+					args[i-1] = v
+					continue
+				}
+				// 				if local, ok := locals[parts[i]]; ok {
+				// 					args[i-1] = local.Register()
+				// 					continue
+				// 				}
 
 				if reg, err := gbasm.ParseReg(parts[i]); err == nil {
 					args[i-1] = reg

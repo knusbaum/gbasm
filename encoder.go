@@ -24,6 +24,11 @@ const (
 	O4
 )
 
+type WriteLener interface {
+	io.Writer
+	Len() int
+}
+
 type Indirect struct {
 	Reg Register
 	Off int32
@@ -34,7 +39,7 @@ type Instruction struct {
 	Forms   []IForm
 }
 
-func (i *Instruction) Encode(w io.Writer, os ...interface{}) error {
+func (i *Instruction) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 forms:
 	for _, f := range i.Forms {
 		if f.opcount != len(os) {
@@ -46,7 +51,7 @@ forms:
 				continue
 			}
 			o := os[i]
-			log.Printf("Checking %#v matches %#v: %t\n", fop, o, fop.Match(o))
+			//log.Printf("Checking %#v matches %#v: %t\n", fop, o, fop.Match(o))
 			if !fop.Match(o) {
 				continue forms
 			}
@@ -55,7 +60,7 @@ forms:
 		//log.Printf("Encoding form %#v\n", f.ops)
 		return f.Encode(w, os...)
 	}
-	return fmt.Errorf("Failed to find an instruction for %s %#v", i.Summary, os)
+	return nil, fmt.Errorf("Failed to find an instruction for %s %#v", i.Summary, os)
 }
 
 const (
@@ -71,7 +76,7 @@ func writeByte(w io.Writer, b byte) error {
 }
 
 type Encoder interface {
-	Encode(w io.Writer, os ...interface{}) error
+	Encode(w WriteLener, os ...interface{}) ([]Relocation, error)
 }
 
 func toOp(o string) (byte, error) {
@@ -94,8 +99,8 @@ type prefix struct {
 	b byte
 }
 
-func (x *prefix) Encode(w io.Writer, os ...interface{}) error {
-	return writeByte(w, x.b)
+func (x *prefix) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
+	return nil, writeByte(w, x.b)
 }
 
 // See: 2.2.1.2 (https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-instruction-set-reference-manual-325383.pdf)
@@ -115,7 +120,7 @@ type rex struct {
 	b         byte
 }
 
-func (x *rex) Encode(w io.Writer, os ...interface{}) error {
+func (x *rex) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	needed := x.mandatory
 	xw := x.w
 	//log.Printf("[REX] GETTING BYTE FOR OS: %#v\n", os)
@@ -142,9 +147,9 @@ func (x *rex) Encode(w io.Writer, os ...interface{}) error {
 		(((xx.byte() >> 3) & 0b1) << 1) |
 		((xb.byte() >> 3) & 0b1)
 	if !needed {
-		return nil
+		return nil, nil
 	}
-	return writeByte(w, b)
+	return nil, writeByte(w, b)
 }
 
 type immediate struct {
@@ -152,73 +157,73 @@ type immediate struct {
 	value byte
 }
 
-func (x *immediate) Encode(w io.Writer, os ...interface{}) error {
+func (x *immediate) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	if int(x.value) >= len(os) {
-		return fmt.Errorf("[immediate] Not enough args. Expected at least %d\n", x.value)
+		return nil, fmt.Errorf("[immediate] Not enough args. Expected at least %d\n", x.value)
 	}
 	switch x.size {
 	case 1:
 		switch b := os[x.value].(type) {
 		case uint8:
-			return binary.Write(w, binary.LittleEndian, b)
+			return nil, binary.Write(w, binary.LittleEndian, b)
 		case int8:
-			return binary.Write(w, binary.LittleEndian, b)
+			return nil, binary.Write(w, binary.LittleEndian, b)
 		default:
-			return fmt.Errorf("Expected op %d to be a (u)int8, but found %v\n", x.value, os[x.value])
+			return nil, fmt.Errorf("Expected op %d to be a (u)int8, but found %v\n", x.value, os[x.value])
 		}
 	case 2:
 		switch b := os[x.value].(type) {
 		case uint8:
-			return binary.Write(w, binary.LittleEndian, uint16(b))
+			return nil, binary.Write(w, binary.LittleEndian, uint16(b))
 		case int8:
-			return binary.Write(w, binary.LittleEndian, int16(b))
+			return nil, binary.Write(w, binary.LittleEndian, int16(b))
 		case uint16:
-			return binary.Write(w, binary.LittleEndian, b)
+			return nil, binary.Write(w, binary.LittleEndian, b)
 		case int16:
-			return binary.Write(w, binary.LittleEndian, b)
+			return nil, binary.Write(w, binary.LittleEndian, b)
 		default:
-			return fmt.Errorf("Expected op %d to be a (u)int16 or (u)int8, but found %v\n", x.value, os[x.value])
+			return nil, fmt.Errorf("Expected op %d to be a (u)int16 or (u)int8, but found %v\n", x.value, os[x.value])
 		}
 	case 4:
 		switch b := os[x.value].(type) {
 		case uint8:
-			return binary.Write(w, binary.LittleEndian, uint32(b))
+			return nil, binary.Write(w, binary.LittleEndian, uint32(b))
 		case int8:
-			return binary.Write(w, binary.LittleEndian, int32(b))
+			return nil, binary.Write(w, binary.LittleEndian, int32(b))
 		case uint16:
-			return binary.Write(w, binary.LittleEndian, uint32(b))
+			return nil, binary.Write(w, binary.LittleEndian, uint32(b))
 		case int16:
-			return binary.Write(w, binary.LittleEndian, int32(b))
+			return nil, binary.Write(w, binary.LittleEndian, int32(b))
 		case uint32:
-			return binary.Write(w, binary.LittleEndian, b)
+			return nil, binary.Write(w, binary.LittleEndian, b)
 		case int32:
-			return binary.Write(w, binary.LittleEndian, b)
+			return nil, binary.Write(w, binary.LittleEndian, b)
 		default:
-			return fmt.Errorf("Expected op %d to be a (u)int32, (u)int16 or (u)int8, but found %v\n", x.value, os[x.value])
+			return nil, fmt.Errorf("Expected op %d to be a (u)int32, (u)int16 or (u)int8, but found %v\n", x.value, os[x.value])
 		}
 	case 8:
 		switch b := os[x.value].(type) {
 		case uint8:
-			return binary.Write(w, binary.LittleEndian, uint64(b))
+			return nil, binary.Write(w, binary.LittleEndian, uint64(b))
 		case int8:
-			return binary.Write(w, binary.LittleEndian, int64(b))
+			return nil, binary.Write(w, binary.LittleEndian, int64(b))
 		case uint16:
-			return binary.Write(w, binary.LittleEndian, uint64(b))
+			return nil, binary.Write(w, binary.LittleEndian, uint64(b))
 		case int16:
-			return binary.Write(w, binary.LittleEndian, int64(b))
+			return nil, binary.Write(w, binary.LittleEndian, int64(b))
 		case uint32:
-			return binary.Write(w, binary.LittleEndian, uint64(b))
+			return nil, binary.Write(w, binary.LittleEndian, uint64(b))
 		case int32:
-			return binary.Write(w, binary.LittleEndian, int64(b))
+			return nil, binary.Write(w, binary.LittleEndian, int64(b))
 		case uint64:
-			return binary.Write(w, binary.LittleEndian, b)
+			return nil, binary.Write(w, binary.LittleEndian, b)
 		case int64:
-			return binary.Write(w, binary.LittleEndian, b)
+			return nil, binary.Write(w, binary.LittleEndian, b)
 		default:
-			return fmt.Errorf("Expected op %d to be a (u)int64, (u)int32, (u)int16 or (u)int8, but found %v\n", x.value, os[x.value])
+			return nil, fmt.Errorf("Expected op %d to be a (u)int64, (u)int32, (u)int16 or (u)int8, but found %v\n", x.value, os[x.value])
 		}
 	default:
-		return fmt.Errorf("Cannot encode immediate of size %d", x.size)
+		return nil, fmt.Errorf("Cannot encode immediate of size %d", x.size)
 	}
 }
 
@@ -227,37 +232,37 @@ type codeOffset struct {
 	value byte
 }
 
-func (x *codeOffset) Encode(w io.Writer, os ...interface{}) error {
+func (x *codeOffset) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	if int(x.value) >= len(os) {
-		return fmt.Errorf("[codeOffset] Not enough args. Expected at least %d\n", x.value)
+		return nil, fmt.Errorf("[codeOffset] Not enough args. Expected at least %d\n", x.value)
 	}
 	switch x.size {
 	case 1:
 		b, ok := os[x.value].(int8)
 		if !ok {
-			return fmt.Errorf("Expected op %d to be a uint8, but found %v\n", x.value, os[x.value])
+			return nil, fmt.Errorf("Expected op %d to be a uint8, but found %v\n", x.value, os[x.value])
 		}
-		return binary.Write(w, binary.LittleEndian, b)
+		return nil, binary.Write(w, binary.LittleEndian, b)
 	case 2:
 		b, ok := os[x.value].(int16)
 		if !ok {
-			return fmt.Errorf("Expected op %d to be a uint16, but found %v\n", x.value, os[x.value])
+			return nil, fmt.Errorf("Expected op %d to be a uint16, but found %v\n", x.value, os[x.value])
 		}
-		return binary.Write(w, binary.LittleEndian, b)
+		return nil, binary.Write(w, binary.LittleEndian, b)
 	case 4:
 		b, ok := os[x.value].(int32)
 		if !ok {
-			return fmt.Errorf("Expected op %d to be a uint32, but found %v\n", x.value, os[x.value])
+			return nil, fmt.Errorf("Expected op %d to be a uint32, but found %v\n", x.value, os[x.value])
 		}
-		return binary.Write(w, binary.LittleEndian, b)
+		return nil, binary.Write(w, binary.LittleEndian, b)
 	case 8:
 		b, ok := os[x.value].(int64)
 		if !ok {
-			return fmt.Errorf("Expected op %d to be a uint64, but found %v\n", x.value, os[x.value])
+			return nil, fmt.Errorf("Expected op %d to be a uint64, but found %v\n", x.value, os[x.value])
 		}
-		return binary.Write(w, binary.LittleEndian, b)
+		return nil, binary.Write(w, binary.LittleEndian, b)
 	default:
-		return fmt.Errorf("Cannot encode immediate of size %d", x.size)
+		return nil, fmt.Errorf("Cannot encode immediate of size %d", x.size)
 	}
 }
 
@@ -266,37 +271,37 @@ type dataOffset struct {
 	value byte
 }
 
-func (x *dataOffset) Encode(w io.Writer, os ...interface{}) error {
+func (x *dataOffset) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	if int(x.value) >= len(os) {
-		return fmt.Errorf("[dataOffset] Not enough args. Expected at least %d\n", x.value)
+		return nil, fmt.Errorf("[dataOffset] Not enough args. Expected at least %d\n", x.value)
 	}
 	switch x.size {
 	case 1:
 		b, ok := os[x.value].(uint8)
 		if !ok {
-			return fmt.Errorf("Expected op %d to be a uint8, but found %v\n", x.value, os[x.value])
+			return nil, fmt.Errorf("Expected op %d to be a uint8, but found %v\n", x.value, os[x.value])
 		}
-		return writeByte(w, b)
+		return nil, writeByte(w, b)
 	case 2:
 		b, ok := os[x.value].(uint16)
 		if !ok {
-			return fmt.Errorf("Expected op %d to be a uint16, but found %v\n", x.value, os[x.value])
+			return nil, fmt.Errorf("Expected op %d to be a uint16, but found %v\n", x.value, os[x.value])
 		}
-		return binary.Write(w, binary.LittleEndian, b)
+		return nil, binary.Write(w, binary.LittleEndian, b)
 	case 4:
 		b, ok := os[x.value].(uint32)
 		if !ok {
-			return fmt.Errorf("Expected op %d to be a uint32, but found %v\n", x.value, os[x.value])
+			return nil, fmt.Errorf("Expected op %d to be a uint32, but found %v\n", x.value, os[x.value])
 		}
-		return binary.Write(w, binary.LittleEndian, b)
+		return nil, binary.Write(w, binary.LittleEndian, b)
 	case 8:
 		b, ok := os[x.value].(uint64)
 		if !ok {
-			return fmt.Errorf("Expected op %d to be a uint64, but found %v\n", x.value, os[x.value])
+			return nil, fmt.Errorf("Expected op %d to be a uint64, but found %v\n", x.value, os[x.value])
 		}
-		return binary.Write(w, binary.LittleEndian, b)
+		return nil, binary.Write(w, binary.LittleEndian, b)
 	default:
-		return fmt.Errorf("Cannot encode immediate of size %d", x.size)
+		return nil, fmt.Errorf("Cannot encode immediate of size %d", x.size)
 	}
 }
 
@@ -331,19 +336,19 @@ func getRegister(i byte, os []interface{}) (Register, error) {
 	return b, nil
 }
 
-func (x *opcode) Encode(w io.Writer, os ...interface{}) error {
+func (x *opcode) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	var add Register
 	var err error
 	b := x.op
 	if x.hasAddend {
 		add, err = getRegister(x.addend, os)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	b += (add.byte() & 0b111)
 	//log.Printf("[OPCODE] Writing byte %v\n", b)
-	return writeByte(w, b)
+	return nil, writeByte(w, b)
 }
 
 type modrm struct {
@@ -353,18 +358,19 @@ type modrm struct {
 }
 
 // This logic is a mess and needs to be streamlined.
-func (x *modrm) Encode(w io.Writer, os ...interface{}) error {
+func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	var doSib bool
 	var mustDisp bool
 	var indirect *Indirect
 	var xmod byte
 	var xreg byte
 	var err error
+	var relocations []Relocation
 	if x.mod&MODE_LITERAL != 0 {
 		xmod = x.mod & ^MODE_LITERAL
 	} else {
 		if int(x.mod) >= len(os) {
-			return fmt.Errorf("[getByte] Not enough args. Expected at least %d\n", x.mod)
+			return nil, fmt.Errorf("[getByte] Not enough args. Expected at least %d\n", x.mod)
 		}
 		o := os[x.mod]
 		switch ot := o.(type) {
@@ -383,8 +389,12 @@ func (x *modrm) Encode(w io.Writer, os ...interface{}) error {
 				mustDisp = true
 			}
 			indirect = &ot
+		case *Var:
+			indirect = &Indirect{Reg: R_RIP, Off: ot.Offset()}
+			relocations = append(relocations, Relocation{offset: uint32(w.Len() + 1), symbol: ot.name})
+			xmod = 0
 		default:
-			return fmt.Errorf("Expected operand %d to be a byte or an indirect.")
+			return nil, fmt.Errorf("Expected operand %#v to be a byte, var or an indirect.", o)
 		}
 	}
 	if x.reg&MODE_LITERAL != 0 {
@@ -392,7 +402,7 @@ func (x *modrm) Encode(w io.Writer, os ...interface{}) error {
 	} else {
 		xregr, err := getRegister(x.reg, os)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		xreg = xregr.byte()
 	}
@@ -403,19 +413,21 @@ func (x *modrm) Encode(w io.Writer, os ...interface{}) error {
 		} else {
 			xrm, err = getRegister(x.rm, os)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
-		if indirect != nil && xmod != 0 {
+		// The xrm.byte() == 0b101 here is a special-case RIP/EIP-relative addressing. See:
+		// "32/64-bit addressing" here: https://wiki.osdev.org/X86-64_Instruction_Encoding#Registers
+		if indirect != nil && (xmod != 0 || xrm.byte() == 0b101) {
 			b := ((xmod & 0b11) << 6) |
 				((xreg & 0b111) << 3) |
 				(xrm.byte() & 0b111)
 			err := writeByte(w, b)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			// 32-bit displacement
-			return binary.Write(w, binary.LittleEndian, indirect.Off)
+			return relocations, binary.Write(w, binary.LittleEndian, indirect.Off)
 		} else if mustDisp {
 			// optimization to avoid 32-bit offsets when offset is 0
 			xmod = 0b01
@@ -424,16 +436,16 @@ func (x *modrm) Encode(w io.Writer, os ...interface{}) error {
 				(xrm.byte() & 0b111)
 			err := writeByte(w, b)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			return binary.Write(w, binary.LittleEndian, byte(0))
+			return relocations, binary.Write(w, binary.LittleEndian, byte(0))
 		} else {
 			b := ((xmod & 0b11) << 6) |
 				((xreg & 0b111) << 3) |
 				(xrm.byte() & 0b111)
-			return writeByte(w, b)
+			return relocations, writeByte(w, b)
 		}
-		return nil
+		return relocations, nil
 	} else {
 		var xrm byte = 0b100
 		b := ((xmod & 0b11) << 6) |
@@ -441,21 +453,21 @@ func (x *modrm) Encode(w io.Writer, os ...interface{}) error {
 			(xrm & 0b111)
 		err := writeByte(w, b)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		// For now, the only valid SIB is an indirect into RSP:
 		// SIB Scale: 00, Index: 100 (RSP) Base: 100 (RSP)
 		err = writeByte(w, 0b00100100)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		if xmod != 0 {
 			// 32-bit displacement
-			return binary.Write(w, binary.LittleEndian, indirect.Off)
+			return relocations, binary.Write(w, binary.LittleEndian, indirect.Off)
 		}
-		return nil
+		return relocations, nil
 	}
 }
 
@@ -590,24 +602,39 @@ func (o *Op) Match(op interface{}) bool {
 		if mo, ok := op.(Indirect); ok {
 			return mo.Reg.width() == 64
 		}
+		if _, ok := op.(*Var); ok {
+			return true
+		}
 	case "m8":
 		if mo, ok := op.(Indirect); ok {
 			return mo.Reg.width() == 64
 		}
+		if _, ok := op.(*Var); ok {
+			return true
+		}
 	case "m16":
 		if mo, ok := op.(Indirect); ok {
 			return mo.Reg.width() == 64
+		}
+		if _, ok := op.(*Var); ok {
+			return true
 		}
 	//case "m16{k}{z}":
 	case "m32":
 		if mo, ok := op.(Indirect); ok {
 			return mo.Reg.width() == 64
 		}
+		if _, ok := op.(*Var); ok {
+			return true
+		}
 	//case "m32{k}":
 	//case "m32{k}{z}":
 	case "m64":
 		if mo, ok := op.(Indirect); ok {
 			return mo.Reg.width() == 64
+		}
+		if _, ok := op.(*Var); ok {
+			return true
 		}
 	//case "m64{k}":
 	//case "m64{k}{z}":
@@ -656,21 +683,22 @@ type IForm struct {
 	enc     [][]Encoder
 }
 
-func (f *IForm) Encode(w io.Writer, os ...interface{}) error {
+func (f *IForm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	var err error
+	var rs []Relocation
 encodings:
 	for _, es := range f.enc {
 		for _, e := range es {
 			//log.Printf("Encoding %#v\n", os)
-			err = e.Encode(w, os...)
+			rs, err = e.Encode(w, os...)
 			if err != nil {
 				log.Printf("Failed one encoding: %s", err)
 				continue encodings
 			}
 		}
-		return nil
+		return rs, nil
 	}
-	return err
+	return rs, err
 }
 
 type Asm struct {
@@ -678,10 +706,10 @@ type Asm struct {
 	instrs   map[string]*Instruction
 }
 
-func (a *Asm) Encode(w io.Writer, instr string, os ...interface{}) error {
+func (a *Asm) Encode(w WriteLener, instr string, os ...interface{}) ([]Relocation, error) {
 	inst, ok := a.instrs[instr]
 	if !ok {
-		return fmt.Errorf("No such instruction: %s", instr)
+		return nil, fmt.Errorf("No such instruction: %s", instr)
 	}
 	//log.Printf("Encoding instruction %s\n", instr)
 	return inst.Encode(w, os...)

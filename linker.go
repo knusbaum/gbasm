@@ -70,7 +70,7 @@ func Link(os []*OFile) []byte {
 		foffset := uint32(bs.Len())
 		funclocs[current.name] = foffset
 		for _, r := range current.relocations {
-			//log.Printf("LINKER FOUND RELOCATION AT OFFSET %d to symbol %s", r.offset, r.symbol)
+			log.Printf("LINKER FOUND RELOCATION AT OFFSET %d to symbol %s", r.offset, r.symbol)
 			r.offset += foffset
 			relocations = append(relocations, r)
 			if _, ok := funclocs[r.symbol]; !ok {

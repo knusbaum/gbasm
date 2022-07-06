@@ -1,0 +1,11 @@
+package main
+
+data hello string "Hello, World!\n"
+
+function main
+	//prologue
+	xor rax rbx
+	mov	rdi 10
+	mov rdi hello
+	//epilogue
+	ret
