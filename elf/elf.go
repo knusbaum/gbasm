@@ -9,6 +9,8 @@ import (
 
 const header64Size = 64
 
+// See also: https://uclibc.org/docs/elf-64-gen.pdf
+
 // A header is the first section of an elf file.
 // Source: https://wiki.osdev.org/ELF
 //  Header
@@ -45,15 +47,15 @@ type header64 struct {
 	machine     uint16  // 20
 	elfVersion  uint32  // 22
 	entryAddr   uint64  // 30
-	peOff       uint64  // 38
-	shOff       uint64  // 46
+	peOff       uint64  // 38	Program Header table offset
+	shOff       uint64  // 46	Secction Header table offset
 	flags       uint32  // 50
-	hSize       uint16  // 52
-	phEntrySize uint16  // 54
-	phCount     uint16  // 56
-	shEntrySize uint16  // 58
-	shCount     uint16  // 60
-	shStrIndex  uint16  // 62
+	ehSize      uint16  // 52	Size in bytes of the ELF header
+	phEntrySize uint16  // 54	Size in bytes of a program header table entry
+	phNum       uint16  // 56	Number of entries in the program header table
+	shEntrySize uint16  // 58	Size in bytes of a section header table entry
+	shNum       uint16  // 60	Number of entries in the section header table
+	shStrIndex  uint16  // 62	The section header table index of the section containing the section name string table
 }
 
 func (h *header64) Write(w io.Writer) {
@@ -111,14 +113,14 @@ var amd64LinuxHeader = header64{
 	elfVersion:  EV_CURRENT,
 	entryAddr:   ENTRY_ADDR,
 	peOff:       header64Size,
-	shOff:       0,
+	shOff:       header64Size + programHeader64Size,
 	flags:       0,
-	hSize:       header64Size,
+	ehSize:      header64Size,
 	phEntrySize: programHeader64Size,
-	phCount:     1,
-	shEntrySize: 0,
-	shCount:     0,
-	shStrIndex:  SHN_UNDEF,
+	phNum:       1,
+	shEntrySize: sectionHeader64Size,
+	shNum:       2,
+	shStrIndex:  1,
 }
 
 const programHeader64Size = 56
@@ -169,7 +171,7 @@ func makeProgramHeader64(text []byte) programHeader64 {
 	return programHeader64{
 		segType:  SEGTYPE_LOAD,
 		flags:    PHFLAG_EXE | PHFLAG_READ,
-		p_offset: (header64Size + programHeader64Size + 0x1000) & 0xFFFFFFFFFFFFFFFFFFFFF000,
+		p_offset: (header64Size + programHeader64Size + (sectionHeader64Size * 2) + 0x1000) & 0xFFFFFFFFFFFFFFFFFFFFF000,
 		p_vaddr:  ENTRY_ADDR,
 		p_paddr:  ENTRY_ADDR,
 		p_filesz: uint64(len(text)),
@@ -200,10 +202,50 @@ func makeProgramHeader64(text []byte) programHeader64 {
 // 	Elf64_Xword sh_addralign; /* Address alignment boundary */
 // 	Elf64_Xword sh_entsize; /* Size of entries, if section has table */
 // } Elf64_Shdr;
-// type sectionHeader64 struct {
-// 	sh_name uint32
-// 	sh_
-// }
+
+const sectionHeader64Size = 64
+
+type sectionHeader64 struct {
+	sh_name      uint32 //	The offset in bytes to the section name, relative to the start of the section name string table
+	sh_type      uint32 //	The section type (enum)
+	sh_flags     uint64 //
+	sh_addr      uint64 //	The virtual address of the beginning of the section in memory
+	sh_offset    uint64 //	The offset, in bytes, of the beginning of the section contents in the file
+	sh_size      uint64 //	The size, in bytes, of the section in the file (unless the type is SHT_NOBITS)
+	sh_link      uint32 //	The section index of an associated section
+	sh_info      uint32 //	Extra info about the section
+	sh_addralign uint64 //	Required alignment of the section (must be power of 2)
+	sh_entsize   uint64 //	The size in bytes of each entry for sections that contain fixed-size entries, otherwise zero.
+}
+
+// These are the Section Types for use in the sh_type field of the sectionHeader64
+const (
+	SHT_NULL     = 0          // Marks an unused section header
+	SHT_PROGBITS = 1          // Contains information defined by the program
+	SHT_SYMTAB   = 2          // Contains a linker symbol table
+	SHT_STRTAB   = 3          // Contains a string table
+	SHT_RELA     = 4          // Contains “Rela” type relocation entries
+	SHT_HASH     = 5          // Contains a symbol hash table
+	SHT_DYNAMIC  = 6          // Contains dynamic linking tables
+	SHT_NOTE     = 7          // Contains note information
+	SHT_NOBITS   = 8          // Contains uninitialized space; does not occupy any space in the file
+	SHT_REL      = 9          // Contains “Rel” type relocation entries
+	SHT_SHLIB    = 10         // Reserved
+	SHT_DYNSYM   = 11         // Contains a dynamic loader symbol table
+	SHT_LOOS     = 0x60000000 // Environment-specific use
+	SHT_HIOS     = 0x6FFFFFFF
+	SHT_LOPROC   = 0x70000000 // Processor-specific use
+	SHT_HIPROC   = 0x7FFFFFFF
+)
+
+// sh_flags
+const (
+	SHF_WRITE     = 0x1        // Section contains writable data
+	SHF_ALLOC     = 0x2        // Section is allocated in memory image of program
+	SHF_EXECINSTR = 0x4        // Section contains executable instructions
+	SHF_MASKOS    = 0x0F000000 // Environment-specific use
+	SHF_MASKPROC  = 0xF0000000 // Processor-specific use
+)
 
 func WriteELF(exename string, text []byte) error {
 	f, err := os.Create(exename)
@@ -214,10 +256,30 @@ func WriteELF(exename string, text []byte) error {
 	amd64LinuxHeader.Write(f)
 	ph := makeProgramHeader64(text)
 	ph.Write(f)
-	current_off := uint64(header64Size + programHeader64Size)
+	textSection := sectionHeader64{
+		sh_name:      1,
+		sh_type:      SHT_PROGBITS,
+		sh_addr:      ENTRY_ADDR,
+		sh_offset:    ph.p_offset,
+		sh_size:      uint64(len(text)),
+		sh_addralign: 0x1000,
+	}
+	sectionStringsTXT := []byte("\x00.text\x00.shstrtab\x00")
+	sectionStrings := sectionHeader64{
+		sh_name:   7,
+		sh_type:   SHT_STRTAB,
+		sh_offset: ph.p_offset + uint64(len(text)),
+		sh_size:   uint64(len(sectionStringsTXT)),
+	}
+	binary.Write(f, binary.LittleEndian, textSection)
+	binary.Write(f, binary.LittleEndian, sectionStrings)
+	//	bs1 := make([]byte, sectionHeader64Size)
+	//	f.Write(bs1)
+	current_off := uint64(header64Size + programHeader64Size + (sectionHeader64Size * 2))
 	target_off := ph.p_offset
 	bs := make([]byte, target_off-current_off)
 	f.Write(bs)
 	f.Write(text)
+	f.Write(sectionStringsTXT)
 	return nil
 }
