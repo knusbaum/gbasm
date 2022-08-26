@@ -344,7 +344,7 @@ func (f *Function) Resolve() error {
 			rel.Apply(bs, int32(loff))
 		} else {
 			//log.Printf("Adding Relocation for symbol %s at offset 0x%02x", rel.symbol, rel.offset)
-			rel.rel_type = R_386_PC32
+			//rel.rel_type = R_386_PC32
 			f.relocations = append(f.relocations, rel)
 		}
 	}

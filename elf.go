@@ -1,7 +1,8 @@
-package elf
+package gbasm
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -247,7 +248,21 @@ const (
 	SHF_MASKPROC  = 0xF0000000 // Processor-specific use
 )
 
-func WriteELF(exename string, text []byte) error {
+func WriteELF(exename string, bin LinkedBin) error {
+	var text []byte
+	for _, s := range bin.Sections {
+		if s.Name == "text" {
+			text = s.val
+		}
+	}
+	if len(text) == 0 {
+		log.Fatalf("No text section.")
+	}
+	for _, b := range text {
+		fmt.Printf("%02x ", b)
+	}
+	fmt.Printf("\n")
+
 	f, err := os.Create(exename)
 	if err != nil {
 		log.Fatalf("Failed to create file: %s", err)

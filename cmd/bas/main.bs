@@ -1,9 +1,12 @@
 package main
 
+var hello string "Hello World"
 
 function main
 	// no prologue necessary. 
 	// Only modifying rdi and rax (by way of calling fib)
+	mov rax hello
+
 	mov rdi 5
 	call fib
 

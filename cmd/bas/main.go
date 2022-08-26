@@ -225,6 +225,21 @@ func main() {
 				o.Data(parts[0], parts[1], data)
 				continue
 			}
+			if strings.HasPrefix(line, "var") {
+				f = nil // A new var declaration ends any current function
+				parts := SplitNSpace(strings.TrimSpace(strings.TrimPrefix(line, "var")), 3)
+				if len(parts) != 3 {
+					fmt.Printf("Fatal: var declaration requires a name, type, and initial data, but got: %v\n", parts)
+					os.Exit(1)
+				}
+				data, err := parseData(parts[2])
+				if err != nil {
+					fmt.Printf("Fatal: failed to parse data for data declaration %s: %v", parts[0], err)
+					os.Exit(1)
+				}
+				o.Var(parts[0], parts[1], data)
+				continue
+			}
 
 			// Handle Regular Line. Must be inside a function.
 			if f == nil {

@@ -43,17 +43,17 @@ const (
 )
 
 type Relocation struct {
-	offset   uint32
-	rel_type reltype
-	symbol   string
-	addend   int32
+	offset uint32
+	//rel_type reltype
+	symbol string
+	//addend int32
 }
 
 func (r *Relocation) Apply(bs []byte, value int32) {
 	target := value - int32(r.offset) - 4
-	if r.rel_type == RA_386_PC32 {
-		target += r.addend
-	}
+	//if r.rel_type == RA_386_PC32 {
+	//	target += r.addend
+	//}
 	bs = bs[r.offset:]
 	bss := bytes.NewBuffer(bs)
 	bss.Truncate(0)

@@ -29,14 +29,20 @@ func main() {
 		pkgs[o.Pkgname] = o
 		ofs = append(ofs, o)
 	}
-	// This part should be moved to the linker, but for now we'll put it here for testing.
-	text := gbasm.Link(ofs)
-	// 	for _, b := range text {
-	// 		fmt.Printf("%02x ", b)
-	// 	}
-	// 	fmt.Printf("\n")
-	err := gbasm.WriteExe("out.o", gbasm.ELF, text)
+
+	err := gbasm.LinkExe("out.o", gbasm.ELF, ofs)
 	if err != nil {
 		log.Fatalf("Failed to write exe: %s", err)
 	}
+
+	// 	// This part should be moved to the linker, but for now we'll put it here for testing.
+	// 	text := gbasm.Link(ofs)
+	// 	// 	for _, b := range text {
+	// 	// 		fmt.Printf("%02x ", b)
+	// 	// 	}
+	// 	// 	fmt.Printf("\n")
+	// 	err := gbasm.WriteExe("out.o", gbasm.ELF, text)
+	// 	if err != nil {
+	// 		log.Fatalf("Failed to write exe: %s", err)
+	// 	}
 }

@@ -60,6 +60,7 @@ forms:
 		//log.Printf("Encoding form %#v\n", f.ops)
 		return f.Encode(w, os...)
 	}
+	panic(fmt.Sprintf("Failed to find an instruction for %s %#v", i.Summary, os))
 	return nil, fmt.Errorf("Failed to find an instruction for %s %#v", i.Summary, os)
 }
 
