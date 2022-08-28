@@ -237,6 +237,7 @@ func main() {
 					fmt.Printf("Fatal: failed to parse data for data declaration %s: %v", parts[0], err)
 					os.Exit(1)
 				}
+				fmt.Printf("##########\n\n##########\nGot Data: [%s]\n##########\n\n##########\n", string(data))
 				o.Var(parts[0], parts[1], data)
 				continue
 			}
@@ -439,8 +440,9 @@ func parseString(s string) ([]byte, error) {
 		} else if s[0] == '"' {
 			//closed = true
 			break
+		} else {
+			bs.Write([]byte{s[0]})
 		}
-		bs.Write([]byte{s[0]})
 	}
 	if len(s) != 1 || s[0] != '"' {
 		return nil, errors.New("String did not endwith a double quote.")

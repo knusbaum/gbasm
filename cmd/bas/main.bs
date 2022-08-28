@@ -1,18 +1,24 @@
 package main
 
-var hello string "Hello World"
+var hello string "Hello World\n"
 
 function main
 	// no prologue necessary. 
 	// Only modifying rdi and rax (by way of calling fib)
-	mov rax hello
-
-	mov rdi 5
-	call fib
-
-	call print
+	//lea rax hello
+	lea rax hello
+	mov [rax+0] 74
+	mov rdi rax
+	call puts
 	mov rax 0
 	ret
+
+// 	mov rdi 5
+// 	call fib
+// 
+// 	call print
+// 	mov rax 0
+// 	ret
 
 function fib
 	// Register use declarations

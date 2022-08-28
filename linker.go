@@ -34,22 +34,84 @@ const (
 // 	}
 // }
 
+func SectSymsToElf64_Symbols(syms []SectSym) []Elf64_Symbol {
+	var ret []Elf64_Symbol
+	for _, s := range syms {
+		ret = append(ret, Elf64_Symbol{
+			Name:    s.Name,
+			Type:    s.Type,
+			Address: s.Address,
+			Size:    s.Size,
+		})
+	}
+	return ret
+}
+
+func LinkedBinToElfSections(b LinkedBin) []Elf64_Section {
+	var ret []Elf64_Section
+	for _, s := range b.Sections {
+		es := Elf64_Section{
+			name:     s.Name,
+			s_type:   SHT_PROGBITS,
+			flags:    SHF_ALLOC,
+			addr:     Elf64_Addr(s.Offset),
+			data:     s.val,
+			loadable: true,
+			syms:     SectSymsToElf64_Symbols(s.symbols),
+		}
+		switch s.permission {
+		case F_WRITE:
+			es.flags |= SHF_WRITE
+		case F_EXEC:
+			es.flags |= SHF_EXECINSTR
+		}
+		ret = append(ret, es)
+	}
+	return ret
+}
+
 func LinkExe(exename string, p platform, os []*OFile) error {
 	switch p {
 	case MACHO:
 		panic("MACH NOT IMPLEMENTED.\n")
 	case ELF:
 		bin := Link(os, ENTRY_ADDR)
-		return WriteELF(exename, bin)
+
+		//return WriteELF(exename, bin)
+		WriteElf(exename, LinkedBinToElfSections(bin))
+		return nil
 	default:
 		return fmt.Errorf("Cannot write executable for platform %s", p)
 	}
 }
 
+// F_READ allows reading.
+// F_WRITE allows writing and implies F_READ
+// F_EXEC allows executing and implies F_READ
+const (
+	F_READ = iota
+	F_WRITE
+	F_EXEC
+)
+
+const (
+	SYM_FUNC = iota
+	SYM_OBJECT
+)
+
+type SectSym struct {
+	Name    string
+	Type    int
+	Address uint64 // This should be the final virtual address for the object
+	Size    int
+}
+
 type Section struct {
-	Name   string
-	Offset uint64
-	val    []byte
+	Name       string
+	Offset     uint64
+	val        []byte
+	permission int
+	symbols    []SectSym
 }
 
 type LinkedBin struct {
@@ -94,9 +156,13 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 	relocations := make([]Relocation, 0)
 	funclocs := make(map[string]uint32)
 	varlocs := make(map[string]uint32)
-	//datalocs := make(map[string]uint32)
+	datalocs := make(map[string]uint32)
 
-	var fnbs, varbs bytes.Buffer
+	funcsyms := make([]SectSym, 0)
+	varsyms := make([]SectSym, 0)
+	datasyms := make([]SectSym, 0)
+
+	var fnbs, varbs, databs bytes.Buffer
 	for len(needfn) > 0 {
 		current := needfn[0]
 		needfn = needfn[1:]
@@ -107,6 +173,12 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 		foffset := uint32(fnbs.Len())
 		fmt.Printf("ADDING %s to funclocs.\n", current.name)
 		funclocs[current.name] = foffset
+		funcsyms = append(funcsyms, SectSym{
+			Name:    current.name,
+			Type:    SYM_FUNC,
+			Address: uint64(foffset),
+			Size:    len(fbs),
+		})
 		for _, r := range current.relocations {
 			log.Printf("Found relocation for symbol %s\n", r.symbol)
 			if fn, ok := funcs[r.symbol]; ok {
@@ -124,11 +196,27 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 					loc := uint32(varbs.Len())
 					varbs.Write(v.val)
 					varlocs[r.symbol] = loc
+					varsyms = append(varsyms, SectSym{
+						Name:    r.symbol,
+						Type:    SYM_OBJECT,
+						Address: uint64(loc),
+						Size:    len(v.val),
+					})
 				}
-			} else if _, ok := data[r.symbol]; ok {
+			} else if v, ok := data[r.symbol]; ok {
 				// Data relocation
 				log.Printf("LINKER FOUND RELOCATION AT OFFSET %d to data %s", r.offset, r.symbol)
-				log.Fatalf("DATA LINKS NOT SUPPORTED YET.\n")
+				if _, ok := datalocs[r.symbol]; !ok {
+					loc := uint32(databs.Len())
+					databs.Write(v.val)
+					datalocs[r.symbol] = loc
+					datasyms = append(datasyms, SectSym{
+						Name:    r.symbol,
+						Type:    SYM_OBJECT,
+						Address: uint64(loc),
+						Size:    len(v.val),
+					})
+				}
 			} else {
 				log.Fatalf("No such symbol %s", r.symbol)
 			}
@@ -141,12 +229,34 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 		}
 	}
 	text := fnbs.Bytes()
+	vardat := varbs.Bytes()
+	datadat := databs.Bytes()
 	varoff := (textoff + uint64(len(text)) + 0x1000) & 0xFFFFFFFFFFFFF000
+	dataoff := (varoff + uint64(len(vardat)) + 0x1000) & 0xFFFFFFFFFFFFF000
+
+	for i := range funcsyms {
+		funcsyms[i].Address += textoff
+	}
+	for i := range varsyms {
+		varsyms[i].Address += varoff
+	}
+	for i := range datasyms {
+		datasyms[i].Address += dataoff
+	}
+
 	for _, r := range relocations {
 		if value, ok := funclocs[r.symbol]; ok {
 			log.Printf("APPLYING RELOCATION AT OFFSET 0x%02x to symbol %s at offset 0x%02x", r.offset, r.symbol, value)
 			r.Apply(text, int32(value))
-		} else if _, ok := varlocs[r.symbol]; ok {
+		} else if value, ok := varlocs[r.symbol]; ok {
+			value += uint32(varoff - textoff)
+			log.Printf("APPLYING RELOCATION AT OFFSET 0x%02x to symbol %s at offset 0x%02x", r.offset, r.symbol, value)
+			r.Apply(text, int32(value))
+			//log.Fatalf("CANNOT RELOCATE SYMBOL %s! VAR RELOCATIONS NOT WORKING YET!\n", r.symbol)
+		} else if value, ok := datalocs[r.symbol]; ok {
+			value += uint32(dataoff - textoff)
+			log.Printf("APPLYING RELOCATION AT OFFSET 0x%02x to symbol %s at offset 0x%02x", r.offset, r.symbol, value)
+			r.Apply(text, int32(value))
 			//log.Fatalf("CANNOT RELOCATE SYMBOL %s! VAR RELOCATIONS NOT WORKING YET!\n", r.symbol)
 		} else {
 			log.Fatalf("THIS SHOULD NEVER HAPPEN. WE CHECKED ABOVE.")
@@ -162,8 +272,9 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 	//return text
 	return LinkedBin{
 		Sections: []*Section{
-			&Section{Name: "text", Offset: textoff, val: text},
-			&Section{Name: "var", Offset: varoff, val: varbs.Bytes()},
+			&Section{Name: ".text", Offset: textoff, permission: F_EXEC, symbols: funcsyms, val: text},
+			&Section{Name: ".data", Offset: varoff, permission: F_WRITE, symbols: varsyms, val: vardat},
+			&Section{Name: ".bss", Offset: dataoff, permission: F_READ, symbols: datasyms, val: datadat},
 		},
 	}
 }
