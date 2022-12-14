@@ -1,0 +1,19 @@
+package main
+
+import "string.bo"
+
+struct ts2 {
+	a num
+}
+
+struct teststruct {
+	x num
+	y num
+	z ts2
+}
+
+fn main() {
+	var s teststruct
+	puti(s.z.a)
+	puti(s.x)
+}

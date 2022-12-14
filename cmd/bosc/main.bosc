@@ -1,0 +1,172 @@
+package main
+
+import "string.bo"
+
+struct bar {
+	a num
+	b str
+}
+
+struct foo {
+	a num
+	b num
+	c bar
+}
+
+fn bosonfib(n num) num { 
+	if (n < 3)
+		return 1
+	else
+		return bosonfib(n - 1) + bosonfib(n - 2)
+}
+
+fn dosomething() {
+
+	puts("I DID SOMETHING!\n")
+
+}
+
+fn putinl(x num) {
+	puti(x)
+	puts("\n")
+}
+
+fn test3() {
+	puts("\n#### Test3\n")
+	var x num
+	var y num
+	var z num
+	var q num
+	var r num
+	var s num
+	x = 1
+	y = 2
+	z = 3
+	q = 4
+	r = 5
+	s = 6
+	var breaker foo
+	putinl(x)
+	putinl(y)
+	putinl(z)
+	putinl(q)
+	putinl(r)
+	putinl(s)
+}
+
+fn test4() {
+	puts("\n#### TEST 4:\n")
+	var f foo
+	f = foo{
+		a: 1,
+		b: 2,
+		c: bar {
+			a: 20,
+			b: "hello!",
+		}
+	}
+//	f.c.a = 10
+	puts("Declared foo:\nf.a: ")
+	puti(f.a)
+	puts("\nf.b: ")
+	puti(f.b)
+	puts("\nf.c.a: ")
+	puti(f.c.a)
+	puts("\nf.c.b: ")
+	puts(f.c.b)
+	puts("\n\n")
+}
+
+fn test2() num {
+	puts("\n#### TEST 2:\n")
+	var z foo
+	z.a = 1
+	z.b = 2
+	var x num
+	x = z.a + z.b
+	return x
+}
+
+fn testbasicstruct() {
+	var z foo
+	z.a = 1
+}
+
+fn test1() {
+	puts("\n#### Test1\n")
+	var x foo
+	x.a = 20
+	x.b = 30
+	puts("x.a: ")
+	puti(x.a)
+	puts("\nx.b: ")
+	puti(x.b)
+	puts("\nx.a + x.b: ")
+// 	var z num
+// 	z = x.a + x.b
+// 	puti(z)
+	puti(x.b + x.a)
+	puts("\n")
+}
+
+fn garbagetest() {
+	var x num
+	puts("x garbage: ")
+	puti(x)
+	puts("\n")
+
+	var y foo
+	puts("foo.a garbage: ")
+	puti(y.a)
+	puts("\n")
+	puts("foo.b garbage: ")
+	puti(y.b)
+	puts("\n")
+}
+
+
+
+fn main() {
+	var t2 num
+	t2 = test2()
+	puti(t2)
+	puts("\n")
+
+	test1()
+
+	puts("\nFib is: ")
+	puti(bosonfib(30))
+	puts("\n")
+
+	test3()
+
+	test4()
+
+	var foobarr num
+	foobarr = bosonfib(20)
+
+	var x num
+	x = 10
+	puts("Putting a var: ")
+	puti(x)
+	puts("\n")
+
+
+	x=11
+	puts("Putting another var: ")
+	puti(x)
+	puts("\n")
+
+
+	var y foo
+	y.a = 20
+	puts("foo.a (y.a): ")
+	puti(y.a)
+	puts("\n")
+
+	puts("foo.a + 10 = ")
+	puti(y.a + 10)
+	puts("\n")
+
+	garbagetest()
+}
