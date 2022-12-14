@@ -130,19 +130,19 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 			funcs[fname] = f
 			fmt.Printf("FUNCTION %s.%s\n", o.Pkgname, fname)
 		}
-		for dname, v := range o.data {
+		for dname, v := range o.Data {
 			if _, ok := data[dname]; ok {
 				log.Fatalf("Duplicate definitions of data %s", dname)
 			}
 			data[dname] = v
-			fmt.Printf("DATA %s %s (%d bytes)\n", dname, v.vtype, len(v.val))
+			fmt.Printf("DATA %s %s (%d bytes)\n", dname, v.VType, len(v.Val))
 		}
-		for vname, v := range o.vars {
+		for vname, v := range o.Vars {
 			if _, ok := vars[vname]; ok {
 				log.Fatalf("Duplicate definitions of data %s", vname)
 			}
 			vars[vname] = v
-			fmt.Printf("VAR %s %s (%d bytes)\n", vname, v.vtype, len(v.val))
+			fmt.Printf("VAR %s %s (%d bytes)\n", vname, v.VType, len(v.Val))
 		}
 	}
 
@@ -150,7 +150,7 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 	//needvar := make([]*Var, 0)
 	main, ok := funcs["start"]
 	if !ok {
-		log.Fatalf("No such function main")
+		log.Fatalf("No such function start")
 	}
 	needfn[0] = main
 	relocations := make([]Relocation, 0)
@@ -171,56 +171,56 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 			log.Fatalf("Failed to resolve function body: %s", err)
 		}
 		foffset := uint32(fnbs.Len())
-		fmt.Printf("ADDING %s to funclocs.\n", current.name)
-		funclocs[current.name] = foffset
+		//fmt.Printf("ADDING %s to funclocs.\n", current.name)
+		funclocs[current.Name] = foffset
 		funcsyms = append(funcsyms, SectSym{
-			Name:    current.name,
+			Name:    current.Name,
 			Type:    SYM_FUNC,
 			Address: uint64(foffset),
 			Size:    len(fbs),
 		})
-		for _, r := range current.relocations {
-			log.Printf("Found relocation for symbol %s\n", r.symbol)
-			if fn, ok := funcs[r.symbol]; ok {
-				log.Printf("Symbol %s is listed in the object funcs.\n", r.symbol)
+		for _, r := range current.Relocations {
+			//log.Printf("Found relocation for symbol %s\n", r.symbol)
+			if fn, ok := funcs[r.Symbol]; ok {
+				//log.Printf("Symbol %s is listed in the object funcs.\n", r.symbol)
 				// Function relocation
-				log.Printf("LINKER FOUND RELOCATION AT OFFSET %d to function %s", r.offset, r.symbol)
-				if _, ok := funclocs[r.symbol]; !ok {
+				//log.Printf("LINKER FOUND RELOCATION AT OFFSET %d to function %s", r.offset, r.symbol)
+				if _, ok := funclocs[r.Symbol]; !ok {
 					//log.Printf("%s is *NOT* in funclocs. Appending function %#v to needfn.\n", r.symbol, fn)
 					needfn = append(needfn, fn)
 				}
-			} else if v, ok := vars[r.symbol]; ok {
+			} else if v, ok := vars[r.Symbol]; ok {
 				// Variable relocation
-				log.Printf("LINKER FOUND RELOCATION AT OFFSET %d to vars %s", r.offset, r.symbol)
-				if _, ok := varlocs[r.symbol]; !ok {
+				//log.Printf("LINKER FOUND RELOCATION AT OFFSET %d to vars %s", r.offset, r.symbol)
+				if _, ok := varlocs[r.Symbol]; !ok {
 					loc := uint32(varbs.Len())
-					varbs.Write(v.val)
-					varlocs[r.symbol] = loc
+					varbs.Write(v.Val)
+					varlocs[r.Symbol] = loc
 					varsyms = append(varsyms, SectSym{
-						Name:    r.symbol,
+						Name:    r.Symbol,
 						Type:    SYM_OBJECT,
 						Address: uint64(loc),
-						Size:    len(v.val),
+						Size:    len(v.Val),
 					})
 				}
-			} else if v, ok := data[r.symbol]; ok {
+			} else if v, ok := data[r.Symbol]; ok {
 				// Data relocation
-				log.Printf("LINKER FOUND RELOCATION AT OFFSET %d to data %s", r.offset, r.symbol)
-				if _, ok := datalocs[r.symbol]; !ok {
+				//log.Printf("LINKER FOUND RELOCATION AT OFFSET %d to data %s", r.offset, r.symbol)
+				if _, ok := datalocs[r.Symbol]; !ok {
 					loc := uint32(databs.Len())
-					databs.Write(v.val)
-					datalocs[r.symbol] = loc
+					databs.Write(v.Val)
+					datalocs[r.Symbol] = loc
 					datasyms = append(datasyms, SectSym{
-						Name:    r.symbol,
+						Name:    r.Symbol,
 						Type:    SYM_OBJECT,
 						Address: uint64(loc),
-						Size:    len(v.val),
+						Size:    len(v.Val),
 					})
 				}
 			} else {
-				log.Fatalf("No such symbol %s", r.symbol)
+				log.Fatalf("No such symbol %s", r.Symbol)
 			}
-			r.offset += foffset
+			r.Offset += foffset
 			relocations = append(relocations, r)
 		}
 		_, err = fnbs.Write(fbs)
@@ -245,29 +245,20 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 	}
 
 	for _, r := range relocations {
-		if value, ok := funclocs[r.symbol]; ok {
-			log.Printf("APPLYING RELOCATION AT OFFSET 0x%02x to symbol %s at offset 0x%02x", r.offset, r.symbol, value)
+		if value, ok := funclocs[r.Symbol]; ok {
+			//log.Printf("APPLYING RELOCATION AT OFFSET 0x%02x to symbol %s at offset 0x%02x", r.offset, r.symbol, value)
 			r.Apply(text, int32(value))
-		} else if value, ok := varlocs[r.symbol]; ok {
+		} else if value, ok := varlocs[r.Symbol]; ok {
 			value += uint32(varoff - textoff)
-			log.Printf("APPLYING RELOCATION AT OFFSET 0x%02x to symbol %s at offset 0x%02x", r.offset, r.symbol, value)
+			//log.Printf("APPLYING RELOCATION AT OFFSET 0x%02x to symbol %s at offset 0x%02x", r.offset, r.symbol, value)
 			r.Apply(text, int32(value))
-			//log.Fatalf("CANNOT RELOCATE SYMBOL %s! VAR RELOCATIONS NOT WORKING YET!\n", r.symbol)
-		} else if value, ok := datalocs[r.symbol]; ok {
+		} else if value, ok := datalocs[r.Symbol]; ok {
 			value += uint32(dataoff - textoff)
-			log.Printf("APPLYING RELOCATION AT OFFSET 0x%02x to symbol %s at offset 0x%02x", r.offset, r.symbol, value)
+			//log.Printf("APPLYING RELOCATION AT OFFSET 0x%02x to symbol %s at offset 0x%02x", r.offset, r.symbol, value)
 			r.Apply(text, int32(value))
-			//log.Fatalf("CANNOT RELOCATE SYMBOL %s! VAR RELOCATIONS NOT WORKING YET!\n", r.symbol)
 		} else {
 			log.Fatalf("THIS SHOULD NEVER HAPPEN. WE CHECKED ABOVE.")
 		}
-
-		// 		value, ok := funclocs[r.symbol]
-		// 		if !ok {
-		// 			log.Fatalf("THIS SHOULD NEVER HAPPEN. WE CHECKED ABOVE.")
-		// 		}
-		// 		//log.Printf("APPLYING RELOCATION AT OFFSET 0x%02x to symbol %s at offset 0x%02x", r.offset, r.symbol, value)
-		// 		r.Apply(text, int32(value))
 	}
 	//return text
 	return LinkedBin{

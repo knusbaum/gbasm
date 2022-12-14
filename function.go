@@ -10,21 +10,67 @@ type Ralloc struct {
 	sym     string   // Name of the allocation
 	size    int      // Size of the allocation in bits
 	inreg   bool     // Whether or not this allocation is is a register
+	inmem   bool     // Whether or not this allocation is live in memory
 	reg     Register // The register the allocation is in.
-	local   bool     // Whether or not this allocation is function-local
+	regable bool     // Whether or not this allocation can fit in a register (int vs struct{})
 	addr    uint64   // if not local, the global address
 	offset  int32    // if local, the offset from RBP
 	rallocs *Rallocs // reference to ralloc to maintain LRU
 }
 
+// size of the data held in the register in bits. For ints/other regable types, this is the size of the data.
+// For non-regable types, this is 64-bits (size of a pointer.
+func (r *Ralloc) RegSize() int {
+	if r.regable {
+		return r.size
+	}
+	return 64
+}
+
 func (r *Ralloc) String() string {
-	return fmt.Sprintf("%s.%s", r.rallocs.f.name, r.sym)
+	return fmt.Sprintf("%s.%s", r.rallocs.f.Name, r.sym)
+}
+
+// Location returns a MOV-able location for the allocation.
+func (r *Ralloc) Location() interface{} {
+	if r.inreg {
+		r.rallocs.updateLRU(r.reg)
+		return r.reg
+	}
+
+	if !r.regable {
+		return r.Register()
+	}
+	if r.inmem {
+		//fmt.Printf("%s not in register. Allocated register %s\n", r.sym, reg)
+		return Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()}
+	}
+	r.inmem = true // We must mark this as inmem, since something may be loading data into this alloc.
+	// TODO: minor optimization possible for uninitialized variables
+	return Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()}
 }
 
 func (r *Ralloc) Register() Register {
 	if r.inreg {
 		r.rallocs.updateLRU(r.reg)
 		return r.reg
+	}
+	if !r.regable {
+		reg, ok := r.rallocs.rs.Get(64)
+		if !ok {
+			reg, ok = r.rallocs.Evict(64)
+			if !ok {
+				panic("Failed to load register") // TODO: Better error handling
+				return 0
+			}
+		}
+		r.rallocs.f.Instr("LEA", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
+		r.reg = reg
+		r.rallocs.regs[reg] = r
+		r.rallocs.updateLRU(reg)
+		r.inreg = true
+		return reg
+		//panic(fmt.Sprintf("Cannot load variable %s into register.", r.sym)) // TODO: Better error handling
 	}
 	reg, ok := r.rallocs.rs.Get(r.size)
 	if !ok {
@@ -34,10 +80,12 @@ func (r *Ralloc) Register() Register {
 			return 0
 		}
 		//log.Printf("HAD TO EVICT REGISTER. EVICTED REGISTER %v", reg)
-	} else {
-		//log.Printf("RALLOCS ALLOCATED REGISTER %v", reg)
 	}
-	r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset})
+	if r.inmem {
+		//fmt.Printf("%s not in register. Allocated register %s\n", r.sym, reg)
+		r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
+		r.inmem = false
+	}
 	r.reg = reg
 	r.rallocs.regs[reg] = r
 	r.rallocs.updateLRU(reg)
@@ -49,35 +97,45 @@ func (r *Ralloc) Evict() Register {
 	if !r.inreg {
 		panic("Already evicted")
 	}
-	if r.local {
-		r.rallocs.f.Instr("MOV", Indirect{Reg: R_RBP, Off: r.offset}, r.reg)
+	if r.regable {
+		r.rallocs.f.Instr("MOV", Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()}, r.reg)
 		r.inreg = false
+		r.inmem = true
 		r.rallocs.rs.Release(r.reg)
 		r.rallocs.removeLRU(r.reg)
 		delete(r.rallocs.regs, r.reg)
 		return r.reg
 	} else {
-		panic("TODO: non-local allocations")
+		//panic("TODO: non-local allocations")
+		r.inreg = false
+		r.rallocs.rs.Release(r.reg)
+		r.rallocs.removeLRU(r.reg)
+		delete(r.rallocs.regs, r.reg)
+		return r.reg
 	}
 }
 
-func (r *Ralloc) MarkNotInreg() {
-	if !r.inreg {
-		return
-	}
-	r.inreg = false
-	r.rallocs.rs.Release(r.reg)
-	r.rallocs.removeLRU(r.reg)
-	delete(r.rallocs.regs, r.reg)
-}
+// func (r *Ralloc) MarkNotInreg() {
+// 	if !r.inreg {
+// 		return
+// 	}
+// 	r.inreg = false
+// 	r.rallocs.rs.Release(r.reg)
+// 	r.rallocs.removeLRU(r.reg)
+// 	delete(r.rallocs.regs, r.reg)
+// }
 
 type Rallocs struct {
-	regs     map[Register]*Ralloc
-	names    map[string]*Ralloc
-	rs       *Registers
-	f        *Function
-	lru      []Register
-	localoff int32
+	regs      map[Register]*Ralloc
+	names     map[string]*Ralloc
+	rs        *Registers
+	f         *Function
+	lru       []Register
+	localoff  int32 // Current local offset in bytes from base pointer for new allocations
+	freeSpace []struct {
+		size   int32
+		offset int32
+	}
 }
 
 func NewRallocs(rs *Registers, f *Function) *Rallocs {
@@ -89,24 +147,191 @@ func NewRallocs(rs *Registers, f *Function) *Rallocs {
 	}
 }
 
+// space allocates 'size' bytes for a local object and returns the offset from the base pointer.
+func (ra *Rallocs) space(size int32) int32 {
+	out := -1
+	for i := 0; i < len(ra.freeSpace); i++ {
+		//fmt.Printf("Looking for size %d at 0x%x with size %d\n", size, ra.freeSpace[i].offset, ra.freeSpace[i].size)
+		if ra.freeSpace[i].size == size {
+			out = i
+			break
+		}
+	}
+	if out >= 0 {
+		ret := ra.freeSpace[out].offset
+		ra.freeSpace = append(ra.freeSpace[:out], ra.freeSpace[out+1:]...)
+		return ret
+	} else {
+		ra.localoff += size
+		return -ra.localoff
+	}
+}
+
+// returnSpace returs 'size' bytes at 'offset' from the base pointer to the allocator.
+func (ra *Rallocs) returnSpace(size int32, offset int32) {
+	ra.freeSpace = append(ra.freeSpace, struct {
+		size   int32
+		offset int32
+	}{
+		size:   size,
+		offset: offset,
+	})
+}
+
+// NewLocal allocates a new local variable of size bits
 func (ra *Rallocs) NewLocal(name string, size int) (*Ralloc, error) {
+	//fmt.Printf("NewLocal %s(%d)\n", name, size)
 	if _, ok := ra.names[name]; ok {
 		return nil, fmt.Errorf("Ralloc %s already declared.", name)
 	}
 	r := &Ralloc{
 		sym:     name,
 		size:    size,
-		local:   true,
-		offset:  -(ra.localoff + (int32(size) / 8)),
+		regable: true,
+		offset:  ra.space(int32(size) / 8),
 		rallocs: ra,
 	}
-	ra.localoff += int32(size) / 8
+	ra.names[name] = r
+	return r, nil
+}
+
+func (ra *Rallocs) Temp(name string, size int) (*Ralloc, error) {
+	//fmt.Printf("Temp %s(%d)\n", name, size)
+	if _, ok := ra.names[name]; ok {
+		return nil, fmt.Errorf("Ralloc %s already declared.", name)
+	}
+	r := &Ralloc{
+		sym:     name,
+		size:    size,
+		regable: true,
+		offset:  ra.space(int32(size) / 8),
+		rallocs: ra,
+	}
+	ra.names[name] = r
+	return r, nil
+}
+
+func (ra *Rallocs) Forget(name string) error {
+	r, ok := ra.names[name]
+	if !ok {
+		return fmt.Errorf("Ralloc %s not declared.", name)
+	}
+	if r.inreg {
+		r.rallocs.removeLRU(r.reg)
+		delete(r.rallocs.regs, r.reg)
+	}
+	delete(ra.names, name)
+	//fmt.Printf("Forgetting %s(%d) at offset 0x%x\n", name, r.size, r.offset)
+	ra.returnSpace(int32(r.size)/8, r.offset)
+	return nil
+}
+
+// Allocates 'size' bytes for variable 'name'
+func (ra *Rallocs) AllocBytes(name string, size int) (*Ralloc, error) {
+	if _, ok := ra.names[name]; ok {
+		return nil, fmt.Errorf("Ralloc %s already declared.", name)
+	}
+	r := &Ralloc{
+		sym:     name,
+		size:    size * 8, // TODO: THIS IS A HACK. We should just be using byte size, not bit size.
+		regable: false,
+		offset:  ra.space(int32(size)),
+		rallocs: ra,
+	}
 	ra.names[name] = r
 	return r, nil
 }
 
 func (ra *Rallocs) AllocFor(name string) *Ralloc {
 	return ra.names[name]
+}
+
+// Arg creates a new local variable for an argument passed in register r.
+//
+// AMD64 Calling Conventions:
+// %rdi, %rsi, %rdx, %rcx, %r8, %r9, stack
+func (ra *Rallocs) Arg(name string, reg Register) (*Ralloc, error) {
+	if _, ok := ra.names[name]; ok {
+		return nil, fmt.Errorf("Ralloc %s already declared.", name)
+	}
+	r := &Ralloc{
+		sym:     name,
+		size:    reg.Width(),
+		inreg:   true,
+		reg:     reg,
+		regable: true,
+		//offset:  -(ra.localoff + (int32(reg.width()) / 8)),
+		offset:  ra.space(int32(reg.Width()) / 8),
+		rallocs: ra,
+	}
+	//fmt.Printf("Argument %s in register %s and offset 0x%x\n", name, reg, r.offset)
+	//ra.localoff += int32(reg.width()) / 8
+	ra.names[name] = r
+	ra.regs[reg] = r
+	ra.updateLRU(reg)
+	ra.rs.Use(reg)
+	return r, nil
+}
+
+// Arg creates a new local variable for an argument passed on the stack at offset stacki.
+//
+// AMD64 Calling Conventions:
+// %rdi, %rsi, %rdx, %rcx, %r8, %r9, stack
+func (f *Function) StackArg(name string, stacki int) (*Ralloc, error) {
+	if _, ok := f.names[name]; ok {
+		return nil, fmt.Errorf("Ralloc %s already declared.", name)
+	}
+	r := &Ralloc{
+		sym:     name,
+		size:    64,
+		inmem:   true,
+		regable: true,
+		offset:  int32((stacki+1)*8) + f.basePointerOff, // Skip over return pointer and base pointer.
+		rallocs: f.Rallocs,
+	}
+	//fmt.Printf("STACK Argument %s at offset 0x%x\n", name, r.offset)
+	f.localoff += 8
+	f.names[name] = r
+	return r, nil
+}
+
+func (f *Function) ArgI(name string, i int) (*Ralloc, error) {
+	switch i {
+	case 0:
+		return f.Arg(name, R_RDI)
+	case 1:
+		return f.Arg(name, R_RSI)
+	case 2:
+		return f.Arg(name, R_RDX)
+	case 3:
+		return f.Arg(name, R_RCX)
+	case 4:
+		return f.Arg(name, R8)
+	case 5:
+		return f.Arg(name, R9)
+	}
+	return f.StackArg(name, i-6)
+}
+
+// This causes the local variable 'name' to take over register 'reg', meaning 'name' will
+// immediately take on the value currently in 'reg'. Any other variable currently in 'reg' will be
+// evicted.
+func (ra *Rallocs) takeoverRegister(name string, reg Register) (*Ralloc, error) {
+	//fmt.Printf("Took over register %s for %s\n", reg, name)
+	r, ok := ra.names[name]
+	if !ok {
+		return nil, fmt.Errorf("No such Ralloc %s.", name)
+	}
+
+	if alloc, ok := ra.regs[reg]; ok {
+		alloc.Evict()
+	}
+	ra.rs.Use(reg)
+	r.inreg = true
+	r.reg = reg
+	ra.regs[reg] = r
+	ra.updateLRU(reg)
+	return r, nil
 }
 
 func (ra *Rallocs) updateLRU(r Register) {
@@ -135,12 +360,21 @@ func (ra *Rallocs) removeLRU(r Register) {
 
 func (ra *Rallocs) Evict(size int) (Register, bool) {
 	for _, reg := range ra.lru {
-		if reg.width() >= size {
+		if reg.Width() >= size {
 			ra.regs[reg].Evict()
 			return reg, true
 		}
 	}
 	return 0, false
+}
+
+// EvictReg evicts whatever variable is in a register, if there is one. It does *NOT* mark the register in use
+// or perform any other bookkeeping. This is mostly useful for when one wants to temporarily use a specific register
+// for some calculation.
+func (ra *Rallocs) EvictReg(r Register) {
+	if alloc, ok := ra.regs[r]; ok {
+		alloc.Evict()
+	}
 }
 
 func (ra *Rallocs) EvictAll() {
@@ -151,13 +385,22 @@ func (ra *Rallocs) EvictAll() {
 	}
 }
 
-func (ra *Rallocs) MarkAllNotInreg() {
-	lru := make([]Register, len(ra.lru))
-	copy(lru, ra.lru)
-	for _, reg := range lru {
-		ra.regs[reg].MarkNotInreg()
+// Acquire evicts whatever variable is in a register, if there is one. And marks the register in use.
+// Registers that are Acquired must be Released, just like Use'd registers.
+func (ra *Rallocs) Acquire(r Register) {
+	if alloc, ok := ra.regs[r]; ok {
+		alloc.Evict()
 	}
+	ra.rs.Use(r)
 }
+
+// func (ra *Rallocs) MarkAllNotInreg() {
+// 	lru := make([]Register, len(ra.lru))
+// 	copy(lru, ra.lru)
+// 	for _, reg := range lru {
+// 		ra.regs[reg].MarkNotInreg()
+// 	}
+// }
 
 // func (ra *Rallocs) NewGlobal(name string, size int, addr uint64) (*Ralloc, error) {
 // 	if _, ok := ra.names[name]; ok {
@@ -175,12 +418,13 @@ func (ra *Rallocs) MarkAllNotInreg() {
 // }
 
 type Function struct {
-	name        string
-	srcFile     string
-	srcLine     int
-	args        []*Var
-	symbols     []Symbol
-	relocations []Relocation
+	Name        string
+	Type        string
+	SrcFile     string
+	SrcLine     int
+	Args        []*Var
+	Symbols     []Symbol
+	Relocations []Relocation
 	bodyBs      []byte
 
 	// The following fields are used to resolve jumps and labels within a function.
@@ -192,6 +436,7 @@ type Function struct {
 	jumps          []Relocation
 	errors         []error
 	localsLocation uint32
+	basePointerOff int32
 
 	a  *Asm
 	rs *Registers
@@ -201,19 +446,20 @@ type Function struct {
 func (o *OFile) NewFunction(srcFile string, srcLine int, name string, args ...*Var) (*Function, error) {
 	if f, ok := o.Funcs[name]; ok {
 		return nil, fmt.Errorf("Function %s declared at %s:%d\n\tPreviously declared here: %s:%d",
-			name, srcFile, srcLine, f.srcFile, f.srcLine)
-	} else if o.vars[name] != nil || o.data[name] != nil {
+			name, srcFile, srcLine, f.SrcFile, f.SrcLine)
+	} else if o.Vars[name] != nil || o.Data[name] != nil {
 		return nil, fmt.Errorf("Name %s already declared.", name)
 	}
 
 	f := &Function{
-		srcFile: srcFile,
-		srcLine: srcLine,
-		name:    name,
-		args:    args,
-		labels:  make(map[string]int),
-		a:       o.a,
-		rs:      NewRegisters(),
+		SrcFile:        srcFile,
+		SrcLine:        srcLine,
+		Name:           name,
+		Args:           args,
+		labels:         make(map[string]int),
+		a:              o.a,
+		rs:             NewRegisters(),
+		basePointerOff: (6 * 8), // Determined in Prologue. This is the amount of "stuff" pushed on top of any arguments before the base pointer is established.
 	}
 	f.Rallocs = NewRallocs(f.rs, f)
 	o.Funcs[name] = f
@@ -240,6 +486,10 @@ func (f *Function) Get(size int) (Register, bool) {
 
 // Functions assume System V x86_64 calling convention.
 func (f *Function) Prologue() error {
+	_, err := f.NewLocal("__retvalue", 64)
+	if err != nil {
+		return err
+	}
 	f.rs.Use(R_RBP)
 	f.rs.Use(R_RSP)
 	// TODO: If we get smarter about encoding, we can determine which of these registers we *need* to save
@@ -307,28 +557,77 @@ func (f *Function) Jump(instr string, label string) error {
 	// 		}
 	// 		return err
 	// 	}
+	if instr == "CALL" {
+		//fmt.Printf("###################INSTR IS [%s]\n", instr)
+		f.takeoverRegister("__retvalue", R_RAX)
+		// 		if err != nil {
+		// 			panic(err)
+		// 		}
+	}
 	_, err := f.a.Encode(&f.bs, instr, int32(0))
 	if err != nil {
 		f.errors = append(f.errors, err)
 		return err
 	}
-	f.jumps = append(f.jumps, Relocation{offset: uint32(f.bs.Len() - 4), symbol: label})
+	f.jumps = append(f.jumps, Relocation{Offset: uint32(f.bs.Len() - 4), Symbol: label})
 	return nil
 }
 
-func (f *Function) Instr(instr string, ops ...interface{}) error {
-	fmt.Printf("INSTRUCTION [%#v] OPS [%#v]\n", instr, ops)
-	for i := range ops {
-		switch v := ops[i].(type) {
-		case string:
-			fmt.Printf("GOT A STRING ARG: %v\n", v)
-		}
+func (f *Function) fixMovVar(ops []interface{}) (string, []interface{}) {
+	fmt.Printf("FIX MOV VAR\n")
+	// TODO: Is this really a good idea?
+	// This catches MOV's of vars into indirects, basically
+	// MOV [REG+I] VAR
+	// and turns it into
+	// MOV TMP VAR
+	// MOV [REG+I] TMP
+	// because VARs are literals (addresses) and can't be
+	// moved into memory (no mov m64 imm64)
+	if len(ops) != 2 {
+		fmt.Printf("1RETURNING %#v\n", ops)
+		return "LEA", ops
 	}
+	ind, ok := ops[0].(Indirect)
+	if !ok {
+		fmt.Printf("2RETURNING %#v\n", ops)
+		return "LEA", ops
+	}
+	v, ok := ops[1].(*Var)
+	if !ok {
+		fmt.Printf("3RETURNING %#v\n", ops)
+		return "LEA", ops
+	}
+
+	tmp, err := f.NewLocal("__movvar", 64)
+	if err != nil {
+		panic(err)
+	}
+	// reg should be safe to use at least until the next instruction.
+	reg := tmp.Register()
+	f.Forget("__movvar")
+	fmt.Printf("v: %#v\n", v)
+	f.Instr("LEA", reg, v)
+
+	fmt.Printf("RETURNING: %#v\n", []interface{}{ind, reg})
+	return "MOV", []interface{}{ind, reg}
+}
+
+func (f *Function) Instr(instr string, ops ...interface{}) error {
+	// 	fmt.Printf("INSTRUCTION [%#v] OPS [", instr)
+	// 	for i := range ops {
+	// 		fmt.Printf("(%s) ", ops[i])
+	// 	}
+	// 	fmt.Printf("]\n")
+
+	if instr == "LEA" {
+		instr, ops = f.fixMovVar(ops)
+	}
+
 	rs, err := f.a.Encode(&f.bs, instr, ops...)
 	if err != nil {
 		f.errors = append(f.errors, err)
 	}
-	f.relocations = append(f.relocations, rs...)
+	f.Relocations = append(f.Relocations, rs...)
 	return err
 }
 
@@ -339,13 +638,13 @@ func (f *Function) Resolve() error {
 	}
 	bs := f.bs.Bytes()
 	for _, rel := range f.jumps {
-		if loff, ok := f.labels[rel.symbol]; ok {
+		if loff, ok := f.labels[rel.Symbol]; ok {
 			//log.Printf("APPLYING RELOCATION AT OFFSET 0x%02x to symbol %s at offset 0x%02x", rel.offset, rel.symbol, loff)
 			rel.Apply(bs, int32(loff))
 		} else {
 			//log.Printf("Adding Relocation for symbol %s at offset 0x%02x", rel.symbol, rel.offset)
 			//rel.rel_type = R_386_PC32
-			f.relocations = append(f.relocations, rel)
+			f.Relocations = append(f.Relocations, rel)
 		}
 	}
 	f.jumps = make([]Relocation, 0)

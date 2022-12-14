@@ -10,6 +10,8 @@ import (
 	"log"
 	"reflect"
 	"strconv"
+
+	"github.com/davecgh/go-spew/spew"
 )
 
 const (
@@ -30,8 +32,9 @@ type WriteLener interface {
 }
 
 type Indirect struct {
-	Reg Register
-	Off int32
+	Reg  Register
+	Off  int32
+	Size int // Size in bytes of the data at the offset Off from Reg
 }
 
 type Instruction struct {
@@ -40,12 +43,17 @@ type Instruction struct {
 }
 
 func (i *Instruction) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
+	// 	fmt.Printf("INSTRUCTION: [%s]\n", i.Summary)
+	// 	for _, f := range i.Forms {
+	// 		fmt.Printf("FORM: %#v\n", f.ops)
+	// 	}
 forms:
 	for _, f := range i.Forms {
 		if f.opcount != len(os) {
 			continue
 		}
 		var i int
+		//fmt.Printf("$$$$\n")
 		for _, fop := range f.ops {
 			if fop.Implicit {
 				continue
@@ -60,7 +68,8 @@ forms:
 		//log.Printf("Encoding form %#v\n", f.ops)
 		return f.Encode(w, os...)
 	}
-	panic(fmt.Sprintf("Failed to find an instruction for %s %#v", i.Summary, os))
+	//spew.Dump(os)
+	//panic(fmt.Sprintf("Failed to find an instruction for %s %#v", i.Summary, os))
 	return nil, fmt.Errorf("Failed to find an instruction for %s %#v", i.Summary, os)
 }
 
@@ -126,20 +135,24 @@ func (x *rex) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	xw := x.w
 	//log.Printf("[REX] GETTING BYTE FOR OS: %#v\n", os)
 	xr, _ := getRegister(x.r, os)
-	// Not all args are registers.
+	// 	fmt.Printf("XR REGISTER: %#s\n", xr)
+	// 	//Not all args are registers.
 	// 	if err != nil {
-	// 		return err
+	// 		fmt.Printf("ERROR: %v\n", err)
 	// 	}
 	needed = needed || xr.needREX()
 	xx, _ := getRegister(x.x, os)
+	// 	fmt.Printf("XX REGISTER: %#s\n", xx)
+	// 	//Not all args are registers.
 	// 	if err != nil {
-	// 		//return err
-	//
+	// 		fmt.Printf("ERROR: %v\n", err)
 	// 	}
 	needed = needed || xr.needREX()
 	xb, _ := getRegister(x.b, os)
+	// 	fmt.Printf("XB REGISTER: %#s\n", xb)
+	// 	//Not all args are registers.
 	// 	if err != nil {
-	// 		return err
+	// 		fmt.Printf("ERROR: %v\n", err)
 	// 	}
 	needed = needed || xr.needREX()
 	b := 0b01000000 |
@@ -330,11 +343,14 @@ func getRegister(i byte, os []interface{}) (Register, error) {
 		panic(fmt.Sprintf("booo I: %d, OS: %#v, len(os): %d\n", i, os, len(os)))
 		return 0, fmt.Errorf("[getByte] Not enough args. Expected at least %d\n", i)
 	}
-	b, ok := os[i].(Register)
-	if !ok {
+	switch b := os[i].(type) {
+	case Register:
+		return b, nil
+	case Indirect:
+		return b.Reg, nil
+	default:
 		return 0, fmt.Errorf("Expected op %d to be a register, but found %v\n", i, reflect.TypeOf(os[i]))
 	}
-	return b, nil
 }
 
 func (x *opcode) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
@@ -391,8 +407,8 @@ func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 			}
 			indirect = &ot
 		case *Var:
-			indirect = &Indirect{Reg: R_RIP, Off: ot.Offset()}
-			relocations = append(relocations, Relocation{offset: uint32(w.Len() + 1), symbol: ot.name})
+			indirect = &Indirect{Reg: R_RIP, Size: 64}
+			relocations = append(relocations, Relocation{Offset: uint32(w.Len() + 1), Symbol: ot.Name})
 			xmod = 0
 		default:
 			return nil, fmt.Errorf("Expected operand %#v to be a byte, var or an indirect.", o)
@@ -593,29 +609,41 @@ func (o *Op) Match(op interface{}) bool {
 		// 	case "k{k}":
 	case "moffs32":
 		if mo, ok := op.(Indirect); ok {
-			return mo.Reg.width() == 64
+			if mo.Size > 0 && mo.Size != 32 {
+				return false
+			}
+			return mo.Reg.Width() == 64
 		}
 	case "moffs64":
 		if mo, ok := op.(Indirect); ok {
-			return mo.Reg.width() == 64
+			if mo.Size > 0 && mo.Size != 64 {
+				return false
+			}
+			return mo.Reg.Width() == 64
 		}
 	case "m":
 		if mo, ok := op.(Indirect); ok {
-			return mo.Reg.width() == 64
+			return mo.Reg.Width() == 64
 		}
 		if _, ok := op.(*Var); ok {
 			return true
 		}
 	case "m8":
 		if mo, ok := op.(Indirect); ok {
-			return mo.Reg.width() == 64
+			if mo.Size > 0 && mo.Size != 8 {
+				return false
+			}
+			return mo.Reg.Width() == 64
 		}
 		if _, ok := op.(*Var); ok {
 			return true
 		}
 	case "m16":
 		if mo, ok := op.(Indirect); ok {
-			return mo.Reg.width() == 64
+			if mo.Size > 0 && mo.Size != 16 {
+				return false
+			}
+			return mo.Reg.Width() == 64
 		}
 		if _, ok := op.(*Var); ok {
 			return true
@@ -623,7 +651,10 @@ func (o *Op) Match(op interface{}) bool {
 	//case "m16{k}{z}":
 	case "m32":
 		if mo, ok := op.(Indirect); ok {
-			return mo.Reg.width() == 64
+			if mo.Size > 0 && mo.Size != 32 {
+				return false
+			}
+			return mo.Reg.Width() == 64
 		}
 		if _, ok := op.(*Var); ok {
 			return true
@@ -632,7 +663,10 @@ func (o *Op) Match(op interface{}) bool {
 	//case "m32{k}{z}":
 	case "m64":
 		if mo, ok := op.(Indirect); ok {
-			return mo.Reg.width() == 64
+			if mo.Size > 0 && mo.Size != 64 {
+				return false
+			}
+			return mo.Reg.Width() == 64
 		}
 		if _, ok := op.(*Var); ok {
 			return true
@@ -712,9 +746,69 @@ func (a *Asm) Encode(w WriteLener, instr string, os ...interface{}) ([]Relocatio
 	if !ok {
 		return nil, fmt.Errorf("No such instruction: %s", instr)
 	}
-	//log.Printf("Encoding instruction %s\n", instr)
-	return inst.Encode(w, os...)
+	//spew.Dump(inst)
+	log.Printf("Encoding instruction %s, %#v\n", instr, os)
+
+	var newos []interface{}
+	for _, o := range os {
+		//fmt.Printf(" ### OS(%d): %#v\n", i, o)
+		switch t := o.(type) {
+		case *Ralloc:
+			//fmt.Printf("### RALLOC ###\t%s -> %v\n", t.sym, t.Location())
+			newos = append(newos, t.Location())
+			// 			if t.inmem {
+			// 				fmt.Printf("### RALLOC ###\t%s IN MEM\n", t.sym)
+			// 				newos = append(newos, Indirect{Reg: R_RBP, Off: t.offset})
+			// 			} else if t.inreg {
+			//
+			// 				fmt.Printf("### RALLOC ###\t%s IN REG\n", t.sym)
+			// 				newos = append(newos, t.Register())
+			// 			} else {
+			// 				fmt.Printf("### RALLOC ###\t%s NEITHER IN REGISTER NOR IN MEMORY\n", t.sym)
+			// 				//panic("NEITHER IN REGISTER NOR IN MEMORY.\n")
+			// 				newos = append(newos, t.Register())
+			// 			}
+		default:
+			newos = append(newos, t)
+		}
+	}
+	found := false
+	for {
+		r, err := inst.Encode(w, newos...)
+		if err == nil {
+			return r, err
+		}
+		fmt.Printf("FAILED TO ENCODE %#v:\n", newos)
+		spew.Dump(newos)
+		for i, o := range newos {
+			if _, ok := o.(Indirect); ok {
+				if ra, ok := os[i].(*Ralloc); ok {
+					found = true
+					newos[i] = ra.Register()
+					break
+				}
+			}
+		}
+		if !found {
+			return r, err
+		}
+		fmt.Printf("TRYING AGAIN WITH:\n")
+		spew.Dump(newos)
+	}
 }
+
+// 	if instr == "MOV" {
+// 		if len(os) == 2 {
+// 			switch t := os[0].(type) {
+// 			case *Ralloc:
+// 				os[0] = t.Register()
+// 			}
+// 			switch t := os[1].(type) {
+// 			case *Ralloc:
+// 				os[1] = Indirect{Reg: R_RBP, Off: t.offset}
+// 			}
+// 		}
+// 	}
 
 func parseForm(xform *XForm) (IForm, error) {
 	var (

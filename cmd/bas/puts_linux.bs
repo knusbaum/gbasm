@@ -9,6 +9,7 @@ package string
 
 // puts(str [?]byte) str must be a null-terminated string.
 function puts
+	type fn(str) none
 	prologue
 
 	// rbx is preserved across function calls

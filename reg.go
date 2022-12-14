@@ -61,6 +61,103 @@ const (
 	R_RIP
 )
 
+func (r Register) String() string {
+	switch r {
+	case R_AL:
+		return "AL"
+	case R_AH:
+		return "AH"
+	case R_AX:
+		return "AX"
+	case R_EAX:
+		return "EAX"
+	case R_RAX:
+		return "RAX"
+
+	case R_BL:
+		return "BL"
+	case R_BH:
+		return "BH"
+	case R_BX:
+		return "BX"
+	case R_EBX:
+		return "EBX"
+	case R_RBX:
+		return "RBX"
+
+	case R_CL:
+		return "CL"
+	case R_CH:
+		return "CH"
+	case R_CX:
+		return "CX"
+	case R_ECX:
+		return "ECX"
+	case R_RCX:
+		return "RCX"
+
+	case R_DL:
+		return "DL"
+	case R_DH:
+		return "DH"
+	case R_DX:
+		return "DX"
+	case R_EDX:
+		return "EDX"
+	case R_RDX:
+		return "RDX"
+
+	case R_SP:
+		return "SP"
+	case R_ESP:
+		return "ESP"
+	case R_RSP:
+		return "RSP"
+
+	case R_BP:
+		return "BP"
+	case R_EBP:
+		return "EBP"
+	case R_RBP:
+		return "RBP"
+
+	case R_SI:
+		return "SI"
+	case R_ESI:
+		return "ESI"
+	case R_RSI:
+		return "RSI"
+
+	case R_DI:
+		return "DI"
+	case R_EDI:
+		return "EDI"
+	case R_RDI:
+		return "RDI"
+
+	case R8:
+		return "R8"
+	case R9:
+		return "R9"
+	case R10:
+		return "R10"
+	case R11:
+		return "R11"
+	case R12:
+		return "R12"
+	case R13:
+		return "R13"
+	case R14:
+		return "R14"
+	case R15:
+		return "R15"
+
+	case R_RIP:
+		return "RIP"
+	}
+	return "UNKNOWN"
+}
+
 func ParseReg(r string) (Register, error) {
 	r = strings.ToUpper(r)
 	switch r {
@@ -294,7 +391,7 @@ func (r Register) byte() byte {
 	}
 }
 
-func (r Register) width() int {
+func (r Register) Width() int {
 	switch r {
 	case R_AL:
 		return 8

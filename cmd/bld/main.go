@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -8,18 +9,30 @@ import (
 	"github.com/knusbaum/gbasm"
 )
 
+var out = flag.String("o", "b.out", "Write the linked executable to this file")
+var help = flag.Bool("h", false, "Print this help message.")
+
 func main() {
-	if len(os.Args) < 2 {
+	flag.Parse()
+
+	if *help {
+		fmt.Printf("HELP MESSAGE\n")
+		flag.PrintDefaults()
+		return
+	}
+
+	if flag.NArg() <= 0 {
 		fmt.Printf("Fatal: Expected file name to open.\n")
 		os.Exit(1)
 	}
 
 	var ofs []*gbasm.OFile
 	pkgs := make(map[string]*gbasm.OFile)
-	for i := 1; i < len(os.Args); i++ {
-		o, err := gbasm.ReadOFile(os.Args[i])
+	for i := 0; i < flag.NArg(); i++ {
+		arg := flag.Arg(i)
+		o, err := gbasm.ReadOFile(arg)
 		if err != nil {
-			fmt.Printf("Failed to read object file %s: %s\n", os.Args[i], err)
+			fmt.Printf("Failed to read object file %s: %s\n", arg, err)
 			os.Exit(1)
 		}
 		if o1, ok := pkgs[o.Pkgname]; ok {
@@ -30,19 +43,8 @@ func main() {
 		ofs = append(ofs, o)
 	}
 
-	err := gbasm.LinkExe("out.o", gbasm.ELF, ofs)
+	err := gbasm.LinkExe(*out, gbasm.ELF, ofs)
 	if err != nil {
 		log.Fatalf("Failed to write exe: %s", err)
 	}
-
-	// 	// This part should be moved to the linker, but for now we'll put it here for testing.
-	// 	text := gbasm.Link(ofs)
-	// 	// 	for _, b := range text {
-	// 	// 		fmt.Printf("%02x ", b)
-	// 	// 	}
-	// 	// 	fmt.Printf("\n")
-	// 	err := gbasm.WriteExe("out.o", gbasm.ELF, text)
-	// 	if err != nil {
-	// 		log.Fatalf("Failed to write exe: %s", err)
-	// 	}
 }

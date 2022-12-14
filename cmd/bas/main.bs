@@ -1,6 +1,8 @@
 package main
 
-var hello string "Hello World\n"
+var hello string "Hello World\n\0"
+var fibprint string "Fib was: \0"
+var newline string "\n\0"
 
 function main
 	// no prologue necessary. 
@@ -10,15 +12,148 @@ function main
 	mov [rax+0] 74
 	mov rdi rax
 	call puts
-	mov rax 0
+
+	// First Fib call
+ 	mov rdi 20
+ 	call fib
+	push rax
+
+	lea rdi fibprint
+	call puts
+
+	pop rdi
+	call puti
+
+	lea rdi newline
+	call puts
+
+	// Second Fib call
+ 	mov rdi 20
+ 	call newfib
+	push rax
+
+	lea rdi fibprint
+	call puts
+
+	pop rdi
+	call puti
+
+	lea rdi newline
+	call puts
+
+	// Third Fib call
+ 	mov rdi 20
+ 	call bosonfib
+	push rax
+
+	lea rdi fibprint
+	call puts
+
+	pop rdi
+	call puti
+
+	lea rdi newline
+	call puts
+
+	mov rdi 1
+	mov rsi 2
+	mov rdx 3
+	mov rcx 4
+	mov r8 5
+	mov r9 6
+	push 8
+	push 7
+	call argprinter
+	add rsp 16
+
+ 	mov rax 0
+ 	ret
+
+function argprinter
+	arg one rdi
+	arg two rsi
+	arg three rdx
+	arg four rcx
+	arg five r8
+	arg six r9
+	arg seven 0
+	arg eight 1
+
+	prologue
+
+	mov rdi one
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi two
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi three
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi four
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi five
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi six
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi seven
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi eight
+	call puti
+	lea rdi newline
+	call puts
+
+	epilogue
 	ret
 
-// 	mov rdi 5
-// 	call fib
-// 
-// 	call print
-// 	mov rax 0
-// 	ret
+
+function newfib
+	arg n rdi
+	local f1 64
+	local f2 64
+	
+	prologue
+
+	cmp n 3	
+	jge recur
+	mov rax 1
+	jmp end
+
+label recur
+	mov rdi n
+	sub rdi 1
+	call fib
+	mov f1 rax
+
+	mov rdi n
+	sub rdi 2
+	call fib
+	mov f2 rax
+
+	add f1 f2
+	mov rax f1
+
+label end
+	epilogue
+	ret
 
 function fib
 	// Register use declarations
@@ -65,57 +200,45 @@ function fib
 	epilogue
 	ret
 
-// Output:
-// start:
-// 0:  e8 0c 00 00 00          call   0x11
-// 5:  48 89 c7                mov    rdi,rax
-// 8:  48 c7 c0 01 00 00 02    mov    rax,0x2000001
-// f:  0f 05                   syscall
-// main:
-// 11: 48 c7 c7 07 00 00 00    mov    rdi,0x7
-// 18: e8 01 00 00 00          call   0x1e
-// 1d: c3                      ret
-// fib:
-// 1e: 55                      push   rbp
-// 1f: 53                      push   rbx
-// 20: 47 54                   rex.RXB push r12
-// 22: 47 55                   rex.RXB push r13
-// 24: 47 56                   rex.RXB push r14
-// 26: 47 57                   rex.RXB push r15
-// 28: 48 89 e5                mov    rbp,rsp
-// 2b: 48 81 ec 18 00 00 00    sub    rsp,0x18
-// 32: 48 8b 9d f8 ff ff ff    mov    rbx,QWORD PTR [rbp-0x8]
-// 39: 48 89 fb                mov    rbx,rdi
-// 3c: 48 83 fb 03             cmp    rbx,0x3
-// 40: 48 89 9d f8 ff ff ff    mov    QWORD PTR [rbp-0x8],rbx
-// 47: 0f 8d 0c 00 00 00       jge    0x59
-// 4d: 48 c7 c0 01 00 00 00    mov    rax,0x1
-// 54: e9 6a 00 00 00          jmp    0xc3
-// 59: 48 8b 9d f8 ff ff ff    mov    rbx,QWORD PTR [rbp-0x8]
-// 60: 48 89 df                mov    rdi,rbx
-// 63: 48 83 ef 01             sub    rdi,0x1
-// 67: 48 89 9d f8 ff ff ff    mov    QWORD PTR [rbp-0x8],rbx
-// 6e: e8 ab ff ff ff          call   0x1e
-// 73: 48 8b 9d f0 ff ff ff    mov    rbx,QWORD PTR [rbp-0x10]
-// 7a: 48 89 c3                mov    rbx,rax
-// 7d: 48 8b 8d f8 ff ff ff    mov    rcx,QWORD PTR [rbp-0x8]
-// 84: 48 89 cf                mov    rdi,rcx
-// 87: 48 83 ef 02             sub    rdi,0x2
-// 8b: 48 89 9d f0 ff ff ff    mov    QWORD PTR [rbp-0x10],rbx
-// 92: 48 89 8d f8 ff ff ff    mov    QWORD PTR [rbp-0x8],rcx
-// 99: e8 80 ff ff ff          call   0x1e
-// 9e: 48 8b 9d e8 ff ff ff    mov    rbx,QWORD PTR [rbp-0x18]
-// a5: 48 89 c3                mov    rbx,rax
-// a8: 48 8b 8d f0 ff ff ff    mov    rcx,QWORD PTR [rbp-0x10]
-// af: 48 01 d9                add    rcx,rbx
-// b2: 48 89 c8                mov    rax,rcx
-// b5: 48 89 9d e8 ff ff ff    mov    QWORD PTR [rbp-0x18],rbx
-// bc: 48 89 8d f0 ff ff ff    mov    QWORD PTR [rbp-0x10],rcx
-// c3: 48 89 ec                mov    rsp,rbp
-// c6: 47 5f                   rex.RXB pop r15
-// c8: 47 5e                   rex.RXB pop r14
-// ca: 47 5d                   rex.RXB pop r13
-// cc: 47 5c                   rex.RXB pop r12
-// ce: 5b                      pop    rbx
-// cf: 5d                      pop    rbp
-// d0: c3                      ret 
+function bosonfib
+	argi n 0
+
+	prologue
+
+	local _T1 64
+	mov _T1 n
+	cmp _T1 3
+	local _T2 8
+	setl _T2
+	movzx _T1 _T2
+	forget _T2
+	cmp _T1 0
+	forget _T1
+	je _LABEL2
+	mov rax 1
+	jmp _LABEL1
+	jmp _LABEL3
+	label _LABEL2
+	local _T3 64
+	evict
+	local _T4 64
+	mov _T4 n
+	sub _T4 1
+	mov rdi _T4
+	call bosonfib
+	mov _T3 rax
+	evict
+	local _T5 64
+	mov _T5 n
+	sub _T5 2
+	mov rdi _T5
+	call bosonfib
+	add _T3 rax
+	mov rax _T3
+	forget _T3
+	jmp _LABEL1
+	label _LABEL3
+
+	label _LABEL1
+	epilogue
+	ret

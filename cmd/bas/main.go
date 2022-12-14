@@ -120,14 +120,15 @@ func SplitSpace(s string) []string {
 	return ss
 }
 
-func ParseIndirect(s string) (reg gbasm.Register, offset int32, err error) {
-	r := regexp.MustCompile(`\[([a-zA-Z0-9]+)([+-][x0-9]+)?\]`)
+func ParseIndirect(s string) (base string, offset int32, err error) {
+	r := regexp.MustCompile(`\[([_a-zA-Z0-9]+)([+-][x0-9]+)?\]`)
 	parts := r.FindStringSubmatch(s)
-	fmt.Printf("HAVE PARTS: %#v\n", parts)
-	reg, err = gbasm.ParseReg(parts[1])
-	if err != nil {
-		return
-	}
+	//fmt.Printf("HAVE PARTS: %#v from %s\n", parts, s)
+	// 	reg, err = gbasm.ParseReg(parts[1])
+	// 	if err != nil {
+	// 		return
+	// 	}
+	base = parts[1]
 	if parts[2] != "" {
 		var o int64
 		if strings.HasPrefix(parts[2], "0x") {
@@ -201,7 +202,7 @@ func main() {
 					fmt.Printf("Fatal: Function name \"%s\" contains a space.\n", fname)
 					os.Exit(1)
 				}
-				f, err = o.NewFunction(os.Args[1], ln, fname)
+				f, err = o.NewFunction(os.Args[fi], ln, fname)
 				if err != nil {
 					fmt.Printf("Fatal: Failed to create function \"%s\": %s\n", fname, err)
 					os.Exit(1)
@@ -222,7 +223,7 @@ func main() {
 					fmt.Printf("Fatal: failed to parse data for data declaration %s: %v", parts[0], err)
 					os.Exit(1)
 				}
-				o.Data(parts[0], parts[1], data)
+				o.AddData(parts[0], parts[1], data)
 				continue
 			}
 			if strings.HasPrefix(line, "var") {
@@ -237,8 +238,8 @@ func main() {
 					fmt.Printf("Fatal: failed to parse data for data declaration %s: %v", parts[0], err)
 					os.Exit(1)
 				}
-				fmt.Printf("##########\n\n##########\nGot Data: [%s]\n##########\n\n##########\n", string(data))
-				o.Var(parts[0], parts[1], data)
+				//fmt.Printf("##########\n\n##########\nGot Data: [%s]\n##########\n\n##########\n", string(data))
+				o.AddVar(parts[0], parts[1], data)
 				continue
 			}
 
@@ -246,6 +247,12 @@ func main() {
 			if f == nil {
 				fmt.Printf("Fatal: All assembly must be inside a function\n")
 				os.Exit(1)
+			}
+			if strings.HasPrefix(line, "type") {
+				ftype := strings.TrimSpace(strings.TrimPrefix(line, "type"))
+				fmt.Printf("DECL DECL DECL %s -> %s\n", f.Name, ftype)
+				f.Type = ftype
+				continue
 			}
 			if strings.HasPrefix(line, "local") {
 				lnamesize := SplitSpace(strings.TrimSpace(strings.TrimPrefix(line, "local")))
@@ -266,6 +273,38 @@ func main() {
 				//locals[lnamesize[0]] = l
 				continue
 			}
+			if strings.HasPrefix(line, "bytes") {
+				bnamesize := SplitSpace(strings.TrimSpace(strings.TrimPrefix(line, "bytes")))
+				if len(bnamesize) != 2 {
+					fmt.Printf("Fatal: Expect a bytes declaration to contain a name and byte size, but have %v\n", bnamesize)
+					os.Exit(1)
+				}
+				size, err := strconv.Atoi(bnamesize[1])
+				if err != nil {
+					fmt.Printf("Expected bytes size to be an integer, but have: %s\n", bnamesize[1])
+					os.Exit(1)
+				}
+				_, err = f.AllocBytes(bnamesize[0], size)
+				if err != nil {
+					fmt.Printf("Fatal: Failed to declare bytes %s: %s\n", bnamesize[1], err)
+					os.Exit(1)
+				}
+				continue
+			}
+			if strings.HasPrefix(line, "forget") {
+				name := SplitSpace(strings.TrimSpace(strings.TrimPrefix(line, "forget")))
+				if len(name) != 1 {
+					fmt.Printf("Fatal: Expect a forget instruction to contain a name, but have %v\n", name)
+					os.Exit(1)
+				}
+				err = f.Forget(name[0])
+				if err != nil {
+					fmt.Printf("Fatal: Failed to forget local %s: %s\n", name[0], err)
+					os.Exit(1)
+				}
+				//locals[lnamesize[0]] = l
+				continue
+			}
 			if strings.HasPrefix(line, "use") {
 				rname := strings.TrimSpace(strings.TrimPrefix(line, "use"))
 				reg, err := gbasm.ParseReg(rname)
@@ -279,6 +318,97 @@ func main() {
 				}
 				continue
 			}
+			if strings.HasPrefix(line, "argi") {
+				params := SplitSpace(strings.TrimSpace(strings.TrimPrefix(line, "argi")))
+				if len(params) != 2 {
+					fmt.Printf("Fatal: Expect an argi declaration to contain a name register/offset, but have %v\n", line)
+					os.Exit(1)
+				}
+				name := params[0]
+				if num, err := strconv.ParseInt(params[1], 10, 64); err == nil {
+					if _, err := f.ArgI(name, int(num)); err != nil {
+						fmt.Printf("Fatal: Failed to mark arg %s: %s\n", name, err)
+						os.Exit(1)
+					}
+				} else {
+					fmt.Printf("Fatal: Expect an argi declaration to contain a name register/offset, but have %v\n", line)
+					os.Exit(1)
+				}
+				continue
+			}
+			if strings.HasPrefix(line, "arg") {
+				params := SplitSpace(strings.TrimSpace(strings.TrimPrefix(line, "arg")))
+				if len(params) != 2 {
+					fmt.Printf("Fatal: Expect an arg declaration to contain a name register/offset, but have %v\n", params)
+					os.Exit(1)
+				}
+				name := params[0]
+				if reg, err := gbasm.ParseReg(params[1]); err == nil {
+					if _, err := f.Arg(name, reg); err != nil {
+						fmt.Printf("Fatal: Failed to mark arg %s: %s\n", name, err)
+						os.Exit(1)
+					}
+				} else if num, err := strconv.ParseInt(params[1], 10, 64); err == nil {
+					if _, err := f.StackArg(name, int(num)); err != nil {
+						fmt.Printf("Fatal: Failed to mark arg %s: %s\n", name, err)
+						os.Exit(1)
+					}
+				} else {
+					fmt.Printf("Fatal: Expect an arg declaration to contain a name register/offset, but have %v\n", params)
+					os.Exit(1)
+				}
+				continue
+			}
+			if strings.HasPrefix(line, "evict") {
+				params := SplitSpace(strings.TrimSpace(strings.TrimPrefix(line, "evict")))
+				if len(params) == 0 {
+					f.EvictAll()
+				}
+				for _, p := range params {
+					if reg, err := gbasm.ParseReg(p); err == nil {
+						f.EvictReg(reg)
+					} else {
+						fmt.Printf("Fatal: Expect an evict argument to be a register, but have %v\n", p)
+						os.Exit(1)
+					}
+				}
+				continue
+			}
+			if strings.HasPrefix(line, "acquire") {
+				// acquire will acquire a register for use by evicting any variables in it and marking it as in use
+				params := SplitSpace(strings.TrimSpace(strings.TrimPrefix(line, "acquire")))
+				if len(params) == 0 {
+					fmt.Printf("Fatal: Expect acquire to have register arguments, but have nothing.\n")
+					os.Exit(1)
+				}
+				for _, p := range params {
+					if reg, err := gbasm.ParseReg(p); err == nil {
+						f.Acquire(reg)
+					} else {
+						fmt.Printf("Fatal: Expect an acquire argument to be a register, but have %v\n", p)
+						os.Exit(1)
+					}
+				}
+				continue
+			}
+			if strings.HasPrefix(line, "release") {
+				// release will release a register acquired by "use" or "acquire"
+				params := SplitSpace(strings.TrimSpace(strings.TrimPrefix(line, "release")))
+				if len(params) == 0 {
+					fmt.Printf("Fatal: Expect release to have register arguments, but have nothing.\n")
+					os.Exit(1)
+				}
+				for _, p := range params {
+					if reg, err := gbasm.ParseReg(p); err == nil {
+						f.Release(reg)
+					} else {
+						fmt.Printf("Fatal: Expect a release argument to be a register, but have %v\n", p)
+						os.Exit(1)
+					}
+				}
+				continue
+			}
+
 			if strings.HasPrefix(line, "label") {
 				lname := strings.TrimSpace(strings.TrimPrefix(line, "label"))
 				err := f.Label(lname)
@@ -310,7 +440,7 @@ func main() {
 			for _, i := range jumps {
 				if i == instrUp {
 					if len(parts) != 2 {
-						fmt.Printf("Fatal: Jumps take exactly 1 argument.")
+						fmt.Printf("Fatal: Jumps take exactly 1 argument, but got: %v\n", line)
 						os.Exit(1)
 					}
 					err = f.Jump(instrUp, parts[1])
@@ -325,17 +455,14 @@ func main() {
 			args := make([]interface{}, len(parts)-1)
 			for i := 1; i < len(parts); i++ {
 				if alloc := f.AllocFor(parts[i]); alloc != nil {
-					args[i-1] = alloc.Register()
+					args[i-1] = alloc //alloc.Register()
 					continue
 				}
 				if v := o.VarFor(parts[i]); v != nil {
+					//panic(fmt.Sprintf("VAR FOR %s\n", parts[i]))
 					args[i-1] = v
 					continue
 				}
-				// 				if local, ok := locals[parts[i]]; ok {
-				// 					args[i-1] = local.Register()
-				// 					continue
-				// 				}
 
 				if reg, err := gbasm.ParseReg(parts[i]); err == nil {
 					args[i-1] = reg
@@ -343,12 +470,18 @@ func main() {
 				}
 
 				if strings.HasPrefix(parts[i], "[") {
-					reg, offset, err := ParseIndirect(parts[i])
+					base, offset, err := ParseIndirect(parts[i])
 					if err != nil {
 						fmt.Printf("Fatal: Failed to parse indirection %s: %s\n", parts[i], err)
 						os.Exit(1)
 					}
-					args[i-1] = gbasm.Indirect{Reg: reg, Off: offset}
+					if reg, err := gbasm.ParseReg(base); err == nil {
+						args[i-1] = gbasm.Indirect{Reg: reg, Off: offset, Size: reg.Width()}
+					} else if v := f.AllocFor(base); v != nil {
+						args[i-1] = gbasm.Indirect{Reg: v.Register(), Off: offset, Size: v.RegSize()}
+					} else {
+						panic(fmt.Sprintf("don't know what %s is.", parts[i]))
+					}
 					continue
 				}
 
@@ -362,7 +495,7 @@ func main() {
 					continue
 				}
 				if num, err := strconv.ParseInt(parts[i], 10, 64); err == nil {
-					fmt.Printf("%v -> Parsed %s into %d (%X)\n", parts, parts[i], smallestI(num), smallestI(num))
+					//fmt.Printf("%v -> Parsed %s into %d (%X)\n", parts, parts[i], smallestI(num), smallestI(num))
 					args[i-1] = smallestI(num)
 					continue
 				}
@@ -387,7 +520,7 @@ func main() {
 	}
 
 	for k, f := range o.Funcs {
-		fmt.Printf("Function %s\n", k)
+		//fmt.Printf("Function %s\n", k)
 		_, err := f.Body()
 		if err != nil {
 			fmt.Printf("Can't get function %s body: %s\n", k, err)
@@ -419,14 +552,14 @@ func parseData(s string) ([]byte, error) {
 }
 
 func parseString(s string) ([]byte, error) {
-	fmt.Printf("Parsing string [%s]\n", s)
+	//fmt.Printf("Parsing string [%s]\n", s)
 	if !strings.HasPrefix(s, `"`) {
 		return nil, fmt.Errorf("Expected string to begin with '\"'")
 	}
 	//var closed bool
 	var bs bytes.Buffer
 	for s = s[1:]; len(s) > 0; s = s[1:] {
-		fmt.Printf("Parsing string [%s]\n", s)
+		//fmt.Printf("Parsing string [%s]\n", s)
 		if s[0] == '\\' {
 			switch s[1] {
 			case 'n':
@@ -435,6 +568,8 @@ func parseString(s string) ([]byte, error) {
 				bs.Write([]byte("\\"))
 			case '"':
 				bs.Write([]byte("\""))
+			case '0':
+				bs.Write([]byte{0})
 			}
 			s = s[1:] // Skip the slash and the escaped character will be skipped by the loop.
 		} else if s[0] == '"' {

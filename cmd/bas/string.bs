@@ -3,8 +3,8 @@ package string
 // Parameters to functions are passed in the registers rdi, rsi, rdx, rcx, r8, r9
 // Functions preserve the registers rbx, rsp, rbp, r12, r13, r14, and r15; 
 // while rax, rdi, rsi, rdx, rcx, r8, r9, r10, r11 are scratch registers. 
-
 function strlen
+	type fn(str) num
 	prologue
 	//mov rax 0
 	//mov [rax] 0
@@ -125,10 +125,11 @@ label skipconvert
 
 // puti(i int64)
 function puti
+	type fn(num) none
 	prologue
 	sub rsp 22
 	mov [rsp+22] 0x00
-	mov [rsp+21] 0x0a
+	mov [rsp+21] 0x00
 	
 	mov rsi rsp
 	call itoa
@@ -136,8 +137,8 @@ function puti
 	mov rdi rsp
 	call puts
 	
-	lea rdi [rsp+21]
-	call puts	
+	//lea rdi [rsp+21]
+	//call puts	
 	
 	epilogue
 	ret

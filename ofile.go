@@ -8,30 +8,31 @@ import (
 )
 
 type TypeDescr struct {
-	name string
+	Name string
 	// Properties should be used to distinguish things
 	// like level of indirection, constantness, etc.
-	// Unlike description, these properties must match in order for
+	// Unlike description, these Properties must match in order for
 	// one TypeDescr to be considered equal to another.
-	properties  []string
-	description []byte
+	Properties  []string
+	Description []byte
 }
 
 type Var struct {
-	name string
-	// vtype is a string and must be parsed by the compiler/linker to ensure it matches some
+	Name string
+	// VType is a string and must be parsed by the compiler/linker to ensure it matches some
 	// TypeDescr.
-	vtype string
-	val   []byte
+	VType string
+	Val   []byte
 }
 
-func (v *Var) Offset() int32 {
-	return 0x0CAFEF0D
-}
+// func (v *Var) Offset() int32 {
+// 	panic("VAR OFFSET")
+// 	//return 0x0CAFEF0D
+// }
 
 type Symbol struct {
-	name   string
-	offset uint32
+	Name   string
+	Offset uint32
 }
 
 type reltype int
@@ -43,18 +44,18 @@ const (
 )
 
 type Relocation struct {
-	offset uint32
+	Offset uint32
 	//rel_type reltype
-	symbol string
+	Symbol string
 	//addend int32
 }
 
 func (r *Relocation) Apply(bs []byte, value int32) {
-	target := value - int32(r.offset) - 4
+	target := value - int32(r.Offset) - 4
 	//if r.rel_type == RA_386_PC32 {
 	//	target += r.addend
 	//}
-	bs = bs[r.offset:]
+	bs = bs[r.Offset:]
 	bss := bytes.NewBuffer(bs)
 	bss.Truncate(0)
 	err := binary.Write(bss, binary.LittleEndian, target)
@@ -66,10 +67,10 @@ func (r *Relocation) Apply(bs []byte, value int32) {
 type OFile struct {
 	Filename  string
 	Pkgname   string
-	exeformat string
-	types     map[string]*TypeDescr
-	data      map[string]*Var
-	vars      map[string]*Var
+	ExeFormat string
+	Types     map[string]*TypeDescr
+	Data      map[string]*Var
+	Vars      map[string]*Var
 	Funcs     map[string]*Function
 
 	// Not written
@@ -84,29 +85,29 @@ func NewOFile(name string, pkgname string) (*OFile, error) {
 	return &OFile{
 		Filename: name,
 		Pkgname:  pkgname,
-		types:    make(map[string]*TypeDescr),
-		data:     make(map[string]*Var),
-		vars:     make(map[string]*Var),
+		Types:    make(map[string]*TypeDescr),
+		Data:     make(map[string]*Var),
+		Vars:     make(map[string]*Var),
 		Funcs:    make(map[string]*Function),
 		a:        a, // TODO: Hard coded for now. This should be a parameter and written to the ofile.
 	}, nil
 }
 
 func (o *OFile) Type(name string, properties []string, description []byte) error {
-	if o.types[name] != nil {
+	if o.Types[name] != nil {
 		return fmt.Errorf("Type %s already declared.", name)
 	}
-	o.types[name] = &TypeDescr{
-		name:        name,
-		properties:  properties,
-		description: description,
+	o.Types[name] = &TypeDescr{
+		Name:        name,
+		Properties:  properties,
+		Description: description,
 	}
 	return nil
 }
 
-// Var declares a mutable variable of type vtype at package scope.
-func (o *OFile) Var(name, vtype string, val interface{}) error {
-	if o.vars[name] != nil || o.data[name] != nil || o.Funcs[name] != nil {
+// AddVar declares a mutable variable of type vtype at package scope.
+func (o *OFile) AddVar(name, vtype string, val interface{}) error {
+	if o.Vars[name] != nil || o.Data[name] != nil || o.Funcs[name] != nil {
 		return fmt.Errorf("Name %s already declared.", name)
 	}
 	switch v := val.(type) {
@@ -115,13 +116,13 @@ func (o *OFile) Var(name, vtype string, val interface{}) error {
 	}
 	var bs bytes.Buffer
 	binary.Write(&bs, binary.LittleEndian, val)
-	o.vars[name] = &Var{name, vtype, bs.Bytes()}
+	o.Vars[name] = &Var{name, vtype, bs.Bytes()}
 	return nil
 }
 
-// Data declares a piece of immutable data of type vtype at package scope.
-func (o *OFile) Data(name, vtype string, val interface{}) error {
-	if o.vars[name] != nil || o.data[name] != nil || o.Funcs[name] != nil {
+// AddData declares a piece of immutable data of type vtype at package scope.
+func (o *OFile) AddData(name, vtype string, val interface{}) error {
+	if o.Vars[name] != nil || o.Data[name] != nil || o.Funcs[name] != nil {
 		return fmt.Errorf("Name %s already declared.", name)
 	}
 	switch v := val.(type) {
@@ -130,15 +131,15 @@ func (o *OFile) Data(name, vtype string, val interface{}) error {
 	}
 	var bs bytes.Buffer
 	binary.Write(&bs, binary.LittleEndian, val)
-	o.data[name] = &Var{name, vtype, bs.Bytes()}
+	o.Data[name] = &Var{name, vtype, bs.Bytes()}
 	return nil
 }
 
 func (o *OFile) VarFor(name string) *Var {
-	if v := o.vars[name]; v != nil {
+	if v := o.Vars[name]; v != nil {
 		return v
 	}
-	return o.data[name]
+	return o.Data[name]
 }
 
 func ReadOFile(filename string) (*OFile, error) {

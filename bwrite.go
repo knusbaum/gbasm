@@ -88,33 +88,33 @@ func readTypeDescrs(r io.Reader) (map[string]*TypeDescr, error) {
 		if err != nil {
 			return nil, err
 		}
-		m[t.name] = t
+		m[t.Name] = t
 	}
 	return m, nil
 }
 
 func writeTypeDescr(w io.Writer, t *TypeDescr) error {
-	err := writeString(w, t.name)
+	err := writeString(w, t.Name)
 	if err != nil {
 		return err
 	}
-	var size int = len(t.properties)
+	var size int = len(t.Properties)
 	err = writeSize(w, size)
 	if err != nil {
 		return err
 	}
-	for _, p := range t.properties {
+	for _, p := range t.Properties {
 		err := writeString(w, p)
 		if err != nil {
 			return err
 		}
 	}
-	size = len(t.description)
+	size = len(t.Description)
 	err = writeSize(w, size)
 	if err != nil {
 		return err
 	}
-	return binary.Write(w, binary.LittleEndian, t.description)
+	return binary.Write(w, binary.LittleEndian, t.Description)
 }
 
 func readTypeDescr(r io.Reader) (*TypeDescr, error) {
@@ -143,7 +143,7 @@ func readTypeDescr(r io.Reader) (*TypeDescr, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &TypeDescr{name: name, properties: ps, description: bs}, nil
+	return &TypeDescr{Name: name, Properties: ps, Description: bs}, nil
 }
 
 func writeVars(w io.Writer, vs map[string]*Var) error {
@@ -172,25 +172,25 @@ func readVars(r io.Reader) (map[string]*Var, error) {
 		if err != nil {
 			return nil, err
 		}
-		m[t.name] = t
+		m[t.Name] = t
 	}
 	return m, nil
 }
 
 func writeVar(w io.Writer, v *Var) error {
-	err := writeString(w, v.name)
+	err := writeString(w, v.Name)
 	if err != nil {
 		return err
 	}
-	err = writeString(w, v.vtype)
+	err = writeString(w, v.VType)
 	if err != nil {
 		return err
 	}
-	err = writeSize(w, len(v.val))
+	err = writeSize(w, len(v.Val))
 	if err != nil {
 		return err
 	}
-	return binary.Write(w, binary.LittleEndian, v.val)
+	return binary.Write(w, binary.LittleEndian, v.Val)
 }
 
 func readVar(r io.Reader) (*Var, error) {
@@ -211,15 +211,15 @@ func readVar(r io.Reader) (*Var, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Var{name: name, vtype: vtype, val: bs}, nil
+	return &Var{Name: name, VType: vtype, Val: bs}, nil
 }
 
 func writeSymbol(w io.Writer, v *Symbol) error {
-	err := writeString(w, v.name)
+	err := writeString(w, v.Name)
 	if err != nil {
 		return err
 	}
-	err = binary.Write(w, binary.LittleEndian, v.offset)
+	err = binary.Write(w, binary.LittleEndian, v.Offset)
 	if err != nil {
 		return err
 	}
@@ -236,11 +236,11 @@ func readSymbol(r io.Reader) (Symbol, error) {
 	if err != nil {
 		return Symbol{}, err
 	}
-	return Symbol{name: name, offset: offset}, nil
+	return Symbol{Name: name, Offset: offset}, nil
 }
 
 func writeRelocation(w io.Writer, v *Relocation) error {
-	err := binary.Write(w, binary.LittleEndian, v.offset)
+	err := binary.Write(w, binary.LittleEndian, v.Offset)
 	if err != nil {
 		return err
 	}
@@ -249,7 +249,7 @@ func writeRelocation(w io.Writer, v *Relocation) error {
 	// 	if err != nil {
 	// 		return err
 	// 	}
-	err = writeString(w, v.symbol)
+	err = writeString(w, v.Symbol)
 	if err != nil {
 		return err
 	}
@@ -262,7 +262,7 @@ func writeRelocation(w io.Writer, v *Relocation) error {
 
 func readRelocation(r io.Reader) (Relocation, error) {
 	var rel Relocation
-	err := binary.Read(r, binary.LittleEndian, &rel.offset)
+	err := binary.Read(r, binary.LittleEndian, &rel.Offset)
 	if err != nil {
 		return Relocation{}, err
 	}
@@ -276,7 +276,7 @@ func readRelocation(r io.Reader) (Relocation, error) {
 	if err != nil {
 		return Relocation{}, err
 	}
-	rel.symbol = sym
+	rel.Symbol = sym
 	// 	err = binary.Read(r, binary.LittleEndian, &rel.addend)
 	// 	if err != nil {
 	// 		return Relocation{}, err
@@ -310,7 +310,7 @@ func readFunctions(r io.Reader) (map[string]*Function, error) {
 		if err != nil {
 			return nil, err
 		}
-		m[f.name] = f
+		m[f.Name] = f
 	}
 	return m, nil
 }
@@ -319,46 +319,50 @@ func writeFunction(w io.Writer, f *Function) error {
 	if err := f.Resolve(); err != nil {
 		return err
 	}
-	err := writeString(w, f.name)
+	err := writeString(w, f.Name)
 	if err != nil {
 		return err
 	}
-	err = writeString(w, f.srcFile)
+	err = writeString(w, f.Type)
 	if err != nil {
 		return err
 	}
-	err = writeSize(w, f.srcLine)
+	err = writeString(w, f.SrcFile)
 	if err != nil {
 		return err
 	}
-	size := len(f.args)
+	err = writeSize(w, f.SrcLine)
+	if err != nil {
+		return err
+	}
+	size := len(f.Args)
 	err = writeSize(w, size)
 	if err != nil {
 		return err
 	}
-	for _, v := range f.args {
+	for _, v := range f.Args {
 		err := writeVar(w, v)
 		if err != nil {
 			return err
 		}
 	}
-	size = len(f.symbols)
+	size = len(f.Symbols)
 	err = writeSize(w, size)
 	if err != nil {
 		return err
 	}
-	for _, v := range f.symbols {
+	for _, v := range f.Symbols {
 		err := writeSymbol(w, &v)
 		if err != nil {
 			return err
 		}
 	}
-	size = len(f.relocations)
+	size = len(f.Relocations)
 	err = writeSize(w, size)
 	if err != nil {
 		return err
 	}
-	for _, r := range f.relocations {
+	for _, r := range f.Relocations {
 		//log.Printf("Writing relocation: %#v\n", r)
 		err := writeRelocation(w, &r)
 		if err != nil {
@@ -383,6 +387,10 @@ func writeFunction(w io.Writer, f *Function) error {
 
 func readFunction(r io.Reader) (*Function, error) {
 	name, err := readString(r)
+	if err != nil {
+		return nil, err
+	}
+	fType, err := readString(r)
 	if err != nil {
 		return nil, err
 	}
@@ -441,12 +449,13 @@ func readFunction(r io.Reader) (*Function, error) {
 		return nil, err
 	}
 	return &Function{
-		name:        name,
-		srcFile:     srcFile,
-		srcLine:     srcLine,
-		args:        args,
-		symbols:     symbols,
-		relocations: relocations,
+		Name:        name,
+		Type:        fType,
+		SrcFile:     srcFile,
+		SrcLine:     srcLine,
+		Args:        args,
+		Symbols:     symbols,
+		Relocations: relocations,
 		bodyBs:      bodyBs,
 	}, nil
 }
@@ -456,19 +465,19 @@ func writeOFile(w io.Writer, o *OFile) error {
 	if err != nil {
 		return err
 	}
-	err = writeString(w, o.exeformat)
+	err = writeString(w, o.ExeFormat)
 	if err != nil {
 		return err
 	}
-	err = writeTypeDescrs(w, o.types)
+	err = writeTypeDescrs(w, o.Types)
 	if err != nil {
 		return err
 	}
-	err = writeVars(w, o.data)
+	err = writeVars(w, o.Data)
 	if err != nil {
 		return err
 	}
-	err = writeVars(w, o.vars)
+	err = writeVars(w, o.Vars)
 	if err != nil {
 		return err
 	}
@@ -506,10 +515,10 @@ func readOFile(r io.Reader) (*OFile, error) {
 	}
 	return &OFile{
 		Pkgname:   pkgname,
-		exeformat: exeformat,
-		types:     types,
-		data:      data,
-		vars:      vars,
+		ExeFormat: exeformat,
+		Types:     types,
+		Data:      data,
+		Vars:      vars,
 		Funcs:     funcs,
 	}, nil
 }

@@ -369,7 +369,7 @@ func WriteElf(exename string, sections []Elf64_Section) {
 				} else if sym.Type == SYM_OBJECT {
 					info = STT_OBJECT
 				}
-				fmt.Printf("SYMBOL %s IN SECTION %d AT OFFSET: %v\n", sym.Name, secti, sym.Address)
+				//fmt.Printf("SYMBOL %s IN SECTION %d AT OFFSET: %v\n", sym.Name, secti, sym.Address)
 				binary.Write(&symbs, binary.LittleEndian, Elf64_Sym{
 					st_name:  st.StrOff(sym.Name),
 					st_info:  info, //| (STB_GLOBAL << 4),
@@ -414,7 +414,7 @@ func WriteElf(exename string, sections []Elf64_Section) {
 	}
 
 	// Write the things.
-	f, err := os.OpenFile(exename, os.O_CREATE|os.O_RDWR, 0755)
+	f, err := os.OpenFile(exename, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0755)
 	if err != nil {
 		log.Fatalf("Failed to create file: %s", err)
 	}

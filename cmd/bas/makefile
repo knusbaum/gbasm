@@ -1,6 +1,6 @@
 
 
-all: bas bld out.o
+all: _bas _bld out.o
 
 asm: _bld _bas
 

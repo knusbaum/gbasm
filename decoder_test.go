@@ -23,43 +23,43 @@ func TestEncoder(t *testing.T) {
 	}
 
 	var bs bytes.Buffer
-	err = a.Encode(&bs, "MOV", R_AL, R_AH)
+	_, err = a.Encode(&bs, "MOV", R_AL, R_AH)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = a.Encode(&bs, "MOV", R_RAX, R_RBX)
+	_, err = a.Encode(&bs, "MOV", R_RAX, R_RBX)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = a.Encode(&bs, "ADD", R_AX, R_BX)
+	_, err = a.Encode(&bs, "ADD", R_AX, R_BX)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = a.Encode(&bs, "ADD", R_EAX, R_EBX)
+	_, err = a.Encode(&bs, "ADD", R_EAX, R_EBX)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = a.Encode(&bs, "ADD", R_RAX, R_RBX)
+	_, err = a.Encode(&bs, "ADD", R_RAX, R_RBX)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = a.Encode(&bs, "ADD", R_RAX, R_RSP)
+	_, err = a.Encode(&bs, "ADD", R_RAX, R_RSP)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = a.Encode(&bs, "ADD", R_EAX, R_ESP)
+	_, err = a.Encode(&bs, "ADD", R_EAX, R_ESP)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = a.Encode(&bs, "CMP", R_AX, uint16(10))
+	_, err = a.Encode(&bs, "CMP", R_AX, uint16(10))
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = a.Encode(&bs, "CMP", R_AX, R_DX)
+	_, err = a.Encode(&bs, "CMP", R_AX, R_DX)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = a.Encode(&bs, "JE", int8(-10))
+	_, err = a.Encode(&bs, "JE", int8(-10))
 	if err != nil {
 		t.Fatal(err)
 	}
