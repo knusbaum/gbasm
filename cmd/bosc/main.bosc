@@ -133,6 +133,9 @@ fn test5() {
 	yb = x[0]
 	puts("x[0]: ")
 	putb(yb)
+	yb = x[1]
+	puts("\nx[1]: ")
+	putb(yb)
 	puts("\n\n")
 }
 

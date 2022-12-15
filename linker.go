@@ -146,7 +146,18 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 		}
 	}
 
+	needfnm := make(map[*Function]struct{})
 	needfn := make([]*Function, 1)
+
+	addNeeded := func(f *Function) {
+		if _, ok := needfnm[f]; ok {
+			// Already have f
+			return
+		}
+		needfnm[f] = struct{}{}
+		needfn = append(needfn, f)
+	}
+
 	//needvar := make([]*Var, 0)
 	main, ok := funcs["start"]
 	if !ok {
@@ -166,6 +177,7 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 	for len(needfn) > 0 {
 		current := needfn[0]
 		needfn = needfn[1:]
+		fmt.Printf("Adding function [%s]\n", current.Name)
 		fbs, err := current.Body()
 		if err != nil {
 			log.Fatalf("Failed to resolve function body: %s", err)
@@ -186,8 +198,8 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 				// Function relocation
 				//log.Printf("LINKER FOUND RELOCATION AT OFFSET %d to function %s", r.offset, r.symbol)
 				if _, ok := funclocs[r.Symbol]; !ok {
-					//log.Printf("%s is *NOT* in funclocs. Appending function %#v to needfn.\n", r.symbol, fn)
-					needfn = append(needfn, fn)
+					//log.Printf("%s is *NOT* in funclocs. Appending function %#v to needfn.\n", r.Symbol, fn)
+					addNeeded(fn)
 				}
 			} else if v, ok := vars[r.Symbol]; ok {
 				// Variable relocation
