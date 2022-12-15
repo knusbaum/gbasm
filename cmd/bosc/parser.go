@@ -195,8 +195,8 @@ func (p *Parser) parseTok() *Node {
 		return &Node{p: c.p}
 	}
 	p.advance()
-	panic(&interpreterError{fmt.Sprintf("Expected number, string, identifier or semicolon, but found: %s\n", c.t), c.p})
-	//panic(fmt.Sprintf("Expected number, string, identifier or semicolon, but found: %s\n", c.t))
+	//panic(&interpreterError{fmt.Sprintf("Expected number, string, identifier or semicolon, but found: %s\n", c.t), c.p})
+	panic(fmt.Sprintf("Expected number, string, identifier or semicolon, but found: %s\n", c.t))
 }
 
 func (p *Parser) parseTypeName() *Node {

@@ -91,7 +91,7 @@ func main() {
 			}
 			//fmt.Printf("WRITING %#v\n", n)
 			n.replaceStrings(ctx)
-			n.compile(ctx, &bs, "")
+			n.compile(ctx, &bs, noval())
 		}
 		ctx.WriteStrings(of)
 		io.Copy(of, &bs)

@@ -10,8 +10,6 @@ import (
 	"log"
 	"reflect"
 	"strconv"
-
-	"github.com/davecgh/go-spew/spew"
 )
 
 const (
@@ -772,14 +770,18 @@ func (a *Asm) Encode(w WriteLener, instr string, os ...interface{}) ([]Relocatio
 			newos = append(newos, t)
 		}
 	}
-	found := false
+
 	for {
+		found := false
 		r, err := inst.Encode(w, newos...)
 		if err == nil {
 			return r, err
 		}
-		fmt.Printf("FAILED TO ENCODE %#v:\n", newos)
-		spew.Dump(newos)
+		fmt.Printf("FAILED TO ENCODE: %s ", instr)
+		for _, o := range newos {
+			fmt.Printf("%s ", o)
+		}
+		fmt.Printf("\n")
 		for i, o := range newos {
 			if _, ok := o.(Indirect); ok {
 				if ra, ok := os[i].(*Ralloc); ok {
@@ -792,8 +794,11 @@ func (a *Asm) Encode(w WriteLener, instr string, os ...interface{}) ([]Relocatio
 		if !found {
 			return r, err
 		}
-		fmt.Printf("TRYING AGAIN WITH:\n")
-		spew.Dump(newos)
+		fmt.Printf("TRYING AGAIN WITH: %s ", instr)
+		for _, o := range newos {
+			fmt.Printf("%s ", o)
+		}
+		fmt.Printf("\n")
 	}
 }
 

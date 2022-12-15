@@ -34,6 +34,10 @@ func tn_str() typename {
 	return typename{name: "str"}
 }
 
+func tn_byte() typename {
+	return typename{name: "byte"}
+}
+
 type structDef struct {
 	fields map[string]typename
 }
@@ -63,6 +67,7 @@ func NewVContext() *VContext {
 			"void": tn_void(),
 			"num":  tn_num(),
 			"str":  tn_str(),
+			"byte": tn_byte(),
 		},
 		structs: make(map[typename]*structDef),
 	}
@@ -115,18 +120,18 @@ func (c *VContext) declStruct(t typename, d *structDef) error {
 	return nil
 }
 
-func (c *VContext) typeFor(t string) (typename, bool) {
-	if tn, ok := c.validTypes[t]; ok {
+func (c *VContext) typeByName(name string) (typename, bool) {
+	if tn, ok := c.validTypes[name]; ok {
 		return tn, ok
 	}
 	if c.parent != nil {
-		return c.parent.typeFor(t)
+		return c.parent.typeByName(name)
 	}
 	return tn_void(), false
 }
 
 func (c *VContext) defType(n string, t typename) bool {
-	if ot, ok := c.typeFor(n); ok {
+	if ot, ok := c.typeByName(n); ok {
 		if t != ot {
 			return false
 		}
@@ -426,7 +431,7 @@ func validate(n *Node, c *VContext) typename {
 		return tn_num()
 	case n_struct:
 		for _, field := range n.args {
-			if _, ok := c.typeFor(field.args[0].sval); !ok {
+			if _, ok := c.typeByName(field.args[0].sval); !ok {
 				panic(&interpreterError{msg: fmt.Sprintf("Type %s undefined.", field.args[0].sval), p: field.args[0].p})
 			}
 		}
@@ -445,7 +450,7 @@ func validate(n *Node, c *VContext) typename {
 		}
 		return tn_void()
 	case n_stlit:
-		t, ok := c.typeFor(n.sval)
+		t, ok := c.typeByName(n.sval)
 		if !ok {
 			panic(&interpreterError{msg: fmt.Sprintf("No such type %s.", n.sval)})
 		}
@@ -461,7 +466,7 @@ func validate(n *Node, c *VContext) typename {
 		}
 		return tn_void()
 	case n_typename:
-		t, ok := c.typeFor(n.sval)
+		t, ok := c.typeByName(n.sval)
 		if !ok {
 			panic(&interpreterError{msg: fmt.Sprintf("no such type '%s'.", n.sval), p: n.p})
 		}
@@ -489,6 +494,18 @@ func validate(n *Node, c *VContext) typename {
 			panic(&interpreterError{msg: fmt.Sprintf("%s is not a field ", n.args[1].sval), p: n.p})
 		}
 		return ft
+	case n_index:
+		t, ok := c.binding(n.sval)
+		if !ok {
+			panic(&interpreterError{msg: fmt.Sprintf("%s is not bound to a type.", n.sval), p: n.p})
+		}
+		if t.ind != 0 {
+			panic(&interpreterError{msg: fmt.Sprintf("cannot yet index into pointers (%s).", n.sval), p: n.p})
+		}
+		if t.name != "str" {
+			panic(&interpreterError{msg: fmt.Sprintf("can only index into strings for now (%s).", n.sval), p: n.p})
+		}
+		return tn_byte()
 	default:
 		fmt.Printf("NOT IMPLEMENTED FOR:\n")
 		spew.Dump(n)

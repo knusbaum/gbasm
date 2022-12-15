@@ -9,6 +9,40 @@ import (
 	"github.com/knusbaum/gbasm"
 )
 
+type ValType int
+
+const (
+	vt_none ValType = iota
+	vt_num
+	vt_str
+	vt_fn
+	vt_builtin
+	vt_struct
+)
+
+type Value struct {
+	T       ValType
+	nval    float64
+	sval    string
+	fnval   *Node
+	builtin interface{}
+	s       *structVal
+}
+
+type structVal struct {
+	T    string
+	vals map[string]Value
+}
+
+type interpreterError struct {
+	msg string
+	p   position
+}
+
+func (e *interpreterError) Error() string {
+	return fmt.Sprintf("at %s: %s", e.p, e.msg)
+}
+
 type structField struct {
 	typename string
 	offset   int
@@ -105,6 +139,8 @@ func (c *CompileContext) typeSize(name string) (int, bool) {
 		return 8, true // pointer
 	case "void":
 		return 0, true
+	case "byte":
+		return 1, true
 	default:
 		if st, ok := c.types[name]; ok {
 			size := 0
@@ -141,7 +177,7 @@ func (c *CompileContext) Temp(of io.Writer) val {
 	c.tempi++
 	t := fmt.Sprintf("_T%d", c.tempi)
 	fmt.Fprintf(of, "\tlocal %s 64\n", t)
-	return regval(t)
+	return regval(t, 64)
 }
 
 // TempB declares a temporary byte
@@ -149,14 +185,14 @@ func (c *CompileContext) TempB(of io.Writer) val {
 	c.tempi++
 	t := fmt.Sprintf("_T%d", c.tempi)
 	fmt.Fprintf(of, "\tlocal %s 8\n", t)
-	return regval(t)
+	return regval(t, 8)
 }
 
 func (c *CompileContext) TempBytes(size int, of io.Writer) val {
 	c.tempi++
 	t := fmt.Sprintf("_T%d", c.tempi)
 	fmt.Fprintf(of, "\tbytes %s %d\n", t, size)
-	return regval(t)
+	return regval(t, size)
 }
 
 func (c *CompileContext) Return(of io.Writer) {
@@ -221,7 +257,7 @@ func setupArgs(ctx *CompileContext, of io.Writer, args []*Node) {
 		var a val
 		switch i {
 		case 0:
-			a = args[i].compile(ctx, of, "rdi")
+			a = args[i].compile(ctx, of, regval("rdi", 64))
 			if a.ref != "rdi" {
 				//fmt.Fprintf(of, "//// CHECK THIS\n")
 				a.LoadInto(ctx, of, "rdi")
@@ -231,7 +267,7 @@ func setupArgs(ctx *CompileContext, of io.Writer, args []*Node) {
 				//a.LoadInto(ctx, of, "rdi")
 			}
 		case 1:
-			a = args[i].compile(ctx, of, "rsi")
+			a = args[i].compile(ctx, of, regval("rsi", 64))
 			if a.ref != "rsi" {
 				//fmt.Fprintf(of, "//// CHECK THIS\n")
 				a.LoadInto(ctx, of, "rsi")
@@ -241,7 +277,7 @@ func setupArgs(ctx *CompileContext, of io.Writer, args []*Node) {
 				// 				a.LoadInto(ctx, of, "rsi")
 			}
 		case 2:
-			a = args[i].compile(ctx, of, "rdx")
+			a = args[i].compile(ctx, of, regval("rdx", 64))
 			if a.ref != "rdx" {
 				// 				fmt.Fprintf(of, "//// CHECK THIS\n")
 				a.LoadInto(ctx, of, "rdx")
@@ -251,7 +287,7 @@ func setupArgs(ctx *CompileContext, of io.Writer, args []*Node) {
 				// 				a.LoadInto(ctx, of, "rdx")
 			}
 		case 3:
-			a = args[i].compile(ctx, of, "rcx")
+			a = args[i].compile(ctx, of, regval("rcx", 64))
 			if a.ref != "rcx" {
 				//				fmt.Fprintf(of, "//// CHECK THIS\n")
 				a.LoadInto(ctx, of, "rcx")
@@ -261,7 +297,7 @@ func setupArgs(ctx *CompileContext, of io.Writer, args []*Node) {
 				// 				a.LoadInto(ctx, of, "rcx")
 			}
 		case 4:
-			a = args[i].compile(ctx, of, "r8")
+			a = args[i].compile(ctx, of, regval("r8", 64))
 			if a.ref != "r8" {
 				//				fmt.Fprintf(of, "//// CHECK THIS\n")
 				a.LoadInto(ctx, of, "r8")
@@ -271,7 +307,7 @@ func setupArgs(ctx *CompileContext, of io.Writer, args []*Node) {
 				// 				a.LoadInto(ctx, of, "r8")
 			}
 		case 5:
-			a = args[i].compile(ctx, of, "r9")
+			a = args[i].compile(ctx, of, regval("r9", 64))
 			if a.ref != "r9" {
 				//				fmt.Fprintf(of, "//// CHECK THIS\n")
 				a.LoadInto(ctx, of, "r9")
@@ -311,18 +347,28 @@ const (
 )
 
 type val struct {
-	ref string
-	t   vtype
+	ref  string
+	t    vtype
+	size int
 }
 
 func (v val) LoadInto(ctx *CompileContext, of io.Writer, s string) {
 	switch v.t {
 	case v_str:
+		fmt.Fprintf(of, "\t//v_str\n")
 		fmt.Fprintf(of, "\tlea %s %s\n", s, v.ref)
 	case v_num:
+		fmt.Fprintf(of, "\t//v_num\n")
 		fmt.Fprintf(of, "\tmov %s %s\n", s, v.ref)
 	case v_reg:
-		fmt.Fprintf(of, "\tmov %s %s\n", s, v.ref)
+		if v.size < 8 {
+			// EXTEND ZEROS!
+			fmt.Fprintf(of, "\t//v_reg %#v (extend)\n", v)
+			fmt.Fprintf(of, "\tmovzx %s %s\n", s, v.ref)
+		} else {
+			fmt.Fprintf(of, "\t//v_reg %#v\n", v)
+			fmt.Fprintf(of, "\tmov %s %s\n", s, v.ref)
+		}
 	default:
 		panic(fmt.Sprintf("CANNOT LOAD %v\n", v))
 	}
@@ -336,15 +382,15 @@ func strval(s string) val {
 	return val{ref: s, t: v_str}
 }
 
-func regval(s string) val {
-	return val{ref: s, t: v_reg}
+func regval(s string, size int) val {
+	return val{ref: s, t: v_reg, size: size}
 }
 
 func noval() val {
 	return val{}
 }
 
-func (n *Node) compileEQDOT(ctx *CompileContext, of io.Writer, prefreg string) val {
+func (n *Node) compileEQDOT(ctx *CompileContext, of io.Writer, prefreg val) val {
 	// 	var t1 val
 	// 	if prefreg != "" {
 	// 		t1 = regval(prefreg)
@@ -387,14 +433,14 @@ func (n *Node) compileEQDOT(ctx *CompileContext, of io.Writer, prefreg string) v
 
 	// Compile the thing we're getting the field from into a ref. This can be just a symbol if it's a variable, or an
 	// expression that yields a struct.
-	v1 := n.args[0].compile(ctx, of, "")
+	v1 := n.args[0].compile(ctx, of, noval())
 	if v1.ref == "" {
 		panic("OK")
 	}
 
 	var t1 val
-	if prefreg != "" {
-		t1 = regval(prefreg)
+	if prefreg != noval() {
+		t1 = prefreg
 	} else {
 		t1 = ctx.Temp(of)
 	}
@@ -406,7 +452,7 @@ func (n *Node) compileEQDOT(ctx *CompileContext, of io.Writer, prefreg string) v
 	return t1
 }
 
-func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
+func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg val) val {
 	switch n.t {
 	case n_number:
 		return numval(int(n.nval)) //fmt.Sprintf("%d", int(n.nval))
@@ -414,24 +460,48 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 		//panic("NOT IMPLEMENTED")
 		return strval(n.sval)
 	case n_symbol:
+		t, ok := ctx.typeOf(n)
+		if !ok {
+			panic(fmt.Sprintf("No type name for %#v\n", n))
+		}
+		s, ok := ctx.typeSize(t.name)
+		if !ok {
+			panic(fmt.Sprintf("No type size for %#v\n", n))
+		}
 		//panic("NOT IMPLEMENTED")
-		return regval(n.sval)
+		return regval(n.sval, s)
 	case n_funcall:
 		setupArgs(ctx, of, n.args)
 		if !ctx.registers.Use(gbasm.R_RAX) {
 			panic(fmt.Sprintf("Could not acquire RAX for return value.\n"))
 		}
 		fmt.Fprintf(of, "\tcall %s\n", n.sval)
-		return regval("rax")
+		return regval("rax", 64)
 	case n_index:
-		panic("NOT IMPLEMENTED")
+		// Currently only string indexing is supported.
+		var t1 val
+		if prefreg != noval() {
+			t1 = prefreg
+		} else {
+			t1 = ctx.Temp(of)
+		}
+		if n.sval != t1.ref {
+			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", t1.ref, n.sval, int(n.args[0].nval))
+		} else {
+			panic("IS THIS EVER USED?")
+			fmt.Fprintf(of, "\tadd %s %d\n", t1.ref, int(n.args[0].nval))
+		}
+		fmt.Printf("%v\n", t1)
+		spew.Dump(n)
+		//panic("NOT IMPLEMENTED")
+		return t1
 	case n_struct:
 		n.createStruct(ctx)
 		return noval()
 	case n_stlit:
 		//spew.Dump(n)
 		//fmt.Printf("Compiling struct literal into %s\n", prefreg)
-		if prefreg == "" {
+		if prefreg == noval() {
 			panic(fmt.Sprintf("Cannot compile struct literal into blank register/var"))
 		}
 
@@ -446,16 +516,16 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 				panic(fmt.Sprintf("no such field %s", f.sval))
 			}
 			// TODO: Can optimize away t1
-			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", t1.ref, prefreg, field.offset)
-			v := f.args[0].compile(ctx, of, t1.ref)
+			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", t1.ref, prefreg.ref, field.offset)
+			v := f.args[0].compile(ctx, of, t1)
 			if v != t1 {
 				//fmt.Fprintf(of, "\tmov [%s+%d] %s\n", prefreg, field.offset, v.ref)
-				v.LoadInto(ctx, of, fmt.Sprintf("[%s+%d]", prefreg, field.offset))
+				v.LoadInto(ctx, of, fmt.Sprintf("[%s+%d]", prefreg.ref, field.offset))
 				release(ctx, of, v)
 			}
 		}
 		release(ctx, of, t1)
-		return regval(prefreg)
+		return prefreg
 		//panic(fmt.Sprintf("NOT IMPLEMENTED: instantiate struct literal %s into %s", n.sval, prefreg))
 	case n_stfield:
 		panic("n_stfield NOT IMPLEMENTED")
@@ -463,12 +533,24 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 		retlab := ctx.Label()
 		ctx.retlabs = append(ctx.retlabs, retlab)
 		fmt.Fprintf(of, "function %s\n", n.sval)
-		for i := 0; i < int(n.nval); i++ {
-			fmt.Fprintf(of, "\targi %s %d\n", n.args[i].sval, i)
+		obindings := ctx.bindings
+		nbindings := make(map[string]*typename)
+		for k, v := range obindings {
+			nbindings[k] = v
 		}
+		for i := 0; i < int(n.nval); i++ {
+			spew.Dump(n.args[i])
+
+			fmt.Fprintf(of, "\targi %s %d\n", n.args[i].sval, i)
+			nbindings[n.args[i].sval] = &typename{name: n.args[i].args[0].sval}
+		}
+
+		ctx.bindings = nbindings
+		defer func() { ctx.bindings = obindings }()
+
 		fmt.Fprintf(of, "\n\tprologue\n\n")
 		for _, arg := range n.args[int(n.nval+1):] {
-			release(ctx, of, arg.compile(ctx, of, ""))
+			release(ctx, of, arg.compile(ctx, of, noval()))
 		}
 		fmt.Fprintf(of, "\n\tlabel %s\n", retlab)
 		fmt.Fprintf(of, "\tepilogue\n")
@@ -497,14 +579,14 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 
 		// Compile the thing we're getting the field from into a ref. This can be just a symbol if it's a variable, or an
 		// expression that yields a struct.
-		v1 := n.args[0].compile(ctx, of, "")
+		v1 := n.args[0].compile(ctx, of, noval())
 		if v1.ref == "" {
 			panic("OK")
 		}
 
 		var t1 val
-		if prefreg != "" {
-			t1 = regval(prefreg)
+		if prefreg != noval() {
+			t1 = prefreg
 		} else {
 			t1 = ctx.Temp(of)
 		}
@@ -530,13 +612,13 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 		//}
 		//rs := strings.ToLower(r.String())
 		var t1 val
-		if prefreg != "" {
-			t1 = regval(prefreg)
+		if prefreg != noval() {
+			t1 = prefreg
 		} else {
 			t1 = ctx.Temp(of)
 		}
 		//t1 := ctx.Temp(of)
-		one := n.args[0].compile(ctx, of, t1.ref)
+		one := n.args[0].compile(ctx, of, t1)
 		if one.t != v_num && one.t != v_reg {
 			panic("CANNOT ADD NON-NUMBERS\n")
 		}
@@ -546,7 +628,7 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 		//one.LoadInto(t1)
 		release(ctx, of, one)
 
-		two := n.args[1].compile(ctx, of, "")
+		two := n.args[1].compile(ctx, of, noval())
 		fmt.Fprintf(of, "\tadd %s %s\n", t1.ref, two.ref)
 		release(ctx, of, two)
 		return t1
@@ -557,12 +639,12 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 		// 		}
 		// 		rs := strings.ToLower(r.String())
 		var t1 val
-		if prefreg != "" {
-			t1 = regval(prefreg)
+		if prefreg != noval() {
+			t1 = prefreg
 		} else {
 			t1 = ctx.Temp(of)
 		}
-		one := n.args[0].compile(ctx, of, t1.ref)
+		one := n.args[0].compile(ctx, of, t1)
 		if one.t != v_num && one.t != v_reg {
 			panic("CANNOT ADD NON-NUMBERS\n")
 		}
@@ -571,7 +653,7 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 		}
 		release(ctx, of, one)
 
-		two := n.args[1].compile(ctx, of, "")
+		two := n.args[1].compile(ctx, of, noval())
 		fmt.Fprintf(of, "\tsub %s %s\n", t1.ref, two.ref)
 		release(ctx, of, two)
 		return t1
@@ -585,9 +667,9 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 		//fmt.Fprintf(of, "\tmov %s %s\n", t1.ref, v.ref)
 		if n.args[0].t == n_dot {
 			//v := n.args[1].compile(ctx, of, "")
-			dst := n.args[0].compileEQDOT(ctx, of, "")
+			dst := n.args[0].compileEQDOT(ctx, of, noval())
 			fmt.Printf("Compiling %s.%s -> %s\n", n.args[0].args[0].sval, n.args[0].args[1].sval, dst.ref)
-			v := n.args[1].compile(ctx, of, dst.ref)
+			v := n.args[1].compile(ctx, of, dst)
 			fmt.Printf("COMPILED RESULT INTO %s\n", v.ref)
 			if v != dst {
 				fmt.Fprintf(of, "\tmov [%s] %s\n", dst.ref, v.ref)
@@ -595,7 +677,15 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 			release(ctx, of, v)
 			release(ctx, of, dst)
 		} else if n.args[0].t == n_symbol {
-			v := n.args[1].compile(ctx, of, n.args[0].sval)
+			t, ok := ctx.typeOf(n.args[0])
+			if !ok {
+				panic(fmt.Sprintf("No type name for %#v\n", n.args[0]))
+			}
+			s, ok := ctx.typeSize(t.name)
+			if !ok {
+				panic(fmt.Sprintf("No type size for %#v\n", n.args[0]))
+			}
+			v := n.args[1].compile(ctx, of, regval(n.args[0].sval, s))
 			//fmt.Fprintf(of, "// COMPARE %#v, %s\n", v, n.args[0].sval)
 			if v.ref != n.args[0].sval {
 				v.LoadInto(ctx, of, n.args[0].sval)
@@ -607,17 +697,17 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 		panic("NOT IMPLEMENTED")
 	case n_lt:
 		var t1 val
-		if prefreg != "" {
-			t1 = regval(prefreg)
+		if prefreg != noval() {
+			t1 = prefreg
 		} else {
 			t1 = ctx.Temp(of)
 		}
-		one := n.args[0].compile(ctx, of, t1.ref)
+		one := n.args[0].compile(ctx, of, t1)
 		//fmt.Fprintf(of, "//// CHECK THIS\n")
 		fmt.Fprintf(of, "\tmov %s %s\n", t1.ref, one.ref)
 		release(ctx, of, one)
 
-		two := n.args[1].compile(ctx, of, "")
+		two := n.args[1].compile(ctx, of, noval())
 		fmt.Fprintf(of, "\tcmp %s %s\n", t1.ref, two.ref)
 		release(ctx, of, two)
 		sgt := ctx.TempB(of)
@@ -627,17 +717,17 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 		return t1
 	case n_gt:
 		var t1 val
-		if prefreg != "" {
-			t1 = regval(prefreg)
+		if prefreg != noval() {
+			t1 = prefreg
 		} else {
 			t1 = ctx.Temp(of)
 		}
-		one := n.args[0].compile(ctx, of, t1.ref)
+		one := n.args[0].compile(ctx, of, t1)
 		//fmt.Fprintf(of, "//// CHECK THIS\n")
 		fmt.Fprintf(of, "\tmov %s %s\n", t1.ref, one.ref)
 		release(ctx, of, one)
 
-		two := n.args[1].compile(ctx, of, "")
+		two := n.args[1].compile(ctx, of, noval())
 		fmt.Fprintf(of, "\tcmp %s %s\n", t1.ref, two.ref)
 		release(ctx, of, two)
 		sgt := ctx.TempB(of)
@@ -647,17 +737,17 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 		return t1
 	case n_le:
 		var t1 val
-		if prefreg != "" {
-			t1 = regval(prefreg)
+		if prefreg != noval() {
+			t1 = prefreg
 		} else {
 			t1 = ctx.Temp(of)
 		}
-		one := n.args[0].compile(ctx, of, t1.ref)
+		one := n.args[0].compile(ctx, of, t1)
 		//fmt.Fprintf(of, "//// CHECK THIS\n")
 		fmt.Fprintf(of, "\tmov %s %s\n", t1.ref, one.ref)
 		release(ctx, of, one)
 
-		two := n.args[1].compile(ctx, of, "")
+		two := n.args[1].compile(ctx, of, noval())
 		fmt.Fprintf(of, "\tcmp %s %s\n", t1.ref, two.ref)
 		release(ctx, of, two)
 		sgt := ctx.TempB(of)
@@ -667,18 +757,18 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 		return t1
 	case n_ge:
 		var t1 val
-		if prefreg != "" {
-			t1 = regval(prefreg)
+		if prefreg != noval() {
+			t1 = prefreg
 		} else {
 			t1 = ctx.Temp(of)
 		}
-		one := n.args[0].compile(ctx, of, t1.ref)
+		one := n.args[0].compile(ctx, of, t1)
 		if one != t1 {
 			fmt.Fprintf(of, "\tmov %s %s\n", t1.ref, one.ref)
 		}
 		release(ctx, of, one)
 
-		two := n.args[1].compile(ctx, of, "")
+		two := n.args[1].compile(ctx, of, noval())
 		fmt.Fprintf(of, "\tcmp %s %s\n", t1.ref, two.ref)
 		release(ctx, of, two)
 		sgt := ctx.TempB(of)
@@ -690,17 +780,17 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 		//panic("NOT IMPLEMENTED")
 		els := ctx.Label()
 		end := ctx.Label()
-		e1 := n.args[0].compile(ctx, of, "")
+		e1 := n.args[0].compile(ctx, of, noval())
 		fmt.Fprintf(of, "\tcmp %s 0\n", e1.ref)
 		release(ctx, of, e1)
 		fmt.Fprintf(of, "\tje %s\n", els)
-		release(ctx, of, n.args[1].compile(ctx, of, ""))
+		release(ctx, of, n.args[1].compile(ctx, of, noval()))
 		if len(n.args) > 2 {
 			fmt.Fprintf(of, "\tjmp %s\n", end)
 		}
 		fmt.Fprintf(of, "\tlabel %s\n", els)
 		if len(n.args) > 2 {
-			release(ctx, of, n.args[2].compile(ctx, of, ""))
+			release(ctx, of, n.args[2].compile(ctx, of, noval()))
 			fmt.Fprintf(of, "\tlabel %s\n", end)
 		}
 		return noval()
@@ -708,25 +798,27 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, prefreg string) val {
 		panic("NOT IMPLEMENTED")
 	case n_block:
 		for _, arg := range n.args {
-			release(ctx, of, arg.compile(ctx, of, ""))
+			release(ctx, of, arg.compile(ctx, of, noval()))
 		}
 		return noval()
 	case n_break:
 		panic("NOT IMPLEMENTED")
 	case n_return:
 		//panic("NOT IMPLEMENTED")
-		val := n.args[0].compile(ctx, of, "")
+		val := n.args[0].compile(ctx, of, noval())
 		//fmt.Fprintf(of, "\tmov rax %s\n", val)
 		val.LoadInto(ctx, of, "rax")
 		release(ctx, of, val)
 		ctx.Return(of)
 		return noval()
 	case n_var:
+		fmt.Printf(":::TYPE SIZE FOR (%s)%s\n", n.sval, n.args[0].sval)
 		if n.nval > 0 {
 			// This is a pointer
 			fmt.Fprintf(of, "\tlocal %s 64\n", n.sval)
 			fmt.Fprintf(of, "\tmov %s 0\n", n.sval)
 		} else {
+			fmt.Printf("TYPE SIZE FOR (%s)%s\n", n.sval, n.args[0].sval)
 			s, ok := ctx.typeSize(n.args[0].sval)
 			if !ok {
 				panic(fmt.Sprintf("Don't know the size of type %s", n.args[0].sval))

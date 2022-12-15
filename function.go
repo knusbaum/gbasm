@@ -64,7 +64,7 @@ func (r *Ralloc) Register() Register {
 				return 0
 			}
 		}
-		r.rallocs.f.Instr("LEA", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
+		r.rallocs.f.Instr("LEA", reg, Indirect{Reg: R_RBP, Off: r.offset}) // TODO: Fix size?, Size: r.RegSize()})
 		r.reg = reg
 		r.rallocs.regs[reg] = r
 		r.rallocs.updateLRU(reg)

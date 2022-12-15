@@ -476,9 +476,9 @@ func main() {
 						os.Exit(1)
 					}
 					if reg, err := gbasm.ParseReg(base); err == nil {
-						args[i-1] = gbasm.Indirect{Reg: reg, Off: offset, Size: reg.Width()}
+						args[i-1] = gbasm.Indirect{Reg: reg, Off: offset}
 					} else if v := f.AllocFor(base); v != nil {
-						args[i-1] = gbasm.Indirect{Reg: v.Register(), Off: offset, Size: v.RegSize()}
+						args[i-1] = gbasm.Indirect{Reg: v.Register(), Off: offset} // Do we ever need size? , Size: v.?()}
 					} else {
 						panic(fmt.Sprintf("don't know what %s is.", parts[i]))
 					}
