@@ -114,7 +114,7 @@ func (x *prefix) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 // Field Name		Bit Position		Definition
 // - 				7:4 				0100
 // W 				3 					0 = Operand size determined by CS.D
-// 									1 = 64 Bit Operand Size
+//  				 					1 = 64 Bit Operand Size
 // R 				2					Extension of the ModR/M reg field
 // X 				1 					Extension of the SIB index field
 // B 				0 					Extension of the ModR/M r/m field, SIB base field, or Opcode reg field
@@ -137,20 +137,20 @@ func (x *rex) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	// 		fmt.Printf("ERROR: %v\n", err)
 	// 	}
 	needed = needed || xr.needREX()
-	xx, _ := getRegister(x.x, os)
-	// 	fmt.Printf("XX REGISTER: %#s\n", xx)
+	xx, _ := REX_X(x.x, os)
+	//fmt.Printf("XX REGISTER: %#s\n", xx)
 	// 	//Not all args are registers.
 	// 	if err != nil {
 	// 		fmt.Printf("ERROR: %v\n", err)
 	// 	}
-	needed = needed || xr.needREX()
+	needed = needed || xx.needREX()
 	xb, _ := getRegister(x.b, os)
-	// 	fmt.Printf("XB REGISTER: %#s\n", xb)
+	//fmt.Printf("XB REGISTER: %#s\n", xb)
 	// 	//Not all args are registers.
 	// 	if err != nil {
 	// 		fmt.Printf("ERROR: %v\n", err)
 	// 	}
-	needed = needed || xr.needREX()
+	needed = needed || xb.needREX()
 	b := 0b01000000 |
 		((xw & 0b1) << 3) |
 		(((xr.byte() >> 3) & 0b1) << 2) |
@@ -334,6 +334,26 @@ func getByte(i byte, os []interface{}) (byte, error) {
 	return b, nil
 }
 
+func REX_X(i byte, os []interface{}) (Register, error) {
+	if int(i) >= len(os) {
+		panic(fmt.Sprintf("booo I: %d, OS: %#v, len(os): %d\n", i, os, len(os)))
+		return 0, fmt.Errorf("[getByte] Not enough args. Expected at least %d\n", i)
+	}
+	switch b := os[i].(type) {
+	case Register:
+		return b, nil
+	case Indirect:
+		if b.Reg == R12 {
+			// Hack to support SIB-based indirection with R12
+			// (see: "32/64-bit addressing" here: https://wiki.osdev.org/X86-64_Instruction_Encoding#Registers)
+			return R_RBP, nil
+		}
+		return b.Reg, nil
+	default:
+		return 0, fmt.Errorf("Expected op %d to be a register, but found %v\n", i, reflect.TypeOf(os[i]))
+	}
+}
+
 func getRegister(i byte, os []interface{}) (Register, error) {
 	if int(i) >= len(os) {
 		panic(fmt.Sprintf("booo I: %d, OS: %#v, len(os): %d\n", i, os, len(os)))
@@ -395,7 +415,7 @@ func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 			} else {
 				xmod = 0b00
 			}
-			if ot.Reg.byte() == R_RSP.byte() {
+			if ot.Reg == R_RSP || ot.Reg == R12 {
 				doSib = true
 			}
 			indirect = &ot

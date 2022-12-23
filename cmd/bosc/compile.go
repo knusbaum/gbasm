@@ -468,6 +468,9 @@ func (v valnew) LoadInto(ctx *CompileContext, of io.Writer, ov valnew) {
 			// EXTEND ZEROS!
 			fmt.Fprintf(of, "\t//rt_direct %#v (extend)\n", v)
 			fmt.Fprintf(of, "\tmovzx %s %s\n", ov.ref, v.ref)
+		} else if v.t.Size() > 8 {
+			fmt.Fprintf(of, "\t//TODO: COPY\n")
+			fmt.Fprintf(of, "\tcopy %s %s\n", ov.ref, v.ref)
 		} else {
 			fmt.Fprintf(of, "\t//rt_direct\n")
 			fmt.Fprintf(of, "\tmov %s %s\n", ov.ref, v.ref)
@@ -518,9 +521,6 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 		//return numval(int(n.nval)) //fmt.Sprintf("%d", int(n.nval))
 		return valnew{ref: fmt.Sprintf("%d", int(n.nval)), t: numType()}
 	case n_str:
-		//panic("NOT IMPLEMENTED")
-		//return strval(n.sval)
-		//return valnew{ref: n.sval, t: strType()}
 		var ret valnew
 		if dest.Same(valnew{}) {
 			tmp := ctx.Temp(strType(), of)
@@ -576,36 +576,39 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 		n.createStruct(ctx)
 		return valnew{}
 	case n_stlit:
-		//spew.Dump(n)
-		//fmt.Printf("Compiling struct literal into %s\n", prefreg)
 		if dest.Same(valnew{}) {
 			panic(fmt.Sprintf("Cannot compile struct literal into blank register/var"))
 		}
-
 		st, ok := ctx.typeByName(n.sval)
 		if !ok {
 			panic(fmt.Sprintf("failed to find struct definition for %s", n.sval))
 		}
 
-		t1 := ctx.Temp(dest.t, of)
 		for _, f := range n.args {
+			fmt.Fprintf(of, "\t//STLIT_FIELD %s.%s\n", n.sval, f.sval)
 			field, ok := st.fields[f.sval]
 			if !ok {
 				panic(fmt.Sprintf("no such field %s", f.sval))
 			}
-			// TODO: Can optimize away t1
-			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", t1.ref, dest.ref, field.offset)
+			t1 := ctx.Temp(field.t, of)
+			if field.t.RefType() == rt_indirect && field.t.Size() > 8 {
+				fmt.Fprintf(of, "\t//this is a struct. Pass on a ref to the field in %s\n", t1.ref)
+				fmt.Fprintf(of, "\tlea %s [%s+%d]\n", t1.ref, dest.ref, field.offset)
+			}
 			v := f.args[0].compile(ctx, of, t1)
 			if !v.Same(t1) {
-				//fmt.Fprintf(of, "\tmov [%s+%d] %s\n", prefreg, field.offset, v.ref)
-				// TODO: Fix inline val
-				v.LoadInto(ctx, of, valnew{ref: fmt.Sprintf("[%s+%d]", dest.ref, field.offset), vt: v_value, t: v.t})
-				ctx.release(of, v)
+				ctx.release(of, t1)
 			}
+
+			if !(field.t.RefType() == rt_indirect && v.t.Size() > 8) {
+				// if it's not a struct, then load it into dest.
+				fmt.Fprintf(of, "\t//LOAD INTO\n")
+				v.LoadInto(ctx, of, valnew{ref: fmt.Sprintf("[%s+%d]", dest.ref, field.offset), vt: v_value, t: v.t})
+			}
+			ctx.release(of, v)
 		}
-		ctx.release(of, t1)
+		fmt.Fprintf(of, "\t//STLIT_DONE\n")
 		return dest
-		//panic(fmt.Sprintf("NOT IMPLEMENTED: instantiate struct literal %s into %s", n.sval, prefreg))
 	case n_stfield:
 		panic("n_stfield NOT IMPLEMENTED")
 	case n_fn:

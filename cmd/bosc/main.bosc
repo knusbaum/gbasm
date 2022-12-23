@@ -151,9 +151,9 @@ fn testnestedstruct3() {
 		b: 2,
 		c: bar {
 			a: 3,
+			b: "goodbye",
 		},
 	}
-	f.c.b = "hello"
  	puts("f.a: ")
  	puti(f.a)
  	puts("\nf.b: ")
@@ -281,5 +281,5 @@ fn main() {
 
 	testnestedstruct1()
 	testnestedstruct2()
-	//testnestedstruct3()
+	testnestedstruct3()
 }
