@@ -79,6 +79,16 @@ func main() {
 			for _, s := range v.Relocations {
 				fmt.Printf("\t\t\t\t0x%X -> %s\n", s.Offset, s.Symbol)
 			}
+			fmt.Printf("\t\t\t\tBODY:\n")
+			bs, err := v.Body()
+			if err != nil {
+				fmt.Printf("\t\t\t\tError resolving body: %v\n", err)
+			} else {
+				for _, b := range bs {
+					fmt.Printf("%X ", b)
+				}
+				fmt.Printf("\n")
+			}
 		}
 	}
 }

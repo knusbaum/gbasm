@@ -7,10 +7,15 @@ struct bar {
 	b str
 }
 
-struct foo {
+struct nfoo {
 	a num
 	b num
 	c bar
+}
+
+struct foo {
+	a num
+	b num
 }
 
 fn bosonfib(n num) num { 
@@ -20,80 +25,80 @@ fn bosonfib(n num) num {
 		return bosonfib(n - 1) + bosonfib(n - 2)
 }
 
-fn dosomething() {
+// fn dosomething() {
+// 
+// 	puts("I DID SOMETHING!\n")
+// 
+// }
+// 
+// fn putinl(x num) {
+// 	puti(x)
+// 	puts("\n")
+// }
+// 
+// fn test3() {
+// 	puts("\n#### Test3\n")
+// 	var x num
+// 	var y num
+// 	var z num
+// 	var q num
+// 	var r num
+// 	var s num
+// 	x = 1
+// 	y = 2
+// 	z = 3
+// 	q = 4
+// 	r = 5
+// 	s = 6
+// 	var breaker foo
+// 	putinl(x)
+// 	putinl(y)
+// 	putinl(z)
+// 	putinl(q)
+// 	putinl(r)
+// 	putinl(s)
+// }
 
-	puts("I DID SOMETHING!\n")
+// fn test4() {
+// 	puts("\n#### TEST 4:\n")
+// 	var f foo
+// 	f = foo{
+// 		a: 1,
+// 		b: 2,
+// 		c: bar {
+// 			a: 20,
+// 			b: "hello!",
+// 		}
+// 	}
+// //	f.c.a = 10
+// 	puts("Declared foo:\nf.a: ")
+// 	puti(f.a)
+// 	puts("\nf.b: ")
+// 	puti(f.b)
+// 	puts("\nf.c.a: ")
+// 	puti(f.c.a)
+// 	puts("\nf.c.b: ")
+// 	puts(f.c.b)
+// 	puts("\n\n")
+// }
 
-}
+// fn test2() num {
+// 	puts("\n#### TEST 2:\n")
+// 	var z foo
+// 	z.a = 1
+// 	z.b = 2
+// 	var x num
+// 	x = z.a + z.b
+// 	return x
+// }
+// 
+// fn testbasicstruct() {
+// 	var z foo
+// 	z.a = 1
+// }
 
-fn putinl(x num) {
-	puti(x)
-	puts("\n")
-}
-
-fn test3() {
-	puts("\n#### Test3\n")
-	var x num
-	var y num
-	var z num
-	var q num
-	var r num
-	var s num
-	x = 1
-	y = 2
-	z = 3
-	q = 4
-	r = 5
-	s = 6
-	var breaker foo
-	putinl(x)
-	putinl(y)
-	putinl(z)
-	putinl(q)
-	putinl(r)
-	putinl(s)
-}
-
-fn test4() {
-	puts("\n#### TEST 4:\n")
-	var f foo
-	f = foo{
-		a: 1,
-		b: 2,
-		c: bar {
-			a: 20,
-			b: "hello!",
-		}
-	}
-//	f.c.a = 10
-	puts("Declared foo:\nf.a: ")
-	puti(f.a)
-	puts("\nf.b: ")
-	puti(f.b)
-	puts("\nf.c.a: ")
-	puti(f.c.a)
-	puts("\nf.c.b: ")
-	puts(f.c.b)
-	puts("\n\n")
-}
-
-fn test2() num {
-	puts("\n#### TEST 2:\n")
-	var z foo
-	z.a = 1
-	z.b = 2
-	var x num
-	x = z.a + z.b
-	return x
-}
-
-fn testbasicstruct() {
-	var z foo
-	z.a = 1
-}
-
-fn test1() {
-	puts("\n#### Test1\n")
+fn teststruct() {
+	puts("\n#### teststruct\n")
 	var x foo
 	x.a = 20
 	x.b = 30
@@ -102,14 +107,66 @@ fn test1() {
 	puts("\nx.b: ")
 	puti(x.b)
 	puts("\nx.a + x.b: ")
-// 	var z num
-// 	z = x.a + x.b
-// 	puti(z)
 	puti(x.b + x.a)
-	puts("\n")
+	puts("\n\n")
+}
+
+fn testnestedstruct1() {
+	puts("\n#### testnestedstruct1\n")
+	var f nfoo
+	puts("f.a: ")
+	puti(f.a)
+	puts("\nf.b: ")
+	puti(f.b)
+	puts("\nf.c.a: ")
+	puti(f.c.a)
+	puts("\nf.c.b: ")
+	//puts(f.c.b)
+	puts("\n\n")
+}
+
+fn testnestedstruct2() {
+ 	puts("\n#### testnestedstruct2\n")
+	var f nfoo
+	f.a = 1
+	f.b = 2
+	f.c.a = 3
+	f.c.b = "hello"
+ 	puts("f.a: ")
+ 	puti(f.a)
+ 	puts("\nf.b: ")
+ 	puti(f.b)
+ 	puts("\nf.c.a: ")
+ 	puti(f.c.a)
+ 	puts("\nf.c.b: ")
+	puts(f.c.b)
+ 	puts("\n\n")
+}
+
+fn testnestedstruct3() {
+ 	puts("\n#### testnestedstruct3\n")
+	var f nfoo
+	f = nfoo{
+		a: 1,
+		b: 2,
+		c: bar {
+			a: 3,
+		},
+	}
+	f.c.b = "hello"
+ 	puts("f.a: ")
+ 	puti(f.a)
+ 	puts("\nf.b: ")
+ 	puti(f.b)
+ 	puts("\nf.c.a: ")
+ 	puti(f.c.a)
+ 	puts("\nf.c.b: ")
+	puts(f.c.b)
+ 	puts("\n\n")
 }
 
 fn garbagetest() {
+ 	puts("\n#### garbagetest\n")
 	var x num
 	puts("x garbage: ")
 	puti(x)
@@ -121,24 +178,24 @@ fn garbagetest() {
 	puts("\n")
 	puts("foo.b garbage: ")
 	puti(y.b)
-	puts("\n")
-}
-
-
-fn test5() {
-	puts("\n#### Test5\n")
-	var x str
-	x = "hello"
-	var yb byte
-	yb = x[0]
-	puts("x[0]: ")
-	putb(yb)
-	yb = x[1]
-	puts("\nx[1]: ")
-	putb(yb)
 	puts("\n\n")
 }
 
+ 
+// fn test5() {
+// 	puts("\n#### Test5\n")
+// 	var x str
+// 	x = "hello"
+// 	var yb byte
+// 	yb = x[0]
+// 	puts("x[0]: ")
+// 	putb(yb)
+// 	yb = x[1]
+// 	puts("\nx[1]: ")
+// 	putb(yb)
+// 	puts("\n\n")
+// }
+// 
 
 // fn printascii(n str) {
 // 	var yb byte
@@ -152,28 +209,19 @@ fn test5() {
 // 	printascii(n+1)
 // }
 
-
-fn main() {
-	var t2 num
-	t2 = test2()
-	puti(t2)
-	puts("\n")
-
-	test1()
-
-	puts("\nFib is: ")
-	puti(bosonfib(30))
-	puts("\n")
-
-	test3()
-
-	test4()
-
-	test5()
-
+fn fibtest() {
+ 	puts("\n#### fibtest\n")
 	var foobarr num
 	foobarr = bosonfib(20)
+	puts("FIB: ")
+	puti(foobarr)
+	puts("\n")
 
+	puts("\n\n")
+}
+
+fn assignment() {
+ 	puts("\n#### assignment\n")
 	var x num
 	x = 10
 	puts("Putting a var: ")
@@ -186,7 +234,15 @@ fn main() {
 	puti(x)
 	puts("\n")
 
+	puts("Putting an addition: ")
+	puti(x + 1)
+	puts("\n")
 
+	puts("\n\n")
+}
+
+fn structassignment() {
+ 	puts("\n#### structassignment\n")
 	var y foo
 	y.a = 20
 	puts("foo.a (y.a): ")
@@ -196,6 +252,34 @@ fn main() {
 	puts("foo.a + 10 = ")
 	puti(y.a + 10)
 	puts("\n")
+	puts("\n\n")
+}
 
+fn main() {
+// 	var t2 num
+// 	t2 = test2()
+// 	puti(t2)
+// 	puts("\n")
+// 
+// 	test1()
+// 
+// 	puts("\nFib is: ")
+// 	puti(bosonfib(30))
+// 	puts("\n")
+// 
+// 	test3()
+// 
+// 	test4()
+// 
+// 	test5()
+
+	fibtest()
+	assignment()
 	garbagetest()
+	structassignment()
+	teststruct()
+
+	testnestedstruct1()
+	testnestedstruct2()
+	//testnestedstruct3()
 }

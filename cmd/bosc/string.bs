@@ -125,12 +125,12 @@ label skipconvert
 
 // putb(i byte)
 function putb
-	type fn(byte) none
+	type fn(byte) void
 	jmp puti
 
 // puti(i int64)
 function puti
-	type fn(num) none
+	type fn(num) void
 	prologue
 	sub rsp 22
 	mov [rsp+22] 0x00

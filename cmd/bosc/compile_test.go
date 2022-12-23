@@ -35,7 +35,7 @@ func TestCompile(t *testing.T) {
 			ctx := NewCompileContext()
 			n.replaceStrings(ctx)
 			var out bytes.Buffer
-			n.compile(ctx, &out, "")
+			n.compile(ctx, &out, valnew{})
 		})
 	}
 }

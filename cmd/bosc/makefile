@@ -15,7 +15,7 @@ bld:
 bdump:
 	go build ../bdump
 
-main.bs: bosc main.bosc
+main.bs: bosc main.bosc string.bo
 	./bosc main.bosc
 
 main.bo: bas main.bs init_linux.bs

@@ -31,7 +31,7 @@ func main() {
 
 		var ln []byte
 		for ln, _, err = reader.ReadLine(); err == nil; ln, _, err = reader.ReadLine() {
-			fmt.Printf("LINE: %s\n", ln)
+			//fmt.Printf("LINE: %s\n", ln)
 			line := strings.TrimSpace(string(ln))
 			if line == "" {
 				continue
@@ -52,7 +52,7 @@ func main() {
 						log.Fatalf("Failed to create file %s: %s", out, err)
 					}
 					defer f.Close()
-					fmt.Printf("WRITING FILE %s\n", out)
+					//fmt.Printf("WRITING FILE %s\n", out)
 					of = f
 				}
 				break
@@ -82,6 +82,11 @@ func main() {
 				if err != nil {
 					log.Fatalf("%v\n", err)
 				}
+				// TODO: get rid of double imports. CompileContext should have access to VContext eventually.
+				err = ctx.Import(n.sval)
+				if err != nil {
+					log.Fatalf("%v\n", err)
+				}
 				continue
 			}
 			err = Validate(n, c)
@@ -91,7 +96,7 @@ func main() {
 			}
 			//fmt.Printf("WRITING %#v\n", n)
 			n.replaceStrings(ctx)
-			n.compile(ctx, &bs, noval())
+			n.compile(ctx, &bs, valnew{})
 		}
 		ctx.WriteStrings(of)
 		io.Copy(of, &bs)

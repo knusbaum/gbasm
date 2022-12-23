@@ -250,7 +250,7 @@ func main() {
 			}
 			if strings.HasPrefix(line, "type") {
 				ftype := strings.TrimSpace(strings.TrimPrefix(line, "type"))
-				fmt.Printf("DECL DECL DECL %s -> %s\n", f.Name, ftype)
+				//fmt.Printf("DECL DECL DECL %s -> %s\n", f.Name, ftype)
 				f.Type = ftype
 				continue
 			}

@@ -84,7 +84,7 @@ func (r *Ralloc) Register() Register {
 	if r.inmem {
 		//fmt.Printf("%s not in register. Allocated register %s\n", r.sym, reg)
 		r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
-		r.inmem = false
+		//r.inmem = false
 	}
 	r.reg = reg
 	r.rallocs.regs[reg] = r
@@ -573,28 +573,28 @@ func (f *Function) Jump(instr string, label string) error {
 	return nil
 }
 
-func (f *Function) fixMovVar(ops []interface{}) (string, []interface{}) {
-	fmt.Printf("FIX MOV VAR\n")
+func (f *Function) fixLEAVar(ops []interface{}) (string, []interface{}) {
+	//fmt.Printf("FIX LEA VAR\n")
 	// TODO: Is this really a good idea?
-	// This catches MOV's of vars into indirects, basically
-	// MOV [REG+I] VAR
+	// This catches LEA's of vars into indirects, basically
+	// LEA [REG+I] VAR
 	// and turns it into
-	// MOV TMP VAR
-	// MOV [REG+I] TMP
+	// LEA TMP VAR
+	// LEA [REG+I] TMP
 	// because VARs are literals (addresses) and can't be
-	// moved into memory (no mov m64 imm64)
+	// LEAed into memory (no LEA m64 imm64)
 	if len(ops) != 2 {
-		fmt.Printf("1RETURNING %#v\n", ops)
+		//fmt.Printf("1RETURNING %#v\n", ops)
 		return "LEA", ops
 	}
 	ind, ok := ops[0].(Indirect)
 	if !ok {
-		fmt.Printf("2RETURNING %#v\n", ops)
+		//fmt.Printf("2RETURNING %#v\n", ops)
 		return "LEA", ops
 	}
 	v, ok := ops[1].(*Var)
 	if !ok {
-		fmt.Printf("3RETURNING %#v\n", ops)
+		//fmt.Printf("3RETURNING %#v\n", ops)
 		return "LEA", ops
 	}
 
@@ -605,10 +605,10 @@ func (f *Function) fixMovVar(ops []interface{}) (string, []interface{}) {
 	// reg should be safe to use at least until the next instruction.
 	reg := tmp.Register()
 	f.Forget("__movvar")
-	fmt.Printf("v: %#v\n", v)
+	//fmt.Printf("v: %#v\n", v)
 	f.Instr("LEA", reg, v)
 
-	fmt.Printf("RETURNING: %#v\n", []interface{}{ind, reg})
+	//fmt.Printf("RETURNING: %#v\n", []interface{}{ind, reg})
 	return "MOV", []interface{}{ind, reg}
 }
 
@@ -620,7 +620,7 @@ func (f *Function) Instr(instr string, ops ...interface{}) error {
 	// 	fmt.Printf("]\n")
 
 	if instr == "LEA" {
-		instr, ops = f.fixMovVar(ops)
+		instr, ops = f.fixLEAVar(ops)
 	}
 
 	rs, err := f.a.Encode(&f.bs, instr, ops...)

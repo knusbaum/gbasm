@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"reflect"
 	"strconv"
 )
@@ -51,7 +50,6 @@ forms:
 			continue
 		}
 		var i int
-		//fmt.Printf("$$$$\n")
 		for _, fop := range f.ops {
 			if fop.Implicit {
 				continue
@@ -375,7 +373,7 @@ type modrm struct {
 // This logic is a mess and needs to be streamlined.
 func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	var doSib bool
-	var mustDisp bool
+	//var mustDisp bool
 	var indirect *Indirect
 	var xmod byte
 	var xreg byte
@@ -399,9 +397,6 @@ func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 			}
 			if ot.Reg.byte() == R_RSP.byte() {
 				doSib = true
-			}
-			if ot.Reg.byte() == R_RBP.byte() {
-				mustDisp = true
 			}
 			indirect = &ot
 		case *Var:
@@ -431,9 +426,22 @@ func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 				return nil, err
 			}
 		}
-		// The xrm.byte() == 0b101 here is a special-case RIP/EIP-relative addressing. See:
-		// "32/64-bit addressing" here: https://wiki.osdev.org/X86-64_Instruction_Encoding#Registers
-		if indirect != nil && (xmod != 0 || xrm.byte() == 0b101) {
+
+		if indirect != nil && (xmod != 0 || xrm.byte() == 0b101 || xrm.byte() == 0b1101) {
+			if indirect.Reg == R_RBP || indirect.Reg == R13 {
+				// Special case, see: "32/64-bit addressing" here: https://wiki.osdev.org/X86-64_Instruction_Encoding#Registers
+				xmod = 0b10
+				b := ((xmod & 0b11) << 6) |
+					((xreg & 0b111) << 3) |
+					(xrm.byte() & 0b111)
+				err := writeByte(w, b)
+				if err != nil {
+					return nil, err
+				}
+				// 32-bit displacement
+				//fmt.Printf("HERE NOW\nXMOD: %X\nXREG: %X\nXRM: %X\n", xmod, xreg, xrm.byte())
+				return relocations, binary.Write(w, binary.LittleEndian, indirect.Off)
+			}
 			b := ((xmod & 0b11) << 6) |
 				((xreg & 0b111) << 3) |
 				(xrm.byte() & 0b111)
@@ -442,19 +450,11 @@ func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 				return nil, err
 			}
 			// 32-bit displacement
+			//fmt.Printf("HERE NOW\nXMOD: %X\nXREG: %X\nXRM: %X\n", xmod, xreg, xrm.byte())
 			return relocations, binary.Write(w, binary.LittleEndian, indirect.Off)
-		} else if mustDisp {
-			// optimization to avoid 32-bit offsets when offset is 0
-			xmod = 0b01
-			b := ((xmod & 0b11) << 6) |
-				((xreg & 0b111) << 3) |
-				(xrm.byte() & 0b111)
-			err := writeByte(w, b)
-			if err != nil {
-				return nil, err
-			}
-			return relocations, binary.Write(w, binary.LittleEndian, byte(0))
 		} else {
+			//fmt.Printf("ELSE\n")
+			//fmt.Printf("XMOD: %X\nXREG: %X\nXRM: %X\n", xmod, xreg, xrm.byte())
 			b := ((xmod & 0b11) << 6) |
 				((xreg & 0b111) << 3) |
 				(xrm.byte() & 0b111)
@@ -722,10 +722,10 @@ func (f *IForm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 encodings:
 	for _, es := range f.enc {
 		for _, e := range es {
-			//log.Printf("Encoding %#v\n", os)
+			//log.Printf("Encoding %#v\n", e)
 			rs, err = e.Encode(w, os...)
 			if err != nil {
-				log.Printf("Failed one encoding: %s", err)
+				//log.Printf("Failed one encoding: %s", err)
 				continue encodings
 			}
 		}
@@ -744,12 +744,14 @@ func (a *Asm) Encode(w WriteLener, instr string, os ...interface{}) ([]Relocatio
 	if !ok {
 		return nil, fmt.Errorf("No such instruction: %s", instr)
 	}
-	//spew.Dump(inst)
-	log.Printf("Encoding instruction %s, %#v\n", instr, os)
+	// 	fmt.Printf("Encoding instruction %s ", instr)
+	// 	for _, o := range os {
+	// 		fmt.Printf("%#v ", o)
+	// 	}
+	// 	fmt.Printf("\n")
 
 	var newos []interface{}
 	for _, o := range os {
-		//fmt.Printf(" ### OS(%d): %#v\n", i, o)
 		switch t := o.(type) {
 		case *Ralloc:
 			//fmt.Printf("### RALLOC ###\t%s -> %v\n", t.sym, t.Location())
@@ -773,15 +775,17 @@ func (a *Asm) Encode(w WriteLener, instr string, os ...interface{}) ([]Relocatio
 
 	for {
 		found := false
+		//fmt.Printf("INST.ENCODE(%#v)\n", newos)
 		r, err := inst.Encode(w, newos...)
 		if err == nil {
 			return r, err
 		}
-		fmt.Printf("FAILED TO ENCODE: %s ", instr)
-		for _, o := range newos {
-			fmt.Printf("%s ", o)
-		}
-		fmt.Printf("\n")
+		// 		fmt.Printf("FAILED TO ENCODE: [%s] ", instr)
+		// 		for _, o := range newos {
+		// 			fmt.Printf("[%#v] ", o)
+		// 		}
+		// 		fmt.Printf("\n")
+		// 		fmt.Printf("ERROR: %v\n", err)
 		for i, o := range newos {
 			if _, ok := o.(Indirect); ok {
 				if ra, ok := os[i].(*Ralloc); ok {
@@ -794,11 +798,11 @@ func (a *Asm) Encode(w WriteLener, instr string, os ...interface{}) ([]Relocatio
 		if !found {
 			return r, err
 		}
-		fmt.Printf("TRYING AGAIN WITH: %s ", instr)
-		for _, o := range newos {
-			fmt.Printf("%s ", o)
-		}
-		fmt.Printf("\n")
+		// 		fmt.Printf("TRYING AGAIN WITH: %s ", instr)
+		// 		for _, o := range newos {
+		// 			fmt.Printf("[%#v] ", o)
+		// 		}
+		// 		fmt.Printf("\n")
 	}
 }
 

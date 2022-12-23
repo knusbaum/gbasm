@@ -8,68 +8,128 @@ import (
 	"github.com/knusbaum/gbasm"
 )
 
-type typename struct {
-	name string
-	ind  int
+type reftype int
+
+const (
+	rt_none reftype = iota
+	rt_direct
+	rt_indirect
+)
+
+type Field struct {
+	t      BType
+	offset int
 }
 
-func (tn typename) String() string {
+// BType is a boson type
+type BType struct {
+	name   string
+	ind    int
+	size   int     // Size in bytes. Required for rt_direct, and when rt_direct, must be <=8
+	rt     reftype // Whether registers hold the value or a pointer to the value.
+	fields map[string]Field
+}
+
+func (t BType) String() string {
 	var b strings.Builder
-	for i := 0; i < tn.ind; i++ {
+	for i := 0; i < t.ind; i++ {
 		fmt.Fprintf(&b, "*")
 	}
-	b.WriteString(tn.name)
+	b.WriteString(t.name)
 	return b.String()
 }
 
-func tn_void() typename {
-	return typename{name: "void"}
-}
-
-func tn_num() typename {
-	return typename{name: "num"}
-}
-
-func tn_str() typename {
-	return typename{name: "str"}
-}
-
-func tn_byte() typename {
-	return typename{name: "byte"}
-}
-
-type structDef struct {
-	fields map[string]typename
-}
-
-func (s *structDef) addField(name string, t typename) error {
-	if s.fields == nil {
-		s.fields = make(map[string]typename)
+// Size returns the size in bytes of instances of this type.
+func (t BType) Size() int {
+	if t.rt == rt_direct && t.size > 8 {
+		panic("Size must be <= 8 bytes for direct-reference types")
 	}
-	if _, ok := s.fields[name]; ok {
+	return t.size
+}
+
+func (t BType) RefType() reftype {
+	return t.rt
+}
+
+func (t BType) Equal(ot BType) bool {
+	if t.name != ot.name {
+		return false
+	}
+	if t.ind != ot.ind {
+		return false
+	}
+	if t.size != ot.size {
+		return false
+	}
+	if t.rt != ot.rt {
+		return false
+	}
+	return true
+}
+
+func (t BType) PointerTo() BType {
+	return BType{
+		name:   t.name,
+		ind:    t.ind + 1,
+		size:   8,
+		rt:     rt_direct, // counter-intuitively, pointers are referenced directly (copied into registers)
+		fields: make(map[string]Field),
+	}
+}
+
+// Built-in types
+func voidType() BType {
+	return BType{name: "void"}
+}
+
+func numType() BType {
+	return BType{name: "num", size: 8, rt: rt_direct} // Nums are 64-bit signed integers.
+}
+
+func strType() BType {
+	return BType{name: "str", size: 8, rt: rt_direct} // strs are pointers.
+}
+
+func strLitType() BType {
+	return BType{name: "strlit", rt: rt_indirect} // strs are pointers.
+}
+
+func byteType() BType {
+	return BType{name: "byte", size: 1, rt: rt_direct}
+}
+
+func (t *BType) addField(name string, ft BType) error {
+	if t.fields == nil {
+		t.fields = make(map[string]Field)
+	}
+	if _, ok := t.fields[name]; ok {
 		return fmt.Errorf("field %s already defined.", name)
 	}
-	s.fields[name] = t
+	t.fields[name] = Field{t: ft, offset: t.size}
+	//fmt.Printf("ADDED FIELD %s(%s) OF SIZE %d AT OFFSET %d TO STRUCT %s\n",
+	//	name, ft.name, ft.Size(), t.size, t.name)
+	t.size += ft.Size()
 	return nil
 }
 
 type VContext struct {
 	parent     *VContext
-	bindType   map[string]typename
-	validTypes map[string]typename
-	structs    map[typename]*structDef
+	bindType   map[string]BType
+	validTypes map[string]BType
+	//structs    map[BType]*structDef
 }
 
 func NewVContext() *VContext {
 	return &VContext{
-		bindType: make(map[string]typename),
-		validTypes: map[string]typename{
-			"void": tn_void(),
-			"num":  tn_num(),
-			"str":  tn_str(),
-			"byte": tn_byte(),
+		bindType: make(map[string]BType),
+		validTypes: map[string]BType{
+			"void":   voidType(),
+			"num":    numType(),
+			"str":    strType(),
+			"strlit": strLitType(),
+			"byte":   byteType(),
 		},
-		structs: make(map[typename]*structDef),
+		//structs: make(map[BType]*structDef),
 	}
 }
 
@@ -79,19 +139,19 @@ func (c *VContext) subVContext() *VContext {
 	return nv
 }
 
-func (c *VContext) binding(n string) (typename, bool) {
+func (c *VContext) binding(n string) (BType, bool) {
 	if tn, ok := c.bindType[n]; ok {
 		return tn, ok
 	}
 	if c.parent != nil {
 		return c.parent.binding(n)
 	}
-	return tn_void(), false
+	return voidType(), false
 }
 
-func (c *VContext) bind(n string, t typename) bool {
+func (c *VContext) bind(n string, t BType) bool {
 	if ot, ok := c.bindType[n]; ok {
-		if t != ot {
+		if !t.Equal(ot) {
 			return false
 		}
 		return true
@@ -100,39 +160,41 @@ func (c *VContext) bind(n string, t typename) bool {
 	return true
 }
 
-func (c *VContext) structFor(t typename) (*structDef, bool) {
-	//fmt.Printf("STRUCTS: %v\n", c.structs)
-	if d, ok := c.structs[t]; ok {
-		return d, ok
-	}
-	if c.parent != nil {
-		return c.parent.structFor(t)
-	}
-	return nil, false
-}
+// func (c *VContext) structFor(t BType) (*structDef, bool) {
+// 	//fmt.Printf("STRUCTS: %v\n", c.structs)
+// 	if d, ok := c.structs[t]; ok {
+// 		return d, ok
+// 	}
+// 	if c.parent != nil {
+// 		return c.parent.structFor(t)
+// 	}
+// 	return nil, false
+// }
+//
+// func (c *VContext) declStruct(t BType, d *structDef) error {
+// 	if _, ok := c.structs[t]; ok {
+// 		return fmt.Errorf("struct %s already declared.", t)
+// 	}
+// 	c.structs[t] = d
+// 	//fmt.Printf("STRUCTS: %v\n", c.structs)
+// 	return nil
+// }
 
-func (c *VContext) declStruct(t typename, d *structDef) error {
-	if _, ok := c.structs[t]; ok {
-		return fmt.Errorf("struct %s already declared.", t)
-	}
-	c.structs[t] = d
-	//fmt.Printf("STRUCTS: %v\n", c.structs)
-	return nil
-}
-
-func (c *VContext) typeByName(name string) (typename, bool) {
+func (c *VContext) typeByName(name string) (BType, bool) {
 	if tn, ok := c.validTypes[name]; ok {
 		return tn, ok
 	}
 	if c.parent != nil {
 		return c.parent.typeByName(name)
 	}
-	return tn_void(), false
+	return voidType(), false
 }
 
-func (c *VContext) defType(n string, t typename) bool {
+func (c *VContext) defType(n string, t BType) bool {
 	if ot, ok := c.typeByName(n); ok {
-		if t != ot {
+		if !t.Equal(ot) {
+			fmt.Printf("ALREADY HAVE TYPE: %#v\n", ot)
+			fmt.Printf("NEW TYPE: %#v\n", t)
 			return false
 		}
 		return true
@@ -148,17 +210,17 @@ func (c *VContext) Import(f string) error {
 	}
 	for v, t := range o.Funcs {
 		if t.Type != "" {
-			if !c.bind(t.Name, typename{name: t.Type}) {
+			if !c.bind(t.Name, BType{name: t.Type}) {
 				return fmt.Errorf("%s already defined.", v)
 			}
-			fmt.Printf("IMPORTED %s %s\n", t.Name, t.Type)
+			//fmt.Printf("IMPORTED %s %s\n", t.Name, t.Type)
 		}
 	}
 	return nil
 }
 
 // TODO: unit test
-func functionTypeName(n *Node) typename {
+func functionTypeName(n *Node) BType {
 	if n.t != n_fn {
 		panic(&interpreterError{msg: fmt.Sprintf("cannot determine function type name of non-function %#v. This is a compiler error.", n), p: n.p})
 	}
@@ -172,12 +234,15 @@ func functionTypeName(n *Node) typename {
 	}
 	b.WriteString(") ")
 	//spew.Dump(n.args[0])
+	if n.args[int(n.nval)].sval == "none" {
+		panic("WOAH!")
+	}
 	b.WriteString(n.args[int(n.nval)].sval)
-	return typename{name: b.String()}
+	return BType{name: b.String()}
 }
 
 // TODO: unit test
-func functionTypeNameFromCall(n *Node, c *VContext) typename {
+func functionTypeNameFromCall(n *Node, c *VContext) BType {
 	if n.t != n_funcall {
 		panic(&interpreterError{msg: fmt.Sprintf("cannot determine function type name of non-function-call %#v. This is a compiler error.", n), p: n.p})
 	}
@@ -196,39 +261,54 @@ func functionTypeNameFromCall(n *Node, c *VContext) typename {
 		b.WriteString(tn.String())
 	}
 	b.WriteString(")")
-	return typename{name: b.String()}
+	return BType{name: b.String()}
 }
 
 // TODO: unit test
-func functionReturnType(n *Node, tn typename) typename {
+func (c *VContext) functionReturnType(n *Node, tn BType) (BType, error) {
 	if !strings.HasPrefix(tn.String(), "fn(") {
 		panic(&interpreterError{msg: fmt.Sprintf("cannot determine function type name of non-function %#v. This is a compiler error.", n), p: n.p})
 	}
-	return typename{name: strings.Split(tn.String(), " ")[1]}
+	rname := strings.Split(tn.String(), " ")[1]
+	//return BType{name: rname}
+	t, ok := c.typeByName(rname)
+	if !ok {
+		fmt.Printf("RNAME IS %#v\n", rname)
+		return BType{}, fmt.Errorf("No such type %s", rname)
+	}
+	return t, nil
 }
 
 // TODO: unit test
-func functionCallType(n *Node, tn typename) typename {
+func functionCallType(n *Node, tn BType) BType {
 	if !strings.HasPrefix(tn.String(), "fn(") {
 		panic(&interpreterError{msg: fmt.Sprintf("cannot determine function type name of non-function %#v. This is a compiler error.", n), p: n.p})
 	}
-	return typename{name: strings.Split(tn.String(), " ")[0]}
+	return BType{name: strings.Split(tn.String(), " ")[0]}
 }
 
-func validateReturns(n *Node, c *VContext, t typename) typename {
+func validateReturns(n *Node, c *VContext, t BType) (rt BType) {
+	// 	fmt.Printf("validateReturns()\n")
+	// 	defer func() { fmt.Printf("validateReturns() -> %#v\n", rt) }()
 	switch n.t {
 	case n_return:
+		//		fmt.Printf("Found Return\n")
 		rt := validate(n.args[0], c)
-		if rt != t {
+		//		fmt.Printf("Return Returned: %#v\n", rt)
+		if !rt.Equal(t) {
 			panic(&interpreterError{msg: fmt.Sprintf("Expected a return of type %s but found %s.", t, rt), p: n.p})
 		}
 		return rt
 	case n_if:
 		//TODO: Validate the condition?
+		//		fmt.Printf("Found If Condition.\n")
 		t1 := validateReturns(n.args[1], c, t)
+		//		fmt.Printf("If Returned: %#v\n", t1)
 		if len(n.args) > 2 {
+			//			fmt.Printf("Found Else\n")
 			t2 := validateReturns(n.args[2], c, t)
-			if t1 == t2 {
+			//			fmt.Printf("Else Returned: %#v\n", t2)
+			if t1.Equal(t2) {
 				return t1
 			} else {
 				panic(&interpreterError{msg: fmt.Sprintf("If branches return different types %s and %s", t1, t2), p: n.p})
@@ -236,14 +316,15 @@ func validateReturns(n *Node, c *VContext, t typename) typename {
 		}
 		return t1
 	case n_block:
+		//		fmt.Printf("Fould Block.\n")
 		for _, n := range n.args {
-			if brv := validateReturns(n, c, t); brv != tn_void() {
+			if brv := validateReturns(n, c, t); !brv.Equal(voidType()) {
 				return brv
 			}
 		}
-		return tn_void()
+		return voidType()
 	default:
-		return tn_void()
+		return voidType()
 	}
 }
 
@@ -252,14 +333,14 @@ func validateReturns(n *Node, c *VContext, t typename) typename {
 // not sufficient to describe complex types such as functions and structs. To make sure a function
 // or struct matches another, we need a Value with the fnval or s fields set, containing the
 // details (parameters, return types, fields) of the function or struct.
-func validate(n *Node, c *VContext) typename {
+func validate(n *Node, c *VContext) BType {
 	switch n.t {
 	case n_none:
-		return tn_void()
+		return voidType()
 	case n_number:
-		return tn_num()
+		return numType()
 	case n_str:
-		return tn_str()
+		return strType()
 	case n_symbol:
 		if v, ok := c.binding(n.sval); ok {
 			return v
@@ -274,11 +355,14 @@ func validate(n *Node, c *VContext) typename {
 		fct := functionCallType(n, v)
 		// 		fmt.Printf("Expected function type: %v\n", ct)
 		// 		fmt.Printf("Function Call Type: %v\n", fct)
-		if ct != fct {
+		if !ct.Equal(fct) {
 			spew.Dump(n)
 			panic(&interpreterError{msg: fmt.Sprintf("Called function '%s' as %s, but function is type %s", n.sval, ct, fct), p: n.p})
 		}
-		rt := functionReturnType(n, v)
+		rt, err := c.functionReturnType(n, v)
+		if err != nil {
+			panic(&interpreterError{msg: err.Error(), p: n.p})
+		}
 		//fmt.Printf("Function Return Type: %v\n", rt)
 		return rt
 	case n_eq:
@@ -288,11 +372,11 @@ func validate(n *Node, c *VContext) typename {
 		}
 		val := n.args[1]
 		v := validate(val, c)
-		if v == tn_void() {
+		if v.Equal(voidType()) {
 			panic(&interpreterError{msg: fmt.Sprintf("cannot assign value of type %s.", v), p: n.p})
 		}
 		sv := validate(sym, c)
-		if sv != v {
+		if !sv.Equal(v) {
 			panic(&interpreterError{msg: fmt.Sprintf("cannot assign value of type %s to variable of type %s.", v, sv), p: n.p})
 		}
 
@@ -320,7 +404,11 @@ func validate(n *Node, c *VContext) typename {
 		}
 		c := c.subVContext()
 		for i := 0; i < int(n.nval); i++ {
-			c.bind(n.args[i].sval, typename{name: n.args[i].args[0].sval})
+			t, ok := c.typeByName(n.args[i].args[0].sval)
+			if !ok {
+				panic(&interpreterError{msg: fmt.Sprintf("No such type %s.", n.args[i].args[0].sval), p: n.args[i].args[0].p})
+			}
+			c.bind(n.args[i].sval, t)
 		}
 
 		validate(body, c)
@@ -328,9 +416,13 @@ func validate(n *Node, c *VContext) typename {
 		// 		if bodyType != functionReturnType(n, ftype) {
 		// 			panic(&interpreterError{msg: fmt.Sprintf("body returns %s but function declares return type %s", bodyType, functionReturnType(n, ftype)), p: n.p})
 		// 		}
-		bodyType := validateReturns(body, c, functionReturnType(n, ftype))
-		if bodyType != functionReturnType(n, ftype) {
-			panic(&interpreterError{msg: fmt.Sprintf("body returns %s but function declares return type %s", bodyType, functionReturnType(n, ftype)), p: n.p})
+		rt, err := c.functionReturnType(n, ftype)
+		if err != nil {
+			panic(&interpreterError{msg: err.Error(), p: n.p})
+		}
+		bodyType := validateReturns(body, c, rt)
+		if !bodyType.Equal(rt) {
+			panic(&interpreterError{msg: fmt.Sprintf("body returns %s but function declares return type %s", bodyType, rt), p: n.p})
 		}
 
 		return ftype
@@ -338,7 +430,7 @@ func validate(n *Node, c *VContext) typename {
 		for _, n := range n.args {
 			validate(n, c)
 		}
-		return tn_void()
+		return voidType()
 	case n_return:
 		return validate(n.args[0], c)
 	case n_if:
@@ -348,107 +440,111 @@ func validate(n *Node, c *VContext) typename {
 		if len(n.args) > 2 {
 			validate(n.args[2], c)
 		}
-		return tn_void()
+		return voidType()
 	case n_add:
 		t1 := validate(n.args[0], c)
-		if t1 != tn_num() {
+		if !t1.Equal(numType()) {
 			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be added, but found %s", t1), p: n.args[0].p})
 		}
 		t2 := validate(n.args[1], c)
-		if t2 != tn_num() {
+		if !t2.Equal(numType()) {
 			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be added, but found %s", t2), p: n.args[1].p})
 		}
-		return tn_num()
+		return numType()
 	case n_sub:
 		t1 := validate(n.args[0], c)
-		if t1 != tn_num() {
+		if !t1.Equal(numType()) {
 			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be subtracted, but found %s", t1), p: n.args[0].p})
 		}
 		t2 := validate(n.args[1], c)
-		if t2 != tn_num() {
+		if !t2.Equal(numType()) {
 			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be subtracted, but found %s", t2), p: n.args[1].p})
 		}
-		return tn_num()
+		return numType()
 	case n_mul:
 		t1 := validate(n.args[0], c)
-		if t1 != tn_num() {
+		if !t1.Equal(numType()) {
 			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be multiplied, but found %s", t1), p: n.args[0].p})
 		}
 		t2 := validate(n.args[1], c)
-		if t2 != tn_num() {
+		if !t2.Equal(numType()) {
 			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be multiplied, but found %s", t2), p: n.args[1].p})
 		}
-		return tn_num()
+		return numType()
 	case n_div:
 		t1 := validate(n.args[0], c)
-		if t1 != tn_num() {
+		if !t1.Equal(numType()) {
 			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be divided, but found %s", t1), p: n.args[0].p})
 		}
 		t2 := validate(n.args[1], c)
-		if t2 != tn_num() {
+		if !t2.Equal(numType()) {
 			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be divided, but found %s", t2), p: n.args[1].p})
 		}
-		return tn_num()
+		return numType()
 	case n_lt:
 		t1 := validate(n.args[0], c)
-		if t1 != tn_num() {
-			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be divided, but found %s", t1), p: n.args[0].p})
+		if !t1.Equal(numType()) {
+			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be compared, but found %s", t1), p: n.args[0].p})
 		}
 		t2 := validate(n.args[1], c)
-		if t2 != tn_num() {
-			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be divided, but found %s", t2), p: n.args[1].p})
+		if !t2.Equal(numType()) {
+			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be compared, but found %s", t2), p: n.args[1].p})
 		}
-		return tn_num()
+		return numType()
 	case n_le:
 		t1 := validate(n.args[0], c)
-		if t1 != tn_num() {
+		if !t1.Equal(numType()) {
 			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be compared, but found %s", t1), p: n.args[0].p})
 		}
 		t2 := validate(n.args[1], c)
-		if t2 != tn_num() {
+		if !t2.Equal(numType()) {
 			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be compared, but found %s", t2), p: n.args[1].p})
 		}
-		return tn_num()
+		return numType()
 	case n_gt:
 		t1 := validate(n.args[0], c)
-		if t1 != tn_num() {
+		if !t1.Equal(numType()) {
 			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be compared, but found %s", t1), p: n.args[0].p})
 		}
 		t2 := validate(n.args[1], c)
-		if t2 != tn_num() {
+		if !t2.Equal(numType()) {
 			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be compared, but found %s", t2), p: n.args[1].p})
 		}
-		return tn_num()
+		return numType()
 	case n_ge:
 		t1 := validate(n.args[0], c)
-		if t1 != tn_num() {
+		if !t1.Equal(numType()) {
 			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be compared, but found %s", t1), p: n.args[0].p})
 		}
 		t2 := validate(n.args[1], c)
-		if t2 != tn_num() {
+		if !t2.Equal(numType()) {
 			panic(&interpreterError{msg: fmt.Sprintf("Only numbers can be compared, but found %s", t2), p: n.args[1].p})
 		}
-		return tn_num()
+		return numType()
 	case n_struct:
 		for _, field := range n.args {
 			if _, ok := c.typeByName(field.args[0].sval); !ok {
 				panic(&interpreterError{msg: fmt.Sprintf("Type %s undefined.", field.args[0].sval), p: field.args[0].p})
 			}
 		}
-		fmt.Printf("DELCALING TYPE %s", n.sval)
-		if !c.defType(n.sval, typename{name: n.sval}) {
-			panic(&interpreterError{msg: fmt.Sprintf("Type %s already defined.", n.sval), p: n.p})
+		// 		fmt.Printf("DECLARING TYPE %s", n.sval)
+		// 		if !c.defType(n.sval, BType{name: n.sval}) {
+		// 			panic(&interpreterError{msg: fmt.Sprintf("Type %s already defined.", n.sval), p: n.p})
+		// 		}
+		sd := BType{name: n.sval}
+		for _, field := range n.args {
+			//fmt.Printf("FIELD ### %s field %d -> name: %s, type: %s\n", n.sval, i, field.sval, field.args[0].sval)
+			t, ok := c.typeByName(field.args[0].sval)
+			if !ok {
+				panic(&interpreterError{msg: fmt.Sprintf("No such type %s in field", field.args[0].sval), p: field.args[0].p})
+			}
+			sd.addField(field.sval, t)
 		}
-		var sd structDef
-		for i, field := range n.args {
-			fmt.Printf("FIELD ### %s field %d -> name: %s, type: %s\n", n.sval, i, field.sval, field.args[0].sval)
-			sd.addField(field.sval, typename{name: field.args[0].sval})
+		//fmt.Printf("DECLARING STRUCT %s\n", n.sval)
+		if ok := c.defType(n.sval, sd); !ok {
+			panic(&interpreterError{msg: fmt.Sprintf("Type %s already exists.", n.sval), p: n.p})
 		}
-		fmt.Printf("DECLARING STRUCT %s\n", n.sval)
-		if err := c.declStruct(typename{name: n.sval}, &sd); err != nil {
-			panic(&interpreterError{msg: err.Error(), p: n.p})
-		}
-		return tn_void()
+		return voidType()
 	case n_stlit:
 		t, ok := c.typeByName(n.sval)
 		if !ok {
@@ -464,7 +560,7 @@ func validate(n *Node, c *VContext) typename {
 		if !c.bind(n.sval, v) {
 			panic(&interpreterError{msg: fmt.Sprintf("failed to bind '%s' to type %s. This is likely a compiler bug.", n.sval, v), p: n.p})
 		}
-		return tn_void()
+		return voidType()
 	case n_typename:
 		t, ok := c.typeByName(n.sval)
 		if !ok {
@@ -484,16 +580,17 @@ func validate(n *Node, c *VContext) typename {
 		// 			panic(&interpreterError{msg: fmt.Sprintf("%s not declared", n.args[0].sval), p: n.p})
 		// 		}
 		vo := v
-		st, ok := c.structFor(vo)
-		if !ok {
-			panic(&interpreterError{msg: fmt.Sprintf("%s is not a struct type", vo), p: n.p})
-		}
+		// 		st, ok := c.structFor(vo)
+		// 		if !ok {
+		// 			panic(&interpreterError{msg: fmt.Sprintf("%s is not a struct type", vo), p: n.p})
+		// 		}
+		st := vo
 		//fmt.Printf("TYPE: %#v\n", st)
 		ft, ok := st.fields[n.args[1].sval]
 		if !ok {
 			panic(&interpreterError{msg: fmt.Sprintf("%s is not a field ", n.args[1].sval), p: n.p})
 		}
-		return ft
+		return ft.t
 	case n_index:
 		t, ok := c.binding(n.sval)
 		if !ok {
@@ -505,14 +602,14 @@ func validate(n *Node, c *VContext) typename {
 		if t.name != "str" {
 			panic(&interpreterError{msg: fmt.Sprintf("can only index into strings for now (%s).", n.sval), p: n.p})
 		}
-		return tn_byte()
+		return byteType()
 	default:
 		fmt.Printf("NOT IMPLEMENTED FOR:\n")
 		spew.Dump(n)
 		panic("NOT IMPLEMENTED")
 	}
 	panic("FORGOT TO RETURN")
-	return tn_void()
+	return voidType()
 	// 		return "n_funcall"
 	// 	case n_index:
 	// 		return "n_index"
