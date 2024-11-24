@@ -68,39 +68,39 @@ function main
 	call argprinter
 	add rsp 16
 
-	call bytestest	
+	//call bytestest	
 
  	mov rax 0
 	epilogue
  	ret
 
-function bytestest
-	 prologue
+// function bytestest
+// 	 prologue
 
-	 bytes alphabet 27
+// 	 bytes alphabet 27
 
-	 // mov [alphabet+0] 65
-	 // mov [alphabet+1] 66
-	 // mov [alphabet+2] 67
-	 // mov [alphabet+3] 0
+// 	 // mov [alphabet+0] 65
+// 	 // mov [alphabet+1] 66
+// 	 // mov [alphabet+2] 67
+// 	 // mov [alphabet+3] 0
 
-	 mov rax 0
-	 mov [alphabet+rax] 65
-	 inc rax
-	 mov [alphabet+rax] 66
-	 inc rax
-	 mov [alphabet+rax] 67
-	 inc rax
-	 mov [alphabet+rax] 0
+// 	 mov rax 0
+// 	 mov [alphabet+rax] 65
+// 	 inc rax
+// 	 mov [alphabet+rax] 66
+// 	 inc rax
+// 	 mov [alphabet+rax] 67
+// 	 inc rax
+// 	 mov [alphabet+rax] 0
 
-	 mov rdi alphabet
-	 call puts
+// 	 mov rdi alphabet
+// 	 call puts
 
-	 lea rdi newline
-	 call puts
+// 	 lea rdi newline
+// 	 call puts
 
-	 epilogue
-	 ret
+// 	 epilogue
+// 	 ret
 
 function argprinter
 	arg one rdi

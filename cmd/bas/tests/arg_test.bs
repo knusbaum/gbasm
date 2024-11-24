@@ -1,39 +1,8 @@
 package main
 
 function main
-	// allocate 2 local variables, smol, an 8-bit value and big, a 64-bit value.
-	local smol 8
-	local big 64
-
 	// Do the function prologue.
 	prologue
-
-	// put 16 into smol and then add 4 for 20
-	mov smol 16
-	add smol 4
-
-	// put 100 into big and then add 80 for 180
-	mov big 100
-	add big 80
-
-	// make sure we can use rdi, rax
-	acquire rdi rax
-
-	// clear rax, move in smol and add big so rax is 200.
-	// we 'forget' smol and big as we're done with them.
-	// This lets the assembler know we can reuse their registers
-	// and storage space and don't need to save them on a jmp or call.
-	xor rax rax
-	mov al smol
-	forget smol
-	add rax big
-	forget big
-
-	// move 200 into rdi, the first argument for puti, then call puti.
-	mov rdi rax
-	call puti
-	release rdi rax
-
 
 	// try (9 + 1) + (1 - (5 + 6) * (2 + 4))
 	local T1 64

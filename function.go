@@ -39,7 +39,7 @@ func (r *Ralloc) Location(preferRegister bool) interface{} {
 	}
 
 	if !r.regable || preferRegister {
-		fmt.Printf("[Location] Preferring Register.\n")
+		//fmt.Printf("[Location] Preferring Register.\n")
 		return r.Register()
 	}
 	if r.inmem {
@@ -73,6 +73,7 @@ func (r *Ralloc) Register() Register {
 		return reg
 		//panic(fmt.Sprintf("Cannot load variable %s into register.", r.sym)) // TODO: Better error handling
 	}
+	//fmt.Printf("Allocating register for %v\n", r.sym)
 	reg, ok := r.rallocs.rs.Get(r.size)
 	if !ok {
 		reg, ok = r.rallocs.Evict(r.size)
@@ -82,7 +83,7 @@ func (r *Ralloc) Register() Register {
 		}
 		//log.Printf("HAD TO EVICT REGISTER. EVICTED REGISTER %v", reg)
 	}
-	fmt.Printf("[Register] took register %v\n", reg)
+	//fmt.Printf("[Register] took register %v\n", reg)
 	if r.inmem {
 		//fmt.Printf("%s not in register. Allocated register %s\n", r.sym, reg)
 		r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
@@ -133,7 +134,7 @@ type Rallocs struct {
 	rs        *Registers
 	f         *Function
 	lru       []Register
-	localoff  int32 // Current local offset in bytes from base pointer for new allocations
+	localoff  uint32 // Current local offset in bytes from base pointer for new allocations
 	freeSpace []struct {
 		size   int32
 		offset int32
@@ -164,8 +165,8 @@ func (ra *Rallocs) space(size int32) int32 {
 		ra.freeSpace = append(ra.freeSpace[:out], ra.freeSpace[out+1:]...)
 		return ret
 	} else {
-		ra.localoff += size
-		return -ra.localoff
+		ra.localoff += uint32(size)
+		return -int32(ra.localoff)
 	}
 }
 
@@ -224,6 +225,7 @@ func (ra *Rallocs) Forget(name string) error {
 	if r.inreg {
 		r.rallocs.removeLRU(r.reg)
 		delete(r.rallocs.regs, r.reg)
+		r.rallocs.rs.Release(r.reg)
 	}
 	delete(ra.names, name)
 	//fmt.Printf("Forgetting %s(%d) at offset 0x%x\n", name, r.size, r.offset)
@@ -377,12 +379,12 @@ func (ra *Rallocs) Evict(size int) (Register, bool) {
 // or perform any other bookkeeping. This is mostly useful for when one wants to temporarily use a specific register
 // for some calculation.
 func (ra *Rallocs) EvictReg(r Register) {
-	fmt.Printf("[EvictReg] In Use:\n")
-	for r := range ra.regs {
-		fmt.Printf("\t%v\n", r)
-	}
+	//fmt.Printf("[EvictReg] In Use:\n")
+	//for r := range ra.regs {
+	//	fmt.Printf("\t%v\n", r)
+	//}
 	conflicts := ra.rs.Conflicts(r)
-	fmt.Printf("[EvictReg] Evicting %v, conflicts: %v\n", r, conflicts)
+	//fmt.Printf("[EvictReg] Evicting %v, conflicts: %v\n", r, conflicts)
 	for _, cr := range conflicts {
 		a, ok := ra.regs[cr]
 		if !ok {
@@ -407,7 +409,7 @@ func (ra *Rallocs) EvictAll() {
 // EvictForCall evicts all of the caller-saved registers in preparation for a
 // call
 func (ra *Rallocs) EvictForCall() {
-	fmt.Printf("[EVICT FOR CALL]\n")
+	//fmt.Printf("[EVICT FOR CALL]\n")
 	for _, r := range caller_saved {
 		ra.EvictReg(r)
 	}
@@ -580,7 +582,10 @@ func (f *Function) Epilogue() error {
 	bs = bs[f.localsLocation:]
 	bss := bytes.NewBuffer(bs)
 	bss.Truncate(0)
-	binary.Write(bss, binary.LittleEndian, f.Rallocs.localoff)
+	// align the stack to 16-bytes.
+	localoff := ((f.Rallocs.localoff + 0x10) & 0xFF_FF_FF_F0)
+	binary.Write(bss, binary.LittleEndian, localoff)
+	//binary.Write(bss, binary.LittleEndian, f.Rallocs.localoff)
 	// This un-does the "SUB" in the prologue, but is unnecessary since we
 	// immediately load RSP from RBP.
 	//f.f.Instr("ADD", R_RSP, uint32(f.Rallocs.localoff))
