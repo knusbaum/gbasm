@@ -470,6 +470,7 @@ func main() {
 				}
 
 				if strings.HasPrefix(parts[i], "[") {
+					fmt.Printf("PARSING INDIRECT %v!\n", parts[i])
 					base, offset, err := ParseIndirect(parts[i])
 					if err != nil {
 						fmt.Printf("Fatal: Failed to parse indirection %s: %s\n", parts[i], err)
@@ -501,6 +502,7 @@ func main() {
 				}
 				args[i-1] = parts[i]
 			}
+			fmt.Printf("INSTRUP: %#v\n args: %#v\n", instrUp, args)
 			err := f.Instr(instrUp, args...)
 			if err != nil {
 				fmt.Printf("Fatal: Instruction %v: %s\n", parts, err)

@@ -1,0 +1,53 @@
+package main
+
+function main
+	 mov rax 10
+	 mov rbx 20
+	 mov rcx 30
+	 mov rdx 40
+	 mov rsi 50
+	 mov rdi 60
+	 mov r8 70
+	 mov r9 80
+	 mov r10 90
+	 mov r11 100
+	 mov r12 110
+	 mov r13 120
+	 mov r14 130
+	 mov r15 140
+
+	 // Do rdi first so we can call
+	 // puti.
+
+	 // 70
+	 add rdi rax
+	 // 90
+	 add rdi rbx
+	 // 120
+	 add rdi rcx
+	 // 160
+	 add rdi rdx
+	 // 210
+	 add rdi rsi
+	 // 420
+	 add rdi rdi
+	 // 490
+	 add rdi r8
+	 // 570
+	 add rdi r9
+	 // 660
+	 add rdi r10
+	 // 760
+	 add rdi r11
+	 // 870
+	 add rdi r12
+	 // 990
+	 add rdi r13
+	 // 1120
+	 add rdi r14
+	 // 1260
+	 add rdi r15	
+	 call puti
+
+	 xor rax rax
+	 ret

@@ -9,6 +9,7 @@ import (
 	"io"
 	"reflect"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -34,12 +35,20 @@ type Indirect struct {
 	Size int // Size in bytes of the data at the offset Off from Reg
 }
 
+type IndirectByReg struct {
+	Reg   Register
+	Index Register
+	Size  int // Size in bytes of the data at the offset Off from Reg
+}
+
 type Instruction struct {
 	Summary string
 	Forms   []IForm
 }
 
-func (i *Instruction) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
+// if formname != "", then the chosen form's name must match formname.
+// This is used to specify e.g. pushw or pushq as opposed to just push.
+func (i *Instruction) Encode(w WriteLener, formname string, os ...interface{}) ([]Relocation, error) {
 	// 	fmt.Printf("INSTRUCTION: [%s]\n", i.Summary)
 	// 	for _, f := range i.Forms {
 	// 		fmt.Printf("FORM: %#v\n", f.ops)
@@ -47,6 +56,11 @@ func (i *Instruction) Encode(w WriteLener, os ...interface{}) ([]Relocation, err
 forms:
 	for _, f := range i.Forms {
 		if f.opcount != len(os) {
+			continue
+		}
+		//fmt.Printf("formname: [%v], f.name: [%v]\n", formname, f.name)
+		if formname != "" && formname != f.name {
+			//fmt.Printf("WRONG NAME! Skip\n")
 			continue
 		}
 		var i int
@@ -57,11 +71,13 @@ forms:
 			o := os[i]
 			//log.Printf("Checking %#v matches %#v: %t\n", fop, o, fop.Match(o))
 			if !fop.Match(o) {
+				//log.Printf("NO\n")
 				continue forms
 			}
+			//log.Printf("YES\n")
 			i++
 		}
-		//log.Printf("Encoding form %#v\n", f.ops)
+		//log.Printf("Encoding form %v %#v\n", f.name, f.ops)
 		return f.Encode(w, os...)
 	}
 	//spew.Dump(os)
@@ -114,7 +130,9 @@ func (x *prefix) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 // Field Name		Bit Position		Definition
 // - 				7:4 				0100
 // W 				3 					0 = Operand size determined by CS.D
-//  				 					1 = 64 Bit Operand Size
+//
+//	1 = 64 Bit Operand Size
+//
 // R 				2					Extension of the ModR/M reg field
 // X 				1 					Extension of the SIB index field
 // B 				0 					Extension of the ModR/M r/m field, SIB base field, or Opcode reg field
@@ -731,6 +749,7 @@ func (o *Op) Match(op interface{}) bool {
 }
 
 type IForm struct {
+	name    string
 	opcount int
 	ops     []Op
 	enc     [][]Encoder
@@ -755,14 +774,21 @@ encodings:
 }
 
 type Asm struct {
-	ArchName string
-	instrs   map[string]*Instruction
+	ArchName  string
+	instrs    map[string]*Instruction
+	specforms map[string]*Instruction
 }
 
 func (a *Asm) Encode(w WriteLener, instr string, os ...interface{}) ([]Relocation, error) {
 	inst, ok := a.instrs[instr]
+	matchspec := ""
 	if !ok {
-		return nil, fmt.Errorf("No such instruction: %s", instr)
+		inst, ok = a.specforms[instr]
+		if !ok {
+			fmt.Printf("specforms: %#v\n", a.specforms)
+			return nil, fmt.Errorf("No such instruction: %s", instr)
+		}
+		matchspec = instr
 	}
 	// 	fmt.Printf("Encoding instruction %s ", instr)
 	// 	for _, o := range os {
@@ -775,7 +801,7 @@ func (a *Asm) Encode(w WriteLener, instr string, os ...interface{}) ([]Relocatio
 		switch t := o.(type) {
 		case *Ralloc:
 			//fmt.Printf("### RALLOC ###\t%s -> %v\n", t.sym, t.Location())
-			newos = append(newos, t.Location())
+			newos = append(newos, t.Location(true))
 			// 			if t.inmem {
 			// 				fmt.Printf("### RALLOC ###\t%s IN MEM\n", t.sym)
 			// 				newos = append(newos, Indirect{Reg: R_RBP, Off: t.offset})
@@ -796,7 +822,7 @@ func (a *Asm) Encode(w WriteLener, instr string, os ...interface{}) ([]Relocatio
 	for {
 		found := false
 		//fmt.Printf("INST.ENCODE(%#v)\n", newos)
-		r, err := inst.Encode(w, newos...)
+		r, err := inst.Encode(w, matchspec, newos...)
 		if err == nil {
 			return r, err
 		}
@@ -806,6 +832,8 @@ func (a *Asm) Encode(w WriteLener, instr string, os ...interface{}) ([]Relocatio
 		// 		}
 		// 		fmt.Printf("\n")
 		// 		fmt.Printf("ERROR: %v\n", err)
+
+		// what the hell is this?
 		for i, o := range newos {
 			if _, ok := o.(Indirect); ok {
 				if ra, ok := os[i].(*Ralloc); ok {
@@ -844,6 +872,11 @@ func parseForm(xform *XForm) (IForm, error) {
 		f   IForm
 		err error
 	)
+	for _, a := range xform.Attrs {
+		if a.Name.Local == "gas-name" {
+			f.name = strings.ToUpper(a.Value)
+		}
+	}
 	for _, o := range xform.Operands {
 		switch o.XMLName.Local {
 		case "ISA":
@@ -1051,7 +1084,11 @@ func ParseFile(fname string) (*Asm, error) {
 		return nil, err
 	}
 
-	a := &Asm{ArchName: xis.Name, instrs: make(map[string]*Instruction)}
+	a := &Asm{
+		ArchName:  xis.Name,
+		instrs:    make(map[string]*Instruction),
+		specforms: make(map[string]*Instruction),
+	}
 	for _, xi := range xis.XInstructions {
 		instr := &Instruction{Summary: xi.Summary}
 		a.instrs[xi.Name] = instr
@@ -1075,18 +1112,25 @@ func parse(r io.Reader) (*Asm, error) {
 		return nil, err
 	}
 
-	a := &Asm{ArchName: xis.Name, instrs: make(map[string]*Instruction)}
+	a := &Asm{
+		ArchName:  xis.Name,
+		instrs:    make(map[string]*Instruction),
+		specforms: make(map[string]*Instruction),
+	}
 	for _, xi := range xis.XInstructions {
 		instr := &Instruction{Summary: xi.Summary}
 		a.instrs[xi.Name] = instr
 		//log.Printf("INSTR: %s", xi.Name)
-
 		for _, xform := range xi.Forms {
 			f, err := parseForm(xform)
+			// if xi.Name == "PUSH" {
+			// 	fmt.Printf("FORM: %#v\n", f)
+			// }
 			if err != nil {
 				//log.Printf("Failed to parse a form of %s: %s", xi.Name, err)
 				continue
 			}
+			a.specforms[f.name] = instr
 			instr.Forms = append(instr.Forms, f)
 		}
 	}

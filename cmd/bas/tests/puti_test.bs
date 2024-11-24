@@ -1,0 +1,7 @@
+package main
+
+function main
+	 mov rdi 10
+	 call puti
+	 xor rax rax
+	 ret

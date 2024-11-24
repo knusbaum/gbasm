@@ -1,0 +1,37 @@
+package main
+
+function main
+	 mov rax 0x00
+	 shl rax 8
+	 add rax 0x44
+	 shl rax 8
+	 add rax 0x4C
+	 shl rax 8
+	 add rax 0x52
+	 push rax
+	 
+	 mov rax 0x4F
+	 shl rax 8
+	 add rax 0x57
+	 shl rax 8
+	 add rax 0x20
+	 shl rax 8
+	 add rax 0x4F
+	 shl rax 8
+	 add rax 0x4C
+	 shl rax 8
+	 add rax 0x4C
+	 shl rax 8
+	 add rax 0x45
+	 shl rax 8
+	 add rax 0x48
+	 push rax
+	 
+	 mov rdi rsp
+	 call puts
+
+	 pop rdi
+	 pop rdi
+
+	 xor rax rax
+	 ret

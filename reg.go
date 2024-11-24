@@ -605,6 +605,25 @@ func (r Register) fullReg() Register {
 	}
 }
 
+// subRegisters8 returns the set of 8-bit registers that belong to r
+func (r Register) subRegisters8() ([]Register, bool) {
+	if r.Width() == 8 {
+		return []Register{r}, true
+	}
+	r = r.fullReg()
+	switch r {
+	case R_RAX:
+		return []Register{R_AL, R_AH}, true
+	case R_RBX:
+		return []Register{R_BL, R_BH}, true
+	case R_RCX:
+		return []Register{R_CL, R_CH}, true
+	case R_RDX:
+		return []Register{R_DL, R_DH}, true
+	}
+	return nil, false
+}
+
 func (r Register) partial(size int) (Register, bool) {
 	switch r {
 	case R_RAX:

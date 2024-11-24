@@ -1,0 +1,25 @@
+package main
+
+function main
+	 // Enough for "hello world\0"
+	 sub rsp 12
+	 mov [rsp] 0x48
+	 mov [rsp+1] 0x45
+	 mov [rsp+2] 0x4C
+	 mov [rsp+3] 0x4C
+	 mov [rsp+4] 0x4F
+	 mov [rsp+5] 0x20
+	 mov [rsp+6] 0x57
+	 mov [rsp+7] 0x4F
+	 mov [rsp+8] 0x52
+	 mov [rsp+9] 0x4C
+	 mov [rsp+10] 0x44
+	 mov [rsp+11] 0x00
+
+	 mov rdi rsp
+	 call puts
+
+	 // fix the stack
+	 add rsp 12
+	 xor rax rax
+	 ret

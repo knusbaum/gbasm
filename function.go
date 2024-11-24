@@ -32,13 +32,14 @@ func (r *Ralloc) String() string {
 }
 
 // Location returns a MOV-able location for the allocation.
-func (r *Ralloc) Location() interface{} {
+func (r *Ralloc) Location(preferRegister bool) interface{} {
 	if r.inreg {
 		r.rallocs.updateLRU(r.reg)
 		return r.reg
 	}
 
-	if !r.regable {
+	if !r.regable || preferRegister {
+		fmt.Printf("[Location] Preferring Register.\n")
 		return r.Register()
 	}
 	if r.inmem {
@@ -81,6 +82,7 @@ func (r *Ralloc) Register() Register {
 		}
 		//log.Printf("HAD TO EVICT REGISTER. EVICTED REGISTER %v", reg)
 	}
+	fmt.Printf("[Register] took register %v\n", reg)
 	if r.inmem {
 		//fmt.Printf("%s not in register. Allocated register %s\n", r.sym, reg)
 		r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
@@ -178,7 +180,8 @@ func (ra *Rallocs) returnSpace(size int32, offset int32) {
 	})
 }
 
-// NewLocal allocates a new local variable of size bits
+// NewLocal allocates a new local variable of size bits. Locals created with
+// this function may have 'Forget' called on them to relinquish their storage.
 func (ra *Rallocs) NewLocal(name string, size int) (*Ralloc, error) {
 	//fmt.Printf("NewLocal %s(%d)\n", name, size)
 	if _, ok := ra.names[name]; ok {
@@ -195,22 +198,24 @@ func (ra *Rallocs) NewLocal(name string, size int) (*Ralloc, error) {
 	return r, nil
 }
 
-func (ra *Rallocs) Temp(name string, size int) (*Ralloc, error) {
-	//fmt.Printf("Temp %s(%d)\n", name, size)
-	if _, ok := ra.names[name]; ok {
-		return nil, fmt.Errorf("Ralloc %s already declared.", name)
-	}
-	r := &Ralloc{
-		sym:     name,
-		size:    size,
-		regable: true,
-		offset:  ra.space(int32(size) / 8),
-		rallocs: ra,
-	}
-	ra.names[name] = r
-	return r, nil
-}
+// func (ra *Rallocs) Temp(name string, size int) (*Ralloc, error) {
+// 	//fmt.Printf("Temp %s(%d)\n", name, size)
+// 	if _, ok := ra.names[name]; ok {
+// 		return nil, fmt.Errorf("Ralloc %s already declared.", name)
+// 	}
+// 	r := &Ralloc{
+// 		sym:     name,
+// 		size:    size,
+// 		regable: true,
+// 		offset:  ra.space(int32(size) / 8),
+// 		rallocs: ra,
+// 	}
+// 	ra.names[name] = r
+// 	return r, nil
+// }
 
+// Forget forgets a local value named name, giving back its storage to the register
+// and stack pool.
 func (ra *Rallocs) Forget(name string) error {
 	r, ok := ra.names[name]
 	if !ok {
@@ -372,9 +377,23 @@ func (ra *Rallocs) Evict(size int) (Register, bool) {
 // or perform any other bookkeeping. This is mostly useful for when one wants to temporarily use a specific register
 // for some calculation.
 func (ra *Rallocs) EvictReg(r Register) {
-	if alloc, ok := ra.regs[r]; ok {
-		alloc.Evict()
+	fmt.Printf("[EvictReg] In Use:\n")
+	for r := range ra.regs {
+		fmt.Printf("\t%v\n", r)
 	}
+	conflicts := ra.rs.Conflicts(r)
+	fmt.Printf("[EvictReg] Evicting %v, conflicts: %v\n", r, conflicts)
+	for _, cr := range conflicts {
+		a, ok := ra.regs[cr]
+		if !ok {
+			// WARNING! Caller-saved register in use, but not as a variable.
+			// It may have been USE'd manually.
+			//panic(fmt.Sprintf("Registers thinks %v is in use, but Rallocs does not have a record of it.\n", cr))
+			continue
+		}
+		a.Evict()
+	}
+	return
 }
 
 func (ra *Rallocs) EvictAll() {
@@ -385,13 +404,60 @@ func (ra *Rallocs) EvictAll() {
 	}
 }
 
+// EvictForCall evicts all of the caller-saved registers in preparation for a
+// call
+func (ra *Rallocs) EvictForCall() {
+	fmt.Printf("[EVICT FOR CALL]\n")
+	for _, r := range caller_saved {
+		ra.EvictReg(r)
+	}
+}
+
 // Acquire evicts whatever variable is in a register, if there is one. And marks the register in use.
 // Registers that are Acquired must be Released, just like Use'd registers.
 func (ra *Rallocs) Acquire(r Register) {
-	if alloc, ok := ra.regs[r]; ok {
-		alloc.Evict()
+	conflicts := ra.rs.Conflicts(r)
+	for _, cr := range conflicts {
+		a, ok := ra.regs[cr]
+		if !ok {
+			panic(fmt.Sprintf("Registers thinks %v is in use, but Rallocs does not have a record of it. Has it already been acquired or used?\n", cr))
+		}
+		a.Evict()
 	}
-	ra.rs.Use(r)
+
+	if !ra.rs.Use(r) {
+		panic(fmt.Sprintf("Failed to use register %v\n", r))
+	}
+	return
+
+	// fmt.Printf("Acquiring register %v\n", r)
+	// //fmt.Printf("REGS: %#v\n", ra.regs)
+	// for k, v := range ra.regs {
+	// 	fmt.Printf("REG: %v, %v\n", k, v)
+	// }
+	// if alloc, ok := ra.regs[r]; ok {
+	// 	fmt.Printf("REG: %v in use.\n", r)
+	// 	alloc.Evict()
+	// } else {
+	// 	fmt.Printf("REG: %v NOT in use.\n", r)
+	// }
+	// fmt.Printf("Resgisters says of %v: %v\n", r, ra.rs.InUse(r))
+
+	// conflicts := ra.rs.Conflicts(r)
+	// fmt.Printf("Registers says these are in use: %v\n", conflicts)
+
+	// for _, cr := range conflicts {
+	// 	fmt.Printf("Evicting %v\n", cr)
+	// 	a, ok := ra.regs[cr]
+	// 	if !ok {
+	// 		panic(fmt.Sprintf("Registers thinks %v is in use, but Rallocs does not have a record of it.\n", cr))
+	// 	}
+	// 	a.Evict()
+	// }
+
+	// if !ra.rs.Use(r) {
+	// 	panic(fmt.Sprintf("Failed to use register %v\n", r))
+	// }
 }
 
 // func (ra *Rallocs) MarkAllNotInreg() {
@@ -543,8 +609,15 @@ func (f *Function) Label(l string) error {
 
 // Instr should be one of the jump instructions like JMP, JNE, JGT, CALL etc.
 func (f *Function) Jump(instr string, label string) error {
-	// When jumping, we need to make sure all locals are saved. We don't know the state where we're jumping.
-	f.EvictAll()
+	if instr == "CALL" {
+		// For call, we only need to save the caller-saved registers according to
+		// System V Amd64 ABI
+		f.EvictForCall()
+	} else {
+		// When jumping, we need to make sure all locals are saved. We don't know
+		// the state where we're jumping.
+		f.EvictAll()
+	}
 	// TODO: If there is already a label, we could apply the jump here rather than creating a
 	// relocation and doing it later. It's not clear if that is a worthwhile optimization or not.
 	// 	if loff, ok := f.labels[label]; ok {

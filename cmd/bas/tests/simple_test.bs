@@ -1,0 +1,6 @@
+package main
+
+// This test just ensures we can assemble, link, and run *something*.
+
+function main
+	ret

@@ -8,7 +8,9 @@ function main
 	// no prologue necessary. 
 	// Only modifying rdi and rax (by way of calling fib)
 	//lea rax hello
+	prologue
 	lea rax hello
+	 // Jello
 	mov [rax+0] 74
 	mov rdi rax
 	call puts
@@ -52,7 +54,7 @@ function main
 	pop rdi
 	call puti
 
-	lea rdi newline
+	lea rdi newline	
 	call puts
 
 	mov rdi 1
@@ -66,8 +68,39 @@ function main
 	call argprinter
 	add rsp 16
 
+	call bytestest	
+
  	mov rax 0
+	epilogue
  	ret
+
+function bytestest
+	 prologue
+
+	 bytes alphabet 27
+
+	 // mov [alphabet+0] 65
+	 // mov [alphabet+1] 66
+	 // mov [alphabet+2] 67
+	 // mov [alphabet+3] 0
+
+	 mov rax 0
+	 mov [alphabet+rax] 65
+	 inc rax
+	 mov [alphabet+rax] 66
+	 inc rax
+	 mov [alphabet+rax] 67
+	 inc rax
+	 mov [alphabet+rax] 0
+
+	 mov rdi alphabet
+	 call puts
+
+	 lea rdi newline
+	 call puts
+
+	 epilogue
+	 ret
 
 function argprinter
 	arg one rdi
