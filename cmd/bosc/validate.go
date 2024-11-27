@@ -385,7 +385,7 @@ func validate(n *Node, c *VContext) BType {
 			panic(&interpreterError{msg: fmt.Sprintf("cannot assign value of type %s.", v), p: n.p})
 		}
 		sv := validate(sym, c)
-		fmt.Printf("Comparing assignment of %#v to %#v\n", sv, v)
+		//fmt.Printf("Comparing assignment of %#v to %#v\n", sv, v)
 		if !sv.Equal(v) {
 			panic(&interpreterError{msg: fmt.Sprintf("cannot assign value of type %s to variable of type %s.", v, sv), p: n.p})
 		}
@@ -583,7 +583,7 @@ func validate(n *Node, c *VContext) BType {
 			if idx.t != n_index {
 				panic(fmt.Sprintf("Bad variable declaration with argument %#v", idx))
 			}
-			fmt.Printf("Variable %v is an array of %d elements.\n", n.sval, idx.ival)
+			//fmt.Printf("Variable %v is an array of %d elements.\n", n.sval, idx.ival)
 			if idx.ival > 0 {
 				t.ind++
 			}

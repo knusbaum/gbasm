@@ -28,14 +28,14 @@ b.out: bld main.bo string.bo
 	./bld main.bo string.bo
 
 clean:
-	- rm main.bo main.bs b.out 
+	- rm main.bo string.bo main.bs b.out 
 
 nuke: clean
 	- rm bosc bas bld
 
 
 ## temp
-array: nuke bas bld bosc
+array: nuke bas bld bosc string.bo
 	./bosc array.bosc
 	./bas main.bs init_linux.bs
 	./bld main.bo string.bo

@@ -817,7 +817,7 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 		ctx.release(of, two)
 		return t1
 	case n_eq:
-		fmt.Printf("Assigning  %v = %v\n", n.args[0], n.args[1])
+		//fmt.Printf("Assigning  %v = %v\n", n.args[0], n.args[1])
 		if n.args[0].t != n_symbol && n.args[0].t != n_dot {
 			panic("Can only assign to variables.\n")
 		}
@@ -1019,7 +1019,7 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 			if idx.t != n_index {
 				panic(fmt.Sprintf("Bad variable declaration with argument %#v", idx))
 			}
-			fmt.Printf("Variable %v is an array of %d elements.\n", n.sval, idx.ival)
+			//fmt.Printf("Variable %v is an array of %d elements.\n", n.sval, idx.ival)
 			elemcount = int(idx.ival)
 		}
 
@@ -1042,7 +1042,7 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 			if elemcount > 0 {
 				allocsize = vtype.size * elemcount
 			}
-			fmt.Printf("Variable %v of size %v bytes\n", n.sval, allocsize)
+			//fmt.Printf("Variable %v of size %v bytes\n", n.sval, allocsize)
 
 			if vtype.size <= 8 && elemcount == 0 {
 				// Value fits in a register and is not an array.
@@ -1070,7 +1070,7 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 			dest = ctx.Temp(it, of)
 		}
 		dest.t = it
-		fmt.Printf("Taking address of %v (%#v)\n", n.sval, t)
+		//fmt.Printf("Taking address of %v (%#v)\n", n.sval, t)
 		fmt.Fprintf(of, "\t// &%s\n", n.sval)
 		if t.rt == rt_direct {
 			fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, n.sval)
@@ -1093,7 +1093,7 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 			dest = ctx.Temp(it, of)
 		}
 		dest.t = it
-		fmt.Printf("DEREF %#v\n", it)
+		//fmt.Printf("DEREF %#v\n", it)
 		if it.rt == rt_indirect {
 			// for indirect, we don't want to copy into the target, because the target is possibly a pointer
 			// that we want to copy, i.e. x = *y

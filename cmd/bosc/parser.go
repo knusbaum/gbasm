@@ -215,7 +215,7 @@ func (p *Parser) parseTypeName() *Node {
 	}
 	typename := c.sval
 	p.advance()
-	fmt.Printf("NEXT TOKEN: %v\n", p.current())
+	//fmt.Printf("NEXT TOKEN: %v\n", p.current())
 	if p.current().t == tok_lsquare {
 		p.advance()
 		if p.current().t != tok_number {
@@ -308,8 +308,8 @@ func (p *Parser) parseFor() *Node {
 }
 
 func (p *Parser) parseParams() []*Node {
-	fmt.Printf("Parsing params...\n")
-	defer fmt.Printf("Parsing params done.\n")
+	//fmt.Printf("Parsing params...\n")
+	//defer fmt.Printf("Parsing params done.\n")
 	var ret []*Node
 	for p.current().t != tok_rparen {
 		v := p.parseTok()

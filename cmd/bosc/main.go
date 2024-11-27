@@ -20,7 +20,7 @@ func main() {
 	var of *os.File
 	var wrotePkg bool
 	for fi := 1; fi < len(os.Args); fi++ {
-		fmt.Printf("Opening %s\n", os.Args[fi])
+		fmt.Printf("Compiling %s\n", os.Args[fi])
 		file, err := os.Open(os.Args[fi])
 		if err != nil {
 			fmt.Printf("Fatal: %s", err)

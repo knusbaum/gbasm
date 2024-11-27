@@ -128,21 +128,21 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 				log.Fatalf("Duplicate definitions of function %s", fname)
 			}
 			funcs[fname] = f
-			fmt.Printf("FUNCTION %s.%s\n", o.Pkgname, fname)
+			//fmt.Printf("FUNCTION %s.%s\n", o.Pkgname, fname)
 		}
 		for dname, v := range o.Data {
 			if _, ok := data[dname]; ok {
 				log.Fatalf("Duplicate definitions of data %s", dname)
 			}
 			data[dname] = v
-			fmt.Printf("DATA %s %s (%d bytes)\n", dname, v.VType, len(v.Val))
+			//fmt.Printf("DATA %s %s (%d bytes)\n", dname, v.VType, len(v.Val))
 		}
 		for vname, v := range o.Vars {
 			if _, ok := vars[vname]; ok {
 				log.Fatalf("Duplicate definitions of data %s", vname)
 			}
 			vars[vname] = v
-			fmt.Printf("VAR %s %s (%d bytes)\n", vname, v.VType, len(v.Val))
+			//fmt.Printf("VAR %s %s (%d bytes)\n", vname, v.VType, len(v.Val))
 		}
 	}
 
@@ -177,7 +177,7 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 	for len(needfn) > 0 {
 		current := needfn[0]
 		needfn = needfn[1:]
-		fmt.Printf("Adding function [%s]\n", current.Name)
+		//fmt.Printf("Adding function [%s]\n", current.Name)
 		fbs, err := current.Body()
 		if err != nil {
 			log.Fatalf("Failed to resolve function body: %s", err)

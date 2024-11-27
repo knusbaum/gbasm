@@ -3,7 +3,6 @@ package gbasm
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"log"
 	"os"
 )
@@ -478,7 +477,7 @@ func WriteSection(f *os.File, data []byte, target_off int64) {
 	}
 
 	//target_off := int64(shStrSect.sh_offset)
-	fmt.Printf("For section %s, current offset: %d (%X), target offset: %d (%X)\n", "STRINGS", current_off, current_off, target_off, target_off)
+	//fmt.Printf("For section %s, current offset: %d (%X), target offset: %d (%X)\n", "STRINGS", current_off, current_off, target_off, target_off)
 	bs := make([]byte, target_off-current_off)
 	f.Write(bs)
 	//f.Write(shst.bs.Bytes())

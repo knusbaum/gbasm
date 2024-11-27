@@ -153,7 +153,7 @@ func main() {
 
 	var o *gbasm.OFile
 	for fi := 1; fi < len(os.Args); fi++ {
-		fmt.Printf("Opening %s\n", os.Args[fi])
+		fmt.Printf("Assembling %s\n", os.Args[fi])
 		file, err := os.Open(os.Args[fi])
 		if err != nil {
 			fmt.Printf("Fatal: %s", err)
@@ -174,7 +174,7 @@ func main() {
 			if strings.HasPrefix(line, "//") {
 				continue
 			}
-			fmt.Printf("%v\n", line)
+			//fmt.Printf("%v\n", line)
 			if strings.HasPrefix(line, "package") {
 				pkgname := strings.TrimSpace(strings.TrimPrefix(line, "package"))
 				if out == "" {
@@ -471,7 +471,6 @@ func main() {
 				}
 
 				if strings.HasPrefix(parts[i], "[") {
-					fmt.Printf("PARSING INDIRECT %v!\n", parts[i])
 					base, offset, err := ParseIndirect(parts[i])
 					if err != nil {
 						fmt.Printf("Fatal: Failed to parse indirection %s: %s\n", parts[i], err)
