@@ -8,12 +8,12 @@ import (
 )
 
 func TestDecoder(t *testing.T) {
-	is, err := DecodeFile("x86_64.xml")
+	_, err := DecodeFile("x86_64.xml")
 	//_, err := DecodeFile("x86_64.xml")
 	if err != nil {
-		log.Fatalf("Failed to parse: %s", err)
+		t.Fatalf("Failed to parse: %s", err)
 	}
-	Dump(is)
+	//Dump(is)
 }
 
 func TestEncoder(t *testing.T) {

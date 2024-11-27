@@ -245,8 +245,8 @@ func TestParser(t *testing.T) {
 		{
 			in: "fn foo (x num, y num) num { printf(\"X is %v\\nY is %v\\n\", x, y) return 0  }",
 			out: &Node{t: n_fn, fval: 2, sval: "foo", args: []*Node{
-				&Node{t: n_arg, sval: "x", args: []*Node{&Node{t: n_symbol, sval: "num"}}},
-				&Node{t: n_arg, sval: "y", args: []*Node{&Node{t: n_symbol, sval: "num"}}},
+				&Node{t: n_arg, sval: "x", args: []*Node{&Node{t: n_typename, sval: "num"}}},
+				&Node{t: n_arg, sval: "y", args: []*Node{&Node{t: n_typename, sval: "num"}}},
 				&Node{t: n_symbol, sval: "num"},
 				&Node{t: n_block, args: []*Node{
 					&Node{t: n_funcall, sval: "printf", args: []*Node{
@@ -263,8 +263,8 @@ func TestParser(t *testing.T) {
 			out: &Node{t: n_eq, args: []*Node{
 				&Node{t: n_symbol, sval: "printxy"},
 				&Node{t: n_fn, fval: 2, sval: "bar", args: []*Node{
-					&Node{t: n_arg, sval: "x", args: []*Node{&Node{t: n_symbol, sval: "num"}}},
-					&Node{t: n_arg, sval: "y", args: []*Node{&Node{t: n_symbol, sval: "num"}}},
+					&Node{t: n_arg, sval: "x", args: []*Node{&Node{t: n_typename, sval: "num"}}},
+					&Node{t: n_arg, sval: "y", args: []*Node{&Node{t: n_typename, sval: "num"}}},
 					&Node{t: n_symbol, sval: "num"},
 					&Node{t: n_block, args: []*Node{
 						&Node{t: n_funcall, sval: "printf", args: []*Node{
@@ -285,7 +285,7 @@ func TestParser(t *testing.T) {
 				&Node{t: n_stfield, sval: "y", args: []*Node{&Node{t: n_typename, sval: "num"}}},
 				&Node{t: n_stfield, sval: "w", args: []*Node{&Node{t: n_typename, sval: "num"}}},
 				&Node{t: n_stfield, sval: "h", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-				&Node{t: n_stfield, sval: "in", args: []*Node{&Node{t: n_typename, sval: "screen", fval: 1}}},
+				&Node{t: n_stfield, sval: "in", args: []*Node{&Node{t: n_typename, sval: "screen", ival: 1}}},
 			}},
 		},
 		{
@@ -304,7 +304,7 @@ func TestParser(t *testing.T) {
 		},
 		{
 			in:  "var x *int",
-			out: &Node{t: n_var, sval: "x", args: []*Node{&Node{t: n_typename, sval: "int", fval: 1}}},
+			out: &Node{t: n_var, sval: "x", args: []*Node{&Node{t: n_typename, sval: "int", ival: 1}}},
 		},
 	} {
 		t.Run("", func(t *testing.T) {
