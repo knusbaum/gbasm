@@ -579,7 +579,7 @@ func validate(n *Node, c *VContext) BType {
 		}
 		t.ind = int(n.ival)
 		if len(n.args) > 0 {
-			idx := n.args[0].args[0]
+			idx := n.args[0]
 			if idx.t != n_index {
 				panic(fmt.Sprintf("Bad variable declaration with argument %#v", idx))
 			}
