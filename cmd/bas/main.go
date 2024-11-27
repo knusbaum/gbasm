@@ -174,6 +174,7 @@ func main() {
 			if strings.HasPrefix(line, "//") {
 				continue
 			}
+			fmt.Printf("%v\n", line)
 			if strings.HasPrefix(line, "package") {
 				pkgname := strings.TrimSpace(strings.TrimPrefix(line, "package"))
 				if out == "" {
@@ -502,7 +503,7 @@ func main() {
 				}
 				args[i-1] = parts[i]
 			}
-			fmt.Printf("INSTRUP: %#v\n args: %#v\n", instrUp, args)
+			//fmt.Printf("INSTRUP: %#v\n args: %#v\n", instrUp, args)
 			err := f.Instr(instrUp, args...)
 			if err != nil {
 				fmt.Printf("Fatal: Instruction %v: %s\n", parts, err)

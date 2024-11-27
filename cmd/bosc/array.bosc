@@ -1,0 +1,55 @@
+package main
+
+import "string.bo"
+
+struct point {
+    x num
+    y num
+    z num
+}
+
+fn numtaker(n *point) {
+    puts("X: ")
+    puti((*n).x)
+    puts("\nY: ")
+    puti((*n).y)
+    puts("\nZ: ")
+    puti((*n).z)
+    puts("\n")
+
+    (*n).x = 5
+}
+
+fn copyprinter(n *point) {
+    var pt point
+    pt = *n
+
+    // change this to prove we're not changing memory we're not supposed to.
+    pt.y = 500
+    puts("X: ")
+    puti(pt.x)
+    puts("\nY: ")
+    puti(pt.y)
+    puts("\nZ: ")
+    puti(pt.z)
+    puts("\n")
+}
+
+fn main() {
+    var a *point
+    var b point
+    b = point{
+        x: 10,
+        y: 20,
+        z: 30,
+    }
+    a = &b
+    numtaker(a)
+    puts("x after numtaker: ")
+    puti(b.x)
+    puts("\n")
+    copyprinter(a)
+    puts("y after numtaker: ")
+    puti(b.y)
+    puts("\n")
+}

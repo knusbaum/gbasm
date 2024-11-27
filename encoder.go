@@ -46,15 +46,21 @@ type Instruction struct {
 	Forms   []IForm
 }
 
+var indent int
+
 // if formname != "", then the chosen form's name must match formname.
 // This is used to specify e.g. pushw or pushq as opposed to just push.
 func (i *Instruction) Encode(w WriteLener, formname string, os ...interface{}) ([]Relocation, error) {
-	// 	fmt.Printf("INSTRUCTION: [%s]\n", i.Summary)
-	// 	for _, f := range i.Forms {
-	// 		fmt.Printf("FORM: %#v\n", f.ops)
-	// 	}
+	// fmt.Printf("INSTRUCTION: [%s]\n", i.Summary)
+	// for _, f := range i.Forms {
+	// 	fmt.Printf("FORM: %#v\n", f.ops)
+	// }
+	//fmt.Printf("Encode OS: %#v\n", os)
 forms:
 	for _, f := range i.Forms {
+		if formname == "movq" {
+			fmt.Printf("Encoding movq\n")
+		}
 		if f.opcount != len(os) {
 			continue
 		}
@@ -63,25 +69,40 @@ forms:
 			//fmt.Printf("WRONG NAME! Skip\n")
 			continue
 		}
-		var i int
+		var idx int
 		for _, fop := range f.ops {
 			if fop.Implicit {
 				continue
 			}
-			o := os[i]
+			o := os[idx]
+
 			//log.Printf("Checking %#v matches %#v: %t\n", fop, o, fop.Match(o))
 			if !fop.Match(o) {
 				//log.Printf("NO\n")
 				continue forms
 			}
 			//log.Printf("YES\n")
-			i++
+			idx++
 		}
-		//log.Printf("Encoding form %v %#v\n", f.name, f.ops)
+		// for i := 0; i < indent; i++ {
+		// 	fmt.Printf("\t")
+		// }
+		// indent++
+		// fmt.Printf("Instruction.Encode(%s): ", i.Summary)
+		// defer func() {
+		// 	indent--
+		// 	for i := 0; i < indent; i++ {
+		// 		fmt.Printf("\t")
+		// 	}
+		// 	fmt.Printf("RETURN Instruction.Encode(%s)\n", i.Summary)
+		// }()
+		// for _, o := range os {
+		// 	fmt.Printf("\t%v, %s", o, reflect.TypeOf(o).String())
+		// }
+		// fmt.Println("")
+		// fmt.Printf("[Instruction] Encoding form %v %#v\n", f.name, f.ops)
 		return f.Encode(w, os...)
 	}
-	//spew.Dump(os)
-	//panic(fmt.Sprintf("Failed to find an instruction for %s %#v", i.Summary, os))
 	return nil, fmt.Errorf("Failed to find an instruction for %s %#v", i.Summary, os)
 }
 
@@ -367,6 +388,8 @@ func REX_X(i byte, os []interface{}) (Register, error) {
 			return R_RBP, nil
 		}
 		return b.Reg, nil
+	case *Ralloc:
+		return b.Register(), nil
 	default:
 		return 0, fmt.Errorf("Expected op %d to be a register, but found %v\n", i, reflect.TypeOf(os[i]))
 	}
@@ -382,6 +405,8 @@ func getRegister(i byte, os []interface{}) (Register, error) {
 		return b, nil
 	case Indirect:
 		return b.Reg, nil
+	case *Ralloc:
+		return b.Register(), nil
 	default:
 		return 0, fmt.Errorf("Expected op %d to be a register, but found %v\n", i, reflect.TypeOf(os[i]))
 	}
@@ -410,6 +435,12 @@ type modrm struct {
 
 // This logic is a mess and needs to be streamlined.
 func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
+	// fmt.Printf("modrm.Encode(%d):", x.mod)
+	// defer fmt.Printf("RETURN modrm.Encode(%d)\n", x.mod)
+	// for _, o := range os {
+	// 	fmt.Printf("\t%v, %s", o, reflect.TypeOf(o).String())
+	// }
+	// fmt.Println("")
 	var doSib bool
 	//var mustDisp bool
 	var indirect *Indirect
@@ -441,6 +472,17 @@ func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 			indirect = &Indirect{Reg: R_RIP, Size: 64}
 			relocations = append(relocations, Relocation{Offset: uint32(w.Len() + 1), Symbol: ot.Name})
 			xmod = 0
+		case *Ralloc:
+			i := ot.Indirect()
+			indirect = &i
+			if indirect.Off != 0 {
+				xmod = 0b10
+			} else {
+				xmod = 0b00
+			}
+			if indirect.Reg == R_RSP || indirect.Reg == R12 {
+				doSib = true
+			}
 		default:
 			return nil, fmt.Errorf("Expected operand %#v to be a byte, var or an indirect.", o)
 		}
@@ -530,6 +572,16 @@ type Op struct {
 	TN       string
 	Output   bool
 	Implicit bool
+}
+
+func (o *Op) ConvertRalloc(a *Ralloc) interface{} {
+	switch o.TN {
+	case "r64":
+		return a.Register()
+	case "m64", "m32", "m16", "m8", "m":
+		return a.Indirect()
+	}
+	panic(fmt.Sprintf("CANNOT CONVERT RALLOC FOR: %v", o.TN))
 }
 
 func (o *Op) Match(op interface{}) bool {
@@ -626,6 +678,9 @@ func (o *Op) Match(op interface{}) bool {
 	//case "r32l":
 	//case "rax":
 	case "r64":
+		if _, ok := op.(*Ralloc); ok {
+			return true
+		}
 		if r, ok := op.(Register); ok {
 			return r == R_RAX || r == R_RBX || r == R_RCX || r == R_RDX || r == R_RSP || r == R_RBP || r == R_RSI || r == R_RDI ||
 				r == R8 || r == R9 || r == R10 || r == R11 || r == R12 || r == R13 || r == R14 || r == R15
@@ -658,6 +713,9 @@ func (o *Op) Match(op interface{}) bool {
 			return mo.Reg.Width() == 64
 		}
 	case "m":
+		if _, ok := op.(*Ralloc); ok {
+			return true
+		}
 		if mo, ok := op.(Indirect); ok {
 			return mo.Reg.Width() == 64
 		}
@@ -665,6 +723,12 @@ func (o *Op) Match(op interface{}) bool {
 			return true
 		}
 	case "m8":
+		if mo, ok := op.(*Ralloc); ok {
+			if mo.size != 8 {
+				return false
+			}
+			return true
+		}
 		if mo, ok := op.(Indirect); ok {
 			if mo.Size > 0 && mo.Size != 8 {
 				return false
@@ -675,6 +739,12 @@ func (o *Op) Match(op interface{}) bool {
 			return true
 		}
 	case "m16":
+		if mo, ok := op.(*Ralloc); ok {
+			if mo.size != 16 {
+				return false
+			}
+			return true
+		}
 		if mo, ok := op.(Indirect); ok {
 			if mo.Size > 0 && mo.Size != 16 {
 				return false
@@ -686,6 +756,12 @@ func (o *Op) Match(op interface{}) bool {
 		}
 	//case "m16{k}{z}":
 	case "m32":
+		if mo, ok := op.(*Ralloc); ok {
+			if mo.size != 32 {
+				return false
+			}
+			return true
+		}
 		if mo, ok := op.(Indirect); ok {
 			if mo.Size > 0 && mo.Size != 32 {
 				return false
@@ -698,6 +774,12 @@ func (o *Op) Match(op interface{}) bool {
 	//case "m32{k}":
 	//case "m32{k}{z}":
 	case "m64":
+		if mo, ok := op.(*Ralloc); ok {
+			if mo.size != 64 {
+				return false
+			}
+			return true
+		}
 		if mo, ok := op.(Indirect); ok {
 			if mo.Size > 0 && mo.Size != 64 {
 				return false
@@ -756,21 +838,44 @@ type IForm struct {
 }
 
 func (f *IForm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
+	// fmt.Printf("IForm.Encode(%s):", f.name)
+	// defer fmt.Printf("RETURN IForm.Encode(%s)\n", f.name)
+	// for _, o := range os {
+	// 	fmt.Printf("\t%v, %s", o, reflect.TypeOf(o).String())
+	// }
+	// fmt.Println("")
+
+	// Once we know which instruction we are using, we must convert all rallocs to their target
+	// values. Doing this may inject instructions, so this is the latest point where we can
+	// change an RAlloc through, e.g. a mov or lea, etc.
+	for i, op := range f.ops {
+		if i >= len(os) {
+			break
+		}
+		if ra, ok := os[i].(*Ralloc); ok {
+			os[i] = op.ConvertRalloc(ra)
+		}
+	}
+
 	var err error
 	var rs []Relocation
 encodings:
 	for _, es := range f.enc {
 		for _, e := range es {
-			//log.Printf("Encoding %#v\n", e)
+			//fmt.Printf("[IForm] Encoding %#v\n", e)
 			rs, err = e.Encode(w, os...)
 			if err != nil {
-				//log.Printf("Failed one encoding: %s", err)
+				fmt.Printf("[IForm] Failed one encoding: %s", err)
 				continue encodings
 			}
 		}
 		return rs, nil
 	}
 	return rs, err
+}
+
+type TLEncoder interface {
+	Encode(w WriteLener, instr string, os ...interface{}) ([]Relocation, error)
 }
 
 type Asm struct {
@@ -801,7 +906,8 @@ func (a *Asm) Encode(w WriteLener, instr string, os ...interface{}) ([]Relocatio
 		switch t := o.(type) {
 		case *Ralloc:
 			//fmt.Printf("### RALLOC ###\t%s -> %v\n", t.sym, t.Location())
-			newos = append(newos, t.Location(true))
+			//newos = append(newos, t.Location(true))
+			newos = append(newos, t)
 			// 			if t.inmem {
 			// 				fmt.Printf("### RALLOC ###\t%s IN MEM\n", t.sym)
 			// 				newos = append(newos, Indirect{Reg: R_RBP, Off: t.offset})

@@ -247,11 +247,12 @@ func setupArgs(ctx *CompileContext, of io.Writer, args []*Node) {
 			rv := RegVal("rdi", 8)
 			a = args[i].compile(ctx, of, rv)
 			if !a.Same(rv) {
-				//fmt.Fprintf(of, "//// CHECK THIS\n")
+				fmt.Fprintf(of, "//// CHECK THIS\n")
 				a.LoadInto(ctx, of, rv)
 			} else {
 				//fmt.Fprintf(of, "//// EXCLUDED \n")
 				//fmt.Fprintf(of, "// mov %s %s\n", rv.ref, a.ref)
+				//panic("HERE")
 			}
 		case 1:
 			rv := RegVal("rsi", 8)
@@ -407,27 +408,27 @@ func (n *Node) compileEQDOT(ctx *CompileContext, of io.Writer, prefreg valnew) v
 	// 	//panic("NOT IMPLEMENTED")
 	// 	return t1
 
-	// Get the struct type of the thing we're getting the field from
-	t, ok := ctx.typeOf(n.args[0])
-	if !ok {
-		panic(fmt.Sprintf("%#v not bound to struct type.", n.args[0]))
-	}
-
-	// Get the struct definition and the field definition
-	st, ok := ctx.typeByName(t.name)
-	if !ok {
-		panic(fmt.Sprintf("failed to find struct definition for %s", t.name))
-	}
-	ft, ok := st.fields[n.args[1].sval]
-	if !ok {
-		panic(fmt.Sprintf("failed to find field definition for %s.%s", t.name, n.args[1].sval))
-	}
+	// // Get the struct type of the thing we're getting the field from
+	// t, ok := ctx.typeOf(n.args[0])
+	// if !ok {
+	// 	panic(fmt.Sprintf("%#v not bound to struct type.", n.args[0]))
+	// }
 
 	// Compile the thing we're getting the field from into a ref. This can be just a symbol if it's a variable, or an
 	// expression that yields a struct.
 	v1 := n.args[0].compile(ctx, of, valnew{})
 	if v1.ref == "" {
 		panic("OK")
+	}
+
+	// Get the struct definition and the field definition
+	st, ok := ctx.typeByName(v1.t.name)
+	if !ok {
+		panic(fmt.Sprintf("failed to find struct definition for %s", v1.t.name))
+	}
+	ft, ok := st.fields[n.args[1].sval]
+	if !ok {
+		panic(fmt.Sprintf("failed to find field definition for %s.%s", st.name, n.args[1].sval))
 	}
 
 	var t1 valnew
@@ -439,7 +440,7 @@ func (n *Node) compileEQDOT(ctx *CompileContext, of io.Writer, prefreg valnew) v
 	}
 	//fmt.Printf("Assigning to field %s of type %s in struct %s\n", n.args[1].sval, ft.t.name, t.name)
 	// return a reference.
-	fmt.Fprintf(of, "\t//loading address for %s.%s\n", t.name, n.args[1].sval)
+	fmt.Fprintf(of, "\t//loading address for %s.%s\n", st.name, n.args[1].sval)
 	fmt.Fprintf(of, "\tlea %s [%s+%d]\n", t1.ref, v1.ref, ft.offset)
 
 	ctx.release(of, v1)
@@ -454,7 +455,7 @@ type valnew struct {
 	// must be set.
 	vt vtype
 
-	// The name of the type of this value
+	// The type of this value
 	t BType
 }
 
@@ -511,6 +512,54 @@ func RegVal(r string, size int) valnew {
 	return valnew{ref: r, vt: v_value, t: BType{name: "*untyped-register*", size: size}}
 }
 
+func memcpy(of io.Writer, dst, src string, bytes int) {
+	qwords := bytes / 8
+	singles := bytes % 8
+
+	fmt.Fprintf(of, "\tacquire rax\n")
+	for i := 0; i < qwords; i++ {
+		fmt.Fprintf(of, "\tmov rax [%s+%d]\n", src, i*8)
+		fmt.Fprintf(of, "\tmov [%s+%d] rax\n", dst, i*8)
+	}
+	for i := 0; i < singles; i++ {
+		fmt.Fprintf(of, "\tmovb al [%s+%d]\n", src, qwords*8+i)
+		fmt.Fprintf(of, "\tmovb [%s+%d] al\n", dst, qwords*8+i)
+	}
+	fmt.Fprintf(of, "\trelease rax\n")
+}
+
+func memset(of io.Writer, dst string, val byte, bytes int) {
+	// loop := ctx.Label()
+	// endloop := ctx.Label()
+	// fmt.Fprintf(of, "\tacquire rcx rax rdi\n") // TODO: Can be more efficient, don't need to evict all registers.
+	// fmt.Fprintf(of, "\tmov rcx %d\n", allocsize)
+	// fmt.Fprintf(of, "\tmov rax 0\n")
+	// fmt.Fprintf(of, "\tmov rdi %s\n", n.sval)
+
+	// fmt.Fprintf(of, "\tlabel %s\n", loop)
+	// fmt.Fprintf(of, "\ttest rcx rcx\n")
+	// fmt.Fprintf(of, "\tjz %s\n", endloop)
+	// fmt.Fprintf(of, "\tmov [rdi] 0\n")
+	// fmt.Fprintf(of, "\tinc rdi\n")
+	// fmt.Fprintf(of, "\tdec rcx\n")
+	// fmt.Fprintf(of, "\tjmp %s\n", loop)
+	// fmt.Fprintf(of, "\tlabel %s\n", endloop)
+	// fmt.Fprintf(of, "\trelease rcx rax rdi\n")
+
+	qwords := bytes / 8
+	singles := bytes % 8
+
+	fmt.Fprintf(of, "\tacquire rax\n")
+	fmt.Fprintf(of, "\tmov rax %d\n", val)
+	for i := 0; i < qwords; i++ {
+		fmt.Fprintf(of, "\tmov [%s+%d] rax\n", dst, i*8)
+	}
+	for i := 0; i < singles; i++ {
+		fmt.Fprintf(of, "\tmovb [%s+%d] al\n", dst, qwords*8+i)
+	}
+	fmt.Fprintf(of, "\trelease rax\n")
+}
+
 // compile compiles causes the node to be recursively compiled, and the val returned. dest is an
 // optional val where compile should try to place any result of the compilation, although this is
 // not required or guaranteed. Callers of compile should check that the return value is indeed in
@@ -519,7 +568,7 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 	switch n.t {
 	case n_number:
 		//return numval(int(n.nval)) //fmt.Sprintf("%d", int(n.nval))
-		return valnew{ref: fmt.Sprintf("%d", int(n.nval)), t: numType()}
+		return valnew{ref: fmt.Sprintf("%d", int(n.fval)), t: numType()}
 	case n_str:
 		var ret valnew
 		if dest.Same(valnew{}) {
@@ -563,10 +612,10 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 			t1 = ctx.Temp(*t, of)
 		}
 		if n.sval != t1.ref {
-			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", t1.ref, n.sval, int(n.args[0].nval))
+			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", t1.ref, n.sval, int(n.args[0].fval))
 		} else {
 			panic("IS THIS EVER USED?")
-			fmt.Fprintf(of, "\tadd %s %d\n", t1.ref, int(n.args[0].nval))
+			fmt.Fprintf(of, "\tadd %s %d\n", t1.ref, int(n.args[0].fval))
 		}
 		// 		fmt.Printf("%v\n", t1)
 		// 		spew.Dump(n)
@@ -616,7 +665,7 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 		ctx.retlabs = append(ctx.retlabs, retlab)
 		fmt.Fprintf(of, "function %s\n", n.sval)
 
-		ftype := functionTypeName(n)
+		ftype := functionTypeName(n, ctx)
 		rtype, err := ctx.functionReturnType(ftype)
 		if err != nil {
 			panic(err.Error())
@@ -628,7 +677,7 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 		for k, v := range obindings {
 			nbindings[k] = v
 		}
-		for i := 0; i < int(n.nval); i++ {
+		for i := 0; i < int(n.fval); i++ {
 			//spew.Dump(n.args[i])
 
 			fmt.Fprintf(of, "\targi %s %d\n", n.args[i].sval, i)
@@ -636,6 +685,7 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 			if !ok {
 				panic(fmt.Sprintf("No such type %s", n.args[i].args[0].sval))
 			}
+			t.ind = int(n.args[i].args[0].ival)
 			nbindings[n.args[i].sval] = &t //&BType{name: n.args[i].args[0].sval}
 		}
 
@@ -643,7 +693,7 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 		defer func() { ctx.bindings = obindings }()
 
 		fmt.Fprintf(of, "\n\tprologue\n\n")
-		for _, arg := range n.args[int(n.nval+1):] {
+		for _, arg := range n.args[int(n.fval+1):] {
 			ctx.release(of, arg.compile(ctx, of, valnew{}))
 		}
 		fmt.Fprintf(of, "\n\tlabel %s\n", retlab)
@@ -655,28 +705,29 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 	case n_arg:
 		panic("NOT IMPLEMENTED")
 	case n_dot:
+		//v := n.args[0].compile(ctx, of, valnew{})
 
-		// Get the struct type of the thing we're getting the field from
-		t, ok := ctx.typeOf(n.args[0])
-		if !ok {
-			panic(fmt.Sprintf("%#v not bound to struct type.", n.args[0]))
-		}
-
-		// Get the struct definition and the field definition
-		st, ok := ctx.typeByName(t.name)
-		if !ok {
-			panic(fmt.Sprintf("failed to find struct definition for %s", t.name))
-		}
-		ft, ok := st.fields[n.args[1].sval]
-		if !ok {
-			panic(fmt.Sprintf("failed to find field definition for %s.%s", t.name, n.args[1].sval))
-		}
+		// // Get the struct type of the thing we're getting the field from
+		// t, ok := ctx.typeOf(n.args[0])
+		// if !ok {
+		// 	panic(fmt.Sprintf("%#v not bound to struct type.", n.args[0]))
+		// }
 
 		// Compile the thing we're getting the field from into a ref. This can be just a symbol if it's a variable, or an
 		// expression that yields a struct.
 		v1 := n.args[0].compile(ctx, of, valnew{})
 		if v1.ref == "" {
 			panic("OK")
+		}
+
+		// Get the struct definition and the field definition
+		st, ok := ctx.typeByName(v1.t.name)
+		if !ok {
+			panic(fmt.Sprintf("failed to find struct definition for %s", v1.t.name))
+		}
+		ft, ok := st.fields[n.args[1].sval]
+		if !ok {
+			panic(fmt.Sprintf("failed to find field definition for %s.%s", v1.t.name, n.args[1].sval))
 		}
 
 		var t1 valnew
@@ -766,6 +817,7 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 		ctx.release(of, two)
 		return t1
 	case n_eq:
+		fmt.Printf("Assigning  %v = %v\n", n.args[0], n.args[1])
 		if n.args[0].t != n_symbol && n.args[0].t != n_dot {
 			panic("Can only assign to variables.\n")
 		}
@@ -783,6 +835,33 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 			}
 			target := Value(n.args[0].sval, t)
 			v := n.args[1].compile(ctx, of, target)
+			if v.ref == n.args[0].sval {
+				return valnew{}
+			}
+			if v.t.rt == rt_indirect && v.t.ind == 0 {
+				// for indirect copies we need to loop over the data and copy it.
+				//loop := ctx.Label()
+				//endloop := ctx.Label()
+				memcpy(of, n.args[0].sval, v.ref, v.t.Size())
+				// // TODO: Can be more efficient, don't need to copy one byte at a time.
+				// fmt.Fprintf(of, "\tacquire rbx rcx rax rdi\n")
+				// fmt.Fprintf(of, "\tmov rcx %d\n", v.t.Size())
+				// fmt.Fprintf(of, "\tmov rax %v\n", n.args[0].sval)
+				// fmt.Fprintf(of, "\tmov rdi %s\n", v.ref)
+
+				// fmt.Fprintf(of, "\tlabel %s\n", loop)
+				// fmt.Fprintf(of, "\ttest rcx rcx\n")
+				// fmt.Fprintf(of, "\tjz %s\n", endloop)
+				// fmt.Fprintf(of, "\tmov bl [rdi]\n")
+				// fmt.Fprintf(of, "\tmov [rax] bl\n")
+				// fmt.Fprintf(of, "\tinc rdi\n")
+				// fmt.Fprintf(of, "\tinc rax\n")
+				// fmt.Fprintf(of, "\tdec rcx\n")
+				// fmt.Fprintf(of, "\tjmp %s\n", loop)
+				// fmt.Fprintf(of, "\tlabel %s\n", endloop)
+				// fmt.Fprintf(of, "\trelease rbx rcx rax rdi\n")
+				return valnew{}
+			}
 			if v.ref != n.args[0].sval {
 				v.LoadInto(ctx, of, target)
 				ctx.release(of, v)
@@ -923,49 +1002,108 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 		ctx.Return(of)
 		return valnew{}
 	case n_var:
-		if n.nval > 0 {
-			// This is a pointer
-			fmt.Fprintf(of, "\tlocal %s 64\n", n.sval)
-			fmt.Fprintf(of, "\tmov %s 0\n", n.sval)
-		} else {
-			t, ok := ctx.typeByName(n.args[0].sval)
-			if !ok {
-				panic(fmt.Sprintf("Don't know the size of type %s", n.args[0].sval))
-			}
-			if s := t.Size(); s <= 8 {
-				// Value fits in a register
-				fmt.Fprintf(of, "\tlocal %s %d\n", n.sval, s*8) // TODO: bit size
-				fmt.Fprintf(of, "\tmov %s 0\n", n.sval)
-			} else {
-				// Value does not fit in a register. Must use a pointer.
-				fmt.Fprintf(of, "\tbytes %s %d\n", n.sval, s)
-				// 				if !ctx.registers.Use(gbasm.R_RCX) {
-				// 					panic(fmt.Sprintf("Could not acquire RCX for rep counter.\n"))
-				// 				}
-
-				loop := ctx.Label()
-				endloop := ctx.Label()
-				fmt.Fprintf(of, "\tacquire rcx rax rdi\n") // TODO: Can be more efficient, don't need to evict all registers.
-				fmt.Fprintf(of, "\tmov rcx %d\n", s)
-				fmt.Fprintf(of, "\tmov rax 0\n")
-				fmt.Fprintf(of, "\tmov rdi %s\n", n.sval)
-
-				fmt.Fprintf(of, "\tlabel %s\n", loop)
-				fmt.Fprintf(of, "\ttest rcx rcx\n")
-				fmt.Fprintf(of, "\tjz %s\n", endloop)
-				fmt.Fprintf(of, "\tmov [rdi] 0\n")
-				fmt.Fprintf(of, "\tinc rdi\n")
-				fmt.Fprintf(of, "\tdec rcx\n")
-				fmt.Fprintf(of, "\tjmp %s\n", loop)
-				fmt.Fprintf(of, "\tlabel %s\n", endloop)
-			}
-		}
 		t, ok := ctx.typeByName(n.args[0].sval)
 		if !ok {
 			panic(fmt.Sprintf("No such type %s", n.args[0].sval))
 		}
-		ctx.bindings[n.sval] = &t // &BType{name: n.args[0].sval, ind: int(n.args[0].nval)}
+
+		// defensive. We could modify t since it's a value, but we may eventually convert to working on pointers.
+		var vtype BType
+		vtype = t
+
+		//size := t.Size()
+
+		elemcount := 0
+		if len(n.args[0].args) > 0 {
+			idx := n.args[0].args[0]
+			if idx.t != n_index {
+				panic(fmt.Sprintf("Bad variable declaration with argument %#v", idx))
+			}
+			fmt.Printf("Variable %v is an array of %d elements.\n", n.sval, idx.ival)
+			elemcount = int(idx.ival)
+		}
+
+		vtype.size = t.Size() // null op, this should be the same already.
+		vtype.ind = int(n.args[0].ival)
+		if elemcount > 0 {
+			// this in an array, meaning we indirect.
+			vtype.ind++
+		}
+		if vtype.ind > 0 || vtype.Size() > 8 {
+			vtype.rt = rt_indirect
+		}
+
+		if n.args[0].ival > 0 {
+			// This is a pointer type
+			fmt.Fprintf(of, "\tlocal %s 64\n", n.sval)
+			fmt.Fprintf(of, "\tmov %s 0\n", n.sval)
+		} else {
+			allocsize := vtype.size
+			if elemcount > 0 {
+				allocsize = vtype.size * elemcount
+			}
+			fmt.Printf("Variable %v of size %v bytes\n", n.sval, allocsize)
+
+			if vtype.size <= 8 && elemcount == 0 {
+				// Value fits in a register and is not an array.
+				fmt.Fprintf(of, "\tlocal %s %d\n", n.sval, vtype.size*8) // TODO: bit size
+				fmt.Fprintf(of, "\tmov %s 0\n", n.sval)
+			} else {
+				// Value does not fit in a register or is an array. Must use a pointer.
+				fmt.Fprintf(of, "\tbytes %s %d\n", n.sval, allocsize)
+				memset(of, n.sval, 0, allocsize)
+			}
+		}
+
+		//ctx.bindings[n.sval] = &t // &BType{name: n.args[0].sval, ind: int(n.args[0].nval)}
+		ctx.bindings[n.sval] = &vtype
 		return valnew{}
+	case n_address:
+		t, ok := ctx.bindings[n.sval]
+		if !ok {
+			panic(&interpreterError{msg: fmt.Sprintf("%s is not bound", n.sval), p: n.p})
+		}
+		var it BType
+		it = *t
+		it.ind++
+		if dest.Same(valnew{}) {
+			dest = ctx.Temp(it, of)
+		}
+		dest.t = it
+		fmt.Printf("Taking address of %v (%#v)\n", n.sval, t)
+		fmt.Fprintf(of, "\t// &%s\n", n.sval)
+		if t.rt == rt_direct {
+			fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, n.sval)
+		} else if t.rt == rt_indirect {
+			fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, n.sval)
+		}
+		return dest
+	case n_deref:
+		t, ok := ctx.bindings[n.sval]
+		if !ok {
+			panic(&interpreterError{msg: fmt.Sprintf("%s is not bound", n.sval), p: n.p})
+		}
+		var it BType
+		it = *t
+		if it.ind == 0 {
+			panic(&interpreterError{msg: fmt.Sprintf("%s is not a pointer type.", n.sval), p: n.p})
+		}
+		it.ind--
+		if dest.Same(valnew{}) {
+			dest = ctx.Temp(it, of)
+		}
+		dest.t = it
+		fmt.Printf("DEREF %#v\n", it)
+		if it.rt == rt_indirect {
+			// for indirect, we don't want to copy into the target, because the target is possibly a pointer
+			// that we want to copy, i.e. x = *y
+			// we can't mov x [y].
+			tmp := ctx.Temp(it, of)
+			fmt.Fprintf(of, "\tmov %s [%s]\n", tmp.ref, n.sval)
+			return tmp
+		}
+		fmt.Fprintf(of, "\tmov %s [%s]\n", dest.ref, n.sval)
+		return dest
 	case n_none:
 		//nic("NOT IMPLEMENTED")
 		return valnew{}

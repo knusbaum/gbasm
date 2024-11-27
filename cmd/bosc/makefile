@@ -32,3 +32,10 @@ clean:
 
 nuke: clean
 	- rm bosc bas bld
+
+
+## temp
+array: nuke bas bld bosc
+	./bosc array.bosc
+	./bas main.bs init_linux.bs
+	./bld main.bo string.bo

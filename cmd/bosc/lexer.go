@@ -29,6 +29,7 @@ const (
 	tok_plus
 	tok_minus
 	tok_star
+	tok_amp
 	tok_fslash
 	tok_eq
 	tok_deq // Double-equals
@@ -107,6 +108,8 @@ func (t toktype) String() string {
 		return "tok_minus"
 	case tok_star:
 		return "tok_star"
+	case tok_amp:
+		return "tok_amp"
 	case tok_fslash:
 		return "tok_fslash"
 	case tok_eq:
@@ -388,6 +391,9 @@ func (l *lexer) Next() (rt token, re error) {
 	case '*':
 		l.nextRune()
 		return token{t: tok_star, p: l.p}, nil
+	case '&':
+		l.nextRune()
+		return token{t: tok_amp, p: l.p}, nil
 	case '/':
 		l.nextRune()
 		if l.headRune() == '/' {

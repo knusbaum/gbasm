@@ -31,6 +31,14 @@ func (r *Ralloc) String() string {
 	return fmt.Sprintf("%s.%s", r.rallocs.f.Name, r.sym)
 }
 
+func (r *Ralloc) Indirect() Indirect {
+	if r.inreg {
+		r.Evict()
+	}
+	// this should be fine even for !regables
+	return Indirect{Reg: R_RBP, Off: r.offset}
+}
+
 // Location returns a MOV-able location for the allocation.
 func (r *Ralloc) Location(preferRegister bool) interface{} {
 	if r.inreg {

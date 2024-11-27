@@ -38,6 +38,8 @@ const (
 	n_break
 	n_return
 	n_import
+	n_address
+	n_deref
 )
 
 func (t nodetype) String() string {
@@ -114,7 +116,8 @@ type Parser struct {
 
 type Node struct {
 	t    nodetype
-	nval float64
+	ival uint64
+	fval float64
 	sval string
 	args []*Node
 	p    position
@@ -183,7 +186,7 @@ func (p *Parser) parseTok() *Node {
 	c := p.current()
 	if c.t == tok_number {
 		p.advance()
-		return &Node{t: n_number, nval: c.nval, p: c.p}
+		return &Node{t: n_number, fval: c.nval, p: c.p}
 	} else if c.t == tok_str {
 		p.advance()
 		return &Node{t: n_str, sval: c.sval, p: c.p}
@@ -201,7 +204,7 @@ func (p *Parser) parseTok() *Node {
 
 func (p *Parser) parseTypeName() *Node {
 	//c := p.current()
-	indirection := 0
+	indirection := uint64(0)
 	for c := p.current(); c.t == tok_star; c = p.current() {
 		indirection++
 		p.advance()
@@ -210,8 +213,25 @@ func (p *Parser) parseTypeName() *Node {
 	if c.t != tok_ident {
 		panic(&interpreterError{fmt.Sprintf("Expected a type name, but found: %s\n", c.t), c.p})
 	}
+	typename := c.sval
 	p.advance()
-	return &Node{t: n_typename, sval: c.sval, nval: float64(indirection)}
+	fmt.Printf("NEXT TOKEN: %v\n", p.current())
+	if p.current().t == tok_lsquare {
+		p.advance()
+		if p.current().t != tok_number {
+			panic(&interpreterError{fmt.Sprintf("Expected a number, but found: %s\n", c.t), c.p})
+		}
+		arrsize := uint64(p.current().nval)
+		p.advance()
+		p.expect(tok_rsquare)
+		return &Node{
+			t:    n_typename,
+			sval: typename,
+			ival: indirection,
+			args: []*Node{&Node{t: n_index, ival: arrsize}},
+		}
+	}
+	return &Node{t: n_typename, sval: c.sval, ival: indirection}
 }
 
 func (p *Parser) parseValue() *Node {
@@ -288,14 +308,16 @@ func (p *Parser) parseFor() *Node {
 }
 
 func (p *Parser) parseParams() []*Node {
+	fmt.Printf("Parsing params...\n")
+	defer fmt.Printf("Parsing params done.\n")
 	var ret []*Node
 	for p.current().t != tok_rparen {
 		v := p.parseTok()
 		if v.t != n_symbol {
 			panic(&interpreterError{fmt.Sprintf("Expected variable name, but found: %v\n", v), v.p})
 		}
-		v2 := p.parseTok()
-		if v2.t != n_symbol {
+		v2 := p.parseTypeName()
+		if v2.t != n_typename {
 			panic(&interpreterError{fmt.Sprintf("Expected type name, but found: %v\n", v), v.p})
 		}
 		ret = append(ret, &Node{t: n_arg, sval: v.sval, p: v.p, args: []*Node{v2}})
@@ -332,7 +354,7 @@ func (p *Parser) parseFn() *Node {
 	args := append(params, rettype)
 	body := p.parseExpression()
 	args = append(args, body)
-	return &Node{t: n_fn, nval: float64(len(params)), sval: fname.sval, p: fnpos, args: args}
+	return &Node{t: n_fn, fval: float64(len(params)), sval: fname.sval, p: fnpos, args: args}
 }
 
 func (p *Parser) parseParens() *Node {
@@ -443,10 +465,27 @@ func (p *Parser) parseExpression() (r *Node) {
 	} else if p.current().t == tok_ident && p.current().sval == "var" {
 		p.advance()
 		return p.parseVarDecl()
+	} else if p.current().t == tok_amp {
+		p.advance()
+		if p.current().t != tok_ident {
+			panic(&interpreterError{fmt.Sprintf("Expected an identifier in address operation, but found: %s\n", p.current().t), p.current().p})
+		}
+		name := p.current().sval
+		p.advance()
+		return &Node{t: n_address, sval: name, p: p.current().p}
+	} else if p.current().t == tok_star {
+		p.advance()
+		if p.current().t != tok_ident {
+			panic(&interpreterError{fmt.Sprintf("Expected an identifier in deref operation, but found: %s\n", p.current().t), p.current().p})
+		}
+		name := p.current().sval
+		p.advance()
+		return &Node{t: n_deref, sval: name, p: p.current().p}
 	} else if p.current().t == tok_none {
 		p.advance()
 		panic(eofError(0))
 	}
+
 	v := p.parseAddSub()
 	for {
 		c := p.current()

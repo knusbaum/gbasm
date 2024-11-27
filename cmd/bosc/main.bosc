@@ -97,6 +97,8 @@ fn bosonfib(n num) num {
 // 	z.a = 1
 // }
 
+var aoeux num[10]
+
 fn teststruct() {
 	puts("\n#### teststruct\n")
 	var x foo
@@ -239,7 +241,7 @@ fn assignment() {
 	puts("\n")
 
 	puts("\n\n")
-}
+} 
 
 fn structassignment() {
  	puts("\n#### structassignment\n")

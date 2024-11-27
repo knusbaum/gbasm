@@ -220,24 +220,33 @@ func (c *VContext) Import(f string) error {
 }
 
 // TODO: unit test
-func functionTypeName(n *Node) BType {
+func functionTypeName(n *Node, c interface{ typeByName(string) (BType, bool) }) BType {
 	if n.t != n_fn {
 		panic(&interpreterError{msg: fmt.Sprintf("cannot determine function type name of non-function %#v. This is a compiler error.", n), p: n.p})
 	}
 	var b strings.Builder
 	b.WriteString("fn(")
-	for i := 0; i < int(n.nval); i++ {
+	for i := 0; i < int(n.fval); i++ {
 		if i > 0 {
 			b.WriteString(",")
 		}
-		b.WriteString(n.args[i].args[0].sval)
+		argtype := n.args[i].args[0].sval
+		argindir := n.args[i].args[0].ival
+		_, ok := c.typeByName(argtype)
+		if !ok {
+			panic(&interpreterError{msg: fmt.Sprintf("no such type '%s'.", argtype), p: n.p})
+		}
+		for i := uint64(0); i < argindir; i++ {
+			b.WriteString("*")
+		}
+		b.WriteString(argtype)
 	}
 	b.WriteString(") ")
 	//spew.Dump(n.args[0])
-	if n.args[int(n.nval)].sval == "none" {
+	if n.args[int(n.fval)].sval == "none" {
 		panic("WOAH!")
 	}
-	b.WriteString(n.args[int(n.nval)].sval)
+	b.WriteString(n.args[int(n.fval)].sval)
 	return BType{name: b.String()}
 }
 
@@ -376,6 +385,7 @@ func validate(n *Node, c *VContext) BType {
 			panic(&interpreterError{msg: fmt.Sprintf("cannot assign value of type %s.", v), p: n.p})
 		}
 		sv := validate(sym, c)
+		fmt.Printf("Comparing assignment of %#v to %#v\n", sv, v)
 		if !sv.Equal(v) {
 			panic(&interpreterError{msg: fmt.Sprintf("cannot assign value of type %s to variable of type %s.", v, sv), p: n.p})
 		}
@@ -393,8 +403,8 @@ func validate(n *Node, c *VContext) BType {
 		// 		}
 		return v
 	case n_fn:
-		ftype := functionTypeName(n)
-		body := n.args[int(n.nval)+1]
+		ftype := functionTypeName(n, c)
+		body := n.args[int(n.fval)+1]
 		if _, ok := c.binding(n.sval); ok {
 			panic(&interpreterError{msg: fmt.Sprintf("function '%s' already defined.", n.sval), p: n.p})
 		} else {
@@ -403,8 +413,9 @@ func validate(n *Node, c *VContext) BType {
 			}
 		}
 		c := c.subVContext()
-		for i := 0; i < int(n.nval); i++ {
+		for i := 0; i < int(n.fval); i++ {
 			t, ok := c.typeByName(n.args[i].args[0].sval)
+			t.ind = int(n.args[i].args[0].ival)
 			if !ok {
 				panic(&interpreterError{msg: fmt.Sprintf("No such type %s.", n.args[i].args[0].sval), p: n.args[i].args[0].p})
 			}
@@ -566,7 +577,17 @@ func validate(n *Node, c *VContext) BType {
 		if !ok {
 			panic(&interpreterError{msg: fmt.Sprintf("no such type '%s'.", n.sval), p: n.p})
 		}
-		t.ind = int(n.nval)
+		t.ind = int(n.ival)
+		if len(n.args) > 0 {
+			idx := n.args[0].args[0]
+			if idx.t != n_index {
+				panic(fmt.Sprintf("Bad variable declaration with argument %#v", idx))
+			}
+			fmt.Printf("Variable %v is an array of %d elements.\n", n.sval, idx.ival)
+			if idx.ival > 0 {
+				t.ind++
+			}
+		}
 		return t
 	case n_dot:
 		//fmt.Printf("##### N_DOT #####\n")
@@ -603,6 +624,23 @@ func validate(n *Node, c *VContext) BType {
 			panic(&interpreterError{msg: fmt.Sprintf("can only index into strings for now (%s).", n.sval), p: n.p})
 		}
 		return byteType()
+	case n_address:
+		t, ok := c.binding(n.sval)
+		if !ok {
+			panic(&interpreterError{msg: fmt.Sprintf("%s is not bound to a type.", n.sval), p: n.p})
+		}
+		t.ind++
+		return t
+	case n_deref:
+		t, ok := c.binding(n.sval)
+		if !ok {
+			panic(&interpreterError{msg: fmt.Sprintf("%s is not bound to a type.", n.sval), p: n.p})
+		}
+		if t.ind == 0 {
+			panic(&interpreterError{msg: fmt.Sprintf("%s is not a pointer type.", n.sval), p: n.p})
+		}
+		t.ind--
+		return t
 	default:
 		fmt.Printf("NOT IMPLEMENTED FOR:\n")
 		spew.Dump(n)
