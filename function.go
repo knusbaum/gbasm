@@ -81,7 +81,6 @@ func (r *Ralloc) Register() Register {
 		return reg
 		//panic(fmt.Sprintf("Cannot load variable %s into register.", r.sym)) // TODO: Better error handling
 	}
-	//fmt.Printf("Allocating register for %v\n", r.sym)
 	reg, ok := r.rallocs.rs.Get(r.size)
 	if !ok {
 		reg, ok = r.rallocs.Evict(r.size)
@@ -91,7 +90,7 @@ func (r *Ralloc) Register() Register {
 		}
 		//log.Printf("HAD TO EVICT REGISTER. EVICTED REGISTER %v", reg)
 	}
-	//fmt.Printf("[Register] took register %v\n", reg)
+	fmt.Printf("[Register] put %s in register %v\n", r.sym, reg)
 	if r.inmem {
 		//fmt.Printf("%s not in register. Allocated register %s\n", r.sym, reg)
 		r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
@@ -192,7 +191,7 @@ func (ra *Rallocs) returnSpace(size int32, offset int32) {
 // NewLocal allocates a new local variable of size bits. Locals created with
 // this function may have 'Forget' called on them to relinquish their storage.
 func (ra *Rallocs) NewLocal(name string, size int) (*Ralloc, error) {
-	//fmt.Printf("NewLocal %s(%d)\n", name, size)
+	fmt.Printf("NewLocal %s(%d)\n", name, size)
 	if _, ok := ra.names[name]; ok {
 		return nil, fmt.Errorf("Ralloc %s already declared.", name)
 	}
@@ -426,6 +425,13 @@ func (ra *Rallocs) EvictForCall() {
 // Acquire evicts whatever variable is in a register, if there is one. And marks the register in use.
 // Registers that are Acquired must be Released, just like Use'd registers.
 func (ra *Rallocs) Acquire(r Register) {
+	// fmt.Printf("ACQUIRING %v\n", r)
+	// fmt.Printf("CURRENT IN-USE: \n")
+	// for k, v := range ra.rs.rs {
+	// 	if v.inuse {
+	// 		fmt.Printf("\t%v\n", k)
+	// 	}
+	// }
 	conflicts := ra.rs.Conflicts(r)
 	for _, cr := range conflicts {
 		a, ok := ra.regs[cr]
@@ -562,10 +568,10 @@ func (f *Function) Get(size int) (Register, bool) {
 
 // Functions assume System V x86_64 calling convention.
 func (f *Function) Prologue() error {
-	_, err := f.NewLocal("__retvalue", 64)
-	if err != nil {
-		return err
-	}
+	// _, err := f.NewLocal("__retvalue", 64)
+	// if err != nil {
+	// 	return err
+	// }
 	f.rs.Use(R_RBP)
 	f.rs.Use(R_RSP)
 	// TODO: If we get smarter about encoding, we can determine which of these registers we *need* to save
@@ -644,11 +650,7 @@ func (f *Function) Jump(instr string, label string) error {
 	// 		return err
 	// 	}
 	if instr == "CALL" {
-		//fmt.Printf("###################INSTR IS [%s]\n", instr)
-		f.takeoverRegister("__retvalue", R_RAX)
-		// 		if err != nil {
-		// 			panic(err)
-		// 		}
+		//f.takeoverRegister("__retvalue", R_RAX)
 	}
 	_, err := f.a.Encode(&f.bs, instr, int32(0))
 	if err != nil {
@@ -706,6 +708,21 @@ func (f *Function) Instr(instr string, ops ...interface{}) error {
 	// 	fmt.Printf("]\n")
 
 	if instr == "LEA" {
+
+		fmt.Printf("OPS: %#v\n", ops)
+		if ra, ok := ops[1].(*Ralloc); ok {
+			// If we're loading the address of a regalloc, we need to mark it
+			// as inmem.
+			// TODO: This should probably belong to Ralloc.
+			if ra.inreg {
+				// It already has a register value. Evict it into the memory.
+				ra.Evict()
+			} else {
+				// It's not in a register. Just mark the memory as in-use.
+				ra.inmem = true
+			}
+		}
+
 		instr, ops = f.fixLEAVar(ops)
 	}
 

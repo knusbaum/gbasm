@@ -39,3 +39,9 @@ array: nuke bas bld bosc string.bo
 	./bosc array.bosc
 	./bas main.bs init_linux.bs
 	./bld main.bo string.bo
+
+comp2: nuke bas bld bosc string.bo
+	./bosc comp2.bosc
+	./bas main.bs init_linux.bs
+	./bld -o comp2 main.bo string.bo
+

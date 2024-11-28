@@ -66,9 +66,11 @@ func main() {
 			fmt.Fprintf(of, "package %s\n\n", pkgname)
 		}
 		p := NewParser(os.Args[fi], reader)
-		c := NewVContext()
-		ctx := NewCompileContext()
+		//c := NewVContext()
+		//ctx := NewCompileContext()
 		var bs bytes.Buffer
+		var asts []AST
+		actx := NewContext()
 		for {
 			n, err := p.Next()
 			if err != nil {
@@ -78,27 +80,52 @@ func main() {
 				break
 			}
 			if n.t == n_import {
-				err := c.Import(n.sval)
-				if err != nil {
-					log.Fatalf("%v\n", err)
-				}
-				// TODO: get rid of double imports. CompileContext should have access to VContext eventually.
-				err = ctx.Import(n.sval)
+				// err := c.Import(n.sval)
+				// if err != nil {
+				// 	log.Fatalf("%v\n", err)
+				// }
+				// // TODO: get rid of double imports. CompileContext should have access to VContext eventually.
+				// err = ctx.Import(n.sval)
+				// if err != nil {
+				// 	log.Fatalf("%v\n", err)
+				// }
+				// continue
+				err = actx.Import(n.sval)
 				if err != nil {
 					log.Fatalf("%v\n", err)
 				}
 				continue
 			}
-			err = Validate(n, c)
+			a, err := n.ToAST(actx)
 			if err != nil {
-				log.Fatalf("Validation error: %v\n", err)
-				return
+				fmt.Printf("Failed to parse: %v\n", err)
+				os.Exit(1)
 			}
-			//fmt.Printf("WRITING %#v\n", n)
-			n.replaceStrings(ctx)
-			n.compile(ctx, &bs, valnew{})
+			asts = append(asts, a)
+			// err = Validate(n, c)
+			// if err != nil {
+			// 	log.Fatalf("Validation error: %v\n", err)
+			// 	return
+			// }
+			// //fmt.Printf("WRITING %#v\n", n)
+			//n.replaceStrings(ctx)
+			// n.compile(ctx, &bs, valnew{})
 		}
-		ctx.WriteStrings(of)
+
+		for _, a := range asts {
+			Compile(&bs, actx, a)
+		}
+
+		// for name, b := range actx.bindings {
+		// 	fmt.Printf("var %v: %#v\n", name, b)
+		// }
+		// for name, s := range actx.structs {
+		// 	fmt.Printf("struct %v: %#v\n", name, s)
+		// }
+		// for name, f := range actx.funcs {
+		// 	fmt.Printf("func %v: %#v\n", name, f)
+		// }
+		actx.WriteStrings(of)
 		io.Copy(of, &bs)
 	}
 }

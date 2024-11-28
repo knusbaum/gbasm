@@ -226,7 +226,7 @@ func functionTypeName(n *Node, c interface{ typeByName(string) (BType, bool) }) 
 	}
 	var b strings.Builder
 	b.WriteString("fn(")
-	for i := 0; i < int(n.fval); i++ {
+	for i := 0; i < int(n.ival); i++ {
 		if i > 0 {
 			b.WriteString(",")
 		}
@@ -243,10 +243,10 @@ func functionTypeName(n *Node, c interface{ typeByName(string) (BType, bool) }) 
 	}
 	b.WriteString(") ")
 	//spew.Dump(n.args[0])
-	if n.args[int(n.fval)].sval == "none" {
+	if n.args[int(n.ival)].sval == "none" {
 		panic("WOAH!")
 	}
-	b.WriteString(n.args[int(n.fval)].sval)
+	b.WriteString(n.args[int(n.ival)].sval)
 	return BType{name: b.String()}
 }
 
@@ -404,7 +404,7 @@ func validate(n *Node, c *VContext) BType {
 		return v
 	case n_fn:
 		ftype := functionTypeName(n, c)
-		body := n.args[int(n.fval)+1]
+		body := n.args[int(n.ival)+1]
 		if _, ok := c.binding(n.sval); ok {
 			panic(&interpreterError{msg: fmt.Sprintf("function '%s' already defined.", n.sval), p: n.p})
 		} else {
@@ -413,7 +413,7 @@ func validate(n *Node, c *VContext) BType {
 			}
 		}
 		c := c.subVContext()
-		for i := 0; i < int(n.fval); i++ {
+		for i := 0; i < int(n.ival); i++ {
 			t, ok := c.typeByName(n.args[i].args[0].sval)
 			t.ind = int(n.args[i].args[0].ival)
 			if !ok {

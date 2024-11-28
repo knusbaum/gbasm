@@ -24,50 +24,64 @@ func TestParser(t *testing.T) {
 			out: &Node{t: n_symbol, sval: "foo"},
 		},
 		{
+			in: "x = 1",
+			out: &Node{t: n_eq, args: []*Node{
+				&Node{t: n_symbol, sval: "x"},
+				&Node{t: n_number, ival: 1},
+			}},
+		},
+		{
+			in: "x = y",
+			out: &Node{t: n_eq, args: []*Node{
+				&Node{t: n_symbol, sval: "x"},
+				&Node{t: n_symbol, sval: "y"},
+			}},
+		},
+		{
 			in:  "foo()",
 			out: &Node{t: n_funcall, sval: "foo"},
 		},
 		{
 			in: "foo(1, 2, 3)",
 			out: &Node{t: n_funcall, sval: "foo", args: []*Node{
-				&Node{t: n_number, fval: 1},
-				&Node{t: n_number, fval: 2},
-				&Node{t: n_number, fval: 3},
+				&Node{t: n_number, ival: 1},
+				&Node{t: n_number, ival: 2},
+				&Node{t: n_number, ival: 3},
 			}},
 		},
 		{
 			in: "1 + 2 * (3 + 4) / 5",
 			out: &Node{t: n_add, args: []*Node{
-				&Node{t: n_number, fval: 1},
+				&Node{t: n_number, ival: 1},
 				&Node{t: n_div, args: []*Node{
 					&Node{t: n_mul, args: []*Node{
-						&Node{t: n_number, fval: 2},
+						&Node{t: n_number, ival: 2},
 						&Node{t: n_add, args: []*Node{
-							&Node{t: n_number, fval: 3},
-							&Node{t: n_number, fval: 4},
+							&Node{t: n_number, ival: 3},
+							&Node{t: n_number, ival: 4},
 						}},
 					}},
-					&Node{t: n_number, fval: 5},
+					&Node{t: n_number, ival: 5},
 				}},
 			}},
 		},
 		{
 			in: "1 + 2 * (bar(\"a\", \"b\", \"c\") + 4) / 5",
 			out: &Node{t: n_add, args: []*Node{
-				&Node{t: n_number, fval: 1},
+				&Node{t: n_number, ival: 1},
 				&Node{t: n_div, args: []*Node{
 					&Node{t: n_mul, args: []*Node{
-						&Node{t: n_number, fval: 2},
+						&Node{t: n_number, ival: 2},
 						&Node{t: n_add, args: []*Node{
 							&Node{t: n_funcall, sval: "bar", args: []*Node{
 								&Node{t: n_str, sval: "a"},
 								&Node{t: n_str, sval: "b"},
 								&Node{t: n_str, sval: "c"},
 							}},
-							&Node{t: n_number, fval: 4},
+							&Node{t: n_number, ival: 4},
 						}},
 					}},
-					&Node{t: n_number, fval: 5},
+					&Node{t: n_number, ival: 5},
 				}},
 			}},
 		},
@@ -76,12 +90,12 @@ func TestParser(t *testing.T) {
 			out: &Node{t: n_add, args: []*Node{
 				&Node{t: n_add, args: []*Node{
 					&Node{t: n_add, args: []*Node{
-						&Node{t: n_number, fval: 1},
-						&Node{t: n_number, fval: 2},
+						&Node{t: n_number, ival: 1},
+						&Node{t: n_number, ival: 2},
 					}},
-					&Node{t: n_number, fval: 3},
+					&Node{t: n_number, ival: 3},
 				}},
-				&Node{t: n_number, fval: 4},
+				&Node{t: n_number, ival: 4},
 			}},
 		},
 		{
@@ -89,32 +103,32 @@ func TestParser(t *testing.T) {
 			out: &Node{t: n_mul, args: []*Node{
 				&Node{t: n_mul, args: []*Node{
 					&Node{t: n_mul, args: []*Node{
-						&Node{t: n_number, fval: 1},
-						&Node{t: n_number, fval: 2},
+						&Node{t: n_number, ival: 1},
+						&Node{t: n_number, ival: 2},
 					}},
-					&Node{t: n_number, fval: 3},
+					&Node{t: n_number, ival: 3},
 				}},
-				&Node{t: n_number, fval: 4},
+				&Node{t: n_number, ival: 4},
 			}},
 		},
 		{
 			// Ensure we parse only one expression.
 			in: "1 * 2 \n 3 * 4 \n 5 * 6",
 			out: &Node{t: n_mul, args: []*Node{
-				&Node{t: n_number, fval: 1},
-				&Node{t: n_number, fval: 2},
+				&Node{t: n_number, ival: 1},
+				&Node{t: n_number, ival: 2},
 			}},
 		},
 		{
 			in: "foo{ field: \"somestring\", field2: 1234.5, field3: bar(), field4: baz(1, 2, 3), field5: quux }",
 			out: &Node{t: n_stlit, sval: "foo", args: []*Node{
 				&Node{t: n_stfield, sval: "field", args: []*Node{&Node{t: n_str, sval: "somestring"}}},
-				&Node{t: n_stfield, sval: "field2", args: []*Node{&Node{t: n_number, fval: 1234.5}}},
+				&Node{t: n_stfield, sval: "field2", args: []*Node{&Node{t: n_number, ival: 1234}}},
 				&Node{t: n_stfield, sval: "field3", args: []*Node{&Node{t: n_funcall, sval: "bar"}}},
 				&Node{t: n_stfield, sval: "field4", args: []*Node{&Node{t: n_funcall, sval: "baz", args: []*Node{
-					&Node{t: n_number, fval: 1},
-					&Node{t: n_number, fval: 2},
-					&Node{t: n_number, fval: 3},
+					&Node{t: n_number, ival: 1},
+					&Node{t: n_number, ival: 2},
+					&Node{t: n_number, ival: 3},
 				}}}},
 				&Node{t: n_stfield, sval: "field5", args: []*Node{&Node{t: n_symbol, sval: "quux"}}},
 			}},
@@ -125,7 +139,7 @@ func TestParser(t *testing.T) {
 				// Condition
 				&Node{t: n_deq, args: []*Node{
 					&Node{t: n_symbol, sval: "x"},
-					&Node{t: n_number, fval: 12},
+					&Node{t: n_number, ival: 12},
 				}},
 				// Then
 				&Node{t: n_block, args: []*Node{
@@ -133,7 +147,7 @@ func TestParser(t *testing.T) {
 						&Node{t: n_symbol, sval: "x"},
 						&Node{t: n_sub, args: []*Node{
 							&Node{t: n_symbol, sval: "x"},
-							&Node{t: n_number, fval: 1},
+							&Node{t: n_number, ival: 1},
 						}},
 					}},
 				}},
@@ -142,20 +156,20 @@ func TestParser(t *testing.T) {
 					// Condition
 					&Node{t: n_lt, args: []*Node{
 						&Node{t: n_symbol, sval: "x"},
-						&Node{t: n_number, fval: 0},
+						&Node{t: n_number, ival: 0},
 					}},
 					// Then
 					&Node{t: n_block, args: []*Node{
 						&Node{t: n_eq, args: []*Node{
 							&Node{t: n_symbol, sval: "x"},
-							&Node{t: n_number, fval: 0},
+							&Node{t: n_number, ival: 0},
 						}},
 					}},
 					// Else
 					&Node{t: n_block, args: []*Node{
 						&Node{t: n_eq, args: []*Node{
 							&Node{t: n_symbol, sval: "x"},
-							&Node{t: n_number, fval: 100},
+							&Node{t: n_number, ival: 100},
 						}},
 					}},
 				}},
@@ -166,17 +180,17 @@ func TestParser(t *testing.T) {
 			out: &Node{t: n_for, args: []*Node{
 				&Node{t: n_eq, args: []*Node{
 					&Node{t: n_symbol, sval: "x"},
-					&Node{t: n_number, fval: 1},
+					&Node{t: n_number, ival: 1},
 				}},
 				&Node{t: n_lt, args: []*Node{
 					&Node{t: n_symbol, sval: "x"},
-					&Node{t: n_number, fval: 10},
+					&Node{t: n_number, ival: 10},
 				}},
 				&Node{t: n_eq, args: []*Node{
 					&Node{t: n_symbol, sval: "x"},
 					&Node{t: n_add, args: []*Node{
 						&Node{t: n_symbol, sval: "x"},
-						&Node{t: n_number, fval: 1},
+						&Node{t: n_number, ival: 1},
 					}},
 				}},
 				&Node{t: n_block, args: []*Node{
@@ -198,14 +212,14 @@ func TestParser(t *testing.T) {
 					&Node{t: n_symbol, sval: "x"},
 					&Node{t: n_add, args: []*Node{
 						&Node{t: n_symbol, sval: "x"},
-						&Node{t: n_number, fval: 1},
+						&Node{t: n_number, ival: 1},
 					}},
 				}},
 				&Node{t: n_if, args: []*Node{
 					// Condition
 					&Node{t: n_ge, args: []*Node{
 						&Node{t: n_symbol, sval: "x"},
-						&Node{t: n_number, fval: 10},
+						&Node{t: n_number, ival: 10},
 					}},
 					// Then
 					&Node{t: n_break},
@@ -227,14 +241,14 @@ func TestParser(t *testing.T) {
 						&Node{t: n_symbol, sval: "x"},
 						&Node{t: n_add, args: []*Node{
 							&Node{t: n_symbol, sval: "x"},
-							&Node{t: n_number, fval: 1},
+							&Node{t: n_number, ival: 1},
 						}},
 					}},
 					&Node{t: n_if, args: []*Node{
 						// Condition
 						&Node{t: n_ge, args: []*Node{
 							&Node{t: n_symbol, sval: "x"},
-							&Node{t: n_number, fval: 10},
+							&Node{t: n_number, ival: 10},
 						}},
 						// Then
 						&Node{t: n_break},
@@ -243,18 +257,37 @@ func TestParser(t *testing.T) {
 			}},
 		},
 		{
+			in: "fn foo () { }",
+			out: &Node{t: n_fn, ival: 0, sval: "foo", args: []*Node{
+				&Node{t: n_typename, sval: "void"},
+				&Node{t: n_block, args: nil},
+			}},
+		},
+		{
+			in: "fn foo (x num, y *num, z **num) ***num { return 0  }",
+			out: &Node{t: n_fn, ival: 3, sval: "foo", args: []*Node{
+				&Node{t: n_arg, sval: "x", args: []*Node{&Node{t: n_typename, sval: "num"}}},
+				&Node{t: n_arg, sval: "y", args: []*Node{&Node{t: n_typename, sval: "num", ival: 1}}},
+				&Node{t: n_arg, sval: "z", args: []*Node{&Node{t: n_typename, sval: "num", ival: 2}}},
+				&Node{t: n_typename, sval: "num", ival: 3},
+				&Node{t: n_block, args: []*Node{
+					&Node{t: n_return, args: []*Node{&Node{t: n_number, ival: 0}}},
+				}},
+			}},
+		},
+		{
 			in: "fn foo (x num, y num) num { printf(\"X is %v\\nY is %v\\n\", x, y) return 0  }",
-			out: &Node{t: n_fn, fval: 2, sval: "foo", args: []*Node{
+			out: &Node{t: n_fn, ival: 2, sval: "foo", args: []*Node{
 				&Node{t: n_arg, sval: "x", args: []*Node{&Node{t: n_typename, sval: "num"}}},
 				&Node{t: n_arg, sval: "y", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-				&Node{t: n_symbol, sval: "num"},
+				&Node{t: n_typename, sval: "num"},
 				&Node{t: n_block, args: []*Node{
 					&Node{t: n_funcall, sval: "printf", args: []*Node{
 						&Node{t: n_str, sval: "X is %v\nY is %v\n"},
 						&Node{t: n_symbol, sval: "x"},
 						&Node{t: n_symbol, sval: "y"},
 					}},
-					&Node{t: n_return, args: []*Node{&Node{t: n_number, fval: 0}}},
+					&Node{t: n_return, args: []*Node{&Node{t: n_number, ival: 0}}},
 				}},
 			}},
 		},
@@ -262,10 +295,10 @@ func TestParser(t *testing.T) {
 			in: "printxy = fn bar (x num, y num) num { printf(\"X is %v\\nY is %v\\n\", x, y); return 0  }",
 			out: &Node{t: n_eq, args: []*Node{
 				&Node{t: n_symbol, sval: "printxy"},
-				&Node{t: n_fn, fval: 2, sval: "bar", args: []*Node{
+				&Node{t: n_fn, ival: 2, sval: "bar", args: []*Node{
 					&Node{t: n_arg, sval: "x", args: []*Node{&Node{t: n_typename, sval: "num"}}},
 					&Node{t: n_arg, sval: "y", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-					&Node{t: n_symbol, sval: "num"},
+					&Node{t: n_typename, sval: "num"},
 					&Node{t: n_block, args: []*Node{
 						&Node{t: n_funcall, sval: "printf", args: []*Node{
 							&Node{t: n_str, sval: "X is %v\nY is %v\n"},
@@ -273,7 +306,7 @@ func TestParser(t *testing.T) {
 							&Node{t: n_symbol, sval: "y"},
 						}},
 						&Node{},
-						&Node{t: n_return, args: []*Node{&Node{t: n_number, fval: 0}}},
+						&Node{t: n_return, args: []*Node{&Node{t: n_number, ival: 0}}},
 					}},
 				}},
 			}},
@@ -294,7 +327,7 @@ func TestParser(t *testing.T) {
 				&Node{t: n_symbol, sval: "x"},
 				&Node{t: n_eq, args: []*Node{
 					&Node{t: n_symbol, sval: "y"},
-					&Node{t: n_number, fval: 10},
+					&Node{t: n_number, ival: 10},
 				}},
 			}},
 		},
@@ -305,6 +338,45 @@ func TestParser(t *testing.T) {
 		{
 			in:  "var x *int",
 			out: &Node{t: n_var, sval: "x", args: []*Node{&Node{t: n_typename, sval: "int", ival: 1}}},
+		},
+		{
+			in: "a.b",
+			out: &Node{t: n_dot, args: []*Node{
+				&Node{t: n_symbol, sval: "a"},
+				&Node{t: n_symbol, sval: "b"},
+			}},
+		},
+		{
+			in: "a.b.c.d",
+			out: &Node{t: n_dot, args: []*Node{
+				&Node{t: n_dot, args: []*Node{
+					&Node{t: n_dot, args: []*Node{
+						&Node{t: n_symbol, sval: "a"},
+						&Node{t: n_symbol, sval: "b"},
+					}},
+					&Node{t: n_symbol, sval: "c"},
+				}},
+				&Node{t: n_symbol, sval: "d"},
+			}},
+		},
+		{
+			in: "*a",
+			out: &Node{t: n_deref, args: []*Node{
+				&Node{t: n_symbol, sval: "a"},
+			}},
+		},
+		{
+			in: "*x.y",
+			out: &Node{t: n_deref, args: []*Node{
+				&Node{t: n_dot, args: []*Node{
+					&Node{t: n_symbol, sval: "x"},
+					&Node{t: n_symbol, sval: "y"},
+				}},
+			}},
+		},
+		{
+			in:  "&x",
+			out: &Node{t: n_address, sval: "x"},
 		},
 	} {
 		t.Run("", func(t *testing.T) {

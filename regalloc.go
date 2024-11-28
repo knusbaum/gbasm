@@ -1,6 +1,8 @@
 package gbasm
 
-import "fmt"
+import (
+	"fmt"
+)
 
 type rstate struct {
 	inuse bool

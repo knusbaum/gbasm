@@ -174,7 +174,7 @@ func main() {
 			if strings.HasPrefix(line, "//") {
 				continue
 			}
-			//fmt.Printf("%v\n", line)
+			fmt.Printf("%v\n", line)
 			if strings.HasPrefix(line, "package") {
 				pkgname := strings.TrimSpace(strings.TrimPrefix(line, "package"))
 				if out == "" {
