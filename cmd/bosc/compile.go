@@ -123,8 +123,28 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		// }
 		// fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, ast.Name)
 		// return dest
+	case *Dot:
+		l := compileTop(of, c, ast.Val, nullspot)
+		def, ok := c.StructDeclForName(l.t.Name)
+		if !ok {
+			panic("No struct (TODO)")
+		}
+		offset := 0
+		var mtype ASTType
+		for _, f := range def.Fields {
+			if f.Name == ast.Member {
+				mtype = f.Type
+				break
+			}
+			offset += f.Type.Size(c)
+		}
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), mtype)
+		}
+		fmt.Fprintf(of, "\tlea %s [%s+%d]\n", dest.ref, l.ref, offset)
+		return dest
 	}
-	panic(fmt.Sprintf("FALLTHROUGH: %#v\n", a))
+	panic(fmt.Sprintf("(LVAL) FALLTHROUGH: %#v\n", a))
 }
 
 func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
@@ -222,7 +242,36 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 		fmt.Fprintf(of, "\n")
 		return ret
 	case *Dot:
+		l := compileTop(of, c, ast.Val, nullspot)
+		def, ok := c.StructDeclForName(l.t.Name)
+		if !ok {
+			panic("No struct (TODO)")
+		}
+		offset := 0
+		var mtype ASTType
+		for _, f := range def.Fields {
+			if f.Name == ast.Member {
+				mtype = f.Type
+				break
+			}
+			offset += f.Type.Size(c)
+		}
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), mtype)
+		}
+		fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, l.ref, offset)
+		return dest
 	case *Deref:
+		v := compileTop(of, c, ast.Val, nullspot)
+		t := v.t
+		if t.Indirection == 0 {
+			panic("Cannot dereference non-pointer type")
+		}
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), t)
+		}
+		fmt.Fprintf(of, "\tmov %s [%s]\n", dest, v)
+		return dest
 	case *Address:
 	case *Assignment:
 		fmt.Fprintf(of, "\t// Assignment begin\n")
@@ -294,5 +343,5 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 		}
 		return dest
 	}
-	panic(fmt.Sprintf("FALLTHROUGH: %#v\n", a))
+	panic(fmt.Sprintf("(TOP) FALLTHROUGH: %#v\n", a))
 }
