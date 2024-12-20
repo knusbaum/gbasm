@@ -1,0 +1,12 @@
+package main
+
+import "string.bo"
+
+fn mully(x num, y num) num {
+   return x * y
+}
+
+fn main() {
+   puti(mully(10, 20))
+   puts("\n")
+}

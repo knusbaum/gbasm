@@ -237,7 +237,7 @@ func (n *Node) replaceStrings(ctx *CompileContext) {
 	return
 }
 
-func setupArgs(ctx *CompileContext, of io.Writer, args []*Node) {
+func oldsetupArgs(ctx *CompileContext, of io.Writer, args []*Node) {
 	fmt.Fprintf(of, "\tevict\n")
 	for i := 0; i < len(args); i++ {
 		//a := args[i].compile(ctx, of)
@@ -587,7 +587,7 @@ func (n *Node) compile(ctx *CompileContext, of io.Writer, dest valnew) valnew {
 		}
 		return Value(n.sval, *t)
 	case n_funcall:
-		setupArgs(ctx, of, n.args)
+		oldsetupArgs(ctx, of, n.args)
 		if !ctx.registers.Use(gbasm.R_RAX) {
 			panic(fmt.Sprintf("Could not acquire RAX for return value.\n"))
 		}

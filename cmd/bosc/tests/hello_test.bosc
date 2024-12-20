@@ -1,0 +1,7 @@
+package main
+
+import "string.bo"
+
+fn main() {
+   puts("Hello, World!\n")
+}

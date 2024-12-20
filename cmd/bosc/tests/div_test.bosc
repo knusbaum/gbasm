@@ -1,0 +1,12 @@
+package main
+
+import "string.bo"
+
+fn divvy(x num, y num) num {
+   return x / y
+}
+
+fn main() {
+   puti(divvy(100, 20))
+   puts("\n")
+}

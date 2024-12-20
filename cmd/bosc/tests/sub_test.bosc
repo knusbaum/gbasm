@@ -1,0 +1,14 @@
+package main
+
+import "string.bo"
+
+fn subby(x num, y num) num {
+   return x - y
+}
+
+fn main() {
+   puti(subby(20, 10))
+   puts("\n")
+   puti(subby(10, 20))
+   puts("\n")
+}

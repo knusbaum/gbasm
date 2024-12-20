@@ -1,0 +1,21 @@
+package main
+
+import "string.bo"
+
+
+
+fn dosth(i num, j num) num {
+   puti(i)
+   puts("\n")
+   puti(j)
+   puts("\n")
+   return 10
+}
+
+fn main() {
+   var x num
+   x = 20
+   dosth(dosth(x,x), dosth(x,x))
+   dosth(10, 20)
+   puts("Hello, World!\n")
+}

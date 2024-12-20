@@ -1,0 +1,39 @@
+package main
+
+import "string.bo"
+
+fn putin(i num) {
+   puti(i)
+   puts("\n")
+}
+
+fn retten() num {
+   return 10
+}
+
+fn retx(x num) num {
+   return x
+}
+
+fn threearg(x num, y num, z num) num {
+   return x + y + z
+}
+
+fn main() {
+   var x num
+   x = retten()
+   putin(x)
+   // 10
+
+   putin(retten())
+   // 10
+
+   putin(retx(10))
+   // 10
+
+   putin(retx(10 * 10))
+   // 100
+
+   putin(threearg(10 * 10, 20 * 20, 30 * 30))
+   // 1400
+}

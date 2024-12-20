@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"flag"
 	"fmt"
 	"math"
 	"math/bits"
@@ -143,18 +144,29 @@ func ParseIndirect(s string) (base string, offset int32, err error) {
 	return
 }
 
+var out = flag.String("o", "", "Write the linked executable to this file")
+var help = flag.Bool("h", false, "Print this help message.")
+
 func main() {
-	if len(os.Args) < 2 {
+	flag.Parse()
+
+	if *help {
+		fmt.Printf("HELP MESSAGE\n")
+		flag.PrintDefaults()
+		return
+	}
+
+	if flag.NArg() < 1 {
 		fmt.Printf("Fatal: Expected file name to open.\n")
 		os.Exit(1)
 	}
 
-	var out string
+	//var out string
 
 	var o *gbasm.OFile
-	for fi := 1; fi < len(os.Args); fi++ {
-		fmt.Printf("Assembling %s\n", os.Args[fi])
-		file, err := os.Open(os.Args[fi])
+	for fi := 0; fi < flag.NArg(); fi++ {
+		fmt.Printf("Assembling %s\n", flag.Arg(fi))
+		file, err := os.Open(flag.Arg(fi))
 		if err != nil {
 			fmt.Printf("Fatal: %s", err)
 		}
@@ -177,18 +189,18 @@ func main() {
 			fmt.Printf("%v\n", line)
 			if strings.HasPrefix(line, "package") {
 				pkgname := strings.TrimSpace(strings.TrimPrefix(line, "package"))
-				if out == "" {
-					out = pkgname + ".bo"
+				if *out == "" {
+					*out = pkgname + ".bo"
 				}
 				if o == nil {
-					o, err = gbasm.NewOFile(out, pkgname)
+					o, err = gbasm.NewOFile(*out, pkgname)
 					if err != nil {
 						fmt.Printf("Failed to create ofile: %s\n", err)
 						os.Exit(1)
 					}
 				} else {
 					if o.Pkgname != pkgname {
-						fmt.Printf("Creating package %s: file %s has package name %s.\n", o.Pkgname, os.Args[fi], pkgname)
+						fmt.Printf("Creating package %s: file %s has package name %s.\n", o.Pkgname, flag.Arg(fi), pkgname)
 						os.Exit(1)
 					}
 				}
@@ -203,7 +215,7 @@ func main() {
 					fmt.Printf("Fatal: Function name \"%s\" contains a space.\n", fname)
 					os.Exit(1)
 				}
-				f, err = o.NewFunction(os.Args[fi], ln, fname)
+				f, err = o.NewFunction(flag.Arg(fi), ln, fname)
 				if err != nil {
 					fmt.Printf("Fatal: Failed to create function \"%s\": %s\n", fname, err)
 					os.Exit(1)

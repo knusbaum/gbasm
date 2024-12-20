@@ -1,0 +1,44 @@
+package main
+
+import "string.bo"
+
+struct point {
+    x num
+    y num
+    z num
+}
+
+fn dosomething(p *point) {
+   puti(p.x)
+   puts("\n")
+   puti((*p).y)
+   puts("\n")
+
+   p.y = 500
+   (*p).z = 600
+}
+
+fn main() num {
+   puts("Hello, World!\n")
+   var x point
+
+   x.x = 10
+   x.y = 20
+   x.z = 30
+
+   puti(x.x)
+   puts("\n")
+
+   var y *point
+   y = &x
+
+   dosomething(y)
+
+
+   puti(x.y)
+   puts("\n")
+   puti(x.z)
+   puts("\n")
+
+   return 0
+}

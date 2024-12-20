@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -10,8 +11,19 @@ import (
 	"strings"
 )
 
+var out = flag.String("o", "", "Write the linked executable to this file")
+var help = flag.Bool("h", false, "Print this help message.")
+
 func main() {
-	if len(os.Args) < 2 {
+	flag.Parse()
+
+	if *help {
+		fmt.Printf("HELP MESSAGE\n")
+		flag.PrintDefaults()
+		return
+	}
+
+	if flag.NArg() < 1 {
 		fmt.Printf("Fatal: Expected file name to open.\n")
 		os.Exit(1)
 	}
@@ -19,9 +31,20 @@ func main() {
 	var pkgname string
 	var of *os.File
 	var wrotePkg bool
-	for fi := 1; fi < len(os.Args); fi++ {
-		fmt.Printf("Compiling %s\n", os.Args[fi])
-		file, err := os.Open(os.Args[fi])
+
+	if out != nil && *out != "" {
+		f, err := os.OpenFile(*out, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0755)
+		if err != nil {
+			log.Fatalf("Failed to create file %s: %s", *out, err)
+		}
+		defer f.Close()
+		//fmt.Printf("WRITING FILE %s\n", out)
+		of = f
+	}
+
+	for fi := 0; fi < flag.NArg(); fi++ {
+		fmt.Printf("Compiling %s\n", flag.Arg(fi))
+		file, err := os.Open(flag.Arg(fi))
 		if err != nil {
 			fmt.Printf("Fatal: %s", err)
 		}
@@ -65,7 +88,7 @@ func main() {
 		if !wrotePkg {
 			fmt.Fprintf(of, "package %s\n\n", pkgname)
 		}
-		p := NewParser(os.Args[fi], reader)
+		p := NewParser(flag.Arg(fi), reader)
 		//c := NewVContext()
 		//ctx := NewCompileContext()
 		var bs bytes.Buffer

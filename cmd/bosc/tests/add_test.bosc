@@ -1,0 +1,12 @@
+package main
+
+import "string.bo"
+
+fn addy(x num, y num) num {
+   return x + y
+}
+
+fn main() {
+   puti(addy(10, 20))
+   puts("\n")
+}
