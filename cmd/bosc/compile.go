@@ -394,6 +394,7 @@ func containsFuncall(a AST) bool {
 }
 
 func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
+	order := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
 	// TODO: Want to be able to optimize this, but can't currently.
 	// Same issue as other register optimizations - we can't acquire the registers
 	// we want ahead-of-time since things like funcalls and register-specific ops

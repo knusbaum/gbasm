@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 
+make bosc bas bld
+
 ./bas puts_linux.bs string.bs >/dev/null 2>&1
 
 #set -e
 #set -x
 rm tests/*.bs.o tests/*.bs tests/*.out tests/*.stdout
 
-make bosc bas bld
 
 for t in `ls tests/*_test.bosc`; do
     echo -e "\n\n############################ $t ############################"
