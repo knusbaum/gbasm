@@ -6,7 +6,14 @@ fn divvy(x num, y num) num {
    return x / y
 }
 
+fn divvy2(x num, y num) num {
+   return divvy(x, 10) / divvy(y, 10)
+}
+
 fn main() {
    puti(divvy(100, 20))
+   puts("\n")
+
+   puti(divvy2(1000, 200))
    puts("\n")
 }

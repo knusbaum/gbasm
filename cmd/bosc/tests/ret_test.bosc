@@ -1,0 +1,12 @@
+package main
+
+import "string.bo"
+
+fn rmul() num {
+   return 10 * 10
+}
+
+fn main() {
+   puti(rmul())
+   puts("\n")
+}

@@ -44,7 +44,7 @@ for t in `ls tests/*_test.bosc`; do
 	continue
     fi
     if [[ -f "${t}.expected" ]]; then
-	echo "Comparing output."
+	#echo "Comparing output."
 	diff -u "${t}.expected" "${t}.stdout"
 	if [[ $? != 0 ]]; then
 	    echo ${t} FAIL

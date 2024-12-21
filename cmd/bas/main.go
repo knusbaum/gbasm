@@ -269,8 +269,8 @@ func main() {
 			}
 			if strings.HasPrefix(line, "local") {
 				lnamesize := SplitSpace(strings.TrimSpace(strings.TrimPrefix(line, "local")))
-				if len(lnamesize) != 2 {
-					fmt.Printf("Fatal: Expect a local declaration to contain a name and bit size, but have %v\n", lnamesize)
+				if len(lnamesize) < 2 || len(lnamesize) > 3 {
+					fmt.Printf("Fatal: Expect a local declaration to contain a name and bit size, and optionally a register, but have %v\n", lnamesize)
 					os.Exit(1)
 				}
 				size, err := strconv.Atoi(lnamesize[1])
@@ -278,18 +278,26 @@ func main() {
 					fmt.Printf("Expected local size to be an integer, but have: %s\n", lnamesize[1])
 					os.Exit(1)
 				}
-				_, err = f.NewLocal(lnamesize[0], size)
+				l, err := f.NewLocal(lnamesize[0], size)
 				if err != nil {
 					fmt.Printf("Fatal: Failed to declare local %s: %s\n", lnamesize[1], err)
 					os.Exit(1)
+				}
+				if len(lnamesize) == 3 {
+					reg, err := gbasm.ParseReg(lnamesize[2])
+					if err != nil {
+						fmt.Printf("Fatal: Failed to use register %s: %s\n", lnamesize[2], err)
+						os.Exit(1)
+					}
+					l.UseRegister(reg)
 				}
 				//locals[lnamesize[0]] = l
 				continue
 			}
 			if strings.HasPrefix(line, "bytes") {
 				bnamesize := SplitSpace(strings.TrimSpace(strings.TrimPrefix(line, "bytes")))
-				if len(bnamesize) != 2 {
-					fmt.Printf("Fatal: Expect a bytes declaration to contain a name and byte size, but have %v\n", bnamesize)
+				if len(bnamesize) < 2 || len(bnamesize) > 3 {
+					fmt.Printf("Fatal: Expect a bytes declaration to contain a name and byte size, and optionally a register, but have %v\n", bnamesize)
 					os.Exit(1)
 				}
 				size, err := strconv.Atoi(bnamesize[1])
@@ -297,10 +305,18 @@ func main() {
 					fmt.Printf("Expected bytes size to be an integer, but have: %s\n", bnamesize[1])
 					os.Exit(1)
 				}
-				_, err = f.AllocBytes(bnamesize[0], size)
+				l, err := f.AllocBytes(bnamesize[0], size)
 				if err != nil {
 					fmt.Printf("Fatal: Failed to declare bytes %s: %s\n", bnamesize[1], err)
 					os.Exit(1)
+				}
+				if len(bnamesize) == 3 {
+					reg, err := gbasm.ParseReg(bnamesize[2])
+					if err != nil {
+						fmt.Printf("Fatal: Failed to use register %s: %s\n", bnamesize[2], err)
+						os.Exit(1)
+					}
+					l.UseRegister(reg)
 				}
 				continue
 			}
@@ -316,6 +332,26 @@ func main() {
 					os.Exit(1)
 				}
 				//locals[lnamesize[0]] = l
+				continue
+			}
+			if strings.HasPrefix(line, "inreg") {
+				// put a var in a specific reg
+				ireg := SplitSpace(strings.TrimSpace(strings.TrimPrefix(line, "inreg")))
+				if len(ireg) != 2 {
+					fmt.Printf("Fatal: Expect an inreg specify a variable and a register, but have: %v\n", ireg)
+					os.Exit(1)
+				}
+				ra := f.AllocFor(ireg[0])
+				if ra == nil {
+					fmt.Printf("Fatal: No such var: %v\n", ireg[0])
+					os.Exit(1)
+				}
+				reg, err := gbasm.ParseReg(ireg[1])
+				if err != nil {
+					fmt.Printf("Fatal: For inreg, cannot parse register %s: %v\n", ireg[1], err)
+					os.Exit(1)
+				}
+				ra.UseRegister(reg)
 				continue
 			}
 			if strings.HasPrefix(line, "use") {

@@ -6,7 +6,14 @@ fn mully(x num, y num) num {
    return x * y
 }
 
+fn mully2(x num, y num) num {
+   return mully(x, x) * mully(y, y)
+}
+
 fn main() {
    puti(mully(10, 20))
+   puts("\n")
+
+   puti(mully2(10, 20))
    puts("\n")
 }

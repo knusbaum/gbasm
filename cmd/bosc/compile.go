@@ -29,6 +29,17 @@ func newSpot(of io.Writer, c *Context, ref string, t ASTType) spot {
 	return s
 }
 
+func newSpotWithReg(of io.Writer, c *Context, ref string, t ASTType, reg string) spot {
+	s := spot{ref: ref, t: t}
+	sz := t.Size(c)
+	if sz <= 8 {
+		fmt.Fprintf(of, "\tlocal %s %d %s\n", ref, sz*8, reg)
+	} else {
+		fmt.Fprintf(of, "\tbytes %s %d %s\n", ref, sz, reg)
+	}
+	return s
+}
+
 func regSpot(of io.Writer, name string) spot {
 	fmt.Fprintf(of, "\tacquire %s\n", name)
 	return spot{ref: name, t: regtype}
@@ -217,9 +228,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 		}
 		ret := nullspot
 		if decl.Return != voidASTType() {
-			ret = newSpot(of, c, c.Temp(), decl.Return)
+			if !dest.empty() {
+				ret = dest
+			} else {
+				ret = newSpot(of, c, c.Temp(), decl.Return)
+			}
 			move(of, c, ret, rax)
 		}
+		fmt.Fprintf(of, "\t// free rax for call return\n")
 		rax.free(of)
 		fmt.Fprintf(of, "\n")
 		return ret
@@ -317,6 +333,20 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 	case *Op2:
 		return doOp2(of, c, ast, dest)
 	case *Return:
+		dest := newSpotWithReg(of, c, c.Temp(), ast.Val.ASTType(c), "rax")
+		fmt.Fprintf(of, "\t// COMPILING RETURN\n")
+		v := compileTop(of, c, ast.Val, dest)
+		if !v.same(&dest) {
+			dest.free(of)
+			dest = v
+			//panic("Should this happen?")
+		}
+		fmt.Fprintf(of, "\t// FINISHED COMPILING RETURN\n")
+		fmt.Fprintf(of, "\tinreg %s %s\n", dest.ref, "rax")
+		c.Return(of)
+		dest.free(of)
+		return nullspot
+
 		// TODO: Would be nice to be able to do this, but cannot support it
 		// currently. We need to not acquire rax, but create a variable
 		// that prefers rax as a register, that way other operations like
@@ -334,13 +364,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 			return nullspot
 		*/
 
-		v := compileTop(of, c, ast.Val, nullspot)
-		rax := regSpot(of, "rax")
-		move(of, c, rax, v)
-		v.free(of)
-		c.Return(of)
-		rax.free(of)
-		return nullspot
+		// v := compileTop(of, c, ast.Val, nullspot)
+		// rax := regSpot(of, "rax")
+		// move(of, c, rax, v)
+		// v.free(of)
+		// c.Return(of)
+		// rax.free(of)
+		// return nullspot
 
 	case *Symbol:
 		s := spot{ref: ast.Name, t: ast.ASTType(c)}
@@ -395,58 +425,62 @@ func containsFuncall(a AST) bool {
 
 func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 	order := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
-	// TODO: Want to be able to optimize this, but can't currently.
-	// Same issue as other register optimizations - we can't acquire the registers
-	// we want ahead-of-time since things like funcalls and register-specific ops
-	// like mul & div may need them.
-	//
-	// funcallArgs := false
-	// for i := 0; i < len(f.Args); i++ {
-	// 	arg := f.Args[i]
-	// 	if containsFuncall(arg) {
-	// 		funcallArgs = true
-	// 		break
-	// 	}
-	// }
-	// order := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
-	// if !funcallArgs {
-	// 	// optimization. We know there are no function calls in the
-	// 	// arguments to this function, so we can copy directly into the
-	// 	// call registers.
-	// 	for i := 0; i < len(f.Args); i++ {
-	// 		arg := f.Args[i]
-	// 		argt := arg.ASTType(c)
-	// 		if !argt.Same(&d.Args[i].Type) {
-	// 			panic("BAD ARG TYPE! (TODO)\n")
-	// 		}
-	// 		if i > 5 {
-	// 			panic("More than 6 args not supported yet (TODO)")
-	// 		}
-	// 		fmt.Fprintf(of, "\t// acquire %s for funcall args\n", order[i])
-	// 		rspot := regSpot(of, order[i])
-	// 		a := compileTop(of, c, arg, rspot)
-	// 		if a == nullspot {
-	// 			panic("AAAH! NULLSPOT!\n")
-	// 		}
-	// 		if a.ref != order[i] {
-	// 			move(of, c, rspot, a)
-	// 			a.free(of)
-	// 		}
-	// 	}
-	// 	return order
-	// }
+	// // TODO: Want to be able to optimize this, but can't currently.
+	// // Same issue as other register optimizations - we can't acquire the registers
+	// // we want ahead-of-time since things like funcalls and register-specific ops
+	// // like mul & div may need them.
+	// //
+	// // funcallArgs := false
+	// // for i := 0; i < len(f.Args); i++ {
+	// // 	arg := f.Args[i]
+	// // 	if containsFuncall(arg) {
+	// // 		funcallArgs = true
+	// // 		break
+	// // 	}
+	// // }
+	// // order := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+	// // if !funcallArgs {
+	// // 	// optimization. We know there are no function calls in the
+	// // 	// arguments to this function, so we can copy directly into the
+	// // 	// call registers.
+	// // 	for i := 0; i < len(f.Args); i++ {
+	// // 		arg := f.Args[i]
+	// // 		argt := arg.ASTType(c)
+	// // 		if !argt.Same(&d.Args[i].Type) {
+	// // 			panic("BAD ARG TYPE! (TODO)\n")
+	// // 		}
+	// // 		if i > 5 {
+	// // 			panic("More than 6 args not supported yet (TODO)")
+	// // 		}
+	// // 		fmt.Fprintf(of, "\t// acquire %s for funcall args\n", order[i])
+	// // 		rspot := regSpot(of, order[i])
+	// // 		a := compileTop(of, c, arg, rspot)
+	// // 		if a == nullspot {
+	// // 			panic("AAAH! NULLSPOT!\n")
+	// // 		}
+	// // 		if a.ref != order[i] {
+	// // 			move(of, c, rspot, a)
+	// // 			a.free(of)
+	// // 		}
+	// // 	}
+	// // 	return order
+	// // }
 
-	// This song and dance is to resolve the arguments into their
-	// associated registers.
-	//
-	// It's possible to optimize this, but this is ok for now.
-	// The reason we have two loops is that we can't acquire the
-	// call registers in the first loop while we're compiling the
-	// arguments. An argument might be a funcall, which itself will
-	// need the call registers.
-	// So instead, we first compile all the arguments into
-	// argspots, and then move each argument into its register for
-	// the call.
+	// // This song and dance is to resolve the arguments into their
+	// // associated registers.
+	// //
+	// // It's possible to optimize this, but this is ok for now.
+	// // The reason we have two loops is that we can't acquire the
+	// // call registers in the first loop while we're compiling the
+	// // arguments. An argument might be a funcall, which itself will
+	// // need the call registers.
+	// // So instead, we first compile all the arguments into
+	// // argspots, and then move each argument into its register for
+	// // the call.
+
+	// We try optimistically to keep the arguments in the call registers
+	// using the newSpotWithReg function. If necessary, these are evicted for
+	// things like funcalls and mul ops
 	var argspots []spot
 	for i := 0; i < len(f.Args); i++ {
 		arg := f.Args[i]
@@ -457,17 +491,23 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		if i > 5 {
 			panic("More than 6 args not supported yet (TODO)")
 		}
-		a := compileTop(of, c, arg, nullspot)
+		dest := newSpotWithReg(of, c, c.Temp(), argt, order[i])
+		a := compileTop(of, c, arg, dest)
 		if a == nullspot {
 			panic("AAAH! NULLSPOT!\n")
 		}
-		argspots = append(argspots, a)
+		if !a.same(&dest) {
+			dest.free(of)
+			dest = a
+		}
+		argspots = append(argspots, dest)
 	}
 	for i := 0; i < len(f.Args); i++ {
-		s := regSpot(of, order[i])
-		a := argspots[i]
-		move(of, c, s, a)
-		a.free(of)
+		//s := regSpot(of, order[i])
+		//a := argspots[i]
+		//move(of, c, s, a)
+		fmt.Fprintf(of, "\tinreg %s %s\n", argspots[i].ref, order[i])
+		argspots[i].free(of)
 	}
 
 	return order
@@ -497,61 +537,103 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		fmt.Fprintf(of, "\tsub %s %s\n", first.ref, second.ref)
 		return first
 	case n_mul:
-		// for multiplications, we need to acquire rax and rdx.
-		// one argument goes in rax, with the second argument in some register.
-		// the result goes in rdx:rax.
-		var rax spot
-		if dest.ref == "rax" {
-			rax = dest
-		} else {
-			rax = regSpot(of, "rax")
+		if dest.empty() {
+			dest = newSpotWithReg(of, c, c.Temp(), o.First.ASTType(c), "rax")
 		}
-		rdx := regSpot(of, "rdx")
-
-		first := compileTop(of, c, o.First, rax)
-		if !first.same(&rax) {
-			move(of, c, rax, first)
+		first := compileTop(of, c, o.First, dest)
+		if !first.same(&dest) {
+			panic(fmt.Sprintf("Expected to get %#v but got %#v from %#v\n", dest, first, o.First))
+			//dest.free(of)
+			dest = first
 		}
-		second := compileTop(of, c, o.Second, rdx)
-		if !second.same(&rdx) {
-			move(of, c, rdx, second)
+		second := newSpotWithReg(of, c, c.Temp(), o.Second.ASTType(c), "rdx")
+		snd := compileTop(of, c, o.Second, second)
+		if !snd.same(&second) {
+			//second.free(of)
+			second = snd
 		}
 
+		fmt.Fprintf(of, "\tinreg %s rax\n", first.ref)
+		fmt.Fprintf(of, "\tinreg %s rdx\n", second.ref)
 		fmt.Fprintf(of, "\timul rdx\n")
-		// TODO: overflow?
-		if dest.ref != "rax" {
-			fmt.Fprintf(of, "\tmov %s rax\n", dest.ref)
-			rax.free(of)
-		}
-		rdx.free(of)
-		return dest
+		second.free(of)
+		return first
+		// // for multiplications, we need to acquire rax and rdx.
+		// // one argument goes in rax, with the second argument in some register.
+		// // the result goes in rdx:rax.
+		// var rax spot
+		// if dest.ref == "rax" {
+		// 	rax = dest
+		// } else {
+		// 	fmt.Fprintf(
+		// 	rax = regSpot(of, "rax")
+		// }
+		// rdx := regSpot(of, "rdx")
+
+		// first := compileTop(of, c, o.First, rax)
+		// if !first.same(&rax) {
+		// 	move(of, c, rax, first)
+		// }
+		// second := compileTop(of, c, o.Second, rdx)
+		// if !second.same(&rdx) {
+		// 	move(of, c, rdx, second)
+		// }
+
+		// fmt.Fprintf(of, "\timul rdx\n")
+		// // TODO: overflow?
+		// if dest.ref != "rax" {
+		// 	fmt.Fprintf(of, "\tmov %s rax\n", dest.ref)
+		// 	fmt.Fprintf(of, "\t// free rax for multiplication\n")
+		// 	rax.free(of)
+		// }
+		// rdx.free(of)
+		// return dest
 	case n_div:
-		// for divisionss, we need to acquire rax and rdx.
-		// one argument goes in rdx:rax, with the second argument in some register.
-		// the result goes in rdx:rax.
-		var rax spot
-		if dest.ref == "rax" {
-			rax = dest
-		} else {
-			rax = regSpot(of, "rax")
+		if dest.empty() {
+			dest = newSpotWithReg(of, c, c.Temp(), o.First.ASTType(c), "rax")
 		}
+		first := compileTop(of, c, o.First, dest)
+		if !first.same(&dest) {
+			panic(fmt.Sprintf("Expected to get %#v but got %#v from %#v\n", dest, first, o.First))
+			//dest.free(of)
+			dest = first
+		}
+		second := compileTop(of, c, o.Second, nullspot)
+		fmt.Fprintf(of, "\tinreg %s rax\n", first.ref)
 		rdx := regSpot(of, "rdx")
-
-		first := compileTop(of, c, o.First, rax)
-		if !first.same(&rax) {
-			move(of, c, rax, first)
-		}
-
-		second := compileTop(of, c, o.Second, dest)
 		fmt.Fprintf(of, "\txor rdx rdx\n")
 		fmt.Fprintf(of, "\tdiv %s\n", second.ref)
-		// TODO: overflow?
-		if dest.ref != "rax" {
-			fmt.Fprintf(of, "\tmov %s rax\n", dest.ref)
-			rax.free(of)
-		}
 		rdx.free(of)
-		return dest
+		second.free(of)
+		return first
+
+		// // for divisionss, we need to acquire rax and rdx.
+		// // one argument goes in rdx:rax, with the second argument in some register.
+		// // the result goes in rdx:rax.
+		// var rax spot
+		// if dest.ref == "rax" {
+		// 	rax = dest
+		// } else {
+		// 	rax = regSpot(of, "rax")
+		// }
+		// rdx := regSpot(of, "rdx")
+
+		// first := compileTop(of, c, o.First, rax)
+		// if !first.same(&rax) {
+		// 	move(of, c, rax, first)
+		// }
+
+		// second := compileTop(of, c, o.Second, dest)
+		// fmt.Fprintf(of, "\txor rdx rdx\n")
+		// fmt.Fprintf(of, "\tdiv %s\n", second.ref)
+		// // TODO: overflow?
+		// if dest.ref != "rax" {
+		// 	fmt.Fprintf(of, "\tmov %s rax\n", dest.ref)
+		// 	fmt.Fprintf(of, "\t// free rax for division\n")
+		// 	rax.free(of)
+		// }
+		// rdx.free(of)
+		// return dest
 	}
 	panic("Could not do op\n")
 }

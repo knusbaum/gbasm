@@ -59,6 +59,62 @@ func (r *Ralloc) Location(preferRegister bool) interface{} {
 	return Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()}
 }
 
+func (r *Ralloc) UseRegister(reg Register) {
+	if r.inreg && r.reg == reg {
+		// We're already in reg.
+		return
+	}
+	// first, clear out the target register.
+	if r.rallocs.rs.InUse(reg) {
+		r.rallocs.EvictReg(reg)
+	}
+	r.rallocs.rs.Use(reg)
+
+	if r.regable && r.size != reg.Width() {
+		panic(fmt.Sprintf("Ralloc %s cannot use register %v. ralloc size: %v, regwidth: %v\n", r.sym, reg, r.size, reg.Width()))
+	}
+
+	if r.inreg {
+		// we're already in a register. MOV the value to the new reg and
+		// free the current one.
+		r.rallocs.f.Instr("MOV", reg, r.reg)
+		r.rallocs.rs.Release(r.reg)
+		r.rallocs.removeLRU(r.reg)
+		delete(r.rallocs.regs, r.reg)
+
+		r.reg = reg
+		r.rallocs.regs[reg] = r
+		r.rallocs.updateLRU(reg)
+		r.inreg = true
+		return
+	}
+	if r.inmem {
+		// We're not in a register, but are in memory.
+		if !r.regable {
+			// we don't fit in a register. LEA.
+			r.rallocs.f.Instr("LEA", reg, Indirect{Reg: R_RBP, Off: r.offset}) // TODO: Fix size?, Size: r.RegSize()})
+			r.reg = reg
+			r.rallocs.regs[reg] = r
+			r.rallocs.updateLRU(reg)
+			r.inreg = true
+			return
+		}
+		r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
+		r.reg = reg
+		r.rallocs.regs[reg] = r
+		r.rallocs.updateLRU(reg)
+		r.inreg = true
+		return
+	}
+
+	// We're not in a register, nor are we in memory.
+	// We can just set the register in the ralloc.
+	r.reg = reg
+	r.rallocs.regs[reg] = r
+	r.rallocs.updateLRU(reg)
+	r.inreg = true
+}
+
 func (r *Ralloc) Register() Register {
 	if r.inreg {
 		r.rallocs.updateLRU(r.reg)
@@ -391,7 +447,7 @@ func (ra *Rallocs) EvictReg(r Register) {
 	//	fmt.Printf("\t%v\n", r)
 	//}
 	conflicts := ra.rs.Conflicts(r)
-	//fmt.Printf("[EvictReg] Evicting %v, conflicts: %v\n", r, conflicts)
+	fmt.Printf("[EvictReg] Evicting %v, conflicts: %v\n", r, conflicts)
 	for _, cr := range conflicts {
 		a, ok := ra.regs[cr]
 		if !ok {
@@ -400,6 +456,7 @@ func (ra *Rallocs) EvictReg(r Register) {
 			//panic(fmt.Sprintf("Registers thinks %v is in use, but Rallocs does not have a record of it.\n", cr))
 			continue
 		}
+		fmt.Printf("EVICTING %#v\n", a)
 		a.Evict()
 	}
 	return
