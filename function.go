@@ -146,7 +146,7 @@ func (r *Ralloc) Register() Register {
 		}
 		//log.Printf("HAD TO EVICT REGISTER. EVICTED REGISTER %v", reg)
 	}
-	fmt.Printf("[Register] put %s in register %v\n", r.sym, reg)
+	//fmt.Printf("[Register] put %s in register %v\n", r.sym, reg)
 	if r.inmem {
 		//fmt.Printf("%s not in register. Allocated register %s\n", r.sym, reg)
 		r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
@@ -247,7 +247,7 @@ func (ra *Rallocs) returnSpace(size int32, offset int32) {
 // NewLocal allocates a new local variable of size bits. Locals created with
 // this function may have 'Forget' called on them to relinquish their storage.
 func (ra *Rallocs) NewLocal(name string, size int) (*Ralloc, error) {
-	fmt.Printf("NewLocal %s(%d)\n", name, size)
+	//fmt.Printf("NewLocal %s(%d)\n", name, size)
 	if _, ok := ra.names[name]; ok {
 		return nil, fmt.Errorf("Ralloc %s already declared.", name)
 	}
@@ -307,6 +307,7 @@ func (ra *Rallocs) AllocBytes(name string, size int) (*Ralloc, error) {
 		regable: false,
 		offset:  ra.space(int32(size)),
 		rallocs: ra,
+		inmem:   true,
 	}
 	ra.names[name] = r
 	return r, nil
@@ -447,7 +448,7 @@ func (ra *Rallocs) EvictReg(r Register) {
 	//	fmt.Printf("\t%v\n", r)
 	//}
 	conflicts := ra.rs.Conflicts(r)
-	fmt.Printf("[EvictReg] Evicting %v, conflicts: %v\n", r, conflicts)
+	//fmt.Printf("[EvictReg] Evicting %v, conflicts: %v\n", r, conflicts)
 	for _, cr := range conflicts {
 		a, ok := ra.regs[cr]
 		if !ok {
@@ -456,7 +457,6 @@ func (ra *Rallocs) EvictReg(r Register) {
 			//panic(fmt.Sprintf("Registers thinks %v is in use, but Rallocs does not have a record of it.\n", cr))
 			continue
 		}
-		fmt.Printf("EVICTING %#v\n", a)
 		a.Evict()
 	}
 	return
@@ -758,15 +758,15 @@ func (f *Function) fixLEAVar(ops []interface{}) (string, []interface{}) {
 }
 
 func (f *Function) Instr(instr string, ops ...interface{}) error {
-	// 	fmt.Printf("INSTRUCTION [%#v] OPS [", instr)
-	// 	for i := range ops {
-	// 		fmt.Printf("(%s) ", ops[i])
-	// 	}
-	// 	fmt.Printf("]\n")
+	// fmt.Printf("INSTRUCTION [%#v] OPS [", instr)
+	// for i := range ops {
+	// 	fmt.Printf("(%s) ", ops[i])
+	// }
+	// fmt.Printf("]\n")
 
 	if instr == "LEA" {
 
-		fmt.Printf("OPS: %#v\n", ops)
+		//fmt.Printf("OPS: %#v\n", ops)
 		if ra, ok := ops[1].(*Ralloc); ok {
 			// If we're loading the address of a regalloc, we need to mark it
 			// as inmem.

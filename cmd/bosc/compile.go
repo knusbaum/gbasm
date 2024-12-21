@@ -69,6 +69,37 @@ func (s *spot) empty() bool {
 	return s.ref == ""
 }
 
+func spot_memcpy(of io.Writer, dst, src spot, bytes int) {
+	qwords := bytes / 8
+	singles := bytes % 8
+
+	fmt.Fprintf(of, "\tacquire rax\n")
+	for i := 0; i < qwords; i++ {
+		fmt.Fprintf(of, "\tmov rax [%s+%d]\n", src.ref, i*8)
+		fmt.Fprintf(of, "\tmov [%s+%d] rax\n", dst.ref, i*8)
+	}
+	for i := 0; i < singles; i++ {
+		fmt.Fprintf(of, "\tmovb al [%s+%d]\n", src.ref, qwords*8+i)
+		fmt.Fprintf(of, "\tmovb [%s+%d] al\n", dst.ref, qwords*8+i)
+	}
+	fmt.Fprintf(of, "\trelease rax\n")
+}
+
+// func spot_memset(of io.Writer, dst spot, val byte, bytes int) {
+// 	qwords := bytes / 8
+// 	singles := bytes % 8
+
+// 	fmt.Fprintf(of, "\tacquire rax\n")
+// 	fmt.Fprintf(of, "\tmov rax %d\n", val)
+// 	for i := 0; i < qwords; i++ {
+// 		fmt.Fprintf(of, "\tmov [%s+%d] rax\n", dst, i*8)
+// 	}
+// 	for i := 0; i < singles; i++ {
+// 		fmt.Fprintf(of, "\tmovb [%s+%d] al\n", dst, qwords*8+i)
+// 	}
+// 	fmt.Fprintf(of, "\trelease rax\n")
+// }
+
 func move(of io.Writer, c *Context, dest spot, src spot) {
 	if dest.t == regtype || src.t == regtype {
 		// We have a register. Just move it.
@@ -76,7 +107,9 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 		return
 	}
 	if src.t.Indirection == 0 && src.t.Size(c) > 8 {
-		panic("MOVE OF BYTES TYPES NOT IMPLEMENTED!")
+		spot_memcpy(of, dest, src, src.t.Size(c))
+		return
+		//panic("MOVE OF BYTES TYPES NOT IMPLEMENTED!")
 	}
 	// TODO: other types, array stuff, etc.
 	if dest.t.Same(&src.t) {

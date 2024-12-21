@@ -6,10 +6,10 @@ make bosc bas bld
 
 #set -e
 #set -x
-rm tests/*.bs.o tests/*.bs tests/*.out tests/*.stdout
+rm tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout
 
 
-for t in `ls tests/*_test.bosc`; do
+for t in `ls tests/*_test.bos`; do
     echo -e "\n\n############################ $t ############################"
     ./bosc -o ${t}.bs $t >${t}.bosc.out 2>&1
     if [[ $? != 0 ]]; then
@@ -55,4 +55,4 @@ for t in `ls tests/*_test.bosc`; do
 done
 
 
-rm tests/*.bosc.o tests/*.bosc.bo tests/*.bs tests/*.out tests/*.stdout
+rm tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout

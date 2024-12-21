@@ -1,0 +1,104 @@
+package main
+
+import "string.bo"
+
+struct point {
+	x num
+	y num
+	z num
+}
+
+fn structfn(p point) {
+	puti(p.x)
+	puts("\n")
+
+	puti(p.y)
+	puts("\n")
+	
+	puti(p.z)
+	puts("\n")
+
+	p.x = p.x + 100
+	p.y = p.y + 100
+	p.z = p.z + 100
+}
+
+fn structPtrFn(p *point) {
+ 	puti(p.x)
+ 	puts("\n")
+
+	puti(p.y)
+	puts("\n")
+	
+	puti(p.z)
+	puts("\n")
+
+	p.x = p.x + 100
+	p.y = p.y + 100
+	p.z = p.z + 100
+}
+
+fn structPtrCopyFn(p *point) {
+	var p2 point
+
+	p2 = *p
+
+	p2.x = p2.x + 100
+	p2.y = p2.y + 100
+	p2.z = p2.z + 100
+	
+ 	puti(p2.x)
+ 	puts("\n")
+
+	puti(p2.y)
+	puts("\n")
+	
+	puti(p2.z)
+	puts("\n")	
+}
+
+fn main() {
+	var p point
+
+	p.x = 10
+	p.y = 20
+	p.z = 30
+
+	structfn(p)
+	
+	puti(p.x)
+	puts("\n")
+
+	puti(p.y)
+	puts("\n")
+	
+	puti(p.z)
+	puts("\n")
+
+	p.x = 100
+	p.y = 200
+	p.z = 300
+	structPtrFn(&p)
+
+	puti(p.x)
+	puts("\n")
+
+	puti(p.y)
+	puts("\n")
+	
+	puti(p.z)
+	puts("\n")
+
+
+	structPtrCopyFn(&p)
+
+	puti(p.x)
+	puts("\n")
+
+	puti(p.y)
+	puts("\n")
+	
+	puti(p.z)
+	puts("\n")
+	
+}
