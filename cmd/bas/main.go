@@ -68,6 +68,32 @@ func smallestUi(i uint64) interface{} {
 	return i
 }
 
+func smallestInt(i int64) interface{} {
+	if i < 0 {
+		// need a signed int.
+		if i < math.MinInt32 {
+			return i
+		}
+		if i < math.MinInt16 {
+			return int32(i)
+		}
+		if i < math.MinInt8 {
+			return int16(i)
+		}
+		return int8(i)
+	}
+	if i > math.MaxUint32 {
+		return uint64(i)
+	}
+	if i > math.MaxUint16 {
+		return uint32(i)
+	}
+	if i > math.MaxUint8 {
+		return uint16(i)
+	}
+	return uint8(i)
+}
+
 // smallestI returns the smallest signed integer representation possible for i
 func smallestI(i int64) interface{} {
 	if i >= math.MaxInt32 {
@@ -186,7 +212,7 @@ func main() {
 			if strings.HasPrefix(line, "//") {
 				continue
 			}
-			//fmt.Printf("%v\n", line)
+			fmt.Printf("INPUT %v\n", line)
 			if strings.HasPrefix(line, "package") {
 				pkgname := strings.TrimSpace(strings.TrimPrefix(line, "package"))
 				if *out == "" {
@@ -545,7 +571,7 @@ func main() {
 				}
 				if num, err := strconv.ParseInt(parts[i], 10, 64); err == nil {
 					//fmt.Printf("%v -> Parsed %s into %d (%X)\n", parts, parts[i], smallestI(num), smallestI(num))
-					args[i-1] = smallestI(num)
+					args[i-1] = smallestInt(num)
 					continue
 				}
 				args[i-1] = parts[i]

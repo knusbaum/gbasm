@@ -167,3 +167,15 @@ function uputi
 	epilogue
 	ret
 	
+// putc(c byte)
+function putc
+	type fn(byte) void
+	prologue
+	sub rsp 16
+	mov [rsp] rdi
+	movb [rsp+1] 0
+	mov rdi rsp
+	call puts
+
+	epilogue
+	ret

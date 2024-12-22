@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 
 	"github.com/davecgh/go-spew/spew"
@@ -178,7 +179,10 @@ type ASTType struct {
 
 const PTR_SIZE = 8
 
-// The size in bytes that the type occupies.
+// The size in bytes that the type occupies in memory.
+// NOTE: THIS IS NOT THE SIZE OF THE REGISTER.
+// For instance, arrays and structs are held in registers
+// as pointers.
 func (t *ASTType) Size(c *Context) int {
 	if t.Indirection > 0 {
 		return PTR_SIZE
@@ -190,6 +194,8 @@ func (t *ASTType) Size(c *Context) int {
 		baseSize = 8
 	case "str":
 		baseSize = 8 // TODO: Is this right? We fucked this up with the last version.
+	case "byte":
+		baseSize = 1
 	default:
 		d, ok := c.StructDeclForName(t.Name)
 		if !ok {
@@ -207,6 +213,18 @@ func (t *ASTType) Same(t2 *ASTType) bool {
 	return t.Name == t2.Name &&
 		t.Indirection == t2.Indirection &&
 		t.ArraySize == t2.ArraySize
+}
+
+func (t ASTType) String() string {
+	var sb strings.Builder
+	for i := 0; i < t.Indirection; i++ {
+		sb.WriteRune('*')
+	}
+	sb.WriteString(t.Name)
+	if t.ArraySize > 0 {
+		fmt.Fprintf(&sb, "[%d]", t.ArraySize)
+	}
+	return sb.String()
 }
 
 func mkTypename(n *Node) ASTType {
@@ -242,9 +260,14 @@ func strASTType() ASTType {
 	return ASTType{Name: "str"}
 }
 
+func byteASTType() ASTType {
+	return ASTType{Name: "byte"}
+}
+
 type AST interface {
 	// returns the type the expression gives.
 	ASTType(*Context) ASTType
+	Note() string
 }
 
 // A binding represents a name which is bound to a value of type Type
@@ -266,6 +289,10 @@ func (*StructDecl) ASTType(*Context) ASTType {
 	return voidASTType()
 }
 
+func (s *StructDecl) Note() string {
+	return fmt.Sprintf("struct %s {...}", s.TName)
+}
+
 // Returns the size in bytes that the struct occupies.
 func (s *StructDecl) Size(c *Context) int {
 	size := 0
@@ -284,6 +311,10 @@ func (*VarDecl) ASTType(*Context) ASTType {
 	return voidASTType()
 }
 
+func (v *VarDecl) Note() string {
+	return fmt.Sprintf("var %s %s", v.Name, v.Type)
+}
+
 type FuncDecl struct {
 	Name   string
 	Args   []Binding
@@ -293,6 +324,10 @@ type FuncDecl struct {
 
 func (*FuncDecl) ASTType(*Context) ASTType {
 	return voidASTType()
+}
+
+func (f *FuncDecl) Note() string {
+	return fmt.Sprintf("fn %s (...) %s {...}", f.Name, f.Return)
 }
 
 type Block struct {
@@ -306,6 +341,10 @@ func (*Block) ASTType(*Context) ASTType {
 	return voidASTType()
 }
 
+func (*Block) Note() string {
+	return fmt.Sprintf("block {...}")
+}
+
 type Funcall struct {
 	FName string
 	Args  []AST
@@ -317,6 +356,10 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 		panic("No such function. TODO: Nice error reports.")
 	}
 	return decl.Return
+}
+
+func (f *Funcall) Note() string {
+	return fmt.Sprintf("call %s(#%d)", f.FName, len(f.Args))
 }
 
 type Dot struct {
@@ -341,6 +384,10 @@ func (d *Dot) ASTType(c *Context) ASTType {
 	panic("No such struct member. TODO: Nice error reports.")
 }
 
+func (d *Dot) Note() string {
+	return fmt.Sprintf("Dot (%s).%s", d.Val.Note(), d.Member)
+}
+
 type Deref struct {
 	Val AST
 }
@@ -352,6 +399,10 @@ func (d *Deref) ASTType(c *Context) ASTType {
 	}
 	t.Indirection -= 1
 	return t
+}
+
+func (d *Deref) Note() string {
+	return fmt.Sprintf("Deref *(...)")
 }
 
 type Address struct {
@@ -372,6 +423,10 @@ func (a *Address) ASTType(c *Context) ASTType {
 	return t
 }
 
+func (a *Address) Note() string {
+	return fmt.Sprintf("Address &%s", a.Var)
+}
+
 type Assignment struct {
 	Target AST
 	Val    AST
@@ -379,6 +434,10 @@ type Assignment struct {
 
 func (*Assignment) ASTType(c *Context) ASTType {
 	return voidASTType()
+}
+
+func (a *Assignment) Note() string {
+	return fmt.Sprintf("Assignment %s = %s", a.Target.Note(), a.Val.Note())
 }
 
 type StructField struct {
@@ -399,6 +458,10 @@ func (s *StructLiteral) ASTType(c *Context) ASTType {
 	return s.Type
 }
 
+func (s *StructLiteral) Note() string {
+	return fmt.Sprintf("struct literal %s", s.Type)
+}
+
 type IfStmt struct {
 	Cond AST
 	Then AST
@@ -408,6 +471,10 @@ type IfStmt struct {
 func (*IfStmt) ASTType(c *Context) ASTType {
 	// TODO: Same as blocks, we'll make these expressions later.
 	return voidASTType()
+}
+
+func (*IfStmt) Note() string {
+	return fmt.Sprintf("if ...")
 }
 
 // Operation on 2 expressions (i.e. +, -, *, <, <=, == etc.)
@@ -424,9 +491,35 @@ func (o *Op2) ASTType(c *Context) ASTType {
 	case n_lt, n_le, n_gt, n_ge, n_deq:
 		return boolASTType()
 	case n_add, n_sub, n_mul, n_div:
-		return numASTType()
+		return o.First.ASTType(c)
+		//return numASTType()
 	}
 	panic("Bad Operation. TODO: Nice error reports.")
+}
+
+func (o *Op2) Note() string {
+	var op string
+	switch o.Type {
+	case n_add:
+		op = "+"
+	case n_sub:
+		op = "-"
+	case n_mul:
+		op = "*"
+	case n_div:
+		op = "/"
+	case n_deq:
+		op = "=="
+	case n_lt:
+		op = "<"
+	case n_le:
+		op = "<="
+	case n_gt:
+		op = ">"
+	case n_ge:
+		op = ">="
+	}
+	return fmt.Sprintf("Op (%s) %s (%s)", o.First.Note(), op, o.Second.Note())
 }
 
 type Return struct {
@@ -435,6 +528,10 @@ type Return struct {
 
 func (*Return) ASTType(*Context) ASTType {
 	return voidASTType()
+}
+
+func (*Return) Note() string {
+	return "return ..."
 }
 
 // TODO: Do we need this, or can we just use the actual value?
@@ -449,8 +546,14 @@ func (l *Literal) ASTType(*Context) ASTType {
 		return strASTType()
 	case uint64:
 		return numASTType()
+	case byte:
+		return byteASTType()
 	}
 	panic("Bad Literal. TODO: Nice error reports.")
+}
+
+func (l *Literal) Note() string {
+	return fmt.Sprintf("literal %v %v", l.Val, reflect.TypeOf(l.Val).String())
 }
 
 type Symbol struct {
@@ -463,6 +566,10 @@ func (s *Symbol) ASTType(c *Context) ASTType {
 		panic("Bad Variable. TODO: Nice error reports.")
 	}
 	return t
+}
+
+func (s *Symbol) Note() string {
+	return fmt.Sprintf("symbol %v", s.Name)
 }
 
 func ParseErrorF(n *Node, f string, args ...any) {
@@ -587,6 +694,8 @@ func (n *Node) toASTTop(c *Context) AST {
 		}
 	case n_number:
 		return &Literal{Val: n.ival}
+	case n_byte:
+		return &Literal{Val: byte(n.ival)}
 	case n_stlit:
 		var s StructLiteral
 		s.Type = ASTType{Name: n.sval}

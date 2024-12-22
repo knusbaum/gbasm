@@ -35,6 +35,27 @@ type Indirect struct {
 	Size int // Size in bytes of the data at the offset Off from Reg
 }
 
+func (i Indirect) String() string {
+	// useful when printing error messages.
+	var size string
+	switch i.Size {
+	case 8:
+		size = "BYTE"
+	case 16:
+		size = "WORD"
+	case 32:
+		size = "DWORD"
+	case 64:
+		size = "QWORD"
+	default:
+		size = fmt.Sprintf("(SIZE %d)", i.Size)
+	}
+	if i.Off > 0 {
+		return fmt.Sprintf("%s [%s + %d]", size, i.Reg, i.Off)
+	}
+	return fmt.Sprintf("%s [%s - %d]", size, i.Reg, -i.Off)
+}
+
 type IndirectByReg struct {
 	Reg   Register
 	Index Register
@@ -55,12 +76,12 @@ func (i *Instruction) Encode(w WriteLener, formname string, os ...interface{}) (
 	// for _, f := range i.Forms {
 	// 	fmt.Printf("FORM: %#v\n", f.ops)
 	// }
-	//fmt.Printf("Encode OS: %#v\n", os)
+	fmt.Printf("Instruction.Encode OS: %#v\n", os)
 forms:
 	for _, f := range i.Forms {
-		if formname == "movq" {
-			fmt.Printf("Encoding movq\n")
-		}
+		// if formname == "movq" {
+		// 	fmt.Printf("Encoding movq\n")
+		// }
 		if f.opcount != len(os) {
 			continue
 		}
@@ -100,7 +121,7 @@ forms:
 		// 	fmt.Printf("\t%v, %s", o, reflect.TypeOf(o).String())
 		// }
 		// fmt.Println("")
-		// fmt.Printf("[Instruction] Encoding form %v %#v\n", f.name, f.ops)
+		fmt.Printf("[Instruction] Encoding form %v ops: %#v, args: %#v\n", f.name, f.ops, os)
 		return f.Encode(w, os...)
 	}
 	return nil, fmt.Errorf("Failed to find an instruction for %s %#v", i.Summary, os)
@@ -396,6 +417,7 @@ func REX_X(i byte, os []interface{}) (Register, error) {
 }
 
 func getRegister(i byte, os []interface{}) (Register, error) {
+	fmt.Printf("GET REGISTER(%d)\n", i)
 	if int(i) >= len(os) {
 		panic(fmt.Sprintf("booo I: %d, OS: %#v, len(os): %d\n", i, os, len(os)))
 		return 0, fmt.Errorf("[getByte] Not enough args. Expected at least %d\n", i)
@@ -435,12 +457,12 @@ type modrm struct {
 
 // This logic is a mess and needs to be streamlined.
 func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
-	// fmt.Printf("modrm.Encode(%d):", x.mod)
-	// defer fmt.Printf("RETURN modrm.Encode(%d)\n", x.mod)
-	// for _, o := range os {
-	// 	fmt.Printf("\t%v, %s", o, reflect.TypeOf(o).String())
-	// }
-	// fmt.Println("")
+	fmt.Printf("modrm.Encode(%d):", x.mod)
+	defer fmt.Printf("RETURN modrm.Encode(%d)\n", x.mod)
+	for _, o := range os {
+		fmt.Printf("\t%v, %s", o, reflect.TypeOf(o).String())
+	}
+	fmt.Println("")
 	var doSib bool
 	//var mustDisp bool
 	var indirect *Indirect
@@ -451,9 +473,12 @@ func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	if x.mod&MODE_LITERAL != 0 {
 		xmod = x.mod & ^MODE_LITERAL
 	} else {
+		fmt.Printf("NOT MOD LITERAL\n")
 		if int(x.mod) >= len(os) {
+			panic("UHHH, WHAT!?")
 			return nil, fmt.Errorf("[getByte] Not enough args. Expected at least %d\n", x.mod)
 		}
+		fmt.Printf("X.MOD: %v\n", x.mod)
 		o := os[x.mod]
 		switch ot := o.(type) {
 		case byte:
@@ -577,7 +602,29 @@ type Op struct {
 func (o *Op) ConvertRalloc(a *Ralloc) interface{} {
 	switch o.TN {
 	case "r64":
-		return a.Register()
+		r := a.Register()
+		if r.Width() != 64 {
+			panic("OOF")
+		}
+		return r
+	case "r32":
+		r := a.Register()
+		if r.Width() != 32 {
+			panic("OOF")
+		}
+		return r
+	case "r16":
+		r := a.Register()
+		if r.Width() != 16 {
+			panic("OOF")
+		}
+		return r
+	case "r8":
+		r := a.Register()
+		if r.Width() != 8 {
+			panic("OOF")
+		}
+		return r
 	case "m64", "m32", "m16", "m8", "m":
 		return a.Indirect()
 	}
@@ -599,6 +646,7 @@ func (o *Op) Match(op interface{}) bool {
 		if _, ok := op.(int8); ok {
 			return ok
 		}
+		//fmt.Printf("FAILED TO MATCH %v (%s) to %v\n", op, reflect.TypeOf(op).String(), o)
 	case "imm16":
 		if _, ok := op.(uint8); ok {
 			return ok
@@ -660,30 +708,43 @@ func (o *Op) Match(op interface{}) bool {
 	//case "al":
 	//case "cl":
 	case "r8":
+		if ra, ok := op.(*Ralloc); ok {
+			return ra.RegSize() == 8
+		}
 		if r, ok := op.(Register); ok {
-			return r == R_AL || r == R_AH || r == R_BL || r == R_BH || r == R_CL || r == R_CH || r == R_DL || r == R_DH
+			//return r == R_AL || r == R_AH || r == R_BL || r == R_BH || r == R_CL || r == R_CH || r == R_DL || r == R_DH
+			return r.Width() == 8
 		}
 	//case "r8l":
 	//case "ax":
 	case "r16":
+		if ra, ok := op.(*Ralloc); ok {
+			return ra.RegSize() == 16
+		}
 		if r, ok := op.(Register); ok {
-			return r == R_AX || r == R_BX || r == R_CX || r == R_DX || r == R_SP || r == R_BP || r == R_SI || r == R_DI
+			//return r == R_AX || r == R_BX || r == R_CX || r == R_DX || r == R_SP || r == R_BP || r == R_SI || r == R_DI
+			return r.Width() == 16
 		}
 	//case "r16l":
 	//case "eax":
 	case "r32":
+		if ra, ok := op.(*Ralloc); ok {
+			return ra.RegSize() == 32
+		}
 		if r, ok := op.(Register); ok {
-			return r == R_EAX || r == R_EBX || r == R_ECX || r == R_EDX || r == R_ESP || r == R_EBP || r == R_ESI || r == R_EDI
+			//return r == R_EAX || r == R_EBX || r == R_ECX || r == R_EDX || r == R_ESP || r == R_EBP || r == R_ESI || r == R_EDI
+			return r.Width() == 32
 		}
 	//case "r32l":
 	//case "rax":
 	case "r64":
-		if _, ok := op.(*Ralloc); ok {
-			return true
+		if ra, ok := op.(*Ralloc); ok {
+			return ra.RegSize() == 64
 		}
 		if r, ok := op.(Register); ok {
-			return r == R_RAX || r == R_RBX || r == R_RCX || r == R_RDX || r == R_RSP || r == R_RBP || r == R_RSI || r == R_RDI ||
-				r == R8 || r == R9 || r == R10 || r == R11 || r == R12 || r == R13 || r == R14 || r == R15
+			//return r == R_RAX || r == R_RBX || r == R_RCX || r == R_RDX || r == R_RSP || r == R_RBP || r == R_RSI || r == R_RDI ||
+			//r == R8 || r == R9 || r == R10 || r == R11 || r == R12 || r == R13 || r == R14 || r == R15
+			return r.Width() == 64
 		}
 		// 	case "mm":
 		// 	case "xmm0":
@@ -857,12 +918,56 @@ func (f *IForm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 		}
 	}
 
+	fmt.Printf("IForm.Encode(%s):", f.name)
+	defer fmt.Printf("RETURN IForm.Encode(%s)\n", f.name)
+	for _, o := range os {
+		fmt.Printf("\t%v, %s", o, reflect.TypeOf(o).String())
+	}
+	fmt.Println("")
+
+	// experimental. This sucks.
+	{
+		mustNotREX := false
+		for _, o := range os {
+			if r, ok := o.(Register); ok {
+				if r == R_AH || r == R_BH || r == R_CH || r == R_DH {
+					// For these registers, we cannot use a REX byte, or they will become
+					// different registers.
+					//
+					// It's probably best to avoid these registers entirely, but we should
+					// still detect this situation rather than emitting incorrect bytecode.
+					mustNotREX = true
+				}
+			}
+		}
+
+		if mustNotREX {
+			// If we cannot use a REX byte, we must loop through all the encodings and look
+			// for REX bytes that are used. If we find one, we bail out.
+			//
+			// This needs to be improved to simply filter out the encodings that don't work,
+			// but in practice it's probably rare that one encoding will work while another
+			// will not.
+			for _, es := range f.enc {
+				for _, e := range es {
+					if r, ok := e.(*rex); ok {
+						var b bytes.Buffer
+						r.Encode(&b, os...)
+						if b.Len() > 0 {
+							panic("This instruction uses one of AH, BH, CH, or DH, but also requires a REX byte, which cannot be encoded.\n")
+						}
+					}
+				}
+			}
+		}
+	}
+
 	var err error
 	var rs []Relocation
 encodings:
 	for _, es := range f.enc {
 		for _, e := range es {
-			//fmt.Printf("[IForm] Encoding %#v\n", e)
+			fmt.Printf("[IForm] Encoding %#v\n", e)
 			rs, err = e.Encode(w, os...)
 			if err != nil {
 				fmt.Printf("[IForm] Failed one encoding: %s", err)
@@ -895,11 +1000,11 @@ func (a *Asm) Encode(w WriteLener, instr string, os ...interface{}) ([]Relocatio
 		}
 		matchspec = instr
 	}
-	// 	fmt.Printf("Encoding instruction %s ", instr)
-	// 	for _, o := range os {
-	// 		fmt.Printf("%#v ", o)
-	// 	}
-	// 	fmt.Printf("\n")
+	// fmt.Printf("[Encode] Encoding instruction %s ", instr)
+	// for _, o := range os {
+	// 	fmt.Printf("%#v ", o)
+	// }
+	// fmt.Printf("\n")
 
 	var newos []interface{}
 	for _, o := range os {

@@ -39,6 +39,7 @@ func NewRegisters() *Registers {
 	rs.rs[R_RBP] = &rstate{}
 	rs.rs[R_RSI] = &rstate{}
 	rs.rs[R_RDI] = &rstate{}
+	rs.rs[R8B] = &rstate{}
 	rs.rs[R8] = &rstate{}
 	rs.rs[R9] = &rstate{}
 	rs.rs[R10] = &rstate{}
@@ -58,7 +59,14 @@ func NewRegisters() *Registers {
 // This can be useful to avoid allocating registers like RAX that will need to be saved for every call.
 // This assembler assumes a System V Amd64 ABI.
 // (See: https://en.wikipedia.org/wiki/X86_calling_conventions#System_V_AMD64_ABI )
-var regs8 = []Register{R_BL, R_BH, R_CL, R_CH, R_DL, R_DH, R_AL, R_AH}
+// var regs8 = []Register{R_BL, R_BH, R_CL, R_CH, R_DL, R_DH, R_AL, R_AH}
+// We have eliminated the use of R_AH, R_BH, R_CH, and R_DH from the register allocator
+// due to the fact that they cannot be safely used with all instructions.
+// For instructions that require a REX byte, the REX converts these registers into
+// the extended byte registers SPL, DIL, BPL, and SIL respectively.
+// It would be nice to add those registers, as they should be safe to use and it would
+// be useful to have more than 4 8-bit registers.
+var regs8 = []Register{R_BL, R_CL, R_DL, R_AL, R8B}
 
 //var regs64 = []Register{R_RBX, R_RCX, R_RDX, R_RSP, R_RBP, R_RSI, R_RDI, R8, R9, R10, R11, R12, R13, R14, R15, R_RAX}
 
@@ -173,13 +181,16 @@ func (rs *Registers) Conflicts(r Register) []Register {
 func (rs *Registers) Release(r Register) {
 	if r.Width() == 8 {
 		rs.rs[r].inuse = false
-		if !rs.rs[r.brother8()].inuse {
-			// If the other 8-bit register that's part of the full register isn't in use, the full register becomes free.
-			rs.rs[r.fullReg()].inuse = false
+		if brother, ok := r.brother8(); ok {
+			// If there is a sibling 8-bit register that's part of the full
+			// register in use, the full register is still in use.
+			if rs.rs[brother].inuse {
+				rs.rs[r.fullReg()].inuse = true
+				return
+			}
 		}
-	} else {
-		rs.rs[r.fullReg()].inuse = false
 	}
+	rs.rs[r.fullReg()].inuse = false
 }
 
 // Use requests the use of a specific register. Used registers should be Released when they are no

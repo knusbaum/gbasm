@@ -6,6 +6,15 @@ import (
 	"strings"
 )
 
+var annotate bool = true
+
+func note(of io.Writer, f string, args ...any) {
+	if !annotate {
+		return
+	}
+	fmt.Fprintf(of, f, args...)
+}
+
 func Compile(of io.Writer, c *Context, a AST) {
 	compileTop(of, c, a, nullspot)
 }
@@ -146,6 +155,9 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		if dest.same(&nullspot) {
 			return s
 		}
+		if s.same(&dest) {
+			return s
+		}
 		move(of, c, dest, s)
 		return dest
 		// t := ast.ASTType(c)
@@ -200,7 +212,27 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 	panic(fmt.Sprintf("(LVAL) FALLTHROUGH: %#v\n", a))
 }
 
+// var level int
+
+// func indent() {
+// 	for i := 0; i < level; i++ {
+// 		fmt.Printf("\t")
+// 	}
+// }
+
 func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
+	if dest.empty() {
+		note(of, "\t// begin %#v\n", a.Note())
+	} else {
+		note(of, "\t// begin %#v into %v\n", a.Note(), dest.ref)
+	}
+	defer note(of, "\t// end %#v\n", a.Note())
+	// indent()
+	// fmt.Printf("COMPILE %#v\n", a)
+	// level++
+	// defer func() {
+	// 	level--
+	// }()
 	switch ast := a.(type) {
 	case *StructDecl:
 		c.DefineStruct(ast.TName, ast)
@@ -222,7 +254,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 		fmt.Fprintf(of, "\n\tprologue\n\n")
 		compileTop(of, c, ast.Body, nullspot)
 		if ast.Name == "main" {
-			fmt.Fprintf(of, "\n\t// default return 0 from main\n")
+			note(of, "\n\t// default return 0 from main\n")
 			fmt.Fprintf(of, "\tmov rax 0\n")
 		}
 		fmt.Fprintf(of, "\n\tlabel %s\n", retlab)
@@ -231,15 +263,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 		return nullspot
 	case *Block:
 		for _, st := range ast.Body {
+			note(of, "\n")
 			s := compileTop(of, c, st, nullspot)
 			s.free(of)
 		}
 		return nullspot
 	case *Funcall:
-		fmt.Fprintf(of, "\n\t// funcall %s\n", ast.FName)
 		decl, ok := c.FuncDeclForName(ast.FName)
 		if !ok {
-			panic("No such func. TODO: error messages")
+			panic(fmt.Sprintf("No such func \"%v\" TODO: error messages", ast.FName))
 		}
 		if len(ast.Args) != len(decl.Args) {
 			panic("BAD NUMBER OF ARGS! (TODO)\n")
@@ -253,10 +285,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 		// manage moving it around.
 		//
 		// for now, we'll just always move rax, even when nobody will use it.
-		fmt.Fprintf(of, "\t// acquire rax for call return\n")
+		note(of, "\t// acquire rax for call return\n")
 		rax := regSpot(of, "rax")
 		fmt.Fprintf(of, "\tcall %s\n", ast.FName)
 		for i := 0; i < len(ast.Args); i++ {
+			note(of, "\t// release call registers\n")
+			//fmt.Fprintf(of, "\t// release call registers\n")
 			fmt.Fprintf(of, "\trelease %s\n", argorder[i])
 		}
 		ret := nullspot
@@ -268,9 +302,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 			}
 			move(of, c, ret, rax)
 		}
-		fmt.Fprintf(of, "\t// free rax for call return\n")
+		note(of, "\t// free rax for call return\n")
 		rax.free(of)
-		fmt.Fprintf(of, "\n")
 		return ret
 	case *Dot:
 		l := compileTop(of, c, ast.Val, nullspot)
@@ -333,7 +366,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 		fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, ast.Var)
 		return dest
 	case *Assignment:
-		fmt.Fprintf(of, "\t// Assignment begin\n")
 		lv := compileLval(of, c, ast.Target, nullspot)
 		srct := ast.Val.ASTType(c)
 		if lv.t.Same(&srct) {
@@ -354,7 +386,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 		}
 		// if it's size == 8, it doesn't matter if it's a pointer or a value,
 		// we can just copy it.
-		fmt.Fprintf(of, "\t// Assignment.move\n")
 		move(of, c, lv, val)
 		//fmt.Fprintf(of, "\tmov [%s] %s\n", lv.ref, val.ref)
 		lv.free(of)
@@ -367,47 +398,23 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 		return doOp2(of, c, ast, dest)
 	case *Return:
 		dest := newSpotWithReg(of, c, c.Temp(), ast.Val.ASTType(c), "rax")
-		fmt.Fprintf(of, "\t// COMPILING RETURN\n")
 		v := compileTop(of, c, ast.Val, dest)
 		if !v.same(&dest) {
 			dest.free(of)
 			dest = v
-			//panic("Should this happen?")
+			panic("Should this happen?")
 		}
-		fmt.Fprintf(of, "\t// FINISHED COMPILING RETURN\n")
 		fmt.Fprintf(of, "\tinreg %s %s\n", dest.ref, "rax")
 		c.Return(of)
 		dest.free(of)
 		return nullspot
-
-		// TODO: Would be nice to be able to do this, but cannot support it
-		// currently. We need to not acquire rax, but create a variable
-		// that prefers rax as a register, that way other operations like
-		// multiplications, funcalls, etc. can evict the variable.
-		/*
-			// We always use rax for return values, due to System v calling convention.
-			fmt.Fprintf(of, "\t// acquire rax for return\n")
-			rax := regSpot(of, "rax")
-			v := compileTop(of, c, ast.Val, rax)
-			if !v.same(&rax) {
-				move(of, c, rax, v)
-				v.free(of)
-			}
-			c.Return(of)
-			return nullspot
-		*/
-
-		// v := compileTop(of, c, ast.Val, nullspot)
-		// rax := regSpot(of, "rax")
-		// move(of, c, rax, v)
-		// v.free(of)
-		// c.Return(of)
-		// rax.free(of)
-		// return nullspot
-
 	case *Symbol:
 		s := spot{ref: ast.Name, t: ast.ASTType(c)}
 		if dest.same(&nullspot) {
+			return s
+		}
+		if s.same(&dest) {
+			note(of, "\t// destination is already %s\n", dest.ref)
 			return s
 		}
 		move(of, c, dest, s)
@@ -427,6 +434,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 			s := c.String(v)
 			fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, s)
 		case uint64:
+			fmt.Fprintf(of, "\tmov %s %d\n", dest.ref, v)
+		case byte:
 			fmt.Fprintf(of, "\tmov %s %d\n", dest.ref, v)
 		default:
 			panic("NOT IMPLEMENTED (TODO)")
@@ -524,7 +533,12 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		if i > 5 {
 			panic("More than 6 args not supported yet (TODO)")
 		}
-		dest := newSpotWithReg(of, c, c.Temp(), argt, order[i])
+		var dest spot
+		if argt.Size(c) == PTR_SIZE {
+			dest = newSpotWithReg(of, c, c.Temp(), argt, order[i])
+		} else {
+			dest = newSpot(of, c, c.Temp(), argt)
+		}
 		a := compileTop(of, c, arg, dest)
 		if a == nullspot {
 			panic("AAAH! NULLSPOT!\n")
@@ -539,7 +553,19 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		//s := regSpot(of, order[i])
 		//a := argspots[i]
 		//move(of, c, s, a)
-		fmt.Fprintf(of, "\tinreg %s %s\n", argspots[i].ref, order[i])
+		note(of, "\t// Ensuring argument %d (%v) is in register %v for call.\n",
+			i, argspots[i].ref, order[i])
+		argt := f.Args[i].ASTType(c)
+		if argt.Size(c) >= PTR_SIZE {
+			// The >= requires some explanation here.
+			// It relies on the fact that for objects of size > PTR_SIZE,
+			// they are held as pointers in register, meaning we can move
+			// them around as if they were 64-bit values.
+			fmt.Fprintf(of, "\tinreg %s %s\n", argspots[i].ref, order[i])
+		} else {
+			fmt.Fprintf(of, "\tacquire %s\n", order[i])
+			fmt.Fprintf(of, "\tmovzx %s %s\n", order[i], argspots[i].ref)
+		}
 		argspots[i].free(of)
 	}
 
@@ -559,6 +585,16 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		second := compileTop(of, c, o.Second, dest)
 		fmt.Fprintf(of, "\tadd %s %s\n", first.ref, second.ref)
+		// if first.t.Size(c) < 8 {
+		// 	var sb strings.Builder
+		// 	sb.WriteString("0x00")
+		// 	for i := 0; i < first.t.Size(c); i++ {
+		// 		sb.WriteString("FF")
+		// 	}
+		// 	fmt.Fprintf(of, "\tnop\n\tnop\n\tnop\n")
+		// 	fmt.Fprintf(of, "\tandb %s %s\n", first.ref, sb.String())
+		// 	fmt.Fprintf(of, "\tnop\n\tnop\n\tnop\n")
+		// }
 		return first
 	case n_sub:
 		first := compileTop(of, c, o.First, dest)
@@ -568,6 +604,14 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		second := compileTop(of, c, o.Second, dest)
 		fmt.Fprintf(of, "\tsub %s %s\n", first.ref, second.ref)
+		// if first.t.Size(c) < 8 {
+		// 	var sb strings.Builder
+		// 	sb.WriteString("0x00")
+		// 	for i := 0; i < first.t.Size(c); i++ {
+		// 		sb.WriteString("FF")
+		// 	}
+		// 	fmt.Fprintf(of, "\tandb %s %s\n", first.ref, sb.String())
+		// }
 		return first
 	case n_mul:
 		if dest.empty() {
@@ -591,36 +635,6 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		fmt.Fprintf(of, "\timul rdx\n")
 		second.free(of)
 		return first
-		// // for multiplications, we need to acquire rax and rdx.
-		// // one argument goes in rax, with the second argument in some register.
-		// // the result goes in rdx:rax.
-		// var rax spot
-		// if dest.ref == "rax" {
-		// 	rax = dest
-		// } else {
-		// 	fmt.Fprintf(
-		// 	rax = regSpot(of, "rax")
-		// }
-		// rdx := regSpot(of, "rdx")
-
-		// first := compileTop(of, c, o.First, rax)
-		// if !first.same(&rax) {
-		// 	move(of, c, rax, first)
-		// }
-		// second := compileTop(of, c, o.Second, rdx)
-		// if !second.same(&rdx) {
-		// 	move(of, c, rdx, second)
-		// }
-
-		// fmt.Fprintf(of, "\timul rdx\n")
-		// // TODO: overflow?
-		// if dest.ref != "rax" {
-		// 	fmt.Fprintf(of, "\tmov %s rax\n", dest.ref)
-		// 	fmt.Fprintf(of, "\t// free rax for multiplication\n")
-		// 	rax.free(of)
-		// }
-		// rdx.free(of)
-		// return dest
 	case n_div:
 		if dest.empty() {
 			dest = newSpotWithReg(of, c, c.Temp(), o.First.ASTType(c), "rax")
@@ -639,34 +653,6 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		rdx.free(of)
 		second.free(of)
 		return first
-
-		// // for divisionss, we need to acquire rax and rdx.
-		// // one argument goes in rdx:rax, with the second argument in some register.
-		// // the result goes in rdx:rax.
-		// var rax spot
-		// if dest.ref == "rax" {
-		// 	rax = dest
-		// } else {
-		// 	rax = regSpot(of, "rax")
-		// }
-		// rdx := regSpot(of, "rdx")
-
-		// first := compileTop(of, c, o.First, rax)
-		// if !first.same(&rax) {
-		// 	move(of, c, rax, first)
-		// }
-
-		// second := compileTop(of, c, o.Second, dest)
-		// fmt.Fprintf(of, "\txor rdx rdx\n")
-		// fmt.Fprintf(of, "\tdiv %s\n", second.ref)
-		// // TODO: overflow?
-		// if dest.ref != "rax" {
-		// 	fmt.Fprintf(of, "\tmov %s rax\n", dest.ref)
-		// 	fmt.Fprintf(of, "\t// free rax for division\n")
-		// 	rax.free(of)
-		// }
-		// rdx.free(of)
-		// return dest
 	}
 	panic("Could not do op\n")
 }

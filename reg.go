@@ -50,6 +50,9 @@ const (
 	R_RDI
 
 	R8
+	R8B
+	R8W
+	R8D
 	R9
 	R10
 	R11
@@ -137,6 +140,12 @@ func (r Register) String() string {
 
 	case R8:
 		return "R8"
+	case R8B:
+		return "R8B"
+	case R8W:
+		return "R8W"
+	case R8D:
+		return "R8D"
 	case R9:
 		return "R9"
 	case R10:
@@ -235,6 +244,12 @@ func ParseReg(r string) (Register, error) {
 
 	case "R8":
 		return R8, nil
+	case "R8B":
+		return R8B, nil
+	case "R8W":
+		return R8W, nil
+	case "R8D":
+		return R8D, nil
 	case "R9":
 		return R9, nil
 	case "R10":
@@ -255,23 +270,7 @@ func ParseReg(r string) (Register, error) {
 }
 
 func (r Register) needREX() bool {
-	switch r {
-	// 	case R_RAX:
-	// 		return true
-	// 	case R_RBX:
-	// 		return true
-	// 	case R_RCX:
-	// 		return true
-	// 	case R_RDX:
-	// 		return true
-	// 	case R_RSP:
-	// 		return true
-	// 	case R_RBP:
-	// 		return true
-	// 	case R_RSI:
-	// 		return true
-	// 	case R_RDI:
-	// 		return true
+	switch r.fullReg() {
 	case R8:
 		return true
 	case R9:
@@ -367,6 +366,12 @@ func (r Register) byte() byte {
 	case R_RDI:
 		return 0b111
 
+	case R8B:
+		fallthrough
+	case R8W:
+		fallthrough
+	case R8D:
+		fallthrough
 	case R8:
 		return 0b1000
 	case R9:
@@ -465,6 +470,12 @@ func (r Register) Width() int {
 	case R_RDI:
 		return 64
 
+	case R8B:
+		return 8
+	case R8W:
+		return 16
+	case R8D:
+		return 32
 	case R8:
 		fallthrough
 	case R9:
@@ -488,26 +499,26 @@ func (r Register) Width() int {
 }
 
 // Only safe to call on 8-bit registers.
-func (r Register) brother8() Register {
+func (r Register) brother8() (Register, bool) {
 	switch r {
 	case R_AL:
-		return R_AH
+		return R_AH, true
 	case R_AH:
-		return R_AL
+		return R_AL, true
 	case R_BL:
-		return R_BH
+		return R_BH, true
 	case R_BH:
-		return R_BL
+		return R_BL, true
 	case R_CL:
-		return R_CH
+		return R_CH, true
 	case R_CH:
-		return R_CL
+		return R_CL, true
 	case R_DL:
-		return R_DH
+		return R_DH, true
 	case R_DH:
-		return R_DL
+		return R_DL, true
 	}
-	panic("No such 8-bit register.")
+	return 0, false
 }
 
 func (r Register) fullReg() Register {
@@ -584,8 +595,14 @@ func (r Register) fullReg() Register {
 	case R_RDI:
 		return R_RDI
 
-	case R8:
+	case R8B:
 		fallthrough
+	case R8W:
+		fallthrough
+	case R8D:
+		fallthrough
+	case R8:
+		return R8
 	case R9:
 		fallthrough
 	case R10:
@@ -620,6 +637,8 @@ func (r Register) subRegisters8() ([]Register, bool) {
 		return []Register{R_CL, R_CH}, true
 	case R_RDX:
 		return []Register{R_DL, R_DH}, true
+	case R8:
+		return []Register{R8B}, true
 	}
 	return nil, false
 }
@@ -717,6 +736,15 @@ func (r Register) partial(size int) (Register, bool) {
 	case R_EAX:
 
 	case R8:
+		if size == 8 {
+			return R8B, true
+		}
+		if size == 16 {
+			return R8W, true
+		}
+		if size == 32 {
+			return R8D, true
+		}
 		fallthrough
 	case R9:
 		fallthrough

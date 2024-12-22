@@ -378,6 +378,23 @@ func TestParser(t *testing.T) {
 			in:  "&x",
 			out: &Node{t: n_address, sval: "x"},
 		},
+		{
+			in: "fn main() {\nvar b byte\nb = 'h'\nputc(b)\n}\n",
+			out: &Node{t: n_fn, ival: 0, sval: "main", args: []*Node{
+				&Node{t: n_typename, sval: "void"},
+				&Node{t: n_block, args: []*Node{
+					&Node{t: n_var, sval: "b", args: []*Node{&Node{t: n_typename, sval: "byte"}}},
+					&Node{t: n_eq, args: []*Node{
+						&Node{t: n_symbol, sval: "b"},
+						&Node{t: n_byte, ival: uint64('h')},
+					}},
+					&Node{t: n_funcall, sval: "putc", args: []*Node{
+						&Node{t: n_symbol, sval: "b"},
+					}},
+				}},
+			},
+			},
+		},
 	} {
 		t.Run("", func(t *testing.T) {
 			p := NewParser("", strings.NewReader(tt.in))

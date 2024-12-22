@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 )
 
 type Ralloc struct {
@@ -21,6 +22,9 @@ type Ralloc struct {
 // size of the data held in the register in bits. For ints/other regable types, this is the size of the data.
 // For non-regable types, this is 64-bits (size of a pointer.
 func (r *Ralloc) RegSize() int {
+	if r.inreg {
+		return r.reg.Width()
+	}
 	if r.regable {
 		return r.size
 	}
@@ -72,6 +76,7 @@ func (r *Ralloc) UseRegister(reg Register) {
 
 	if r.regable && r.size != reg.Width() {
 		panic(fmt.Sprintf("Ralloc %s cannot use register %v. ralloc size: %v, regwidth: %v\n", r.sym, reg, r.size, reg.Width()))
+
 	}
 
 	if r.inreg {
@@ -146,11 +151,14 @@ func (r *Ralloc) Register() Register {
 		}
 		//log.Printf("HAD TO EVICT REGISTER. EVICTED REGISTER %v", reg)
 	}
+	fmt.Printf("[RALLOC.Register] Loading %s into a register of size %d %v\n", r.sym, r.size, reg)
 	//fmt.Printf("[Register] put %s in register %v\n", r.sym, reg)
 	if r.inmem {
-		//fmt.Printf("%s not in register. Allocated register %s\n", r.sym, reg)
+		fmt.Printf("[RALLOC.Register] %s not in register. Allocated register %s\n", r.sym, reg)
 		r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
 		//r.inmem = false
+	} else {
+		fmt.Printf("[RALLOC.Register] %s was not in memory. Active register marked as %v\n", r.sym, reg)
 	}
 	r.reg = reg
 	r.rallocs.regs[reg] = r
@@ -712,6 +720,7 @@ func (f *Function) Jump(instr string, label string) error {
 	_, err := f.a.Encode(&f.bs, instr, int32(0))
 	if err != nil {
 		f.errors = append(f.errors, err)
+		panic(err)
 		return err
 	}
 	f.jumps = append(f.jumps, Relocation{Offset: uint32(f.bs.Len() - 4), Symbol: label})
@@ -757,12 +766,25 @@ func (f *Function) fixLEAVar(ops []interface{}) (string, []interface{}) {
 	return "MOV", []interface{}{ind, reg}
 }
 
+type splitWriteLener struct {
+	w WriteLener
+}
+
+func (s *splitWriteLener) Write(p []byte) (n int, err error) {
+	fmt.Printf("[%s]\n", p)
+	return s.w.Write(p)
+}
+
+func (s *splitWriteLener) Len() int {
+	return s.w.Len()
+}
+
 func (f *Function) Instr(instr string, ops ...interface{}) error {
-	// fmt.Printf("INSTRUCTION [%#v] OPS [", instr)
-	// for i := range ops {
-	// 	fmt.Printf("(%s) ", ops[i])
-	// }
-	// fmt.Printf("]\n")
+	fmt.Printf("\tINSTRUCTION [%#v] OPS [", instr)
+	for i := range ops {
+		fmt.Printf("(%v) ", ops[i])
+	}
+	fmt.Printf("]\n")
 
 	if instr == "LEA" {
 
@@ -786,6 +808,7 @@ func (f *Function) Instr(instr string, ops ...interface{}) error {
 	rs, err := f.a.Encode(&f.bs, instr, ops...)
 	if err != nil {
 		f.errors = append(f.errors, err)
+		panic(err)
 	}
 	f.Relocations = append(f.Relocations, rs...)
 	return err
@@ -814,7 +837,7 @@ func (f *Function) Resolve() error {
 }
 
 func (f *Function) Body() ([]byte, error) {
-	//log.Printf("RESOLVING.")
+	log.Printf("RESOLVING %v Current errors: %v\n", f.Name, len(f.errors))
 	f.Resolve()
 	//log.Printf("RESOLVED.")
 	if len(f.errors) != 0 {

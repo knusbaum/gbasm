@@ -16,6 +16,18 @@ func TestLexer(t *testing.T) {
 		err string
 	}{
 		{
+			in: "b = 'h'\nputc(b)",
+			out: []token{
+				token{t: tok_ident, sval: "b"},
+				token{t: tok_eq},
+				token{t: tok_byte, nval: float64('h')},
+				token{t: tok_ident, sval: "putc"},
+				token{t: tok_lparen},
+				token{t: tok_ident, sval: "b"},
+				token{t: tok_rparen},
+			},
+		},
+		{
 			in:  `import "/some/path/to/some/package"`,
 			out: []token{token{t: tok_import}, token{t: tok_str, sval: `/some/path/to/some/package`}},
 		},

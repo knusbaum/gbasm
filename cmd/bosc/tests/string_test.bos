@@ -1,0 +1,12 @@
+package main
+
+import "string.bo"
+
+fn main() {
+	var b byte
+	b = 'h'
+
+	putc(b)
+	puts("\n")
+	
+}

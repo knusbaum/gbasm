@@ -25,6 +25,7 @@ const (
 	tok_ident
 	tok_number
 	tok_str
+	tok_byte
 	tok_dot
 	tok_plus
 	tok_minus
@@ -100,6 +101,8 @@ func (t toktype) String() string {
 		return "tok_number"
 	case tok_str:
 		return "tok_str"
+	case tok_byte:
+		return "tok_byte"
 	case tok_dot:
 		return "tok_dot"
 	case tok_plus:
@@ -304,6 +307,30 @@ func (l *lexer) parseString() token {
 	return token{t: tok_str, sval: string(ret), p: l.p}
 }
 
+func (l *lexer) parseChar() token {
+	l.nextRune()
+	var ret rune
+	r := l.readRune()
+	if r == '\\' {
+		r = l.readRune()
+		switch r {
+		case 'n':
+			ret = '\n'
+		case '"':
+			ret = '"'
+		default:
+			ret = r
+		}
+	} else {
+		ret = r
+	}
+	r = l.readRune()
+	if r != '\'' {
+		panic(&interpreterError{fmt.Sprintf("too many characters in char literal"), l.p})
+	}
+	return token{t: tok_byte, nval: float64(ret), p: l.p}
+}
+
 func unparseString(s string) string {
 	rs := []rune(s)
 	var ret strings.Builder
@@ -382,6 +409,8 @@ func (l *lexer) Next() (rt token, re error) {
 		return token{t: tok_comma, p: l.p}, nil
 	case '"':
 		return l.parseString(), nil
+	case '\'':
+		return l.parseChar(), nil
 	case '.':
 		l.nextRune()
 		return token{t: tok_dot, p: l.p}, nil

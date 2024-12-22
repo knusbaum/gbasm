@@ -293,7 +293,7 @@ func writeFunctions(w io.Writer, fs map[string]*Function) error {
 	for _, f := range fs {
 		err := writeFunction(w, f)
 		if err != nil {
-			return err
+			return fmt.Errorf("Writing function %s: %w", f.Name, err)
 		}
 	}
 	return nil
@@ -317,70 +317,70 @@ func readFunctions(r io.Reader) (map[string]*Function, error) {
 
 func writeFunction(w io.Writer, f *Function) error {
 	if err := f.Resolve(); err != nil {
-		return err
+		return fmt.Errorf("While resolving: %w", err)
 	}
 	err := writeString(w, f.Name)
 	if err != nil {
-		return err
+		return fmt.Errorf("Writing name: %w", err)
 	}
 	err = writeString(w, f.Type)
 	if err != nil {
-		return err
+		return fmt.Errorf("Writing type: %w", err)
 	}
 	err = writeString(w, f.SrcFile)
 	if err != nil {
-		return err
+		return fmt.Errorf("Writing srcfile: %w", err)
 	}
 	err = writeSize(w, f.SrcLine)
 	if err != nil {
-		return err
+		return fmt.Errorf("Writing srcline: %w", err)
 	}
 	size := len(f.Args)
 	err = writeSize(w, size)
 	if err != nil {
-		return err
+		return fmt.Errorf("Writing args size: %w", err)
 	}
 	for _, v := range f.Args {
 		err := writeVar(w, v)
 		if err != nil {
-			return err
+			return fmt.Errorf("Writing args: %w", err)
 		}
 	}
 	size = len(f.Symbols)
 	err = writeSize(w, size)
 	if err != nil {
-		return err
+		return fmt.Errorf("Writing symbols size: %w", err)
 	}
 	for _, v := range f.Symbols {
 		err := writeSymbol(w, &v)
 		if err != nil {
-			return err
+			return fmt.Errorf("Writing symbol: %w", err)
 		}
 	}
 	size = len(f.Relocations)
 	err = writeSize(w, size)
 	if err != nil {
-		return err
+		return fmt.Errorf("Writing relocations size: %w", err)
 	}
 	for _, r := range f.Relocations {
 		//log.Printf("Writing relocation: %#v\n", r)
 		err := writeRelocation(w, &r)
 		if err != nil {
-			return err
+			return fmt.Errorf("While writing relocation: %w", err)
 		}
 	}
 	body, err := f.Body()
 	if err != nil {
-		return err
+		return fmt.Errorf("Generating body: %w\n", err)
 	}
 	size = len(body)
 	err = writeSize(w, size)
 	if err != nil {
-		return err
+		return fmt.Errorf("writing body size: %w", err)
 	}
 	err = binary.Write(w, binary.LittleEndian, f.bodyBs)
 	if err != nil {
-		return err
+		return fmt.Errorf("Writing body: %w", err)
 	}
 	return nil
 }
@@ -483,7 +483,7 @@ func writeOFile(w io.Writer, o *OFile) error {
 	}
 	err = writeFunctions(w, o.Funcs)
 	if err != nil {
-		return err
+		return fmt.Errorf("WriteFunctions: %w", err)
 	}
 	return nil
 }
