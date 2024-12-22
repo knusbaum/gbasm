@@ -8,5 +8,10 @@ fn main() {
 
 	putc(b)
 	puts("\n")
+
+	var s str
+	s = "Hello, World!"
+	putc(s[0])
+	puts("\n")
 	
 }

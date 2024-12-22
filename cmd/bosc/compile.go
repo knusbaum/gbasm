@@ -58,7 +58,7 @@ func (s *spot) free(of io.Writer) {
 	if s.empty() {
 		return
 	}
-	if s.t.Same(&regtype) {
+	if s.t.Same(regtype) {
 		// if this is a regtype spot, release it.
 		fmt.Fprintf(of, "\trelease %s\n", s.ref)
 	} else if strings.HasPrefix(s.ref, temp_prefix) {
@@ -121,13 +121,13 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 		//panic("MOVE OF BYTES TYPES NOT IMPLEMENTED!")
 	}
 	// TODO: other types, array stuff, etc.
-	if dest.t.Same(&src.t) {
+	if dest.t.Same(src.t) {
 		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, src.ref)
 		return
 	}
 	depoint := dest.t
 	depoint.Indirection--
-	if depoint.Same(&src.t) {
+	if depoint.Same(src.t) {
 		// dest was *T and src is T
 		fmt.Fprintf(of, "\tmov [%s] %s\n", dest.ref, src.ref)
 		return
@@ -365,10 +365,25 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 		}
 		fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, ast.Var)
 		return dest
+	case *Index:
+		v := compileTop(of, c, ast.Val, nullspot)
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), ast.ASTType(c))
+		}
+		if v.t.Name == "str" && v.t.Indirection == 0 && v.t.ArraySize == 0 {
+			// SPECIAL CASE! We have a string. This needs to go away.
+			// See: Index.ASTType() documentation.
+			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, v.ref, ast.N)
+			return dest
+		}
+		targt := ast.ASTType(c)
+		off := uint64(targt.Size(c)) * ast.N
+		fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, v.ref, off)
+		return dest
 	case *Assignment:
 		lv := compileLval(of, c, ast.Target, nullspot)
 		srct := ast.Val.ASTType(c)
-		if lv.t.Same(&srct) {
+		if lv.t.Same(srct) {
 			// srctype == dsttype
 			// this means the dsttype is not a pointer to the location.
 			// and we can use lv as the dest in the compile call.
@@ -394,6 +409,29 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 
 	case *StructLiteral:
 	case *IfStmt:
+	case *For:
+		v := compileTop(of, c, ast.Init, nullspot)
+		if !v.empty() {
+			v.free(of)
+		}
+		start := c.Label("for")
+		end := c.Label("end")
+		fmt.Fprintf(of, "\tlabel %s\n", start)
+		v = compileTop(of, c, ast.Cond, nullspot)
+		fmt.Fprintf(of, "\ttest %s %s\n", v.ref, v.ref)
+		fmt.Fprintf(of, "\tjz %s\n", end)
+		v.free(of)
+		v = compileTop(of, c, ast.Body, nullspot)
+		if !v.empty() {
+			v.free(of)
+		}
+		v = compileTop(of, c, ast.Step, nullspot)
+		if !v.empty() {
+			v.free(of)
+		}
+		fmt.Fprintf(of, "\tjmp %s\n", start)
+		fmt.Fprintf(of, "\tlabel %s\n", end)
+		return nullspot
 	case *Op2:
 		return doOp2(of, c, ast, dest)
 	case *Return:
@@ -527,7 +565,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 	for i := 0; i < len(f.Args); i++ {
 		arg := f.Args[i]
 		argt := arg.ASTType(c)
-		if !argt.Same(&d.Args[i].Type) {
+		if !argt.Same(d.Args[i].Type) {
 			panic("BAD ARG TYPE! (TODO)\n")
 		}
 		if i > 5 {
@@ -572,6 +610,47 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 	return order
 }
 
+func jumpOp(of io.Writer, c *Context, o *Op2, label string) {
+	switch o.Type {
+	case n_lt:
+		first := compileTop(of, c, o.First, nullspot)
+		second := compileTop(of, c, o.Second, nullspot)
+		// TODO: For now we only use signed integers.
+		// so we will use the setl/setg etc. instructions.
+		// For unsigned integers we will need to use
+		// setb/seta etc.
+		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
+		fmt.Fprintf(of, "\tjl %s\n", label)
+	case n_le:
+		first := compileTop(of, c, o.First, nullspot)
+		second := compileTop(of, c, o.Second, nullspot)
+		// TODO: For now we only use signed integers.
+		// so we will use the setl/setg etc. instructions.
+		// For unsigned integers we will need to use
+		// setb/seta etc.
+		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
+		fmt.Fprintf(of, "\tgjle %s\n", label)
+	case n_gt:
+		first := compileTop(of, c, o.First, nullspot)
+		second := compileTop(of, c, o.Second, nullspot)
+		// TODO: For now we only use signed integers.
+		// so we will use the setl/setg etc. instructions.
+		// For unsigned integers we will need to use
+		// setb/seta etc.
+		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
+		fmt.Fprintf(of, "\tjg %s\n", label)
+	case n_ge:
+		first := compileTop(of, c, o.First, nullspot)
+		second := compileTop(of, c, o.Second, nullspot)
+		// TODO: For now we only use signed integers.
+		// so we will use the setl/setg etc. instructions.
+		// For unsigned integers we will need to use
+		// setb/seta etc.
+		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
+		fmt.Fprintf(of, "\tjge %s\n", label)
+	}
+}
+
 func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 	if dest.empty() {
 		dest = newSpot(of, c, c.Temp(), o.ASTType(c))
@@ -585,16 +664,6 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		second := compileTop(of, c, o.Second, dest)
 		fmt.Fprintf(of, "\tadd %s %s\n", first.ref, second.ref)
-		// if first.t.Size(c) < 8 {
-		// 	var sb strings.Builder
-		// 	sb.WriteString("0x00")
-		// 	for i := 0; i < first.t.Size(c); i++ {
-		// 		sb.WriteString("FF")
-		// 	}
-		// 	fmt.Fprintf(of, "\tnop\n\tnop\n\tnop\n")
-		// 	fmt.Fprintf(of, "\tandb %s %s\n", first.ref, sb.String())
-		// 	fmt.Fprintf(of, "\tnop\n\tnop\n\tnop\n")
-		// }
 		return first
 	case n_sub:
 		first := compileTop(of, c, o.First, dest)
@@ -604,14 +673,6 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		second := compileTop(of, c, o.Second, dest)
 		fmt.Fprintf(of, "\tsub %s %s\n", first.ref, second.ref)
-		// if first.t.Size(c) < 8 {
-		// 	var sb strings.Builder
-		// 	sb.WriteString("0x00")
-		// 	for i := 0; i < first.t.Size(c); i++ {
-		// 		sb.WriteString("FF")
-		// 	}
-		// 	fmt.Fprintf(of, "\tandb %s %s\n", first.ref, sb.String())
-		// }
 		return first
 	case n_mul:
 		if dest.empty() {
@@ -653,6 +714,62 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		rdx.free(of)
 		second.free(of)
 		return first
+	case n_lt:
+		first := compileTop(of, c, o.First, nullspot)
+		second := compileTop(of, c, o.Second, nullspot)
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), boolASTType())
+		}
+
+		// TODO: For now we only use signed integers.
+		// so we will use the setl/setg etc. instructions.
+		// For unsigned integers we will need to use
+		// setb/seta etc.
+		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
+		fmt.Fprintf(of, "\tsetl %s\n", dest.ref)
+		return dest
+	case n_le:
+		first := compileTop(of, c, o.First, nullspot)
+		second := compileTop(of, c, o.Second, nullspot)
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), boolASTType())
+		}
+
+		// TODO: For now we only use signed integers.
+		// so we will use the setl/setg etc. instructions.
+		// For unsigned integers we will need to use
+		// setb/seta etc.
+		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
+		fmt.Fprintf(of, "\tsetle %s\n", dest.ref)
+		return dest
+	case n_gt:
+		first := compileTop(of, c, o.First, nullspot)
+		second := compileTop(of, c, o.Second, nullspot)
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), boolASTType())
+		}
+
+		// TODO: For now we only use signed integers.
+		// so we will use the setl/setg etc. instructions.
+		// For unsigned integers we will need to use
+		// setb/seta etc.
+		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
+		fmt.Fprintf(of, "\tsetg %s\n", dest.ref)
+		return dest
+	case n_ge:
+		first := compileTop(of, c, o.First, nullspot)
+		second := compileTop(of, c, o.Second, nullspot)
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), boolASTType())
+		}
+
+		// TODO: For now we only use signed integers.
+		// so we will use the setl/setg etc. instructions.
+		// For unsigned integers we will need to use
+		// setb/seta etc.
+		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
+		fmt.Fprintf(of, "\tsetge %s\n", dest.ref)
+		return dest
 	}
 	panic("Could not do op\n")
 }

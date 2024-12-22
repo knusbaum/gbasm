@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 
 make bosc bas bld
+if [[ $? != 0 ]]; then
+	echo "Failed to build toolchain."
+	exit 1
+fi
 
 ./bas puts_linux.bs string.bs >/dev/null 2>&1
 
@@ -55,4 +59,4 @@ for t in `ls tests/*_test.bos`; do
 done
 
 
-rm tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout
+#rm tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout

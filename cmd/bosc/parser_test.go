@@ -202,6 +202,20 @@ func TestParser(t *testing.T) {
 			}},
 		},
 		{
+			in: "for (; ; ) { printf(\"X is %v\\n\", x) }",
+			out: &Node{t: n_for, args: []*Node{
+				&Node{},
+				&Node{},
+				&Node{},
+				&Node{t: n_block, args: []*Node{
+					&Node{t: n_funcall, sval: "printf", args: []*Node{
+						&Node{t: n_str, sval: "X is %v\n"},
+						&Node{t: n_symbol, sval: "x"},
+					}},
+				}},
+			}},
+		},
+		{
 			in: "{ printf(\"X is %v\\n\", x) x = x + 1 if (x >= 10) break }",
 			out: &Node{t: n_block, args: []*Node{
 				&Node{t: n_funcall, sval: "printf", args: []*Node{
@@ -394,6 +408,12 @@ func TestParser(t *testing.T) {
 				}},
 			},
 			},
+		},
+		{
+			in: "a[10]",
+			out: &Node{t: n_index, sval: "a", args: []*Node{
+				&Node{t: n_number, ival: 10},
+			}},
 		},
 	} {
 		t.Run("", func(t *testing.T) {

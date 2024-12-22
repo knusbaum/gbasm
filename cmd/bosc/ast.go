@@ -103,10 +103,15 @@ func (c *Context) FuncDeclForName(name string) (*FuncDecl, bool) {
 	return c.parent.FuncDeclForName(name)
 }
 
+func (c *Context) Label(tag string) string {
+	c.labeli++
+	l := fmt.Sprintf("_LABEL_%s_%d", tag, c.labeli)
+	return l
+}
+
 // Push a new return label onto the return stack
 func (c *Context) PushRetlabel() string {
-	c.labeli++
-	l := fmt.Sprintf("_LABEL_%d", c.labeli)
+	l := c.Label("return")
 	c.retlabs = append(c.retlabs, l)
 	return l
 }
@@ -196,6 +201,8 @@ func (t *ASTType) Size(c *Context) int {
 		baseSize = 8 // TODO: Is this right? We fucked this up with the last version.
 	case "byte":
 		baseSize = 1
+	case "bool":
+		baseSize = 1
 	default:
 		d, ok := c.StructDeclForName(t.Name)
 		if !ok {
@@ -209,7 +216,7 @@ func (t *ASTType) Size(c *Context) int {
 	return baseSize
 }
 
-func (t *ASTType) Same(t2 *ASTType) bool {
+func (t ASTType) Same(t2 ASTType) bool {
 	return t.Name == t2.Name &&
 		t.Indirection == t2.Indirection &&
 		t.ArraySize == t2.ArraySize
@@ -477,6 +484,24 @@ func (*IfStmt) Note() string {
 	return fmt.Sprintf("if ...")
 }
 
+type For struct {
+	Init AST
+	Cond AST
+	Step AST
+	Body AST
+}
+
+func (*For) ASTType(c *Context) ASTType {
+	return voidASTType()
+}
+
+func (f *For) Note() string {
+	if f.Init == nil {
+		return fmt.Sprintf("for (; ...) { ... }")
+	}
+	return fmt.Sprintf("for (%s ...) { ... }", f.Init.Note())
+}
+
 // Operation on 2 expressions (i.e. +, -, *, <, <=, == etc.)
 type Op2 struct {
 	Type   nodetype
@@ -532,6 +557,34 @@ func (*Return) ASTType(*Context) ASTType {
 
 func (*Return) Note() string {
 	return "return ..."
+}
+
+type Index struct {
+	Val AST
+	N   uint64
+}
+
+func (i *Index) ASTType(c *Context) ASTType {
+	t := i.Val.ASTType(c)
+	if t.Indirection > 0 {
+		t.Indirection -= 1
+		return t
+	}
+	if t.ArraySize > 0 {
+		t.ArraySize = 0
+		return t
+	}
+	// SPECIAL CASE
+	// TODO: We should generalize this into some slice-like structure
+	// so it can be reused.
+	if t.Name == "str" {
+		return byteASTType()
+	}
+	panic(fmt.Sprintf("CANNOT INDEX INTO NON-ARRAY TYPE %v", t))
+}
+
+func (i *Index) Note() string {
+	return fmt.Sprintf("Index (...)[%d]", i.N)
 }
 
 // TODO: Do we need this, or can we just use the actual value?
@@ -713,6 +766,11 @@ func (n *Node) toASTTop(c *Context) AST {
 		return &Address{
 			Var: n.sval,
 		}
+	case n_index:
+		return &Index{
+			Val: &Symbol{Name: n.sval},
+			N:   n.args[0].ival,
+		}
 	case n_if:
 		ifs := IfStmt{
 			Cond: n.args[0].toASTTop(NewContext()),
@@ -722,6 +780,21 @@ func (n *Node) toASTTop(c *Context) AST {
 			ifs.Else = n.args[2].toASTTop(NewContext())
 		}
 		return &ifs
+	case n_for:
+		init := n.args[0].toASTTop(NewContext())
+		cond := n.args[1].toASTTop(NewContext())
+		step := n.args[2].toASTTop(NewContext())
+		body := n.args[3].toASTTop(NewContext())
+		ct := cond.ASTType(c)
+		if !ct.Same(boolASTType()) {
+			panic("Cannot compile for loop with non-boolean condition.\n")
+		}
+		return &For{
+			Init: init,
+			Cond: cond,
+			Step: step,
+			Body: body,
+		}
 	case n_lt, n_le, n_gt, n_ge, n_deq, n_add, n_sub, n_mul, n_div:
 		return &Op2{
 			Type:   n.t,
