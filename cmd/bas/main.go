@@ -147,6 +147,80 @@ func SplitSpace(s string) []string {
 	return ss
 }
 
+func ParseIndirect2(s string) (indirect any, err error) {
+	//(base, index string, scale int, err error) {
+	r := regexp.MustCompile(`\[([_a-zA-Z0-9]+)\s*(([+-])([x0-9a-zA-Z]+))?(\*([x0-9]+))?\]`)
+	parts := r.FindStringSubmatch(s)
+	fmt.Printf("PARTS: %#v\n", parts)
+	base := parts[1]
+	index := parts[4]
+	scale := parts[6]
+
+	baser, err := gbasm.ParseReg(base)
+	if err != nil {
+		return nil, err
+	}
+
+	// figure out if index is an int or register
+	if strings.HasPrefix(index, "0x") {
+		i, err := strconv.ParseInt(strings.TrimPrefix(index, "0x"), 16, 32)
+		if err != nil {
+			return nil, err
+		}
+		if scale != "" {
+			return nil, fmt.Errorf("Cannot index with scale with scale literal")
+		}
+		if parts[3] != "+" {
+			return nil, fmt.Errorf("Cannot subtract hex literal in scale")
+		}
+		return gbasm.Indirect{
+			Reg: baser,
+			Off: int32(i),
+		}, nil
+	}
+	i, err := strconv.ParseInt(index, 10, 32)
+	if err == nil {
+		if scale != "" {
+			return nil, fmt.Errorf("Cannot index with scale with scale literal")
+		}
+		if parts[3] == "-" {
+			i = -i
+		}
+		return gbasm.Indirect{
+			Reg: baser,
+			Off: int32(i),
+		}, nil
+	}
+	fmt.Printf("PARSE INDEX INTEGER: %v\n", err)
+
+	// Not an integer index
+	indexr, err := gbasm.ParseReg(index)
+	if err != nil {
+		return nil, fmt.Errorf("Index was neither an integer nor a register: %v", err)
+	}
+	if indexr == gbasm.R_RSP {
+		return nil, fmt.Errorf("Cannot use rsp register as index register.")
+	}
+
+	scalei := 1
+	if scale != "" {
+		i, err := strconv.ParseInt(scale, 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("Scale must be an integer in [1, 2, 4, 8], but got %v", scale)
+		}
+		if i != 1 && i != 2 && i != 4 && i != 8 {
+			return nil, fmt.Errorf("Scale must be an integer in [1, 2, 4, 8], but got %v", i)
+		}
+		scalei = int(i)
+	}
+
+	return gbasm.IndirectBaseIndexScale{
+		Base:  baser,
+		Index: indexr,
+		Scale: scalei,
+	}, nil
+}
+
 func ParseIndirect(s string) (base string, offset int32, err error) {
 	r := regexp.MustCompile(`\[([_a-zA-Z0-9]+)([+-][x0-9]+)?\]`)
 	parts := r.FindStringSubmatch(s)
@@ -545,18 +619,25 @@ func main() {
 				}
 
 				if strings.HasPrefix(parts[i], "[") {
-					base, offset, err := ParseIndirect(parts[i])
+					ind, err := ParseIndirect2(parts[i])
+					fmt.Printf("Indirect: %#v Err: %v\n", ind, err)
 					if err != nil {
-						fmt.Printf("Fatal: Failed to parse indirection %s: %s\n", parts[i], err)
+						fmt.Printf("Fatal: Failed to parse indirection: %v\n", err)
 						os.Exit(1)
 					}
-					if reg, err := gbasm.ParseReg(base); err == nil {
-						args[i-1] = gbasm.Indirect{Reg: reg, Off: offset}
-					} else if v := f.AllocFor(base); v != nil {
-						args[i-1] = gbasm.Indirect{Reg: v.Register(), Off: offset} // Do we ever need size? , Size: v.?()}
-					} else {
-						panic(fmt.Sprintf("don't know what %s is.", parts[i]))
-					}
+					args[i-1] = ind
+					// if err != nil {
+					// 	fmt.Printf("Fatal: Failed to parse indirection %s: %s\n", parts[i], err)
+					// 	os.Exit(1)
+					// }
+					// if reg, err := gbasm.ParseReg(base); err == nil {
+					// 	args[i-1] = gbasm.Indirect{Reg: reg, Off: offset}
+					// } else if v := f.AllocFor(base); v != nil {
+					// 	args[i-1] = gbasm.Indirect{Reg: v.Register(), Off: offset} // Do we ever need size? , Size: v.?()}
+					// } else {
+					// 	panic(fmt.Sprintf("don't know what %s is.", parts[i]))
+					// }
+
 					continue
 				}
 

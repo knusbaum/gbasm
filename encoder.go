@@ -56,10 +56,16 @@ func (i Indirect) String() string {
 	return fmt.Sprintf("%s [%s - %d]", size, i.Reg, -i.Off)
 }
 
-type IndirectByReg struct {
-	Reg   Register
+// type IndirectByReg struct {
+// 	Reg   Register
+// 	Index Register
+// 	Size  int // Size in bytes of the data at the offset Off from Reg
+// }
+
+type IndirectBaseIndexScale struct {
+	Base  Register
 	Index Register
-	Size  int // Size in bytes of the data at the offset Off from Reg
+	Scale int // must be 1 2 4 or 8
 }
 
 type Instruction struct {
@@ -409,6 +415,8 @@ func REX_X(i byte, os []interface{}) (Register, error) {
 			return R_RBP, nil
 		}
 		return b.Reg, nil
+	case IndirectBaseIndexScale:
+		return b.Index, nil
 	case *Ralloc:
 		return b.Register(), nil
 	default:
@@ -427,6 +435,8 @@ func getRegister(i byte, os []interface{}) (Register, error) {
 		return b, nil
 	case Indirect:
 		return b.Reg, nil
+	case IndirectBaseIndexScale:
+		return b.Base, nil
 	case *Ralloc:
 		return b.Register(), nil
 	default:
@@ -456,6 +466,8 @@ type modrm struct {
 }
 
 // This logic is a mess and needs to be streamlined.
+// Update 12/2024: This is a complete mess and I am sorry I ever wrote this.
+// To be fair, it's mostly AMD and Intel's fault their ISA is so insane.
 func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	fmt.Printf("modrm.Encode(%d):", x.mod)
 	defer fmt.Printf("RETURN modrm.Encode(%d)\n", x.mod)
@@ -466,6 +478,7 @@ func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	var doSib bool
 	//var mustDisp bool
 	var indirect *Indirect
+	var indirectbis *IndirectBaseIndexScale
 	var xmod byte
 	var xreg byte
 	var err error
@@ -493,6 +506,10 @@ func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 				doSib = true
 			}
 			indirect = &ot
+		case IndirectBaseIndexScale:
+			doSib = true
+			xmod = 0b00
+			indirectbis = &ot
 		case *Var:
 			indirect = &Indirect{Reg: R_RIP, Size: 64}
 			relocations = append(relocations, Relocation{Offset: uint32(w.Len() + 1), Symbol: ot.Name})
@@ -567,6 +584,15 @@ func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 		}
 		return relocations, nil
 	} else {
+		disp8 := false
+		if indirectbis != nil && (indirectbis.Base == R_RBP || indirectbis.Base == R13) {
+			disp8 = true
+			// TODO: Mystery!
+			// With, e.g. mov [rbp+rax*8] 1, this works with the disp8 xmod
+			// (0x01, as we use here), but it does not seem to work with 0x10
+			// disp32. Not sure why.
+			xmod = 0x01
+		}
 		var xrm byte = 0b100
 		b := ((xmod & 0b11) << 6) |
 			((xreg & 0b111) << 3) |
@@ -576,17 +602,43 @@ func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 			return nil, err
 		}
 
-		// For now, the only valid SIB is an indirect into RSP:
-		// SIB Scale: 00, Index: 100 (RSP) Base: 100 (RSP)
-		err = writeByte(w, 0b00100100)
+		if indirectbis == nil {
+			// For now, the only valid SIB is an indirect into RSP:
+			// SIB Scale: 00, Index: 100 (RSP) Base: 100 (RSP)
+			err = writeByte(w, 0b00100100)
+			if err != nil {
+				return nil, err
+			}
+
+			if xmod != 0 {
+				// 32-bit displacement
+				return relocations, binary.Write(w, binary.LittleEndian, indirect.Off)
+			}
+			return relocations, nil
+		}
+
+		var sib byte
+		switch indirectbis.Scale {
+		case 1:
+			sib = 0
+		case 2:
+			sib = 0b01000000
+		case 4:
+			sib = 0b10000000
+		case 8:
+			sib = 0b11000000
+		}
+		sib = sib | ((indirectbis.Index.byte() & 0b111) << 3)
+		sib = sib | (indirectbis.Base.byte() & 0b111)
+		err = writeByte(w, sib)
 		if err != nil {
 			return nil, err
 		}
 
-		if xmod != 0 {
-			// 32-bit displacement
-			return relocations, binary.Write(w, binary.LittleEndian, indirect.Off)
+		if disp8 {
+			binary.Write(w, binary.LittleEndian, byte(0x0))
 		}
+
 		return relocations, nil
 	}
 }
@@ -780,6 +832,9 @@ func (o *Op) Match(op interface{}) bool {
 		if mo, ok := op.(Indirect); ok {
 			return mo.Reg.Width() == 64
 		}
+		if mo, ok := op.(IndirectBaseIndexScale); ok {
+			return mo.Base.Width() == 64
+		}
 		if _, ok := op.(*Var); ok {
 			return true
 		}
@@ -796,6 +851,9 @@ func (o *Op) Match(op interface{}) bool {
 			}
 			return mo.Reg.Width() == 64
 		}
+		if mo, ok := op.(IndirectBaseIndexScale); ok {
+			return mo.Base.Width() == 64
+		}
 		if _, ok := op.(*Var); ok {
 			return true
 		}
@@ -811,6 +869,9 @@ func (o *Op) Match(op interface{}) bool {
 				return false
 			}
 			return mo.Reg.Width() == 64
+		}
+		if mo, ok := op.(IndirectBaseIndexScale); ok {
+			return mo.Base.Width() == 64
 		}
 		if _, ok := op.(*Var); ok {
 			return true
@@ -829,6 +890,9 @@ func (o *Op) Match(op interface{}) bool {
 			}
 			return mo.Reg.Width() == 64
 		}
+		if mo, ok := op.(IndirectBaseIndexScale); ok {
+			return mo.Base.Width() == 64
+		}
 		if _, ok := op.(*Var); ok {
 			return true
 		}
@@ -846,6 +910,9 @@ func (o *Op) Match(op interface{}) bool {
 				return false
 			}
 			return mo.Reg.Width() == 64
+		}
+		if mo, ok := op.(IndirectBaseIndexScale); ok {
+			return mo.Base.Width() == 64
 		}
 		if _, ok := op.(*Var); ok {
 			return true

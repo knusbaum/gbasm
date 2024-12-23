@@ -1,4 +1,4 @@
-
+.PHONY: bas
 
 all: _bas _bld out.o
 
