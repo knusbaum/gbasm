@@ -147,11 +147,10 @@ func SplitSpace(s string) []string {
 	return ss
 }
 
-func ParseIndirect2(s string) (indirect any, err error) {
+func ParseIndirect(s string) (indirect any, err error) {
 	//(base, index string, scale int, err error) {
-	r := regexp.MustCompile(`\[([_a-zA-Z0-9]+)\s*(([+-])([x0-9a-zA-Z]+))?(\*([x0-9]+))?\]`)
+	r := regexp.MustCompile(`\[([a-zA-Z0-9]+)\s*(([+-])\s*([x0-9a-zA-Z]+))?\s*(\*\s*([x0-9]+))?\]`)
 	parts := r.FindStringSubmatch(s)
-	fmt.Printf("PARTS: %#v\n", parts)
 	base := parts[1]
 	index := parts[4]
 	scale := parts[6]
@@ -191,7 +190,6 @@ func ParseIndirect2(s string) (indirect any, err error) {
 			Off: int32(i),
 		}, nil
 	}
-	fmt.Printf("PARSE INDEX INTEGER: %v\n", err)
 
 	// Not an integer index
 	indexr, err := gbasm.ParseReg(index)
@@ -219,29 +217,6 @@ func ParseIndirect2(s string) (indirect any, err error) {
 		Index: indexr,
 		Scale: scalei,
 	}, nil
-}
-
-func ParseIndirect(s string) (base string, offset int32, err error) {
-	r := regexp.MustCompile(`\[([_a-zA-Z0-9]+)([+-][x0-9]+)?\]`)
-	parts := r.FindStringSubmatch(s)
-	//fmt.Printf("HAVE PARTS: %#v from %s\n", parts, s)
-	// 	reg, err = gbasm.ParseReg(parts[1])
-	// 	if err != nil {
-	// 		return
-	// 	}
-	base = parts[1]
-	if parts[2] != "" {
-		var o int64
-		if strings.HasPrefix(parts[2], "0x") {
-			o, err = strconv.ParseInt(strings.TrimPrefix(parts[2], "0x"), 16, 32)
-			offset = int32(o)
-			return
-		}
-		o, err = strconv.ParseInt(strings.TrimPrefix(parts[2], "0x"), 10, 32)
-		offset = int32(o)
-		return
-	}
-	return
 }
 
 var out = flag.String("o", "", "Write the linked executable to this file")
@@ -619,25 +594,12 @@ func main() {
 				}
 
 				if strings.HasPrefix(parts[i], "[") {
-					ind, err := ParseIndirect2(parts[i])
-					fmt.Printf("Indirect: %#v Err: %v\n", ind, err)
+					ind, err := ParseIndirect(parts[i])
 					if err != nil {
 						fmt.Printf("Fatal: Failed to parse indirection: %v\n", err)
 						os.Exit(1)
 					}
 					args[i-1] = ind
-					// if err != nil {
-					// 	fmt.Printf("Fatal: Failed to parse indirection %s: %s\n", parts[i], err)
-					// 	os.Exit(1)
-					// }
-					// if reg, err := gbasm.ParseReg(base); err == nil {
-					// 	args[i-1] = gbasm.Indirect{Reg: reg, Off: offset}
-					// } else if v := f.AllocFor(base); v != nil {
-					// 	args[i-1] = gbasm.Indirect{Reg: v.Register(), Off: offset} // Do we ever need size? , Size: v.?()}
-					// } else {
-					// 	panic(fmt.Sprintf("don't know what %s is.", parts[i]))
-					// }
-
 					continue
 				}
 

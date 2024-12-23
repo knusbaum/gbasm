@@ -584,14 +584,14 @@ func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 		}
 		return relocations, nil
 	} else {
-		disp8 := false
-		if indirectbis != nil && (indirectbis.Base == R_RBP || indirectbis.Base == R13) {
+		disp8 := indirectbis != nil &&
+			(indirectbis.Base == R_RBP || indirectbis.Base == R13)
+		if disp8 {
 			disp8 = true
-			// TODO: Mystery!
-			// With, e.g. mov [rbp+rax*8] 1, this works with the disp8 xmod
-			// (0x01, as we use here), but it does not seem to work with 0x10
-			// disp32. Not sure why.
-			xmod = 0x01
+			// We could also use 0b10 here if we wanted a 32-bit displacement, but
+			// currently the assembler doesn't support displacements, so the
+			// smaller the better.
+			xmod = 0b01
 		}
 		var xrm byte = 0b100
 		b := ((xmod & 0b11) << 6) |
@@ -636,6 +636,8 @@ func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 		}
 
 		if disp8 {
+			// The displacement is currently unused, but must be present for
+			// certain registers (RBP, R13).
 			binary.Write(w, binary.LittleEndian, byte(0x0))
 		}
 
