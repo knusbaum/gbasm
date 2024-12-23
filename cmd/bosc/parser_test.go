@@ -415,6 +415,12 @@ func TestParser(t *testing.T) {
 				&Node{t: n_number, ival: 10},
 			}},
 		},
+		{
+			in: "a[x]",
+			out: &Node{t: n_index, sval: "a", args: []*Node{
+				&Node{t: n_symbol, sval: "x"},
+			}},
+		},
 	} {
 		t.Run("", func(t *testing.T) {
 			p := NewParser("", strings.NewReader(tt.in))

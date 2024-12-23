@@ -370,16 +370,34 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), ast.ASTType(c))
 		}
+		if ast.NAST == nil {
+			// Special case for index literals.
+			if v.t.Name == "str" && v.t.Indirection == 0 && v.t.ArraySize == 0 {
+				// SPECIAL CASE! We have a string. This needs to go away.
+				// See: Index.ASTType() documentation.
+				fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, v.ref, ast.N)
+				return dest
+			}
+			targt := ast.ASTType(c)
+			off := uint64(targt.Size(c)) * ast.N
+			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, v.ref, off)
+			return dest
+		}
+		// TODO: Need to add assembler support for indexing like [base + index * size].
+		// For now, we'll calculate it ourselves.
 		if v.t.Name == "str" && v.t.Indirection == 0 && v.t.ArraySize == 0 {
 			// SPECIAL CASE! We have a string. This needs to go away.
 			// See: Index.ASTType() documentation.
-			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, v.ref, ast.N)
+			idx := newSpot(of, c, c.Temp(), ast.NAST.ASTType(c))
+			nidx := compileTop(of, c, ast.NAST, idx)
+			if !nidx.same(&idx) {
+				idx.free(of)
+			}
+			fmt.Fprintf(of, "\tadd %s %s\n", nidx.ref, v.ref)
+			fmt.Fprintf(of, "\tmov %s [%s]\n", dest.ref, nidx.ref)
 			return dest
 		}
-		targt := ast.ASTType(c)
-		off := uint64(targt.Size(c)) * ast.N
-		fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, v.ref, off)
-		return dest
+		panic("Generic indexing not supported yet.")
 	case *Assignment:
 		lv := compileLval(of, c, ast.Target, nullspot)
 		srct := ast.Val.ASTType(c)

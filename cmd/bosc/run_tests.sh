@@ -59,4 +59,4 @@ for t in `ls tests/*_test.bos`; do
 done
 
 
-#rm tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout
+rm tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout

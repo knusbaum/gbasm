@@ -560,8 +560,9 @@ func (*Return) Note() string {
 }
 
 type Index struct {
-	Val AST
-	N   uint64
+	Val  AST
+	NAST AST
+	N    uint64
 }
 
 func (i *Index) ASTType(c *Context) ASTType {
@@ -767,9 +768,18 @@ func (n *Node) toASTTop(c *Context) AST {
 			Var: n.sval,
 		}
 	case n_index:
-		return &Index{
-			Val: &Symbol{Name: n.sval},
-			N:   n.args[0].ival,
+		if n.args[0].t == n_number {
+			// special optimization
+			return &Index{
+				Val: &Symbol{Name: n.sval},
+				N:   n.args[0].ival,
+			}
+		} else {
+			idx := n.args[0].toASTTop(NewContext())
+			return &Index{
+				Val:  &Symbol{Name: n.sval},
+				NAST: idx,
+			}
 		}
 	case n_if:
 		ifs := IfStmt{

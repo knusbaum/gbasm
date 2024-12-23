@@ -13,5 +13,14 @@ fn main() {
 	s = "Hello, World!"
 	putc(s[0])
 	puts("\n")
+
+	var len num
+	len = strlen(s)
+
+	var i num
+	for (i = 0; i < len; i = i + 1) {
+		putc(s[i])
+	}
+	puts("\n")
 	
 }
