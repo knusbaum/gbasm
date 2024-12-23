@@ -1,0 +1,75 @@
+package main
+	
+var newline string "\n\0"
+	
+function main
+	sub rsp 32
+	mov [rsp]    1
+	mov [rsp+8]  2
+	mov [rsp+16] 3
+	mov [rsp+24] 4
+
+	// loop with registers
+	// init
+	mov rcx 0
+label loop
+	mov rdi [rsp+rcx*8]
+	push rcx
+	call puti
+	lea rdi newline
+	call puts
+	pop rcx
+	inc rcx
+
+	// cond
+	cmp rcx 3
+	jle loop
+
+	call vartest
+	
+	// fix the stack
+	add rsp 32
+	// return 0
+	mov rax 0
+	ret
+	
+function vartest
+	// we need prelude and epilogue
+	// to use variables
+
+	prologue
+	
+	// with variables
+	bytes array 32
+	mov rax 1
+	mov [array]    rax
+	inc rax
+	mov [array+8]  rax
+	inc rax
+	mov [array+16] rax
+	inc rax
+	mov [array+24] rax
+	
+	// loop with variables
+	local i 64
+	local v 64
+	mov i 0
+label loop2
+	mov v [array+i*8]
+	mov rdi v
+	call puti
+	lea rdi newline
+	call puts
+	inc i
+
+	// cond
+	cmp i 3
+	jle loop2
+	
+
+	epilogue
+	
+	// return 0
+	mov rax 0
+	ret
+	
