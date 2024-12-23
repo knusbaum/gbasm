@@ -147,17 +147,21 @@ func SplitSpace(s string) []string {
 	return ss
 }
 
-func ParseIndirect(s string) (indirect any, err error) {
+func ParseIndirect(f *gbasm.Function, s string) (indirect any, err error) {
 	//(base, index string, scale int, err error) {
-	r := regexp.MustCompile(`\[([a-zA-Z0-9]+)\s*(([+-])\s*([x0-9a-zA-Z]+))?\s*(\*\s*([x0-9]+))?\]`)
+	r := regexp.MustCompile(`\[([_a-zA-Z0-9]+)\s*(([+-])\s*([_x0-9a-zA-Z]+))?\s*(\*\s*([x0-9]+))?\]`)
 	parts := r.FindStringSubmatch(s)
 	base := parts[1]
 	index := parts[4]
 	scale := parts[6]
 
-	baser, err := gbasm.ParseReg(base)
-	if err != nil {
-		return nil, err
+	var baser gbasm.Register
+	if reg, err := gbasm.ParseReg(base); err == nil {
+		baser = reg
+	} else if a := f.AllocFor(base); a != nil {
+		baser = a.Register()
+	} else {
+		return nil, fmt.Errorf("Base was neither an integer, nor a register, nor a variable.")
 	}
 
 	// figure out if index is an int or register
@@ -191,13 +195,23 @@ func ParseIndirect(s string) (indirect any, err error) {
 		}, nil
 	}
 
-	// Not an integer index
-	indexr, err := gbasm.ParseReg(index)
-	if err != nil {
-		return nil, fmt.Errorf("Index was neither an integer nor a register: %v", err)
+	if index == "" {
+		if scale != "" {
+			return nil, fmt.Errorf("Cannot have scale without index.")
+		}
+		return gbasm.Indirect{
+			Reg: baser,
+		}, nil
 	}
-	if indexr == gbasm.R_RSP {
-		return nil, fmt.Errorf("Cannot use rsp register as index register.")
+
+	// Not an integer index
+	var indexr gbasm.Register
+	if reg, err := gbasm.ParseReg(index); err == nil {
+		indexr = reg
+	} else if a := f.AllocFor(index); a != nil {
+		indexr = a.Register()
+	} else {
+		return nil, fmt.Errorf("Index was neither an integer, nor a register, nor a variable.")
 	}
 
 	scalei := 1
@@ -235,8 +249,6 @@ func main() {
 		fmt.Printf("Fatal: Expected file name to open.\n")
 		os.Exit(1)
 	}
-
-	//var out string
 
 	var o *gbasm.OFile
 	for fi := 0; fi < flag.NArg(); fi++ {
@@ -594,7 +606,7 @@ func main() {
 				}
 
 				if strings.HasPrefix(parts[i], "[") {
-					ind, err := ParseIndirect(parts[i])
+					ind, err := ParseIndirect(f, parts[i])
 					if err != nil {
 						fmt.Printf("Fatal: Failed to parse indirection: %v\n", err)
 						os.Exit(1)
