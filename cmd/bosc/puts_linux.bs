@@ -34,3 +34,75 @@ function puts
 
 	epilogue
 	ret
+
+// SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
+// call number: 0
+function read
+    // fd, data, count
+	type fn(num, byte[]) num
+	prologue
+
+	mov rdx [rsi+8]
+	mov rsi [rsi]
+
+	mov rax 0x0
+	syscall
+
+	epilogue
+	ret
+
+// SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf, size_t, count)
+// call number: 1
+function write
+	// fd, data, count
+	type fn(num, byte[]) num
+	prologue
+
+	mov rdx [rsi+8]
+	mov rsi [rsi]
+
+	mov rax 0x1
+	syscall
+
+	epilogue
+	ret
+
+// SYSCALL_DEFINE3(open, const char __user *, filename, int, flags, umode_t, mode)
+// call number: 2
+function open
+	// path, flags, mode
+	type fn(str, num, num) num
+	prologue
+	nop
+	nop
+	nop
+	nop
+
+	mov rax 0x2
+	syscall
+
+	epilogue
+	ret
+
+// SYSCALL_DEFINE1(close, unsigned int, fd)
+// call number: 3
+function close
+	// fd
+	type fn(num) num
+	prologue
+
+	mov rax 0x3
+	syscall
+
+	epilogue
+	ret
+
+
+// want to be able to do this:
+// fn read(n num, b byte[]) {
+// 	syscall(0, n, b.addr, b.len)
+// }
+//
+// function syscall
+// ...
+// only syscall is in asm.

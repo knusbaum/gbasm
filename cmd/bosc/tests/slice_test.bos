@@ -1,0 +1,17 @@
+package main
+
+import "string.bo"
+
+fn main() {
+	var a byte[10]
+	a[0] = 1
+	a[1] = 2
+	a[2] = 3
+	a[3] = 4
+	var b byte[]
+	b = a[:]
+	putb(b[0])
+	puts("\n")
+	putb(b[1])
+	puts("\n")
+}

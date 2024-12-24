@@ -195,27 +195,21 @@ type rex struct {
 func (x *rex) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	needed := x.mandatory
 	xw := x.w
-	//log.Printf("[REX] GETTING BYTE FOR OS: %#v\n", os)
+	if len(os) == 0 {
+		// when there are zero args, rex only appears when it's mandatory (I think).
+		// so it's only here to provide rex.w. This is a special case.
+		b := 0b01000000 | ((xw & 0b1) << 3)
+		return nil, writeByte(w, b)
+	}
+
+	// with args > 0, do the usual.
 	xr, _ := getRegister(x.r, os)
-	// 	fmt.Printf("XR REGISTER: %#s\n", xr)
-	// 	//Not all args are registers.
-	// 	if err != nil {
-	// 		fmt.Printf("ERROR: %v\n", err)
-	// 	}
 	needed = needed || xr.needREX()
+
 	xx, _ := REX_X(x.x, os)
-	//fmt.Printf("XX REGISTER: %#s\n", xx)
-	// 	//Not all args are registers.
-	// 	if err != nil {
-	// 		fmt.Printf("ERROR: %v\n", err)
-	// 	}
 	needed = needed || xx.needREX()
+
 	xb, _ := getRegister(x.b, os)
-	//fmt.Printf("XB REGISTER: %#s\n", xb)
-	// 	//Not all args are registers.
-	// 	if err != nil {
-	// 		fmt.Printf("ERROR: %v\n", err)
-	// 	}
 	needed = needed || xb.needREX()
 	b := 0b01000000 |
 		((xw & 0b1) << 3) |

@@ -6,6 +6,7 @@ if [[ $? != 0 ]]; then
 	exit 1
 fi
 
+rm string.bo
 ./bas puts_linux.bs string.bs >/dev/null 2>&1
 
 #set -e

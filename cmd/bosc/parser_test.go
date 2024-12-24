@@ -354,6 +354,29 @@ func TestParser(t *testing.T) {
 			out: &Node{t: n_var, sval: "x", args: []*Node{&Node{t: n_typename, sval: "int", ival: 1}}},
 		},
 		{
+			in: "var x int[10]",
+			out: &Node{t: n_var, sval: "x", args: []*Node{
+				&Node{
+					t:    n_typename,
+					sval: "int",
+					args: []*Node{
+						&Node{t: n_index, ival: 10},
+					},
+				}}},
+		},
+		{
+			in: "var x *int[10]",
+			out: &Node{t: n_var, sval: "x", args: []*Node{
+				&Node{
+					t:    n_typename,
+					sval: "int",
+					ival: 1,
+					args: []*Node{
+						&Node{t: n_index, ival: 10},
+					},
+				}}},
+		},
+		{
 			in: "a.b",
 			out: &Node{t: n_dot, args: []*Node{
 				&Node{t: n_symbol, sval: "a"},

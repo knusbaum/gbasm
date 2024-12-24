@@ -180,6 +180,7 @@ type ASTType struct {
 	Name        string
 	Indirection int // pointer level, i.e. ***int -> Indirection: 3
 	ArraySize   int // zero for non-arrays.
+	Slice       bool
 }
 
 const PTR_SIZE = 8
@@ -213,13 +214,18 @@ func (t *ASTType) Size(c *Context) int {
 	if t.ArraySize > 0 {
 		return baseSize * t.ArraySize
 	}
+	if t.Slice {
+		// slice is struct{ptr, size}
+		return 16
+	}
 	return baseSize
 }
 
 func (t ASTType) Same(t2 ASTType) bool {
 	return t.Name == t2.Name &&
 		t.Indirection == t2.Indirection &&
-		t.ArraySize == t2.ArraySize
+		t.ArraySize == t2.ArraySize &&
+		t.Slice == t2.Slice
 }
 
 func (t ASTType) String() string {
@@ -230,6 +236,9 @@ func (t ASTType) String() string {
 	sb.WriteString(t.Name)
 	if t.ArraySize > 0 {
 		fmt.Fprintf(&sb, "[%d]", t.ArraySize)
+	}
+	if t.Slice {
+		sb.WriteString("[]")
 	}
 	return sb.String()
 }
@@ -243,10 +252,13 @@ func mkTypename(n *Node) ASTType {
 	t.Indirection = int(n.ival)
 	if len(n.args) > 0 {
 		array := n.args[0]
-		if array.t != n_index {
+		if array.t == n_index {
+			t.ArraySize = int(array.ival)
+		} else if array.t == n_slice {
+			t.Slice = true
+		} else {
 			ParseErrorF(array, "Expected an array specifier, but found %v", array.t)
 		}
-		t.ArraySize = int(array.ival)
 	}
 	return t
 }
@@ -567,8 +579,13 @@ type Index struct {
 
 func (i *Index) ASTType(c *Context) ASTType {
 	t := i.Val.ASTType(c)
-	if t.Indirection > 0 {
-		t.Indirection -= 1
+	// Probably shouldn't allow indexing pointers.
+	// if t.Indirection > 0 {
+	// 	t.Indirection -= 1
+	// 	return t
+	// }
+	if t.Slice {
+		t.Slice = false
 		return t
 	}
 	if t.ArraySize > 0 {
@@ -586,6 +603,30 @@ func (i *Index) ASTType(c *Context) ASTType {
 
 func (i *Index) Note() string {
 	return fmt.Sprintf("Index (...)[%d]", i.N)
+}
+
+type SliceOp struct {
+	Val   AST
+	Lower AST
+	Upper AST
+}
+
+func (s *SliceOp) ASTType(c *Context) ASTType {
+	t := s.Val.ASTType(c)
+	if t.Slice {
+		return t
+	}
+	if t.ArraySize > 0 {
+		t.ArraySize = 0
+		t.Slice = true
+		return t
+	}
+	// No slicing pointers.
+	panic("Cannot perform slice operation on non-array or non-slice")
+}
+
+func (s *SliceOp) Note() string {
+	return fmt.Sprintf("Slice operation %s[...:...]", s.Val.Note())
 }
 
 // TODO: Do we need this, or can we just use the actual value?
@@ -780,6 +821,19 @@ func (n *Node) toASTTop(c *Context) AST {
 				Val:  &Symbol{Name: n.sval},
 				NAST: idx,
 			}
+		}
+	case n_slice:
+		var lower, upper AST
+		if n.args[0] != nil {
+			lower = n.args[0].toASTTop(NewContext())
+		}
+		if n.args[1] != nil {
+			upper = n.args[1].toASTTop(NewContext())
+		}
+		return &SliceOp{
+			Val:   &Symbol{Name: n.sval},
+			Lower: lower,
+			Upper: upper,
 		}
 	case n_if:
 		ifs := IfStmt{

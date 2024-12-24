@@ -1,0 +1,20 @@
+package main
+
+import "string.bo"
+
+fn main() {
+	var x num
+	x = 0
+
+	x = x - 1
+	puti(x)
+	puts("\n")
+
+	x = x * 20
+	puti(x)
+	puts("\n")
+
+	x = x / 2
+	puti(x)
+	puts("\n")
+}

@@ -17,6 +17,7 @@ const (
 	n_var
 	n_typename
 	n_index   // Indexing Operation
+	n_slice   // Slicing Operation
 	n_struct  // Structure Type Declaration
 	n_stlit   // Structure Literal
 	n_stfield // Structure Field
@@ -63,6 +64,8 @@ func (t nodetype) String() string {
 		return "n_typename"
 	case n_index:
 		return "n_index"
+	case n_slice:
+		return "n_slice"
 	case n_struct:
 		return "n_struct"
 	case n_stlit:
@@ -232,7 +235,7 @@ func (p *Parser) parseTok() *Node {
 	}
 	p.advance()
 	panic(&interpreterError{fmt.Sprintf("Expected number, string, identifier or semicolon, but found: %s\n", c.t), c.p})
-	//panic(fmt.Sprintf("Expected number, string, identifier or semicolon, but found: %s\n", c.t))
+	//panic(fmt.Sprintf("Expected number, string, identifier or semicolon, but found: %s (%v)\n", c.t, c.p))
 }
 
 func (p *Parser) parseTypeName() *Node {
@@ -251,18 +254,32 @@ func (p *Parser) parseTypeName() *Node {
 	//fmt.Printf("NEXT TOKEN: %v\n", p.current())
 	if p.current().t == tok_lsquare {
 		p.advance()
-		if p.current().t != tok_number {
-			panic(&interpreterError{fmt.Sprintf("Expected a number, but found: %s\n", c.t), c.p})
+		if p.current().t == tok_number {
+			// if p.current().t != tok_number {
+			// 	panic(&interpreterError{fmt.Sprintf("Expected a number, but found: %s\n", c.t), c.p})
+			// }
+			arrsize := uint64(p.current().nval)
+			p.advance()
+			p.expect(tok_rsquare)
+			return &Node{
+				t:    n_typename,
+				sval: typename,
+				ival: indirection,
+				args: []*Node{&Node{t: n_index, ival: arrsize}},
+				p:    p.current().p,
+			}
+		} else if p.current().t == tok_rsquare {
+			p.advance()
+			return &Node{
+				t:    n_typename,
+				sval: typename,
+				ival: indirection,
+				args: []*Node{&Node{t: n_slice, p: p.current().p}},
+				p:    p.current().p,
+			}
 		}
-		arrsize := uint64(p.current().nval)
-		p.advance()
-		p.expect(tok_rsquare)
-		return &Node{
-			t:    n_typename,
-			sval: typename,
-			ival: indirection,
-			args: []*Node{&Node{t: n_index, ival: arrsize}},
-		}
+
+		panic(&interpreterError{fmt.Sprintf("Expected a number, but found: %s\n", c.t), c.p})
 	}
 	return &Node{t: n_typename, sval: c.sval, ival: indirection}
 }
@@ -278,7 +295,32 @@ func (p *Parser) parseValue() *Node {
 			return &Node{t: n_funcall, sval: v.sval, p: v.p, args: args}
 		} else if p.current().t == tok_lsquare {
 			p.advance()
+			if p.current().t == tok_colon {
+				// [:
+				p.advance()
+				if p.current().t == tok_rsquare {
+					// [:]
+					p.advance()
+					return &Node{t: n_slice, sval: v.sval, p: v.p, args: []*Node{nil, nil}}
+				}
+				// [: X]
+				v3 := p.parseExpression()
+				p.expect(tok_rsquare)
+				return &Node{t: n_slice, sval: v.sval, p: v.p, args: []*Node{nil, v3}}
+			}
 			v2 := p.parseExpression()
+
+			if p.current().t == tok_colon {
+				// [ X :
+				if p.current().t == tok_rsquare {
+					// [X:]
+					p.advance()
+					return &Node{t: n_slice, sval: v.sval, p: v.p, args: []*Node{v2, nil}}
+				}
+				v3 := p.parseExpression()
+				return &Node{t: n_slice, sval: v.sval, p: v.p, args: []*Node{v2, v3}}
+			}
+
 			p.expect(tok_rsquare)
 			return &Node{t: n_index, sval: v.sval, p: v.p, args: []*Node{v2}}
 		} else if p.current().t == tok_lcurly {

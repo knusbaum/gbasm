@@ -1,6 +1,6 @@
 
 
-all: b.out
+all: bosc bas bld
 
 .PHONY: bosc bas bld
 
@@ -34,6 +34,10 @@ clean:
 nuke: clean
 	- rm bosc bas bld
 
+test: bosc bas bld
+	go test ./...
+	./run_tests.sh
+
 
 ## temp
 array: nuke bas bld bosc string.bo
@@ -46,7 +50,7 @@ comp2: nuke bas bld bosc string.bo
 	./bas main.bs init_linux.bs
 	./bld -o comp2 main.bo string.bo
 
-test: nuke bas bld bosc string.bo
-	./bosc test.bosc
-	./bas main.bs init_linux.bs
-	./bld main.bo string.bo
+#test: nuke bas bld bosc string.bo
+#	./bosc test.bosc
+#	./bas main.bs init_linux.bs
+#	./bld main.bo string.bo

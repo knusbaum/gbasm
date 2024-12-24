@@ -109,6 +109,7 @@ func spot_memcpy(of io.Writer, dst, src spot, bytes int) {
 // 	fmt.Fprintf(of, "\trelease rax\n")
 // }
 
+// can move T to T or T into *T
 func move(of io.Writer, c *Context, dest spot, src spot) {
 	if dest.t == regtype || src.t == regtype {
 		// We have a register. Just move it.
@@ -130,18 +131,15 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 	if depoint.Same(src.t) {
 		// dest was *T and src is T
 		fmt.Fprintf(of, "\tmov [%s] %s\n", dest.ref, src.ref)
+		if src.t.Size(c) > 8 {
+			panic("Can't copy T into *T for T.size > 8 bytes")
+		}
 		return
 	}
 
 	fmt.Printf("DEST: %#v\nSRC:%#v\nDEPOINT: %#v\n", dest, src, depoint)
 	panic("move TODO")
 }
-
-// func ensureNotRegspot(of io.Writer, c *Context, s spot) spot {
-// 	if s.t == regtype {
-// 		newSpot(of io.Writer, c *Context, ref string, t ASTType)
-// 	}
-// }
 
 // compileLval compiles an AST into a spot of type a.ASTType *or* pointer to a.ASTType.
 // If the type is the same as the value, it must me suitable to mov dest src.
@@ -208,31 +206,72 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		}
 		// We're just going to return the pointer.
 		return v
+	case *Index:
+		w := compileTop(of, c, ast.Val, nullspot)
+		vt := ast.ASTType(c)
+		var addr spot
+		if w.t.Slice {
+			t := vt
+			t.Indirection += 1
+			addr = newSpot(of, c, c.Temp(), t)
+			fmt.Fprintf(of, "\tmov %s [%s]\n", addr.ref, w.ref)
+		} else {
+			addr = w
+		}
+		lvt := vt
+		lvt.Indirection += 1
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), lvt)
+		}
+		if ast.NAST == nil {
+			// fixed offset at compile time
+			off := uint64(vt.Size(c)) * ast.N
+			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", dest.ref, addr.ref, off)
+			return dest
+		}
+		if vt.Size(c) <= 8 {
+			// We can use base + index * scale
+			base := addr
+			index := compileTop(of, c, ast.NAST, nullspot)
+			scale := vt.Size(c)
+			fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", dest.ref, base.ref, index.ref, scale)
+			return dest
+		} else {
+			// These objects are too large to use base + index * scale
+			// and we must calculate the offset manually.
+			panic("Not implemented Scale + Index * Scale when scale > 8")
+		}
 	}
 	panic(fmt.Sprintf("(LVAL) FALLTHROUGH: %#v\n", a))
 }
 
-// var level int
+func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
+	defer func() {
+		// This ensures that every spot ruturned by the compiler
+		// contains the type expected to be produced by that AST.
+		expect := a.ASTType(c)
+		actual := spt.t
+		if !expect.Same(actual) {
+			if expect.Same(voidASTType()) && spt.empty() {
+				// this is ok. void ASTs produce empty spots.
+				return
+			}
+			if _, ok := a.(*Literal); ok && expect.Same(numASTType()) {
+				// this is OK. Number literals can produce types different
+				// than their AST.
+				return
+			}
+			panic(fmt.Sprintf("Expected type %s but compiler produced %s", expect, actual))
+		}
+	}()
 
-// func indent() {
-// 	for i := 0; i < level; i++ {
-// 		fmt.Printf("\t")
-// 	}
-// }
-
-func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 	if dest.empty() {
 		note(of, "\t// begin %#v\n", a.Note())
 	} else {
 		note(of, "\t// begin %#v into %v\n", a.Note(), dest.ref)
 	}
 	defer note(of, "\t// end %#v\n", a.Note())
-	// indent()
-	// fmt.Printf("COMPILE %#v\n", a)
-	// level++
-	// defer func() {
-	// 	level--
-	// }()
+
 	switch ast := a.(type) {
 	case *StructDecl:
 		c.DefineStruct(ast.TName, ast)
@@ -274,7 +313,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 			panic(fmt.Sprintf("No such func \"%v\" TODO: error messages", ast.FName))
 		}
 		if len(ast.Args) != len(decl.Args) {
-			panic("BAD NUMBER OF ARGS! (TODO)\n")
+			panic(fmt.Sprintf("BAD NUMBER OF ARGS for %s (TODO)\n", ast.FName))
 		}
 
 		argorder := setupArgs(of, c, ast, decl)
@@ -290,7 +329,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 		fmt.Fprintf(of, "\tcall %s\n", ast.FName)
 		for i := 0; i < len(ast.Args); i++ {
 			note(of, "\t// release call registers\n")
-			//fmt.Fprintf(of, "\t// release call registers\n")
 			fmt.Fprintf(of, "\trelease %s\n", argorder[i])
 		}
 		ret := nullspot
@@ -332,7 +370,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 			panic("Cannot dereference non-pointer type")
 		}
 		t.Indirection -= 1
-		//move(of, c, dest, v)
 
 		if t.Indirection > 0 {
 			if dest.empty() {
@@ -347,7 +384,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 		} else if t.Size(c) > 8 {
 			// It's a large object, meaning we need to pass it by pointer.
 			v.t.Indirection -= 1
-			//fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, v.ref)
 			return v
 		} else {
 			if dest.empty() {
@@ -366,26 +402,37 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 		fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, ast.Var)
 		return dest
 	case *Index:
-		v := compileTop(of, c, ast.Val, nullspot)
+		vt := ast.ASTType(c)
+		w := compileTop(of, c, ast.Val, nullspot)
+		var addr spot
+		if w.t.Slice {
+			t := vt
+			t.Indirection += 1
+			addr = newSpot(of, c, c.Temp(), t)
+			fmt.Fprintf(of, "\tmov %s [%s]\n", addr.ref, w.ref)
+		} else {
+			addr = w
+		}
+
 		if dest.empty() {
-			dest = newSpot(of, c, c.Temp(), ast.ASTType(c))
+			dest = newSpot(of, c, c.Temp(), vt)
 		}
 		if ast.NAST == nil {
 			// Special case for index literals.
-			if v.t.Name == "str" && v.t.Indirection == 0 && v.t.ArraySize == 0 {
+			if w.t.Name == "str" && w.t.Indirection == 0 && w.t.ArraySize == 0 && !w.t.Slice {
 				// SPECIAL CASE! We have a string. This needs to go away.
 				// See: Index.ASTType() documentation.
-				fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, v.ref, ast.N)
+				fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, addr.ref, ast.N)
 				return dest
 			}
-			targt := ast.ASTType(c)
-			off := uint64(targt.Size(c)) * ast.N
-			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, v.ref, off)
+			//targt := ast.ASTType(c)
+			off := uint64(vt.Size(c)) * ast.N
+			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, addr.ref, off)
 			return dest
 		}
 		// TODO: Need to add assembler support for indexing like [base + index * size].
 		// For now, we'll calculate it ourselves.
-		if v.t.Name == "str" && v.t.Indirection == 0 && v.t.ArraySize == 0 {
+		if w.t.Name == "str" && w.t.Indirection == 0 && w.t.ArraySize == 0 && !w.t.Slice {
 			// SPECIAL CASE! We have a string. This needs to go away.
 			// See: Index.ASTType() documentation.
 			idx := newSpot(of, c, c.Temp(), ast.NAST.ASTType(c))
@@ -393,14 +440,105 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 			if !nidx.same(&idx) {
 				idx.free(of)
 			}
-			fmt.Fprintf(of, "\tadd %s %s\n", nidx.ref, v.ref)
+			fmt.Fprintf(of, "\tadd %s %s\n", nidx.ref, addr.ref)
 			fmt.Fprintf(of, "\tmov %s [%s]\n", dest.ref, nidx.ref)
 			return dest
 		}
+		if vt.Size(c) <= 8 {
+			base := addr
+			index := compileTop(of, c, ast.NAST, nullspot)
+			scale := vt.Size(c)
+			fmt.Fprintf(of, "\tmov %s [%s+%s*%d]\n", dest.ref, base.ref, index.ref, scale)
+		} else {
+			panic("Not implemented: Scale + Index * Scale when scale > 8")
+		}
+
+		// See compileLval for similar implementation.
 		panic("Generic indexing not supported yet.")
+	case *SliceOp:
+		// TODO: dest optimization
+		v := compileTop(of, c, ast.Val, nullspot)
+		//addr := newSpot(of, c, c.Temp(), voidASTType())
+		var baset ASTType
+		var newt ASTType
+		var addr spot
+		if v.t.Slice {
+			baset = v.t
+			newt = v.t
+			baset.Slice = false
+			addrt := baset
+			addrt.Indirection += 1
+			addr = newSpot(of, c, c.Temp(), addrt)
+			fmt.Fprintf(of, "\tmov %s [%s]\n", addr.ref, v.ref)
+		} else if v.t.ArraySize > 0 {
+			baset = v.t
+			baset.ArraySize = 0
+			newt = baset
+			newt.Slice = true
+			addr = v
+			addr.t = baset
+			addr.t.Indirection++
+			//fmt.Fprintf(of, "\tmov %s %s\n", addr, v)
+		} else {
+			panic("Somehow slicing a non-array, non-slice")
+		}
+
+		var upper spot
+		if ast.Upper != nil {
+			upper = compileTop(of, c, ast.Upper, nullspot)
+		} else {
+			upper = newSpot(of, c, c.Temp(), numASTType())
+			if v.t.Slice {
+				fmt.Fprintf(of, "\tmov %s [%s+8]", upper.ref, v.ref)
+			}
+			// else if v.t.ArraySize > 0 already checked above
+			fmt.Fprintf(of, "\tmov %s %d\n", upper.ref, v.t.ArraySize)
+		}
+
+		if ast.Lower != nil {
+			lower := compileTop(of, c, ast.Lower, nullspot)
+			if baset.Size(c) > 8 {
+				panic("Slicing for types > 8 bytes not implemented.")
+			}
+			fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", addr.ref, addr.ref, lower.ref, baset.Size(c))
+			fmt.Fprintf(of, "\tsub %s %s\n", upper.ref, lower.ref)
+			lower.free(of)
+		}
+		newslice := newSpot(of, c, c.Temp(), newt)
+		fmt.Fprintf(of, "\tmov [%s] %s\n", newslice.ref, addr.ref)
+		fmt.Fprintf(of, "\tmov [%s+8] %s\n", newslice.ref, upper.ref)
+		return newslice
+
 	case *Assignment:
 		lv := compileLval(of, c, ast.Target, nullspot)
 		srct := ast.Val.ASTType(c)
+		dstt := ast.Target.ASTType(c)
+		if !srct.Same(dstt) {
+			//panic(fmt.Sprintf("Cannot assign different types %s = %s\n", dstt, srct))
+			// TODO: Get rid of this manual munging for numeric literals.
+			srclit, ok := ast.Val.(*Literal)
+			if !ok {
+				panic(fmt.Sprintf("Cannot assign different types %s = %s\n", dstt, srct))
+			}
+			// If it's a numeric literal, we allow it to be assigned to anything,
+			// just because we don't have advanced type handling yet.
+			// This is dangerous and needs to be fixed.
+			if !srclit.ASTType(c).Same(numASTType()) {
+				panic(fmt.Sprintf("Cannot assign different types %s = %s\n", dstt, srct))
+			}
+			// pretend our source literal number is the same as the destination type
+			dest := newSpot(of, c, c.Temp(), dstt)
+			ret := compileTop(of, c, ast.Val, dest)
+			if !ret.same(&dest) {
+				dest.free(of)
+			}
+			move(of, c, lv, ret)
+			ret.free(of)
+			return nullspot
+		}
+		// if !lv.t.Same(dstt) {
+		// 	panic(fmt.Sprintf("Expected dstt (%v) != lv.t (%v)\n", dstt, lv.t))
+		// }
 		if lv.t.Same(srct) {
 			// srctype == dsttype
 			// this means the dsttype is not a pointer to the location.
@@ -412,11 +550,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 			}
 			return nullspot
 		}
+
 		val := compileTop(of, c, ast.Val, nullspot)
-		if val.t.Size(c) != 8 {
-			panic("CANNOT MOVE TYPES THAT ARE NOT 64 BITS YET!")
-			// TODO: Need to handle type sizes
-		}
+		// if val.t.Size(c) != 8 {
+		// 	panic(fmt.Sprintf("CANNOT MOVE TYPES THAT ARE NOT 64 BITS YET, but have %v %d\n", val.t.Size(c), val.t))
+		// 	// TODO: Need to handle type sizes
+		// }
 		// if it's size == 8, it doesn't matter if it's a pointer or a value,
 		// we can just copy it.
 		move(of, c, lv, val)
@@ -424,9 +563,28 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) spot {
 		lv.free(of)
 		val.free(of)
 		return nullspot
-
 	case *StructLiteral:
 	case *IfStmt:
+		v := compileTop(of, c, ast.Cond, nullspot)
+		labelse := c.Label("else")
+		labend := c.Label("end")
+		fmt.Fprintf(of, "\ttest %s %s\n", v.ref, v.ref)
+		fmt.Fprintf(of, "\tjz %s\n", labelse)
+		v.free(of)
+		v = compileTop(of, c, ast.Then, nullspot)
+		if !v.empty() {
+			v.free(of)
+		}
+		fmt.Fprintf(of, "\tjmp %s\n", labend)
+		fmt.Fprintf(of, "\tlabel %s\n", labelse)
+		if ast.Else != nil {
+			v = compileTop(of, c, ast.Else, nullspot)
+			if !v.empty() {
+				v.free(of)
+			}
+		}
+		fmt.Fprintf(of, "\tlabel %s\n", labend)
+		return nullspot
 	case *For:
 		v := compileTop(of, c, ast.Init, nullspot)
 		if !v.empty() {
@@ -523,6 +681,10 @@ func containsFuncall(a AST) bool {
 
 func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 	order := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+	// This double-commented code and all comments within are obsolete.
+	// However, I still want to revisit how I'm setting up the call registers
+	// and don't want to throw this old code away yet.
+	//
 	// // TODO: Want to be able to optimize this, but can't currently.
 	// // Same issue as other register optimizations - we can't acquire the registers
 	// // we want ahead-of-time since things like funcalls and register-specific ops
@@ -563,7 +725,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 	// // 	}
 	// // 	return order
 	// // }
-
+	// //
 	// // This song and dance is to resolve the arguments into their
 	// // associated registers.
 	// //
@@ -584,7 +746,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		arg := f.Args[i]
 		argt := arg.ASTType(c)
 		if !argt.Same(d.Args[i].Type) {
-			panic("BAD ARG TYPE! (TODO)\n")
+			panic(fmt.Sprintf("BAD ARG TYPE! param: %v, passed arg: %v", d.Args[i].Type, argt))
 		}
 		if i > 5 {
 			panic("More than 6 args not supported yet (TODO)")
@@ -597,7 +759,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		}
 		a := compileTop(of, c, arg, dest)
 		if a == nullspot {
-			panic("AAAH! NULLSPOT!\n")
+			panic("AAAH! NULLSPOT! This should not happen. An ast that's supposed to produce a value for the call produced a null spot.\n")
 		}
 		if !a.same(&dest) {
 			dest.free(of)
@@ -726,9 +888,13 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		second := compileTop(of, c, o.Second, nullspot)
 		fmt.Fprintf(of, "\tinreg %s rax\n", first.ref)
-		rdx := regSpot(of, "rdx")
-		fmt.Fprintf(of, "\txor rdx rdx\n")
-		fmt.Fprintf(of, "\tdiv %s\n", second.ref)
+		rdx := regSpot(of, "rdx") // Use regSpot to acquire rdx for the div.
+		// div/idiv divides rdx:rax by the argument register.
+		// In order to divide signed integers, we need to sign extend
+		// the 64-bit value in rax into rdx. This is what cqo does.
+		// See: https://www.felixcloutier.com/x86/cwd:cdq:cqo
+		fmt.Fprintf(of, "\tcqo\n")
+		fmt.Fprintf(of, "\tidiv %s\n", second.ref)
 		rdx.free(of)
 		second.free(of)
 		return first
@@ -787,6 +953,15 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		// setb/seta etc.
 		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
 		fmt.Fprintf(of, "\tsetge %s\n", dest.ref)
+		return dest
+	case n_deq:
+		first := compileTop(of, c, o.First, nullspot)
+		second := compileTop(of, c, o.Second, nullspot)
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), boolASTType())
+		}
+		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
+		fmt.Fprintf(of, "\tsete %s\n", dest.ref)
 		return dest
 	}
 	panic("Could not do op\n")
