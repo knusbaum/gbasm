@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/bits"
 	"os"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -66,8 +67,16 @@ func smallestUi(i uint64) interface{} {
 		return uint32(i)
 	}
 	return i
+	//if i > math.MaxUint64 {
+	//	// Don't know what to do here. We'll just keep the integer unchanged.
+	//	return i
+	//}
+	//return smallestInt(int64(i))
 }
 
+// this used to return either an int or a uint, depending on the range.
+// However, all immediates in x86 appear to be sign-extended, meaning they are
+// almost always treated as signed integers. For this reason, we should treat them that way here.
 func smallestInt(i int64) interface{} {
 	if i < 0 {
 		// need a signed int.
@@ -621,11 +630,12 @@ func main() {
 						fmt.Printf("Fatal: Failed to parse hex %s: %s\n", parts[i], err)
 						os.Exit(1)
 					}
+					fmt.Printf("%v -> Parsed %s into %d (%X)(%v)\n", parts, parts[i], smallestUi(num), smallestUi(num), reflect.TypeOf(smallestUi(num)).String())
 					args[i-1] = smallestUi(num)
 					continue
 				}
 				if num, err := strconv.ParseInt(parts[i], 10, 64); err == nil {
-					//fmt.Printf("%v -> Parsed %s into %d (%X)\n", parts, parts[i], smallestI(num), smallestI(num))
+					fmt.Printf("%v -> Parsed %s into %d (%X)(%v)\n", parts, parts[i], smallestInt(num), smallestInt(num), reflect.TypeOf(smallestInt(num)).String())
 					args[i-1] = smallestInt(num)
 					continue
 				}

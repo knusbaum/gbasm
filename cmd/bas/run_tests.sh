@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+make clean
+make bas bld
+
 ./bas puts_linux.bs string.bs >/dev/null 2>&1
 
 #set -e

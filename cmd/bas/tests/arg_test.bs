@@ -1,5 +1,7 @@
 package main
 
+var newline string "\n\0"
+
 function main
 	// Do the function prologue.
 	prologue
@@ -57,10 +59,15 @@ function main
 	mov rdi 9
 	call doSomeMath
 
-	// should print -55 again.
-	mov rdi rax
-	call puti
-	
+	mov rdi 1
+	mov rsi 2
+	mov rdx 3
+	mov rcx 4
+	mov r8 5
+	mov r9 6
+	push 8
+	push 7
+	call argprinter
 
 	epilogue
 	xor rax rax
@@ -107,3 +114,58 @@ function doSomeMath
 	 epilogue
 
 	 ret
+
+function argprinter
+	arg one rdi
+	arg two rsi
+	arg three rdx
+	arg four rcx
+	arg five r8
+	arg six r9
+	arg seven 0
+	arg eight 1
+
+	prologue
+
+	mov rdi one
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi two
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi three
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi four
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi five
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi six
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi seven
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi eight
+	call puti
+	lea rdi newline
+	call puts
+
+	epilogue
+	ret

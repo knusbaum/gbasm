@@ -1,20 +1,6 @@
-.PHONY: bas
+.PHONY: bas bld
 
-all: _bas _bld out.o
-
-asm: _bld _bas
-
-clean:
-	rm *.o *.bo bas bld
-
-string.bo: puts_linux.bs string.bs
-	./bas puts_linux.bs string.bs
-
-main.bo: main.bs main3.bs init_linux.bs
-	./bas main.bs main3.bs init_linux.bs
-
-out.o : main.bo string.bo
-	./bld main.bo string.bo
+all: bas bld
 
 bld:
 	go build ../bld
@@ -22,9 +8,8 @@ bld:
 bas:
 	go build
 
-_bld:
-	go build ../bld
+clean:
+	rm *.o *.bo bas bld
 
-_bas:
-	go build
-
+#string.bo: bas puts_linux.bs string.bs
+#	./bas puts_linux.bs string.bs

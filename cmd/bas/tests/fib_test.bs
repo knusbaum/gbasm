@@ -1,0 +1,113 @@
+package main
+
+var fibprint string "Fib was: \0"
+var newline string "\n\0"
+
+function main
+	prologue
+	// First Fib call
+ 	mov rdi 20
+ 	call fib
+	push rax
+
+	lea rdi fibprint
+	call puts
+
+	pop rdi
+	call puti
+
+	lea rdi newline
+	call puts
+
+	// Second Fib call
+ 	mov rdi 20
+ 	call newfib
+	push rax
+
+	lea rdi fibprint
+	call puts
+
+	pop rdi
+	call puti
+
+	lea rdi newline
+	call puts
+
+ 	mov rax 0
+	epilogue
+ 	ret
+
+function newfib
+	arg n rdi
+	local f1 64
+	local f2 64
+	
+	prologue
+
+	cmp n 3	
+	jge recur
+	mov rax 1
+	jmp end
+
+label recur
+	mov rdi n
+	sub rdi 1
+	call fib
+	mov f1 rax
+
+	mov rdi n
+	sub rdi 2
+	call fib
+	mov f2 rax
+
+	add f1 f2
+	mov rax f1
+
+label end
+	epilogue
+	ret
+
+function fib
+	// Register use declarations
+	// These will not be overwritten by the local allocator
+	use rdi
+	use rax
+	// Local variable declaration
+	// N is the 64-bit argument to fib (populated from rdi below)
+	// f1 will be the 64-bit value of fib(n-1)
+	// f2 will be the 64-bit value of fib(n-2)
+	local n 64
+	local f1 64
+	local f2 64
+
+	prologue
+
+	// Argument goes in RDI
+	mov n rdi
+	
+	// Base cases
+	cmp n 3
+	jge recursive
+	mov rax 1
+	jmp end
+
+	label recursive
+	// f1 = fib(n - 1)
+	mov rdi n
+	sub rdi 1
+	call fib
+	mov f1 rax
+
+	// f2 = fib(n - 2)
+	mov rdi n
+	sub rdi 2
+	call fib
+	mov f2 rax
+
+	// rax = f1 + f2
+	add f1 f2
+	mov rax f1
+	
+	label end
+	epilogue
+	ret

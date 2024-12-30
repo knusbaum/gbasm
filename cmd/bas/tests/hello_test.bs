@@ -2,7 +2,7 @@ package main
 
 function print
 	prologue
-	sub rsp 132
+	sub rsp 200
 //0x1000
 //
 
@@ -38,5 +38,14 @@ function print
 	lea rdi [rsp+11]
 	call puts
 
+	epilogue
+	ret
+
+function main
+	prologue
+
+	call print
+
+	mov rax 0
 	epilogue
 	ret
