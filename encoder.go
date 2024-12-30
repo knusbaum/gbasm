@@ -97,6 +97,7 @@ forms:
 			continue
 		}
 		var idx int
+		var opBits int
 		for _, fop := range f.ops {
 			if fop.Implicit {
 				continue
@@ -104,9 +105,13 @@ forms:
 			o := os[idx]
 
 			//log.Printf("Checking %#v matches %#v: %t\n", fop, o, fop.Match(o))
-			if !fop.Match(o) {
+			matches, size := fop.Match(o, opBits)
+			if !matches {
 				//log.Printf("NO\n")
 				continue forms
+			}
+			if size > opBits {
+				opBits = size
 			}
 			//log.Printf("YES\n")
 			idx++
@@ -676,120 +681,137 @@ func (o *Op) ConvertRalloc(a *Ralloc) interface{} {
 	panic(fmt.Sprintf("CANNOT CONVERT RALLOC FOR: %v", o.TN))
 }
 
-func (o *Op) Match(op interface{}) bool {
+func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 	if o.Implicit {
-		return false
+		return false, 0
 	}
 	switch o.TN {
 	case "imm4":
 		//		_, ok := op.(uint8)
 		//		return ok
 	case "imm8":
-		if _, ok := op.(uint8); ok {
-			return ok
+		if ui, ok := op.(uint8); ok {
+			if largestOpBits > 8 && ((0x80 & ui) > 0) {
+				// If the other operands are larger than the immediate,
+				// it will be sign-extended, meaning that unsigned integers
+				// larger than math.MaxIntN cannot be represented.
+				// However, we want unsigned integers > math.MaxIntN to be able
+				// to be represented by their corresponding correctly-sized
+				// immN parameters for cases such as 'mov al 200', for which
+				// the only applicable instruction is mov r8 imm8, and does not
+				// have sign-extension issues.
+				return false, 0
+			}
+			return ok, 8
 		}
 		if _, ok := op.(int8); ok {
-			return ok
+			return ok, 8
 		}
 		//fmt.Printf("FAILED TO MATCH %v (%s) to %v\n", op, reflect.TypeOf(op).String(), o)
 	case "imm16":
 		if _, ok := op.(uint8); ok {
-			return ok
+			return ok, 16
 		}
-		if _, ok := op.(uint16); ok {
-			return ok
+		if ui, ok := op.(uint16); ok {
+			if largestOpBits > 16 && ((0x8000 & ui) > 0) {
+				return false, 0
+			}
+			return ok, 16
 		}
 		if _, ok := op.(int8); ok {
-			return ok
+			return ok, 16
 		}
 		if _, ok := op.(int16); ok {
-			return ok
+			return ok, 16
 		}
 	case "imm32":
 		if _, ok := op.(uint8); ok {
-			return ok
+			return ok, 32
 		}
 		if _, ok := op.(uint16); ok {
-			return ok
+			return ok, 32
 		}
-		if _, ok := op.(uint32); ok {
-			return ok
+		if ui, ok := op.(uint32); ok {
+			if largestOpBits > 32 && ((0x80000000 & ui) > 0) {
+				return false, 0
+			}
+			return ok, 32
 		}
 		if _, ok := op.(int8); ok {
-			return ok
+			return ok, 32
 		}
 		if _, ok := op.(int16); ok {
-			return ok
+			return ok, 32
 		}
 		if _, ok := op.(int32); ok {
-			return ok
+			return ok, 32
 		}
 
 	case "imm64":
 		if _, ok := op.(uint8); ok {
-			return ok
+			return ok, 64
 		}
 		if _, ok := op.(uint16); ok {
-			return ok
+			return ok, 64
 		}
 		if _, ok := op.(uint32); ok {
-			return ok
+			return ok, 64
 		}
 		if _, ok := op.(uint64); ok {
-			return ok
+			return ok, 64
 		}
 		if _, ok := op.(int8); ok {
-			return ok
+			return ok, 64
 		}
 		if _, ok := op.(int16); ok {
-			return ok
+			return ok, 64
 		}
 		if _, ok := op.(int32); ok {
-			return ok
+			return ok, 64
 		}
 		if _, ok := op.(int64); ok {
-			return ok
+			return ok, 64
 		}
 	//case "al":
 	//case "cl":
 	case "r8":
 		if ra, ok := op.(*Ralloc); ok {
-			return ra.RegSize() == 8
+			return ra.RegSize() == 8, 8
 		}
 		if r, ok := op.(Register); ok {
 			//return r == R_AL || r == R_AH || r == R_BL || r == R_BH || r == R_CL || r == R_CH || r == R_DL || r == R_DH
-			return r.Width() == 8
+			return r.Width() == 8, 8
 		}
 	//case "r8l":
 	//case "ax":
 	case "r16":
 		if ra, ok := op.(*Ralloc); ok {
-			return ra.RegSize() == 16
+			return ra.RegSize() == 16, 16
 		}
 		if r, ok := op.(Register); ok {
 			//return r == R_AX || r == R_BX || r == R_CX || r == R_DX || r == R_SP || r == R_BP || r == R_SI || r == R_DI
-			return r.Width() == 16
+			return r.Width() == 16, 16
 		}
 	//case "r16l":
 	//case "eax":
 	case "r32":
 		if ra, ok := op.(*Ralloc); ok {
-			return ra.RegSize() == 32
+			return ra.RegSize() == 32, 32
 		}
 		if r, ok := op.(Register); ok {
 			//return r == R_EAX || r == R_EBX || r == R_ECX || r == R_EDX || r == R_ESP || r == R_EBP || r == R_ESI || r == R_EDI
-			return r.Width() == 32
+			return r.Width() == 32, 32
 		}
 	//case "r32l":
 	//case "rax":
 	case "r64":
 		if ra, ok := op.(*Ralloc); ok {
-			return ra.RegSize() == 64
+			return ra.RegSize() == 64, 64
 		}
 		if r, ok := op.(Register); ok {
 			//return r == R_RAX || r == R_RBX || r == R_RCX || r == R_RDX || r == R_RSP || r == R_RBP || r == R_RSI || r == R_RDI ||
 			//r == R8 || r == R9 || r == R10 || r == R11 || r == R12 || r == R13 || r == R14 || r == R15
-			return r.Width() == 64
+			return r.Width() == 64, 64
 		}
 		// 	case "mm":
 		// 	case "xmm0":
@@ -807,108 +829,108 @@ func (o *Op) Match(op interface{}) bool {
 	case "moffs32":
 		if mo, ok := op.(Indirect); ok {
 			if mo.Size > 0 && mo.Size != 32 {
-				return false
+				return false, 32
 			}
-			return mo.Reg.Width() == 64
+			return mo.Reg.Width() == 64, 32
 		}
 	case "moffs64":
 		if mo, ok := op.(Indirect); ok {
 			if mo.Size > 0 && mo.Size != 64 {
-				return false
+				return false, 64
 			}
-			return mo.Reg.Width() == 64
+			return mo.Reg.Width() == 64, 64
 		}
 	case "m":
 		if _, ok := op.(*Ralloc); ok {
-			return true
+			return true, 64
 		}
 		if mo, ok := op.(Indirect); ok {
-			return mo.Reg.Width() == 64
+			return mo.Reg.Width() == 64, 64
 		}
 		if mo, ok := op.(IndirectBaseIndexScale); ok {
-			return mo.Base.Width() == 64
+			return mo.Base.Width() == 64, 64
 		}
 		if _, ok := op.(*Var); ok {
-			return true
+			return true, 64
 		}
 	case "m8":
 		if mo, ok := op.(*Ralloc); ok {
 			if mo.size != 8 {
-				return false
+				return false, 8
 			}
-			return true
+			return true, 8
 		}
 		if mo, ok := op.(Indirect); ok {
 			if mo.Size > 0 && mo.Size != 8 {
-				return false
+				return false, 8
 			}
-			return mo.Reg.Width() == 64
+			return mo.Reg.Width() == 64, 8
 		}
 		if mo, ok := op.(IndirectBaseIndexScale); ok {
-			return mo.Base.Width() == 64
+			return mo.Base.Width() == 64, 8
 		}
 		if _, ok := op.(*Var); ok {
-			return true
+			return true, 8
 		}
 	case "m16":
 		if mo, ok := op.(*Ralloc); ok {
 			if mo.size != 16 {
-				return false
+				return false, 16
 			}
-			return true
+			return true, 16
 		}
 		if mo, ok := op.(Indirect); ok {
 			if mo.Size > 0 && mo.Size != 16 {
-				return false
+				return false, 16
 			}
-			return mo.Reg.Width() == 64
+			return mo.Reg.Width() == 64, 16
 		}
 		if mo, ok := op.(IndirectBaseIndexScale); ok {
-			return mo.Base.Width() == 64
+			return mo.Base.Width() == 64, 16
 		}
 		if _, ok := op.(*Var); ok {
-			return true
+			return true, 16
 		}
 	//case "m16{k}{z}":
 	case "m32":
 		if mo, ok := op.(*Ralloc); ok {
 			if mo.size != 32 {
-				return false
+				return false, 32
 			}
-			return true
+			return true, 32
 		}
 		if mo, ok := op.(Indirect); ok {
 			if mo.Size > 0 && mo.Size != 32 {
-				return false
+				return false, 32
 			}
-			return mo.Reg.Width() == 64
+			return mo.Reg.Width() == 64, 32
 		}
 		if mo, ok := op.(IndirectBaseIndexScale); ok {
-			return mo.Base.Width() == 64
+			return mo.Base.Width() == 64, 32
 		}
 		if _, ok := op.(*Var); ok {
-			return true
+			return true, 32
 		}
 	//case "m32{k}":
 	//case "m32{k}{z}":
 	case "m64":
 		if mo, ok := op.(*Ralloc); ok {
 			if mo.size != 64 {
-				return false
+				return false, 64
 			}
-			return true
+			return true, 64
 		}
 		if mo, ok := op.(Indirect); ok {
 			if mo.Size > 0 && mo.Size != 64 {
-				return false
+				return false, 64
 			}
-			return mo.Reg.Width() == 64
+			return mo.Reg.Width() == 64, 64
 		}
 		if mo, ok := op.(IndirectBaseIndexScale); ok {
-			return mo.Base.Width() == 64
+			return mo.Base.Width() == 64, 64
 		}
 		if _, ok := op.(*Var); ok {
-			return true
+			return true, 64
 		}
 	//case "m64{k}":
 	//case "m64{k}{z}":
@@ -939,16 +961,16 @@ func (o *Op) Match(op interface{}) bool {
 	// 	case "vm64z{k}":
 	case "rel8":
 		_, ok := op.(int8)
-		return ok
+		return ok, 8
 	case "rel32":
 		_, ok := op.(int32)
-		return ok
+		return ok, 32
 		// 	case "{er}":
 		// 	case "{sae}":
 	default:
-		return false
+		return false, 0
 	}
-	return false
+	return false, 0
 }
 
 type IForm struct {
