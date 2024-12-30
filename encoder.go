@@ -82,7 +82,7 @@ func (i *Instruction) Encode(w WriteLener, formname string, os ...interface{}) (
 	// for _, f := range i.Forms {
 	// 	fmt.Printf("FORM: %#v\n", f.ops)
 	// }
-	fmt.Printf("Instruction.Encode OS: %#v\n", os)
+	//fmt.Printf("Instruction.Encode OS: %#v\n", os)
 forms:
 	for _, f := range i.Forms {
 		// if formname == "movq" {
@@ -127,7 +127,7 @@ forms:
 		// 	fmt.Printf("\t%v, %s", o, reflect.TypeOf(o).String())
 		// }
 		// fmt.Println("")
-		fmt.Printf("[Instruction] Encoding form %v ops: %#v, args: %#v\n", f.name, f.ops, os)
+		fmt.Printf("\t[Instruction] Encoding form %v ops: %#v, args: %#v\n", f.name, f.ops, os)
 		return f.Encode(w, os...)
 	}
 	return nil, fmt.Errorf("Failed to find an instruction for %s %#v", i.Summary, os)
@@ -419,7 +419,6 @@ func REX_X(i byte, os []interface{}) (Register, error) {
 }
 
 func getRegister(i byte, os []interface{}) (Register, error) {
-	fmt.Printf("GET REGISTER(%d)\n", i)
 	if int(i) >= len(os) {
 		panic(fmt.Sprintf("booo I: %d, OS: %#v, len(os): %d\n", i, os, len(os)))
 		return 0, fmt.Errorf("[getByte] Not enough args. Expected at least %d\n", i)
@@ -463,12 +462,12 @@ type modrm struct {
 // Update 12/2024: This is a complete mess and I am sorry I ever wrote this.
 // To be fair, it's mostly AMD and Intel's fault their ISA is so insane.
 func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
-	fmt.Printf("modrm.Encode(%d):", x.mod)
-	defer fmt.Printf("RETURN modrm.Encode(%d)\n", x.mod)
-	for _, o := range os {
-		fmt.Printf("\t%v, %s", o, reflect.TypeOf(o).String())
-	}
-	fmt.Println("")
+	// fmt.Printf("modrm.Encode(%d):", x.mod)
+	// defer fmt.Printf("RETURN modrm.Encode(%d)\n", x.mod)
+	// for _, o := range os {
+	// 	fmt.Printf("\t%v, %s", o, reflect.TypeOf(o).String())
+	// }
+	// fmt.Println("")
 	var doSib bool
 	//var mustDisp bool
 	var indirect *Indirect
@@ -480,12 +479,10 @@ func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	if x.mod&MODE_LITERAL != 0 {
 		xmod = x.mod & ^MODE_LITERAL
 	} else {
-		fmt.Printf("NOT MOD LITERAL\n")
 		if int(x.mod) >= len(os) {
-			panic("UHHH, WHAT!?")
+			panic("SHOULD NOT HAPPEN. The panic is here to catch any potential instances of this inequality.")
 			return nil, fmt.Errorf("[getByte] Not enough args. Expected at least %d\n", x.mod)
 		}
-		fmt.Printf("X.MOD: %v\n", x.mod)
 		o := os[x.mod]
 		switch ot := o.(type) {
 		case byte:
@@ -981,12 +978,12 @@ func (f *IForm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 		}
 	}
 
-	fmt.Printf("IForm.Encode(%s):", f.name)
-	defer fmt.Printf("RETURN IForm.Encode(%s)\n", f.name)
-	for _, o := range os {
-		fmt.Printf("\t%v, %s", o, reflect.TypeOf(o).String())
-	}
-	fmt.Println("")
+	// fmt.Printf("IForm.Encode(%s):", f.name)
+	// defer fmt.Printf("RETURN IForm.Encode(%s)\n", f.name)
+	// for _, o := range os {
+	// 	fmt.Printf("\t%v, %s", o, reflect.TypeOf(o).String())
+	// }
+	// fmt.Println("")
 
 	// experimental. This sucks.
 	{
@@ -1030,10 +1027,13 @@ func (f *IForm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 encodings:
 	for _, es := range f.enc {
 		for _, e := range es {
-			fmt.Printf("[IForm] Encoding %#v\n", e)
+			//fmt.Printf("[IForm] Encoding %#v\n", e)
 			rs, err = e.Encode(w, os...)
 			if err != nil {
 				fmt.Printf("[IForm] Failed one encoding: %s", err)
+				// TODO: I think this is horribly wrong. We can't just partially encode one form and then
+				// switch to another. Fortunately, we seem to never hit this thanks to the validation
+				// before we try encoding.
 				continue encodings
 			}
 		}

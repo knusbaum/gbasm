@@ -134,6 +134,7 @@ func (r *Ralloc) Register() Register {
 				return 0
 			}
 		}
+		fmt.Printf("\t[Ralloc.Register()]: Loading pointer to %s into %s\n", r.sym, reg)
 		r.rallocs.f.Instr("LEA", reg, Indirect{Reg: R_RBP, Off: r.offset}) // TODO: Fix size?, Size: r.RegSize()})
 		r.reg = reg
 		r.rallocs.regs[reg] = r
@@ -144,22 +145,23 @@ func (r *Ralloc) Register() Register {
 	}
 	reg, ok := r.rallocs.rs.Get(r.size)
 	if !ok {
+		fmt.Printf("\t[Ralloc.Register()]: No available registers for %s. Evicting some variable.\n", r.sym)
 		reg, ok = r.rallocs.Evict(r.size)
 		if !ok {
 			panic("Failed to load register") // TODO: Better error handling
 			return 0
 		}
+		fmt.Printf("\t[Ralloc.Register()]: Evicted %s.\n", reg)
 		//log.Printf("HAD TO EVICT REGISTER. EVICTED REGISTER %v", reg)
 	}
-	fmt.Printf("[RALLOC.Register] Loading %s into a register of size %d %v\n", r.sym, r.size, reg)
-	//fmt.Printf("[Register] put %s in register %v\n", r.sym, reg)
 	if r.inmem {
-		fmt.Printf("[RALLOC.Register] %s not in register. Allocated register %s\n", r.sym, reg)
+		fmt.Printf("\t[Ralloc.Register()]: Loading local %s into %s\n", r.sym, reg)
+		//fmt.Printf("[RALLOC.Register] %s not in register. Allocated register %s\n", r.sym, reg)
 		r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
 		//r.inmem = false
-	} else {
-		fmt.Printf("[RALLOC.Register] %s was not in memory. Active register marked as %v\n", r.sym, reg)
-	}
+	} //else {
+	//fmt.Printf("[RALLOC.Register] %s was not in memory. Active register marked as %v\n", r.sym, reg)
+	//}
 	r.reg = reg
 	r.rallocs.regs[reg] = r
 	r.rallocs.updateLRU(reg)
