@@ -15,8 +15,26 @@ func note(of io.Writer, f string, args ...any) {
 	fmt.Fprintf(of, f, args...)
 }
 
-func Compile(of io.Writer, c *Context, a AST) {
+func CompileErrorF(a AST, f string, args ...any) {
+	panic(&interpreterError{
+		msg: fmt.Sprintf(f, args...),
+		p:   a.Pos(),
+	})
+}
+
+func Compile(of io.Writer, c *Context, a AST) (e error) {
+	defer func() {
+		if err := recover(); err != nil {
+			if le, ok := err.(*interpreterError); ok {
+				a = nil
+				e = le
+				return
+			}
+			panic(err)
+		}
+	}()
 	compileTop(of, c, a, nullspot)
+	return nil
 }
 
 var nullspot = spot{}
@@ -137,7 +155,7 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 		// dest was *T and src is T
 		fmt.Fprintf(of, "\tmov [%s] %s\n", dest.ref, src.ref)
 		if src.t.Size(c) > 8 {
-			panic("Can't copy T into *T for T.size > 8 bytes")
+			panic("(TODO) Can't copy T into *T for T.size > 8 bytes")
 		}
 		return
 	}
@@ -186,7 +204,7 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		l := compileLval(of, c, ast.Val, nullspot)
 		def, ok := c.StructDeclForName(l.t.Name)
 		if !ok {
-			panic("No struct (TODO)")
+			CompileErrorF(a, "No such structure \"%v\"", l.t.Name)
 		}
 		offset, mtype := def.ByteOffset(c, ast.Member)
 		mtype.Indirection += 1
@@ -199,7 +217,7 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		v := compileTop(of, c, ast.Val, nullspot)
 		t := v.t
 		if t.Indirection == 0 {
-			panic("Cannot dereference non-pointer type")
+			CompileErrorF(a, "Cannot dereference non-pointer type %s", t)
 		}
 		// We're just going to return the pointer.
 		return v
@@ -261,7 +279,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				// than their AST.
 				return
 			}
-			panic(fmt.Sprintf("Expected type %s but compiler produced %s", expect, actual))
+			//panic(fmt.Sprintf("Expected type %s but compiler produced %s", expect, actual))
+			CompileErrorF(a, "Expected type %s but compiler produced %s", expect, actual)
 		}
 	}()
 
@@ -310,10 +329,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	case *Funcall:
 		decl, ok := c.FuncDeclForName(ast.FName)
 		if !ok {
-			panic(fmt.Sprintf("No such func \"%v\" TODO: error messages", ast.FName))
+			//panic(fmt.Sprintf("No such func \"%v\" TODO: error messages", ast.FName))
+			CompileErrorF(a, "No such function \"%v\"", ast.FName)
 		}
 		if len(ast.Args) != len(decl.Args) {
-			panic(fmt.Sprintf("BAD NUMBER OF ARGS for %s (TODO)\n", ast.FName))
+			//panic(fmt.Sprintf("BAD NUMBER OF ARGS for %s (TODO)\n", ast.FName))
+			CompileErrorF(a, "%s expected %d arguments, but was called with %d",
+				ast.FName, len(decl.Args), len(ast.Args))
 		}
 
 		argorder := setupArgs(of, c, ast, decl)
@@ -349,7 +371,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		l := compileTop(of, c, ast.Val, nullspot)
 		def, ok := c.StructDeclForName(l.t.Name)
 		if !ok {
-			panic("No struct (TODO)")
+			//panic("No struct (TODO)")
+			CompileErrorF(a, "No such structure \"%v\"", l.t.Name)
 		}
 		offset, mtype := def.ByteOffset(c, ast.Member)
 		if dest.empty() {
@@ -361,7 +384,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		v := compileTop(of, c, ast.Val, nullspot)
 		t := v.t
 		if t.Indirection == 0 {
-			panic("Cannot dereference non-pointer type")
+			//panic("Cannot dereference non-pointer type")
+			CompileErrorF(a, "Cannot dereference non-pointer type %s", t)
 		}
 		t.Indirection -= 1
 
@@ -513,13 +537,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// TODO: Get rid of this manual munging for numeric literals.
 			srclit, ok := ast.Val.(*Literal)
 			if !ok {
-				panic(fmt.Sprintf("Cannot assign different types %s = %s\n", dstt, srct))
+				//panic(fmt.Sprintf("Cannot assign different types %s = %s\n", dstt, srct))
+				CompileErrorF(a, "Cannot assign different types %s = %s", dstt, srct)
 			}
 			// If it's a numeric literal, we allow it to be assigned to anything,
 			// just because we don't have advanced type handling yet.
 			// This is dangerous and needs to be fixed.
 			if !srclit.ASTType(c).Same(numASTType()) {
-				panic(fmt.Sprintf("Cannot assign different types %s = %s\n", dstt, srct))
+				//panic(fmt.Sprintf("Cannot assign different types %s = %s\n", dstt, srct))
+				CompileErrorF(a, "Cannot assign different types %s = %s", dstt, srct)
 			}
 			// pretend our source literal number is the same as the destination type
 			dest := newSpot(of, c, c.Temp(), dstt)
@@ -633,7 +659,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		def, ok := c.StructDeclForName(ast.Type.Name)
 		if !ok {
-			panic("No struct (TODO)")
+			CompileErrorF(a, "No such structure \"%v\"", ast.Type.Name)
 		}
 		for _, f := range ast.Fields {
 			v := compileTop(of, c, f.Val, nullspot)
@@ -757,7 +783,9 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		arg := f.Args[i]
 		argt := arg.ASTType(c)
 		if !argt.Same(d.Args[i].Type) {
-			panic(fmt.Sprintf("%#v BAD ARG TYPE! param: %v, passed arg: %v", f, d.Args[i].Type, argt))
+			//panic(fmt.Sprintf("%#v BAD ARG TYPE! param: %v, passed arg: %v", f, d.Args[i].Type, argt))
+			CompileErrorF(arg, "For argument %d, expected type %v but got %v",
+				i, d.Args[i].Type, argt)
 		}
 		if i > 5 {
 			panic("More than 6 args not supported yet (TODO)")
@@ -875,6 +903,8 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		first := compileTop(of, c, o.First, dest)
 		if !first.same(&dest) {
+			// TODO: Is this actually an error? We should be able to handle
+			// first != dest.
 			panic(fmt.Sprintf("Expected to get %#v but got %#v from %#v\n", dest, first, o.First))
 			//dest.free(of)
 			dest = first
@@ -897,6 +927,8 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		first := compileTop(of, c, o.First, dest)
 		if !first.same(&dest) {
+			// TODO: Is this actually an error? We should be able to handle
+			// first != dest.
 			panic(fmt.Sprintf("Expected to get %#v but got %#v from %#v\n", dest, first, o.First))
 			//dest.free(of)
 			dest = first

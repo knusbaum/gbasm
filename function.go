@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"log"
 )
+
+var debug bool = false
 
 type Ralloc struct {
 	sym     string   // Name of the allocation
@@ -134,7 +135,9 @@ func (r *Ralloc) Register() Register {
 				return 0
 			}
 		}
-		fmt.Printf("\t[Ralloc.Register()]: Loading pointer to %s into %s\n", r.sym, reg)
+		if debug {
+			fmt.Printf("\t[Ralloc.Register()]: Loading pointer to %s into %s\n", r.sym, reg)
+		}
 		r.rallocs.f.Instr("LEA", reg, Indirect{Reg: R_RBP, Off: r.offset}) // TODO: Fix size?, Size: r.RegSize()})
 		r.reg = reg
 		r.rallocs.regs[reg] = r
@@ -145,17 +148,23 @@ func (r *Ralloc) Register() Register {
 	}
 	reg, ok := r.rallocs.rs.Get(r.size)
 	if !ok {
-		fmt.Printf("\t[Ralloc.Register()]: No available registers for %s (size %d). Evicting some variable.\n", r.sym, r.size)
+		if debug {
+			fmt.Printf("\t[Ralloc.Register()]: No available registers for %s (size %d). Evicting some variable.\n", r.sym, r.size)
+		}
 		reg, ok = r.rallocs.Evict(r.size)
 		if !ok {
 			panic("Failed to load register") // TODO: Better error handling
 			return 0
 		}
-		fmt.Printf("\t[Ralloc.Register()]: Evicted %s.\n", reg)
+		if debug {
+			fmt.Printf("\t[Ralloc.Register()]: Evicted %s.\n", reg)
+		}
 		//log.Printf("HAD TO EVICT REGISTER. EVICTED REGISTER %v", reg)
 	}
 	if r.inmem {
-		fmt.Printf("\t[Ralloc.Register()]: Loading local %s into %s\n", r.sym, reg)
+		if debug {
+			fmt.Printf("\t[Ralloc.Register()]: Loading local %s into %s\n", r.sym, reg)
+		}
 		//fmt.Printf("[RALLOC.Register] %s not in register. Allocated register %s\n", r.sym, reg)
 		r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
 		//r.inmem = false
@@ -784,11 +793,13 @@ func (s *splitWriteLener) Len() int {
 }
 
 func (f *Function) Instr(instr string, ops ...interface{}) error {
-	fmt.Printf("\tINSTRUCTION [%#v] OPS [", instr)
-	for i := range ops {
-		fmt.Printf("(%v) ", ops[i])
+	if debug {
+		fmt.Printf("\tINSTRUCTION [%#v] OPS [", instr)
+		for i := range ops {
+			fmt.Printf("(%v) ", ops[i])
+		}
+		fmt.Printf("]\n")
 	}
-	fmt.Printf("]\n")
 
 	if instr == "LEA" {
 
@@ -841,7 +852,9 @@ func (f *Function) Resolve() error {
 }
 
 func (f *Function) Body() ([]byte, error) {
-	log.Printf("RESOLVING %v Current errors: %v\n", f.Name, len(f.errors))
+	if debug {
+		fmt.Printf("RESOLVING %v Current errors: %v\n", f.Name, len(f.errors))
+	}
 	f.Resolve()
 	//log.Printf("RESOLVED.")
 	if len(f.errors) != 0 {

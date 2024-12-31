@@ -287,6 +287,7 @@ type AST interface {
 	// returns the type the expression gives.
 	ASTType(*Context) ASTType
 	Note() string
+	Pos() position
 }
 
 // A binding represents a name which is bound to a value of type Type
@@ -302,6 +303,7 @@ type Binding struct {
 type StructDecl struct {
 	TName  string
 	Fields []Binding
+	p      position
 }
 
 func (*StructDecl) ASTType(*Context) ASTType {
@@ -310,6 +312,10 @@ func (*StructDecl) ASTType(*Context) ASTType {
 
 func (s *StructDecl) Note() string {
 	return fmt.Sprintf("struct %s {...}", s.TName)
+}
+
+func (s *StructDecl) Pos() position {
+	return s.p
 }
 
 // Returns the size in bytes that the struct occupies.
@@ -337,6 +343,7 @@ func (s *StructDecl) ByteOffset(c *Context, field string) (int, ASTType) {
 type VarDecl struct {
 	Name string
 	Type ASTType
+	p    position
 }
 
 func (*VarDecl) ASTType(*Context) ASTType {
@@ -347,11 +354,16 @@ func (v *VarDecl) Note() string {
 	return fmt.Sprintf("var %s %s", v.Name, v.Type)
 }
 
+func (v *VarDecl) Pos() position {
+	return v.p
+}
+
 type FuncDecl struct {
 	Name   string
 	Args   []Binding
 	Return ASTType
 	Body   *Block
+	p      position
 }
 
 func (*FuncDecl) ASTType(*Context) ASTType {
@@ -362,8 +374,13 @@ func (f *FuncDecl) Note() string {
 	return fmt.Sprintf("fn %s (...) %s {...}", f.Name, f.Return)
 }
 
+func (f *FuncDecl) Pos() position {
+	return f.p
+}
+
 type Block struct {
 	Body []AST
+	p    position
 }
 
 func (*Block) ASTType(*Context) ASTType {
@@ -377,9 +394,14 @@ func (*Block) Note() string {
 	return fmt.Sprintf("block {...}")
 }
 
+func (b *Block) Pos() position {
+	return b.p
+}
+
 type Funcall struct {
 	FName string
 	Args  []AST
+	p     position
 }
 
 func (f *Funcall) ASTType(c *Context) ASTType {
@@ -392,6 +414,10 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 
 func (f *Funcall) Note() string {
 	return fmt.Sprintf("call %s(#%d)", f.FName, len(f.Args))
+}
+
+func (f *Funcall) Pos() position {
+	return f.p
 }
 
 type Dot struct {
@@ -420,6 +446,10 @@ func (d *Dot) Note() string {
 	return fmt.Sprintf("Dot (%s).%s", d.Val.Note(), d.Member)
 }
 
+func (d *Dot) Pos() position {
+	return d.Val.Pos()
+}
+
 type Deref struct {
 	Val AST
 }
@@ -437,6 +467,10 @@ func (d *Deref) Note() string {
 	return fmt.Sprintf("Deref *(...)")
 }
 
+func (d *Deref) Pos() position {
+	return d.Val.Pos()
+}
+
 type Address struct {
 	// for now we can only take the address of a variable.
 	// TODO: extend this to arbitrary expressions.
@@ -444,6 +478,7 @@ type Address struct {
 	// something that is addressable, so for now we'll do the
 	// easy thing.
 	Var string
+	p   position
 }
 
 func (a *Address) ASTType(c *Context) ASTType {
@@ -459,6 +494,10 @@ func (a *Address) Note() string {
 	return fmt.Sprintf("Address &%s", a.Var)
 }
 
+func (a *Address) Pos() position {
+	return a.p
+}
+
 type Assignment struct {
 	Target AST
 	Val    AST
@@ -472,6 +511,10 @@ func (a *Assignment) Note() string {
 	return fmt.Sprintf("Assignment %s = %s", a.Target.Note(), a.Val.Note())
 }
 
+func (a *Assignment) Pos() position {
+	return a.Target.Pos()
+}
+
 type StructField struct {
 	Name string
 	Val  AST
@@ -480,6 +523,7 @@ type StructField struct {
 type StructLiteral struct {
 	Type   ASTType
 	Fields []StructField
+	p      position
 }
 
 func (s *StructLiteral) ASTType(c *Context) ASTType {
@@ -492,6 +536,10 @@ func (s *StructLiteral) ASTType(c *Context) ASTType {
 
 func (s *StructLiteral) Note() string {
 	return fmt.Sprintf("struct literal %s", s.Type)
+}
+
+func (s *StructLiteral) Pos() position {
+	return s.p
 }
 
 type IfStmt struct {
@@ -507,6 +555,10 @@ func (*IfStmt) ASTType(c *Context) ASTType {
 
 func (*IfStmt) Note() string {
 	return fmt.Sprintf("if ...")
+}
+
+func (i *IfStmt) Pos() position {
+	return i.Cond.Pos()
 }
 
 type For struct {
@@ -525,6 +577,10 @@ func (f *For) Note() string {
 		return fmt.Sprintf("for (; ...) { ... }")
 	}
 	return fmt.Sprintf("for (%s ...) { ... }", f.Init.Note())
+}
+
+func (f *For) Pos() position {
+	return f.Init.Pos()
 }
 
 // Operation on 2 expressions (i.e. +, -, *, <, <=, == etc.)
@@ -578,8 +634,13 @@ func (o *Op2) Note() string {
 	return fmt.Sprintf("Op (%s) %s (%s)", o.First.Note(), op, o.Second.Note())
 }
 
+func (o *Op2) Pos() position {
+	return o.First.Pos()
+}
+
 type Return struct {
 	Val AST
+	p   position
 }
 
 func (*Return) ASTType(*Context) ASTType {
@@ -588,6 +649,10 @@ func (*Return) ASTType(*Context) ASTType {
 
 func (*Return) Note() string {
 	return "return ..."
+}
+
+func (r *Return) Pos() position {
+	return r.p
 }
 
 type Index struct {
@@ -624,6 +689,10 @@ func (i *Index) Note() string {
 	return fmt.Sprintf("Index (...)[%d]", i.N)
 }
 
+func (i *Index) Pos() position {
+	return i.Val.Pos()
+}
+
 type SliceOp struct {
 	Val   AST
 	Lower AST
@@ -648,10 +717,15 @@ func (s *SliceOp) Note() string {
 	return fmt.Sprintf("Slice operation %s[...:...]", s.Val.Note())
 }
 
+func (s *SliceOp) Pos() position {
+	return s.Val.Pos()
+}
+
 // TODO: Do we need this, or can we just use the actual value?
 // What's the purpose of boxing it?
 type Literal struct {
 	Val interface{}
+	p   position
 }
 
 func (l *Literal) ASTType(*Context) ASTType {
@@ -670,8 +744,13 @@ func (l *Literal) Note() string {
 	return fmt.Sprintf("literal %v %v", l.Val, reflect.TypeOf(l.Val).String())
 }
 
+func (l *Literal) Pos() position {
+	return l.p
+}
+
 type Symbol struct {
 	Name string
+	p    position
 }
 
 func (s *Symbol) ASTType(c *Context) ASTType {
@@ -684,6 +763,10 @@ func (s *Symbol) ASTType(c *Context) ASTType {
 
 func (s *Symbol) Note() string {
 	return fmt.Sprintf("symbol %v", s.Name)
+}
+
+func (s *Symbol) Pos() position {
+	return s.p
 }
 
 func ParseErrorF(n *Node, f string, args ...any) {
@@ -730,6 +813,7 @@ func (n *Node) toASTTop(c *Context) AST {
 	case n_struct:
 		var sd StructDecl
 		sd.TName = n.sval
+		sd.p = n.p
 		for _, a := range n.args {
 			if a.t != n_stfield {
 				ParseErrorF(a, "Expected a struct field, but found %s", a.t)
@@ -747,11 +831,13 @@ func (n *Node) toASTTop(c *Context) AST {
 		var v VarDecl
 		v.Name = n.sval
 		v.Type = mkTypename(n.args[0])
+		v.p = n.p
 		c.BindVar(v.Name, v.Type)
 		return &v
 	case n_fn:
 		var fn FuncDecl
 		fn.Name = n.sval
+		fn.p = n.p
 		nargs := int(n.ival)
 		args := n.args
 		for i := 0; i < nargs; i++ {
@@ -774,6 +860,7 @@ func (n *Node) toASTTop(c *Context) AST {
 		return &fn
 	case n_block:
 		var b Block
+		b.p = n.p
 		for _, bn := range n.args {
 			b.Body = append(b.Body, bn.toASTTop(NewContext()))
 		}
@@ -781,6 +868,7 @@ func (n *Node) toASTTop(c *Context) AST {
 	case n_funcall:
 		var f Funcall
 		f.FName = n.sval
+		f.p = n.p
 		for _, a := range n.args {
 			f.Args = append(f.Args, a.toASTTop(NewContext()))
 		}
@@ -788,7 +876,7 @@ func (n *Node) toASTTop(c *Context) AST {
 	case n_str:
 		//str := c.String(n.sval)
 		//return &Literal{Val: str}
-		return &Literal{Val: n.sval}
+		return &Literal{Val: n.sval, p: n.p}
 	case n_dot:
 		var d Dot
 		d.Val = n.args[0].toASTTop(NewContext())
@@ -800,19 +888,20 @@ func (n *Node) toASTTop(c *Context) AST {
 	case n_deref:
 		return &Deref{Val: n.args[0].toASTTop(NewContext())}
 	case n_symbol:
-		return &Symbol{Name: n.sval}
+		return &Symbol{Name: n.sval, p: n.p}
 	case n_eq:
 		return &Assignment{
 			Target: n.args[0].toASTTop(NewContext()),
 			Val:    n.args[1].toASTTop(NewContext()),
 		}
 	case n_number:
-		return &Literal{Val: n.ival}
+		return &Literal{Val: n.ival, p: n.p}
 	case n_byte:
-		return &Literal{Val: byte(n.ival)}
+		return &Literal{Val: byte(n.ival), p: n.p}
 	case n_stlit:
 		var s StructLiteral
 		s.Type = ASTType{Name: n.sval}
+		s.p = n.p
 		for _, f := range n.args {
 			if f.t != n_stfield {
 				ParseErrorF(f, "Expected struct field, but got %v", f.t)
@@ -826,18 +915,19 @@ func (n *Node) toASTTop(c *Context) AST {
 	case n_address:
 		return &Address{
 			Var: n.sval,
+			p:   n.p,
 		}
 	case n_index:
 		if n.args[0].t == n_number {
 			// special optimization
 			return &Index{
-				Val: &Symbol{Name: n.sval},
+				Val: &Symbol{Name: n.sval, p: n.p},
 				N:   n.args[0].ival,
 			}
 		} else {
 			idx := n.args[0].toASTTop(NewContext())
 			return &Index{
-				Val:  &Symbol{Name: n.sval},
+				Val:  &Symbol{Name: n.sval, p: n.p},
 				NAST: idx,
 			}
 		}
@@ -850,7 +940,7 @@ func (n *Node) toASTTop(c *Context) AST {
 			upper = n.args[1].toASTTop(NewContext())
 		}
 		return &SliceOp{
-			Val:   &Symbol{Name: n.sval},
+			Val:   &Symbol{Name: n.sval, p: n.p},
 			Lower: lower,
 			Upper: upper,
 		}
@@ -870,7 +960,7 @@ func (n *Node) toASTTop(c *Context) AST {
 		body := n.args[3].toASTTop(NewContext())
 		ct := cond.ASTType(c)
 		if !ct.Same(boolASTType()) {
-			panic("Cannot compile for loop with non-boolean condition.\n")
+			ParseErrorF(n.args[1], "Cannot compile for loop with non-boolean condition: %v\n", ct)
 		}
 		return &For{
 			Init: init,
@@ -887,6 +977,7 @@ func (n *Node) toASTTop(c *Context) AST {
 	case n_return:
 		return &Return{
 			Val: n.args[0].toASTTop(NewContext()),
+			p:   n.p,
 		}
 	}
 	spew.Dump(n)

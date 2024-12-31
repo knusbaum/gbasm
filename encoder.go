@@ -132,7 +132,9 @@ forms:
 		// 	fmt.Printf("\t%v, %s", o, reflect.TypeOf(o).String())
 		// }
 		// fmt.Println("")
-		fmt.Printf("\t[Instruction] Encoding form %v ops: %#v, args: %#v\n", f.name, f.ops, os)
+		if debug {
+			fmt.Printf("\t[Instruction] Encoding form %v ops: %#v, args: %#v\n", f.name, f.ops, os)
+		}
 		return f.Encode(w, os...)
 	}
 	return nil, fmt.Errorf("Failed to find an instruction for %s %#v", i.Summary, os)

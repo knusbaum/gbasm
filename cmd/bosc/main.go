@@ -136,7 +136,11 @@ func main() {
 		}
 
 		for _, a := range asts {
-			Compile(&bs, actx, a)
+			err := Compile(&bs, actx, a)
+			if err != nil {
+				fmt.Printf("Fatal: %v\n", err)
+				os.Exit(1)
+			}
 		}
 
 		// for name, b := range actx.bindings {

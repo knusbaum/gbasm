@@ -9,7 +9,6 @@ import (
 	"math"
 	"math/bits"
 	"os"
-	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -282,7 +281,7 @@ func main() {
 			if strings.HasPrefix(line, "//") {
 				continue
 			}
-			fmt.Printf("INPUT %v\n", line)
+			//fmt.Printf("INPUT %v\n", line)
 			if strings.HasPrefix(line, "package") {
 				pkgname := strings.TrimSpace(strings.TrimPrefix(line, "package"))
 				if *out == "" {
@@ -630,12 +629,12 @@ func main() {
 						fmt.Printf("Fatal: Failed to parse hex %s: %s\n", parts[i], err)
 						os.Exit(1)
 					}
-					fmt.Printf("%v -> Parsed %s into %d (%X)(%v)\n", parts, parts[i], smallestUi(num), smallestUi(num), reflect.TypeOf(smallestUi(num)).String())
+					//fmt.Printf("%v -> Parsed %s into %d (%X)(%v)\n", parts, parts[i], smallestUi(num), smallestUi(num), reflect.TypeOf(smallestUi(num)).String())
 					args[i-1] = smallestUi(num)
 					continue
 				}
 				if num, err := strconv.ParseInt(parts[i], 10, 64); err == nil {
-					fmt.Printf("%v -> Parsed %s into %d (%X)(%v)\n", parts, parts[i], smallestInt(num), smallestInt(num), reflect.TypeOf(smallestInt(num)).String())
+					//fmt.Printf("%v -> Parsed %s into %d (%X)(%v)\n", parts, parts[i], smallestInt(num), smallestInt(num), reflect.TypeOf(smallestInt(num)).String())
 					args[i-1] = smallestInt(num)
 					continue
 				}
