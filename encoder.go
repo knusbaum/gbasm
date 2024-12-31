@@ -654,25 +654,25 @@ func (o *Op) ConvertRalloc(a *Ralloc) interface{} {
 	case "r64":
 		r := a.Register()
 		if r.Width() != 64 {
-			panic("OOF")
+			panic("r64 OOF")
 		}
 		return r
 	case "r32":
 		r := a.Register()
 		if r.Width() != 32 {
-			panic("OOF")
+			panic("r32 OOF")
 		}
 		return r
 	case "r16":
 		r := a.Register()
 		if r.Width() != 16 {
-			panic("OOF")
+			panic("r16 OOF")
 		}
 		return r
 	case "r8":
 		r := a.Register()
 		if r.Width() != 8 {
-			panic("OOF")
+			panic(fmt.Sprintf("r8 OOF. Expected %s to be %d wide, but register %v was %d", a.sym, 8, r, r.Width()))
 		}
 		return r
 	case "m64", "m32", "m16", "m8", "m":
@@ -987,6 +987,18 @@ func (f *IForm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 	// 	fmt.Printf("\t%v, %s", o, reflect.TypeOf(o).String())
 	// }
 	// fmt.Println("")
+
+	defer func() {
+		if e := recover(); e != nil {
+			fmt.Printf("PANIC DURING IForm.Encode(%s):", f.name)
+			defer fmt.Printf("RETURN IForm.Encode(%s)\n", f.name)
+			for _, o := range os {
+				fmt.Printf("\t%v, %s", o, reflect.TypeOf(o).String())
+			}
+			fmt.Println("")
+			panic(e)
+		}
+	}()
 
 	// Once we know which instruction we are using, we must convert all rallocs to their target
 	// values. Doing this may inject instructions, so this is the latest point where we can

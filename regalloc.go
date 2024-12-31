@@ -41,12 +41,19 @@ func NewRegisters() *Registers {
 	rs.rs[R_RDI] = &rstate{}
 	rs.rs[R8B] = &rstate{}
 	rs.rs[R8] = &rstate{}
+	rs.rs[R9B] = &rstate{}
 	rs.rs[R9] = &rstate{}
+	rs.rs[R10B] = &rstate{}
 	rs.rs[R10] = &rstate{}
+	rs.rs[R11B] = &rstate{}
 	rs.rs[R11] = &rstate{}
+	rs.rs[R12B] = &rstate{}
 	rs.rs[R12] = &rstate{}
+	rs.rs[R13B] = &rstate{}
 	rs.rs[R13] = &rstate{}
+	rs.rs[R14B] = &rstate{}
 	rs.rs[R14] = &rstate{}
+	rs.rs[R15B] = &rstate{}
 	rs.rs[R15] = &rstate{}
 	return rs
 }
@@ -66,7 +73,7 @@ func NewRegisters() *Registers {
 // the extended byte registers SPL, DIL, BPL, and SIL respectively.
 // It would be nice to add those registers, as they should be safe to use and it would
 // be useful to have more than 4 8-bit registers.
-var regs8 = []Register{R_BL, R_CL, R_DL, R_AL, R8B}
+var regs8 = []Register{R_BL, R_CL, R_DL, R_AL, R8B, R9B, R10B, R11B, R12B, R13B, R14B, R15B}
 
 //var regs64 = []Register{R_RBX, R_RCX, R_RDX, R_RSP, R_RBP, R_RSI, R_RDI, R8, R9, R10, R11, R12, R13, R14, R15, R_RAX}
 

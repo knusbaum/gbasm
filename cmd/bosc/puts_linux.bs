@@ -35,6 +35,13 @@ function puts
 	epilogue
 	ret
 
+function lenb
+	type fn(byte[]) num
+
+	mov rax [rdi+8]
+
+	ret
+
 // SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 // call number: 0
 function read

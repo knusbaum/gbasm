@@ -145,7 +145,7 @@ func (r *Ralloc) Register() Register {
 	}
 	reg, ok := r.rallocs.rs.Get(r.size)
 	if !ok {
-		fmt.Printf("\t[Ralloc.Register()]: No available registers for %s. Evicting some variable.\n", r.sym)
+		fmt.Printf("\t[Ralloc.Register()]: No available registers for %s (size %d). Evicting some variable.\n", r.sym, r.size)
 		reg, ok = r.rallocs.Evict(r.size)
 		if !ok {
 			panic("Failed to load register") // TODO: Better error handling
@@ -443,7 +443,9 @@ func (ra *Rallocs) Evict(size int) (Register, bool) {
 	for _, reg := range ra.lru {
 		if reg.Width() >= size {
 			ra.regs[reg].Evict()
-			return reg, true
+			//return reg, true
+			// Can't just return reg, since it might be > size
+			return ra.rs.Get(size)
 		}
 	}
 	return 0, false

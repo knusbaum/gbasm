@@ -1,0 +1,72 @@
+package main
+
+import "string.bo"
+
+struct nret {
+	i num
+	err bool
+}
+
+fn atoi(s str) nret {
+	var true bool
+	var false bool
+	true = (0 == 0)
+	false = (1 == 0)
+	
+	var l num
+	l = strlen(s)
+	var i num
+	var r num
+	r = 0
+	for (i = 0; i < l; i = i + 1) {
+		r = r * 10
+		var b byte
+		b = s[i]
+		//putc(b)
+		if (b == '1') {
+			r = r + 1
+		} else if (b == '2') {
+			r = r + 2
+		} else if (b == '3') {
+			r = r + 3
+		} else if (b == '4') {
+			r = r + 4
+		} else if (b == '5') {
+			r = r + 5
+		} else if (b == '6') {
+			r = r + 6
+		} else if (b == '7') {
+			r = r + 7
+		} else if (b == '8') {
+			r = r + 8
+		} else if (b == '9') {
+			r = r + 9
+		} else if (b == '0') {
+			
+		} else {
+			return nret{i: 0, err: true }
+		}
+	}
+	return nret{i:r, err: false}
+}
+
+fn main() {
+	var r nret
+	r = atoi("Hello, World!\n")
+	if (r.err) {
+		puts("ATOI FAILED!\n")
+	} else {
+		puts("ATOI RETURNED: ")
+		puti(r.i)
+		puts("\n")
+	}
+	
+	r = atoi("12345")
+	if (r.err) {
+		puts("ATOI FAILED!\n")
+	} else {
+		puts("ATOI RETURNED: ")
+		puti(r.i)
+		puts("\n")
+	}
+}

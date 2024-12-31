@@ -57,13 +57,19 @@ fn structPtrCopyFn(p *point) {
 	puts("\n")	
 }
 
-fn main() {
+fn main() num {
 	var p point
 
-	p.x = 10
-	p.y = 20
-	p.z = 30
-
+	p = point{
+		x: 10,
+		y: 20,
+		z: 30
+	}
+	
+	// p.x = 10
+	// p.y = 20
+	// p.z = 30
+	
 	structfn(p)
 	
 	puti(p.x)

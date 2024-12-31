@@ -28,16 +28,20 @@ const (
 	n_div
 	n_add
 	n_sub
-	n_eq  // Assignment equal
-	n_deq // Comparison equal
+	n_eq  // Assignment (=)
+	n_deq // Comparison equal (==)
+	n_neq // Not equal (!=)
 	n_lt  // Less than
 	n_gt  // Greater than
 	n_le  // Less or equal
 	n_ge  // Greater or equal
+	n_booland
+	n_boolor
 	n_if
 	n_for
 	n_block
 	n_break
+	n_continue
 	n_return
 	n_import
 	n_address
@@ -90,6 +94,8 @@ func (t nodetype) String() string {
 		return "n_eq"
 	case n_deq:
 		return "n_deq"
+	case n_neq:
+		return "n_deq"
 	case n_lt:
 		return "n_lt"
 	case n_gt:
@@ -98,6 +104,10 @@ func (t nodetype) String() string {
 		return "n_le"
 	case n_ge:
 		return "n_ge"
+	case n_booland:
+		return "n_booland"
+	case n_boolor:
+		return "n_boolor"
 	case n_if:
 		return "n_if"
 	case n_for:
@@ -106,6 +116,8 @@ func (t nodetype) String() string {
 		return "n_block"
 	case n_break:
 		return "n_break"
+	case n_continue:
+		return "n_continue"
 	case n_return:
 		return "n_return"
 	case n_import:
@@ -457,6 +469,9 @@ func (p *Parser) parseParens() *Node {
 	} else if c.t == tok_break {
 		p.advance()
 		return &Node{t: n_break, p: c.p}
+	} else if c.t == tok_continue {
+		p.advance()
+		return &Node{t: n_continue, p: c.p}
 	} else if c.t == tok_return {
 		p.advance()
 		val := p.parseExpression()
@@ -581,6 +596,11 @@ func (p *Parser) parseExpression() (r *Node) {
 			v2 := p.parseAddSub()
 			v = &Node{t: n_deq, p: c.p, args: []*Node{v, v2}}
 			continue
+		case tok_neq:
+			p.advance()
+			v2 := p.parseAddSub()
+			v = &Node{t: n_neq, p: c.p, args: []*Node{v, v2}}
+			continue
 		case tok_lt:
 			p.advance()
 			v2 := p.parseAddSub()
@@ -601,8 +621,16 @@ func (p *Parser) parseExpression() (r *Node) {
 			v2 := p.parseAddSub()
 			v = &Node{t: n_ge, p: c.p, args: []*Node{v, v2}}
 			continue
-			//case tok_semicolon:
-			//	p.advance()
+		case tok_booland:
+			p.advance()
+			v2 := p.parseAddSub()
+			v = &Node{t: n_booland, p: c.p, args: []*Node{v, v2}}
+			continue
+		case tok_boolor:
+			p.advance()
+			v2 := p.parseAddSub()
+			v = &Node{t: n_boolor, p: c.p, args: []*Node{v, v2}}
+			continue
 		}
 		break
 	}

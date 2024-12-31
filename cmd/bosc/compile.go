@@ -78,20 +78,26 @@ func (s *spot) empty() bool {
 	return s.ref == ""
 }
 
-func spot_memcpy(of io.Writer, dst, src spot, bytes int) {
+func spot_memcpy(of io.Writer, c *Context, dst, src spot, bytes int) {
 	qwords := bytes / 8
 	singles := bytes % 8
 
-	fmt.Fprintf(of, "\tacquire rax\n")
+	//fmt.Fprintf(of, "\tacquire rax\n")
+	tmp := newSpot(of, c, c.Temp(), ASTType{Name: "byte", ArraySize: 8})
 	for i := 0; i < qwords; i++ {
-		fmt.Fprintf(of, "\tmov rax [%s+%d]\n", src.ref, i*8)
-		fmt.Fprintf(of, "\tmov [%s+%d] rax\n", dst.ref, i*8)
+		fmt.Fprintf(of, "\tmov %s [%s+%d]\n", tmp.ref, src.ref, i*8)
+		fmt.Fprintf(of, "\tmov [%s+%d] %s\n", dst.ref, i*8, tmp.ref)
 	}
-	for i := 0; i < singles; i++ {
-		fmt.Fprintf(of, "\tmovb al [%s+%d]\n", src.ref, qwords*8+i)
-		fmt.Fprintf(of, "\tmovb [%s+%d] al\n", dst.ref, qwords*8+i)
+	tmp.free(of)
+	if singles > 0 {
+		tmp = newSpot(of, c, c.Temp(), ASTType{Name: "byte"})
+		for i := 0; i < singles; i++ {
+			fmt.Fprintf(of, "\tmovb %s [%s+%d]\n", tmp.ref, src.ref, qwords*8+i)
+			fmt.Fprintf(of, "\tmovb [%s+%d] %s\n", dst.ref, qwords*8+i, tmp.ref)
+		}
+		//fmt.Fprintf(of, "\trelease rax\n")
+		tmp.free(of)
 	}
-	fmt.Fprintf(of, "\trelease rax\n")
 }
 
 // func spot_memset(of io.Writer, dst spot, val byte, bytes int) {
@@ -117,9 +123,8 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 		return
 	}
 	if src.t.Indirection == 0 && src.t.Size(c) > 8 {
-		spot_memcpy(of, dest, src, src.t.Size(c))
+		spot_memcpy(of, c, dest, src, src.t.Size(c))
 		return
-		//panic("MOVE OF BYTES TYPES NOT IMPLEMENTED!")
 	}
 	// TODO: other types, array stuff, etc.
 	if dest.t.Same(src.t) {
@@ -183,15 +188,7 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		if !ok {
 			panic("No struct (TODO)")
 		}
-		offset := 0
-		var mtype ASTType
-		for _, f := range def.Fields {
-			if f.Name == ast.Member {
-				mtype = f.Type
-				break
-			}
-			offset += f.Type.Size(c)
-		}
+		offset, mtype := def.ByteOffset(c, ast.Member)
 		mtype.Indirection += 1
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), mtype)
@@ -247,6 +244,9 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 
 func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	defer func() {
+		if e := recover(); e != nil {
+			panic(e)
+		}
 		// This ensures that every spot ruturned by the compiler
 		// contains the type expected to be produced by that AST.
 		expect := a.ASTType(c)
@@ -326,6 +326,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// for now, we'll just always move rax, even when nobody will use it.
 		note(of, "\t// acquire rax for call return\n")
 		rax := regSpot(of, "rax")
+		rax.t = ast.ASTType(c)
 		fmt.Fprintf(of, "\tcall %s\n", ast.FName)
 		for i := 0; i < len(ast.Args); i++ {
 			note(of, "\t// release call registers\n")
@@ -341,6 +342,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			move(of, c, ret, rax)
 		}
 		note(of, "\t// free rax for call return\n")
+		rax.t = regtype
 		rax.free(of)
 		return ret
 	case *Dot:
@@ -349,15 +351,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if !ok {
 			panic("No struct (TODO)")
 		}
-		offset := 0
-		var mtype ASTType
-		for _, f := range def.Fields {
-			if f.Name == ast.Member {
-				mtype = f.Type
-				break
-			}
-			offset += f.Type.Size(c)
-		}
+		offset, mtype := def.ByteOffset(c, ast.Member)
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), mtype)
 		}
@@ -449,6 +443,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			index := compileTop(of, c, ast.NAST, nullspot)
 			scale := vt.Size(c)
 			fmt.Fprintf(of, "\tmov %s [%s+%s*%d]\n", dest.ref, base.ref, index.ref, scale)
+			return dest
 		} else {
 			panic("Not implemented: Scale + Index * Scale when scale > 8")
 		}
@@ -563,14 +558,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		lv.free(of)
 		val.free(of)
 		return nullspot
-	case *StructLiteral:
 	case *IfStmt:
 		v := compileTop(of, c, ast.Cond, nullspot)
 		labelse := c.Label("else")
 		labend := c.Label("end")
 		fmt.Fprintf(of, "\ttest %s %s\n", v.ref, v.ref)
-		fmt.Fprintf(of, "\tjz %s\n", labelse)
 		v.free(of)
+		fmt.Fprintf(of, "\tjz %s\n", labelse)
 		v = compileTop(of, c, ast.Then, nullspot)
 		if !v.empty() {
 			v.free(of)
@@ -632,6 +626,23 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			return s
 		}
 		move(of, c, dest, s)
+		return dest
+	case *StructLiteral:
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), ast.Type)
+		}
+		def, ok := c.StructDeclForName(ast.Type.Name)
+		if !ok {
+			panic("No struct (TODO)")
+		}
+		for _, f := range ast.Fields {
+			v := compileTop(of, c, f.Val, nullspot)
+			off, _ := def.ByteOffset(c, f.Name)
+			if v.t.Indirection == 0 && v.t.Size(c) > 8 {
+				panic("struct literal with nested structs not implemented yet.")
+			}
+			fmt.Fprintf(of, "\tmov [%s+%d] %s\n", dest.ref, off, v.ref)
+		}
 		return dest
 	case *Literal:
 		t := ast.ASTType(c)
@@ -746,7 +757,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		arg := f.Args[i]
 		argt := arg.ASTType(c)
 		if !argt.Same(d.Args[i].Type) {
-			panic(fmt.Sprintf("BAD ARG TYPE! param: %v, passed arg: %v", d.Args[i].Type, argt))
+			panic(fmt.Sprintf("%#v BAD ARG TYPE! param: %v, passed arg: %v", f, d.Args[i].Type, argt))
 		}
 		if i > 5 {
 			panic("More than 6 args not supported yet (TODO)")
@@ -835,6 +846,10 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 	if dest.empty() {
 		dest = newSpot(of, c, c.Temp(), o.ASTType(c))
 	}
+	// TODO: Validate operation types
+	// if !o.First.ASTType(c).Same(numASTType()) {
+	// 	panic("Cannot perform comparisons on non-numeric types.")
+	// }
 	switch o.Type {
 	case n_add:
 		first := compileTop(of, c, o.First, dest)
@@ -962,6 +977,30 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
 		fmt.Fprintf(of, "\tsete %s\n", dest.ref)
+		return dest
+	case n_neq:
+		first := compileTop(of, c, o.First, nullspot)
+		second := compileTop(of, c, o.Second, nullspot)
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), boolASTType())
+		}
+		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
+		fmt.Fprintf(of, "\tsetne %s\n", dest.ref)
+		return dest
+	case n_booland:
+		first := compileTop(of, c, o.First, nullspot)
+		second := compileTop(of, c, o.Second, nullspot)
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), boolASTType())
+		}
+		fmt.Fprintf(of, "\ttest %s %s\n", first.ref, first.ref)
+		fmt.Fprintf(of, "\tseta %s\n", first.ref)
+
+		fmt.Fprintf(of, "\ttest %s %s\n", second.ref, second.ref)
+		fmt.Fprintf(of, "\tseta %s\n", second.ref)
+
+		fmt.Fprintf(of, "\tand %s %s\n", first.ref, second.ref)
+		fmt.Fprintf(of, "\tseta %s\n", dest.ref)
 		return dest
 	}
 	panic("Could not do op\n")

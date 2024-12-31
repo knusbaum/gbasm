@@ -68,7 +68,7 @@ func (c *Context) DefineFunc(name string, f *FuncDecl) {
 
 func (c *Context) BindVar(name string, t ASTType) {
 	if _, ok := c.bindings[name]; ok {
-		panic("TODO")
+		panic(fmt.Sprintf("Binding already exists: %s", name))
 	}
 	c.bindings[name] = t
 }
@@ -321,6 +321,19 @@ func (s *StructDecl) Size(c *Context) int {
 	return size
 }
 
+func (s *StructDecl) ByteOffset(c *Context, field string) (int, ASTType) {
+	offset := 0
+	var mtype ASTType
+	for _, f := range s.Fields {
+		if f.Name == field {
+			mtype = f.Type
+			break
+		}
+		offset += f.Type.Size(c)
+	}
+	return offset, mtype
+}
+
 type VarDecl struct {
 	Name string
 	Type ASTType
@@ -525,7 +538,7 @@ func (o *Op2) ASTType(c *Context) ASTType {
 	// TODO: this will be expanded as more types are added.
 	// For now, it's only num that can have operations.
 	switch o.Type {
-	case n_lt, n_le, n_gt, n_ge, n_deq:
+	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_booland, n_boolor:
 		return boolASTType()
 	case n_add, n_sub, n_mul, n_div:
 		return o.First.ASTType(c)
@@ -547,6 +560,8 @@ func (o *Op2) Note() string {
 		op = "/"
 	case n_deq:
 		op = "=="
+	case n_neq:
+		op = "!="
 	case n_lt:
 		op = "<"
 	case n_le:
@@ -658,7 +673,7 @@ type Symbol struct {
 func (s *Symbol) ASTType(c *Context) ASTType {
 	t, ok := c.TypeForVar(s.Name)
 	if !ok {
-		panic("Bad Variable. TODO: Nice error reports.")
+		panic(fmt.Sprintf("Bad Variable: %s ... TODO: Nice error reports.", s.Name))
 	}
 	return t
 }
@@ -859,7 +874,7 @@ func (n *Node) toASTTop(c *Context) AST {
 			Step: step,
 			Body: body,
 		}
-	case n_lt, n_le, n_gt, n_ge, n_deq, n_add, n_sub, n_mul, n_div:
+	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_add, n_sub, n_mul, n_div, n_booland, n_boolor:
 		return &Op2{
 			Type:   n.t,
 			First:  n.args[0].toASTTop(NewContext()),

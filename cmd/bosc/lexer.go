@@ -34,10 +34,13 @@ const (
 	tok_fslash
 	tok_eq
 	tok_deq // Double-equals
+	tok_neq
 	tok_lt
 	tok_gt
 	tok_le
 	tok_ge
+	tok_booland
+	tok_boolor
 
 	// Keywords
 	tok_if
@@ -46,19 +49,21 @@ const (
 	tok_for
 	tok_fn
 	tok_break
+	tok_continue
 	tok_struct
 	tok_import
 )
 
 var keywords map[string]toktype = map[string]toktype{
-	"if":     tok_if,
-	"else":   tok_else,
-	"return": tok_return,
-	"for":    tok_for,
-	"fn":     tok_fn,
-	"break":  tok_break,
-	"struct": tok_struct,
-	"import": tok_import,
+	"if":       tok_if,
+	"else":     tok_else,
+	"return":   tok_return,
+	"for":      tok_for,
+	"fn":       tok_fn,
+	"break":    tok_break,
+	"continue": tok_continue,
+	"struct":   tok_struct,
+	"import":   tok_import,
 }
 
 const (
@@ -119,6 +124,8 @@ func (t toktype) String() string {
 		return "tok_eq"
 	case tok_deq:
 		return "tok_deq"
+	case tok_neq:
+		return "tok_neq"
 	case tok_lt:
 		return "tok_lt"
 	case tok_gt:
@@ -127,6 +134,10 @@ func (t toktype) String() string {
 		return "tok_le"
 	case tok_ge:
 		return "tok_ge"
+	case tok_booland:
+		return "tok_booland"
+	case tok_boolor:
+		return "tok_boolor"
 	case tok_if:
 		return "tok_if"
 	case tok_else:
@@ -139,6 +150,8 @@ func (t toktype) String() string {
 		return "tok_fn"
 	case tok_break:
 		return "tok_break"
+	case tok_continue:
+		return "tok_continue"
 	case tok_struct:
 		return "tok_struct"
 	}
@@ -422,6 +435,10 @@ func (l *lexer) Next() (rt token, re error) {
 		return token{t: tok_star, p: l.p}, nil
 	case '&':
 		l.nextRune()
+		if l.headRune() == '&' {
+			l.nextRune()
+			return token{t: tok_booland, p: l.p}, nil
+		}
 		return token{t: tok_amp, p: l.p}, nil
 	case '/':
 		l.nextRune()
@@ -431,6 +448,13 @@ func (l *lexer) Next() (rt token, re error) {
 			return l.Next()
 		}
 		return token{t: tok_fslash, p: l.p}, nil
+	case '!':
+		l.nextRune()
+		if l.headRune() == '=' {
+			l.nextRune()
+			return token{t: tok_neq, p: l.p}, nil
+		}
+		panic("NOT not implemented")
 	case '=':
 		l.nextRune()
 		if l.headRune() == '=' {
