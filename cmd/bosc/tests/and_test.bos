@@ -1,0 +1,19 @@
+package main
+
+import "string.bo"
+
+fn main() {
+	var i num
+	i = 10
+	if (i > 0 && i < 20) {
+		puts("between 0 and 20\n")
+	} else {
+		puts("not between 0 and 20\n")
+	}
+
+	if (i > 10 && i < 30) {
+		puts("between 10 and 30\n")
+	} else {
+		puts("not between 10 and 30\n")
+	}
+}

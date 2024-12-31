@@ -993,14 +993,18 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), boolASTType())
 		}
+		fbool := newSpot(of, c, c.Temp(), byteASTType())
+		sbool := newSpot(of, c, c.Temp(), byteASTType())
 		fmt.Fprintf(of, "\ttest %s %s\n", first.ref, first.ref)
-		fmt.Fprintf(of, "\tseta %s\n", first.ref)
+		fmt.Fprintf(of, "\tseta %s\n", fbool.ref)
 
 		fmt.Fprintf(of, "\ttest %s %s\n", second.ref, second.ref)
-		fmt.Fprintf(of, "\tseta %s\n", second.ref)
+		fmt.Fprintf(of, "\tseta %s\n", sbool.ref)
 
-		fmt.Fprintf(of, "\tand %s %s\n", first.ref, second.ref)
+		fmt.Fprintf(of, "\tand %s %s\n", fbool.ref, sbool.ref)
 		fmt.Fprintf(of, "\tseta %s\n", dest.ref)
+		fbool.free(of)
+		sbool.free(of)
 		return dest
 	}
 	panic("Could not do op\n")

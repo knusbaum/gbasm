@@ -547,6 +547,68 @@ func (p *Parser) parseVarDecl() *Node {
 	return &Node{t: n_var, sval: name, args: []*Node{v2}}
 }
 
+func (p *Parser) parseBoolOp() *Node {
+	v := p.parseCompare()
+	for {
+		c := p.current()
+		switch c.t {
+		case tok_booland:
+			p.advance()
+			v2 := p.parseCompare()
+			v = &Node{t: n_booland, p: c.p, args: []*Node{v, v2}}
+			continue
+		case tok_boolor:
+			p.advance()
+			v2 := p.parseCompare()
+			v = &Node{t: n_boolor, p: c.p, args: []*Node{v, v2}}
+			continue
+		}
+		break
+	}
+	return v
+}
+
+func (p *Parser) parseCompare() *Node {
+	v := p.parseAddSub()
+	for {
+		c := p.current()
+		switch c.t {
+		case tok_deq:
+			p.advance()
+			v2 := p.parseAddSub()
+			v = &Node{t: n_deq, p: c.p, args: []*Node{v, v2}}
+			continue
+		case tok_neq:
+			p.advance()
+			v2 := p.parseAddSub()
+			v = &Node{t: n_neq, p: c.p, args: []*Node{v, v2}}
+			continue
+		case tok_lt:
+			p.advance()
+			v2 := p.parseAddSub()
+			v = &Node{t: n_lt, p: c.p, args: []*Node{v, v2}}
+			continue
+		case tok_gt:
+			p.advance()
+			v2 := p.parseAddSub()
+			v = &Node{t: n_gt, p: c.p, args: []*Node{v, v2}}
+			continue
+		case tok_le:
+			p.advance()
+			v2 := p.parseAddSub()
+			v = &Node{t: n_le, p: c.p, args: []*Node{v, v2}}
+			continue
+		case tok_ge:
+			p.advance()
+			v2 := p.parseAddSub()
+			v = &Node{t: n_ge, p: c.p, args: []*Node{v, v2}}
+			continue
+		}
+		break
+	}
+	return v
+}
+
 func (p *Parser) parseExpression() (r *Node) {
 	//fmt.Printf("[Start parseExpression] %#v\n", p.current())
 	//defer func() { fmt.Printf("[Finish parseExpression]: %#v\n", r) }()
@@ -579,7 +641,7 @@ func (p *Parser) parseExpression() (r *Node) {
 		panic(eofError(0))
 	}
 
-	v := p.parseAddSub()
+	v := p.parseBoolOp()
 	for {
 		c := p.current()
 		switch c.t {
@@ -590,46 +652,6 @@ func (p *Parser) parseExpression() (r *Node) {
 			p.advance()
 			v2 := p.parseExpression()
 			v = &Node{t: n_eq, p: c.p, args: []*Node{v, v2}}
-			continue
-		case tok_deq:
-			p.advance()
-			v2 := p.parseAddSub()
-			v = &Node{t: n_deq, p: c.p, args: []*Node{v, v2}}
-			continue
-		case tok_neq:
-			p.advance()
-			v2 := p.parseAddSub()
-			v = &Node{t: n_neq, p: c.p, args: []*Node{v, v2}}
-			continue
-		case tok_lt:
-			p.advance()
-			v2 := p.parseAddSub()
-			v = &Node{t: n_lt, p: c.p, args: []*Node{v, v2}}
-			continue
-		case tok_gt:
-			p.advance()
-			v2 := p.parseAddSub()
-			v = &Node{t: n_gt, p: c.p, args: []*Node{v, v2}}
-			continue
-		case tok_le:
-			p.advance()
-			v2 := p.parseAddSub()
-			v = &Node{t: n_le, p: c.p, args: []*Node{v, v2}}
-			continue
-		case tok_ge:
-			p.advance()
-			v2 := p.parseAddSub()
-			v = &Node{t: n_ge, p: c.p, args: []*Node{v, v2}}
-			continue
-		case tok_booland:
-			p.advance()
-			v2 := p.parseAddSub()
-			v = &Node{t: n_booland, p: c.p, args: []*Node{v, v2}}
-			continue
-		case tok_boolor:
-			p.advance()
-			v2 := p.parseAddSub()
-			v = &Node{t: n_boolor, p: c.p, args: []*Node{v, v2}}
 			continue
 		}
 		break

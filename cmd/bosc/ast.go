@@ -570,6 +570,10 @@ func (o *Op2) Note() string {
 		op = ">"
 	case n_ge:
 		op = ">="
+	case n_booland:
+		op = "&&"
+	case n_boolor:
+		op = "||"
 	}
 	return fmt.Sprintf("Op (%s) %s (%s)", o.First.Note(), op, o.Second.Note())
 }
