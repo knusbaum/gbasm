@@ -9,6 +9,7 @@ make bas bld
 #set -x
 rm tests/*.bs.o tests/*.out tests/*.stdout
 
+fail=''
 for t in `ls tests/*_test.bs`; do
     echo -e "\n\n############################ $t ############################"
     ./bas init_linux.bs $t >${t}.bas.out 2>&1
@@ -16,6 +17,7 @@ for t in `ls tests/*_test.bs`; do
 		echo assembler failed for ${t}:
 		cat ${t}.bas.out
 		echo ${t} FAIL
+		fail=$(echo -e "$fail\n${t} FAIL")
 		continue
     fi
     # cat ${t}.bas.out
@@ -24,6 +26,7 @@ for t in `ls tests/*_test.bs`; do
 		echo linker failed for ${t}:
 		cat ${t}.bld.out
 		echo ${t} FAIL
+		fail=$(echo -e "$fail\n${t} FAIL")
 		continue
     fi
     ${t}.o > ${t}.stdout
@@ -34,6 +37,7 @@ for t in `ls tests/*_test.bs`; do
 		cat ${t}.stdout
 		echo '```'
 		echo ${t} FAIL
+		fail=$(echo -e "$fail\n${t} FAIL")
 		continue
     fi
     if [[ -f "${t}.expected" ]]; then
@@ -41,6 +45,7 @@ for t in `ls tests/*_test.bs`; do
 		diff -u "${t}.expected" "${t}.stdout"
 		if [[ $? != 0 ]]; then
 			echo ${t} FAIL
+			fail=$(echo -e "$fail\n${t} FAIL")
 			continue
 		fi
     fi
@@ -48,4 +53,12 @@ for t in `ls tests/*_test.bs`; do
 done
 
 
+if [[ $fail != '' ]]; then
+	echo -e '\nSUITE FAILED:'
+	echo -e "${fail}"
+	exit 1
+fi
+
 rm tests/*.bs.o tests/*.out tests/*.stdout
+echo "SUITE PASSED"
+exit 0
