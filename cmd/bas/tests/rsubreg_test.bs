@@ -1,0 +1,46 @@
+package main
+
+function main
+	prologue
+	mov r8b 10
+	mov r8w 10
+	mov r8d 10
+	mov r8 10
+
+	mov r9b 10
+	mov r9w 10
+	mov r9d 10
+	mov r9 10
+
+	mov r10b 10
+	mov r10w 10
+	mov r10d 10
+	mov r10 10
+
+	mov r11b 10
+	mov r11w 10
+	mov r11d 10
+	mov r11 10
+
+	mov r12b 10
+	mov r12w 10
+	mov r12d 10
+	mov r12 10
+
+	mov r13b 10
+	mov r13w 10
+	mov r13d 10
+	mov r13 10
+
+	mov r14b 10
+	mov r14w 10
+	mov r14d 10
+	mov r14 10
+
+	mov r15b 10
+	mov r15w 10
+	mov r15d 10
+	mov r15 10
+	
+	epilogue
+	ret

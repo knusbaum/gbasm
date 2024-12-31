@@ -1,0 +1,21 @@
+package main
+
+function main
+	// This is a simple test that ensures that
+	// immediate values are correctly sign-extended (or not)
+	xor rax rax
+	sub rax 200
+	add rax -200
+	sub rax -400
+	add rax 400
+
+	mov rbx 400
+	cmp rax rbx
+	je end
+
+	mov rax 1
+	ret
+
+label end
+	mov rax 0
+	ret

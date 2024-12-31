@@ -53,13 +53,41 @@ const (
 	R8B
 	R8W
 	R8D
+
 	R9
+	R9B
+	R9W
+	R9D
+
 	R10
+	R10B
+	R10W
+	R10D
+
 	R11
+	R11B
+	R11W
+	R11D
+
 	R12
+	R12B
+	R12W
+	R12D
+
 	R13
+	R13B
+	R13W
+	R13D
+
 	R14
+	R14B
+	R14W
+	R14D
+
 	R15
+	R15B
+	R15W
+	R15D
 
 	R_RIP
 )
@@ -146,20 +174,69 @@ func (r Register) String() string {
 		return "R8W"
 	case R8D:
 		return "R8D"
+
 	case R9:
 		return "R9"
+	case R9B:
+		return "R9B"
+	case R9W:
+		return "R9W"
+	case R9D:
+		return "R9D"
+
 	case R10:
 		return "R10"
+	case R10B:
+		return "R10B"
+	case R10W:
+		return "R10W"
+	case R10D:
+		return "R10D"
+
 	case R11:
 		return "R11"
+	case R11B:
+		return "R11B"
+	case R11W:
+		return "R11W"
+	case R11D:
+		return "R11D"
+
 	case R12:
 		return "R12"
+	case R12B:
+		return "R12B"
+	case R12W:
+		return "R12W"
+	case R12D:
+		return "R12D"
+
 	case R13:
 		return "R13"
+	case R13B:
+		return "R13B"
+	case R13W:
+		return "R13W"
+	case R13D:
+		return "R13D"
+
 	case R14:
 		return "R14"
+	case R14B:
+		return "R14B"
+	case R14W:
+		return "R14W"
+	case R14D:
+		return "R14D"
+
 	case R15:
 		return "R15"
+	case R15B:
+		return "R15B"
+	case R15W:
+		return "R15W"
+	case R15D:
+		return "R15D"
 
 	case R_RIP:
 		return "RIP"
@@ -250,20 +327,70 @@ func ParseReg(r string) (Register, error) {
 		return R8W, nil
 	case "R8D":
 		return R8D, nil
+
 	case "R9":
 		return R9, nil
+	case "R9B":
+		return R9B, nil
+	case "R9W":
+		return R9W, nil
+	case "R9D":
+		return R9D, nil
+
 	case "R10":
 		return R10, nil
+	case "R10B":
+		return R10B, nil
+	case "R10W":
+		return R10W, nil
+	case "R10D":
+		return R10D, nil
+
 	case "R11":
 		return R11, nil
+	case "R11B":
+		return R11B, nil
+	case "R11W":
+		return R11W, nil
+	case "R11D":
+		return R11D, nil
+
 	case "R12":
 		return R12, nil
+	case "R12B":
+		return R12B, nil
+	case "R12W":
+		return R12W, nil
+	case "R12D":
+		return R12D, nil
+
 	case "R13":
 		return R13, nil
+	case "R13B":
+		return R13B, nil
+	case "R13W":
+		return R13W, nil
+	case "R13D":
+		return R13D, nil
+
 	case "R14":
 		return R14, nil
+	case "R14B":
+		return R14B, nil
+	case "R14W":
+		return R14W, nil
+	case "R14D":
+		return R14D, nil
+
 	case "R15":
 		return R15, nil
+	case "R15B":
+		return R15B, nil
+	case "R15W":
+		return R15W, nil
+	case "R15D":
+		return R15D, nil
+
 	default:
 		return 0, fmt.Errorf("No such register: %s", r)
 	}
@@ -366,27 +493,21 @@ func (r Register) byte() byte {
 	case R_RDI:
 		return 0b111
 
-	case R8B:
-		fallthrough
-	case R8W:
-		fallthrough
-	case R8D:
-		fallthrough
-	case R8:
+	case R8, R8B, R8W, R8D:
 		return 0b1000
-	case R9:
+	case R9, R9B, R9W, R9D:
 		return 0b1001
-	case R10:
+	case R10, R10B, R10W, R10D:
 		return 0b1010
-	case R11:
+	case R11, R11B, R11W, R11D:
 		return 0b1011
-	case R12:
+	case R12, R12B, R12W, R12D:
 		return 0b1100
-	case R13:
+	case R13, R13B, R13W, R13D:
 		return 0b1101
-	case R14:
+	case R14, R14B, R14W, R14D:
 		return 0b1110
-	case R15:
+	case R15, R15B, R15W, R15D:
 		return 0b1111
 	case R_RIP:
 		return 0b101
@@ -477,21 +598,71 @@ func (r Register) Width() int {
 	case R8D:
 		return 32
 	case R8:
-		fallthrough
+		return 64
+
+	case R9B:
+		return 8
+	case R9W:
+		return 16
+	case R9D:
+		return 32
 	case R9:
-		fallthrough
+		return 64
+
+	case R10B:
+		return 8
+	case R10W:
+		return 16
+	case R10D:
+		return 32
 	case R10:
-		fallthrough
+		return 64
+
+	case R11B:
+		return 8
+	case R11W:
+		return 16
+	case R11D:
+		return 32
 	case R11:
-		fallthrough
+		return 64
+
+	case R12B:
+		return 8
+	case R12W:
+		return 16
+	case R12D:
+		return 32
 	case R12:
-		fallthrough
+		return 64
+
+	case R13B:
+		return 8
+	case R13W:
+		return 16
+	case R13D:
+		return 32
 	case R13:
-		fallthrough
+		return 64
+
+	case R14B:
+		return 8
+	case R14W:
+		return 16
+	case R14D:
+		return 32
 	case R14:
-		fallthrough
+		return 64
+
+	case R15B:
+		return 8
+	case R15W:
+		return 16
+	case R15D:
+		return 32
 	case R15:
 		return 64
+
 	default:
 		log.Fatalf("No such register: %d", r) // TODO: better error handling
 		return 0
@@ -595,28 +766,22 @@ func (r Register) fullReg() Register {
 	case R_RDI:
 		return R_RDI
 
-	case R8B:
-		fallthrough
-	case R8W:
-		fallthrough
-	case R8D:
-		fallthrough
-	case R8:
+	case R8, R8B, R8W, R8D:
 		return R8
-	case R9:
-		fallthrough
-	case R10:
-		fallthrough
-	case R11:
-		fallthrough
-	case R12:
-		fallthrough
-	case R13:
-		fallthrough
-	case R14:
-		fallthrough
-	case R15:
-		return r
+	case R9, R9B, R9W, R9D:
+		return R9
+	case R10, R10B, R10W, R10D:
+		return R10
+	case R11, R11B, R11W, R11D:
+		return R11
+	case R12, R12B, R12W, R12D:
+		return R12
+	case R13, R13B, R13W, R13D:
+		return R13
+	case R14, R14B, R14W, R14D:
+		return R14
+	case R15, R15B, R15W, R15D:
+		return R15
 	default:
 		panic("No such register")
 	}
@@ -639,6 +804,20 @@ func (r Register) subRegisters8() ([]Register, bool) {
 		return []Register{R_DL, R_DH}, true
 	case R8:
 		return []Register{R8B}, true
+	case R9:
+		return []Register{R9B}, true
+	case R10:
+		return []Register{R10B}, true
+	case R11:
+		return []Register{R11B}, true
+	case R12:
+		return []Register{R12B}, true
+	case R13:
+		return []Register{R13B}, true
+	case R14:
+		return []Register{R14B}, true
+	case R15:
+		return []Register{R15B}, true
 	}
 	return nil, false
 }
@@ -745,23 +924,84 @@ func (r Register) partial(size int) (Register, bool) {
 		if size == 32 {
 			return R8D, true
 		}
-		fallthrough
+		return R8, true
 	case R9:
-		fallthrough
-	case R10:
-		fallthrough
-	case R11:
-		fallthrough
-	case R12:
-		fallthrough
-	case R13:
-		fallthrough
-	case R14:
-		fallthrough
-	case R15:
-		if size == 64 {
-			return r, true
+		if size == 8 {
+			return R9B, true
 		}
+		if size == 16 {
+			return R9W, true
+		}
+		if size == 32 {
+			return R9D, true
+		}
+		return R9, true
+	case R10:
+		if size == 8 {
+			return R10B, true
+		}
+		if size == 16 {
+			return R10W, true
+		}
+		if size == 32 {
+			return R10D, true
+		}
+		return R10, true
+	case R11:
+		if size == 8 {
+			return R11B, true
+		}
+		if size == 16 {
+			return R11W, true
+		}
+		if size == 32 {
+			return R11D, true
+		}
+		return R11, true
+	case R12:
+		if size == 8 {
+			return R12B, true
+		}
+		if size == 16 {
+			return R12W, true
+		}
+		if size == 32 {
+			return R12D, true
+		}
+		return R12, true
+	case R13:
+		if size == 8 {
+			return R13B, true
+		}
+		if size == 16 {
+			return R13W, true
+		}
+		if size == 32 {
+			return R13D, true
+		}
+		return R13, true
+	case R14:
+		if size == 8 {
+			return R14B, true
+		}
+		if size == 16 {
+			return R14W, true
+		}
+		if size == 32 {
+			return R14D, true
+		}
+		return R14, true
+	case R15:
+		if size == 8 {
+			return R15B, true
+		}
+		if size == 16 {
+			return R15W, true
+		}
+		if size == 32 {
+			return R15D, true
+		}
+		return R15, true
 	default:
 		panic("No such register")
 	}
