@@ -166,6 +166,9 @@ func (r *Ralloc) Register() Register {
 			fmt.Printf("\t[Ralloc.Register()]: Loading local %s into %s\n", r.sym, reg)
 		}
 		//fmt.Printf("[RALLOC.Register] %s not in register. Allocated register %s\n", r.sym, reg)
+		if reg.Width() < 64 {
+			r.rallocs.f.Instr("XOR", reg.fullReg(), reg.fullReg())
+		}
 		r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
 		//r.inmem = false
 	} //else {
@@ -296,6 +299,18 @@ func (ra *Rallocs) NewLocal(name string, size int) (*Ralloc, error) {
 // 	ra.names[name] = r
 // 	return r, nil
 // }
+
+func (ra *Rallocs) ForgetAll() {
+	for name, r := range ra.names {
+		if r.inreg {
+			r.rallocs.removeLRU(r.reg)
+			delete(r.rallocs.regs, r.reg)
+			r.rallocs.rs.Release(r.reg)
+		}
+		delete(ra.names, name)
+		ra.returnSpace(int32(r.size)/8, r.offset)
+	}
+}
 
 // Forget forgets a local value named name, giving back its storage to the register
 // and stack pool.

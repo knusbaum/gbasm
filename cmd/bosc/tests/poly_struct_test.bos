@@ -1,0 +1,38 @@
+package main
+
+import "string.bo"
+
+struct poly {
+	x num
+	y num
+	bs byte[]
+}
+
+
+fn dosth(bs byte[]) poly {
+	var p poly
+
+	p = poly{
+		x: 1,
+		y: 2
+	}
+	p.bs = bs[:10]
+
+	return p
+}
+
+
+fn main() num {
+	var arr byte[100]
+
+	var p poly
+	p = dosth(arr[:])
+
+	puts("X: ")
+	puti(p.x)
+	puts("\nY: ")
+	puti(p.y)
+	puts("\nbs: ")
+	puti(lenb(p.bs))
+	puts("\n")
+}

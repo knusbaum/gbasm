@@ -42,6 +42,11 @@ function lenb
 
 	ret
 
+function lenn
+	type fn(num[]) num
+	mov rax [rdi+8]
+	ret
+
 // SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 // call number: 0
 function read
@@ -104,6 +109,12 @@ function close
 	epilogue
 	ret
 
+function exit
+	type fn(num) void
+	// exit code already in rdi
+	mov rax 0x3C
+	syscall
+
 
 // want to be able to do this:
 // fn read(n num, b byte[]) {
@@ -113,3 +124,4 @@ function close
 // function syscall
 // ...
 // only syscall is in asm.
+

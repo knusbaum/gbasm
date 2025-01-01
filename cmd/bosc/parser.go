@@ -28,6 +28,7 @@ const (
 	n_div
 	n_add
 	n_sub
+	n_neg // negate (-1)
 	n_eq  // Assignment (=)
 	n_deq // Comparison equal (==)
 	n_neq // Not equal (!=)
@@ -90,6 +91,8 @@ func (t nodetype) String() string {
 		return "n_add"
 	case n_sub:
 		return "n_sub"
+	case n_neg:
+		return "n_neg"
 	case n_eq:
 		return "n_eq"
 	case n_deq:
@@ -324,12 +327,14 @@ func (p *Parser) parseValue() *Node {
 
 			if p.current().t == tok_colon {
 				// [ X :
+				p.advance()
 				if p.current().t == tok_rsquare {
 					// [X:]
 					p.advance()
 					return &Node{t: n_slice, sval: v.sval, p: v.p, args: []*Node{v2, nil}}
 				}
 				v3 := p.parseExpression()
+				p.expect(tok_rsquare)
 				return &Node{t: n_slice, sval: v.sval, p: v.p, args: []*Node{v2, v3}}
 			}
 
@@ -474,6 +479,9 @@ func (p *Parser) parseParens() *Node {
 		return &Node{t: n_continue, p: c.p}
 	} else if c.t == tok_return {
 		p.advance()
+		if p.current().t == tok_rcurly {
+			return &Node{t: n_return, p: c.p, args: []*Node{}}
+		}
 		val := p.parseExpression()
 		return &Node{t: n_return, p: c.p, args: []*Node{val}}
 	} else if c.t == tok_fn {
@@ -636,6 +644,11 @@ func (p *Parser) parseExpression() (r *Node) {
 		// name := p.current().sval
 		// p.advance()
 		// return &Node{t: n_deref, sval: name, p: p.current().p}
+	} else if p.current().t == tok_minus {
+		p.advance()
+		cur := p.current().p
+		n := p.parseExpression()
+		return &Node{t: n_neg, args: []*Node{n}, p: cur}
 	} else if p.current().t == tok_none {
 		p.advance()
 		panic(eofError(0))

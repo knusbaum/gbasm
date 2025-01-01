@@ -14,4 +14,83 @@ fn main() {
 	puts("\n")
 	putb(b[1])
 	puts("\n")
+
+	b = a[:2]
+	putb(b[0])
+	puts("\n")
+
+	b = a[2:]
+	putb(b[0])
+	puts("\n")
+
+	var arr byte[50]
+	slicetest(arr[:])
+
+	var i num
+	var bb byte
+	for(i = 0; i < 50; i = i + 1) {
+		bb = arr[i]
+	}
+
+	var bs byte[]
+	bs = arr[:]
+	for(i = 0; i < 50; i = i + 1) {
+		bb = bs[i]
+	}
+
+	// bs = arr[10:20]
+	// for(i = 0; i < 50; i = i + 1) {
+	// 	bb = bs[i]
+	// }
+	
+	// boundstest()
+}
+
+// fn boundstest() {
+// 	var arr byte[50]
+// 	var bs byte[]
+// 	bs = arr[:]
+// 	var b byte
+	
+// 	b = bs[0]
+// 	putb(b)
+// 	puts("\n")
+// 	b = bs[49]
+// 	putb(b)
+// 	puts("\n")
+// 	// index out of bounds
+// 	//b = bs[50]
+// 	//putb(b)
+// 	//puts("\n")
+// }
+
+fn slicetest(bs byte[]) {
+	var i num
+	i = 0
+	i = i + 5
+
+	bs[5] = 10
+	bs[6] = 20
+
+	puti(lenb(bs))
+	puts("\n")
+	
+	bs = bs[i:]
+	puti(lenb(bs))
+	puts("\n")
+
+	putb(bs[0])
+	puts("\n")
+
+	bs = bs[:i]
+	puti(lenb(bs))
+	puts("\n")
+
+	i = 1
+	bs = bs[i:i+1]
+	puti(lenb(bs))
+	puts("\n")
+	
+	putb(bs[0])
+	puts("\n")
 }

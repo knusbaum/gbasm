@@ -21,10 +21,12 @@ type Context struct {
 	// maps function names to their declarations.
 	funcs map[string]*FuncDecl
 
-	// return label stack. Return returns from the current Context
-	// by jumping to the label.
-	retlabs []string
-	labeli  int
+	// return, continue, break label stack. Return returns from the current Context
+	// by jumping to the label. Continue and break do the usual within loops.
+	retlabs   []string
+	contlabs  []string
+	breaklabs []string
+	labeli    int
 
 	// Counter for temporaries
 	tempi int
@@ -73,6 +75,12 @@ func (c *Context) BindVar(name string, t ASTType) {
 	c.bindings[name] = t
 }
 
+func (c *Context) FreeLocalVars(of io.Writer) {
+	for n := range c.bindings {
+		fmt.Fprintf(of, "\tforget %s\n", n)
+	}
+}
+
 func (c *Context) TypeForVar(name string) (ASTType, bool) {
 	if c == nil {
 		return ASTType{}, false
@@ -104,13 +112,69 @@ func (c *Context) FuncDeclForName(name string) (*FuncDecl, bool) {
 }
 
 func (c *Context) Label(tag string) string {
+	if c.parent != nil {
+		return c.parent.Label(tag)
+	}
 	c.labeli++
 	l := fmt.Sprintf("_LABEL_%s_%d", tag, c.labeli)
 	return l
 }
 
+func (c *Context) PushContLabel() string {
+	if c.parent != nil {
+		return c.parent.PushContLabel()
+	}
+	l := c.Label("cont")
+	c.contlabs = append(c.contlabs, l)
+	return l
+}
+
+func (c *Context) PopContLabel() {
+	if c.parent != nil {
+		c.parent.PopContLabel()
+		return
+	}
+	c.contlabs = c.contlabs[:len(c.contlabs)-1]
+}
+
+func (c *Context) Continue(of io.Writer) {
+	if c.parent != nil {
+		c.parent.Continue(of)
+		return
+	}
+	fmt.Fprintf(of, "\tjmp %s\n", c.contlabs[len(c.contlabs)-1])
+}
+
+func (c *Context) PushBreakLabel() string {
+	if c.parent != nil {
+		return c.parent.PushBreakLabel()
+	}
+	l := c.Label("break")
+	c.breaklabs = append(c.breaklabs, l)
+	return l
+}
+
+func (c *Context) PopBreakLabel() {
+	if c.parent != nil {
+		c.parent.PopBreakLabel()
+		return
+	}
+	c.breaklabs = c.breaklabs[:len(c.breaklabs)-1]
+}
+
+func (c *Context) Break(of io.Writer) {
+	if c.parent != nil {
+		c.parent.Break(of)
+		return
+	}
+	fmt.Fprintf(of, "\tjmp %s\n", c.breaklabs[len(c.breaklabs)-1])
+}
+
 // Push a new return label onto the return stack
 func (c *Context) PushRetlabel() string {
+	if c.parent != nil {
+		return c.parent.PushRetlabel()
+	}
 	l := c.Label("return")
 	c.retlabs = append(c.retlabs, l)
 	return l
@@ -118,18 +182,29 @@ func (c *Context) PushRetlabel() string {
 
 // Pop a return label from the return stack.
 func (c *Context) PopRetlabel() {
+	if c.parent != nil {
+		c.parent.PopRetlabel()
+		return
+	}
 	c.retlabs = c.retlabs[:len(c.retlabs)-1]
+}
+
+func (c *Context) Return(of io.Writer) {
+	if c.parent != nil {
+		c.parent.Return(of)
+		return
+	}
+	fmt.Fprintf(of, "\tjmp %s\n", c.retlabs[len(c.retlabs)-1])
 }
 
 const temp_prefix = "Temp_"
 
 func (c *Context) Temp() string {
+	if c.parent != nil {
+		return c.parent.Temp()
+	}
 	c.tempi++
 	return fmt.Sprintf("%s%d", temp_prefix, c.tempi)
-}
-
-func (c *Context) Return(of io.Writer) {
-	fmt.Fprintf(of, "\tjmp %s\n", c.retlabs[len(c.retlabs)-1])
 }
 
 func parseFuncType(ftype string) (FuncDecl, error) {
@@ -407,7 +482,10 @@ type Funcall struct {
 func (f *Funcall) ASTType(c *Context) ASTType {
 	decl, ok := c.FuncDeclForName(f.FName)
 	if !ok {
-		panic("No such function. TODO: Nice error reports.")
+		panic(&interpreterError{
+			msg: fmt.Sprintf("No such function \"%s\"", f.FName),
+			p:   f.p,
+		})
 	}
 	return decl.Return
 }
@@ -655,6 +733,38 @@ func (r *Return) Pos() position {
 	return r.p
 }
 
+type Continue struct {
+	p position
+}
+
+func (*Continue) ASTType(*Context) ASTType {
+	return voidASTType()
+}
+
+func (*Continue) Note() string {
+	return "continue ..."
+}
+
+func (c *Continue) Pos() position {
+	return c.p
+}
+
+type Break struct {
+	p position
+}
+
+func (*Break) ASTType(*Context) ASTType {
+	return voidASTType()
+}
+
+func (*Break) Note() string {
+	return "break ..."
+}
+
+func (b *Break) Pos() position {
+	return b.p
+}
+
 type Index struct {
 	Val  AST
 	NAST AST
@@ -756,7 +866,10 @@ type Symbol struct {
 func (s *Symbol) ASTType(c *Context) ASTType {
 	t, ok := c.TypeForVar(s.Name)
 	if !ok {
-		panic(fmt.Sprintf("Bad Variable: %s ... TODO: Nice error reports.", s.Name))
+		panic(&interpreterError{
+			msg: fmt.Sprintf("Variable %s undeclared.", s.Name),
+			p:   s.p,
+		})
 	}
 	return t
 }
@@ -974,10 +1087,24 @@ func (n *Node) toASTTop(c *Context) AST {
 			First:  n.args[0].toASTTop(NewContext()),
 			Second: n.args[1].toASTTop(NewContext()),
 		}
+	case n_neg:
+		return &Op2{
+			Type:   n_sub,
+			First:  &Literal{Val: uint64(0)},
+			Second: n.args[0].toASTTop(NewContext()),
+		}
 	case n_return:
 		return &Return{
 			Val: n.args[0].toASTTop(NewContext()),
 			p:   n.p,
+		}
+	case n_continue:
+		return &Continue{
+			p: n.p,
+		}
+	case n_break:
+		return &Break{
+			p: n.p,
 		}
 	}
 	spew.Dump(n)

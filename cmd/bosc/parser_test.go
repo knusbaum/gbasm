@@ -444,6 +444,15 @@ func TestParser(t *testing.T) {
 				&Node{t: n_symbol, sval: "x"},
 			}},
 		},
+		{
+			in: "x = -x",
+			out: &Node{t: n_eq, args: []*Node{
+				&Node{t: n_symbol, sval: "x"},
+				&Node{t: n_neg, args: []*Node{
+					&Node{t: n_symbol, sval: "x"},
+				}},
+			}},
+		},
 	} {
 		t.Run("", func(t *testing.T) {
 			p := NewParser("", strings.NewReader(tt.in))

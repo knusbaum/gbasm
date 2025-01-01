@@ -224,14 +224,17 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 	case *Index:
 		w := compileTop(of, c, ast.Val, nullspot)
 		vt := ast.ASTType(c)
+		max := newSpot(of, c, c.Temp(), numASTType())
 		var addr spot
 		if w.t.Slice {
 			t := vt
 			t.Indirection += 1
 			addr = newSpot(of, c, c.Temp(), t)
 			fmt.Fprintf(of, "\tmov %s [%s]\n", addr.ref, w.ref)
+			fmt.Fprintf(of, "\tmov %s [%s+8]\n", max.ref, w.ref)
 		} else {
 			addr = w
+			fmt.Fprintf(of, "\tmov %s %d\n", max.ref, w.t.ArraySize)
 		}
 		lvt := vt
 		lvt.Indirection += 1
@@ -241,6 +244,19 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		if ast.NAST == nil {
 			// fixed offset at compile time
 			off := uint64(vt.Size(c)) * ast.N
+			if !w.t.Slice {
+				if ast.N >= uint64(w.t.ArraySize) {
+					CompileErrorF(a, "Index %d greater than max for array of size %d", ast.N, w.t.ArraySize)
+				}
+			} else {
+				l := c.Label("icheck")
+				fmt.Fprintf(of, "\tcmp %s %d\n", max.ref, ast.N)
+				fmt.Fprintf(of, "\tjg %s\n", l)
+				fmt.Fprintf(of, "\tmov rdi %d\n", ast.N)
+				fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
+				fmt.Fprintf(of, "\tcall index_oob\n")
+				fmt.Fprintf(of, "\tlabel %s\n", l)
+			}
 			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", dest.ref, addr.ref, off)
 			return dest
 		}
@@ -249,6 +265,25 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 			base := addr
 			index := compileTop(of, c, ast.NAST, nullspot)
 			scale := vt.Size(c)
+			l := c.Label("icheck")
+			if !index.t.Same(numASTType()) {
+				itmp := newSpot(of, c, c.Temp(), numASTType())
+				//move(of, c, itmp, index)
+				fmt.Fprintf(of, "\tmovzx %s %s\n", itmp.ref, index.ref)
+				fmt.Fprintf(of, "\tcmp %s %s\n", itmp.ref, max.ref)
+				itmp.free(of)
+			} else {
+				fmt.Fprintf(of, "\tcmp %s %s\n", index.ref, max.ref)
+			}
+			fmt.Fprintf(of, "\tjl %s\n", l)
+			if index.t.Same(numASTType()) {
+				fmt.Fprintf(of, "\tmov rdi %s\n", index.ref)
+			} else {
+				fmt.Fprintf(of, "\tmovzx rdi %s\n", index.ref)
+			}
+			fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
+			fmt.Fprintf(of, "\tcall index_oob\n")
+			fmt.Fprintf(of, "\tlabel %s\n", l)
 			fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", dest.ref, base.ref, index.ref, scale)
 			return dest
 		} else {
@@ -320,11 +355,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		fmt.Fprintf(of, "\tret\n\n")
 		return nullspot
 	case *Block:
+		sc := c.SubContext()
 		for _, st := range ast.Body {
 			note(of, "\n")
-			s := compileTop(of, c, st, nullspot)
+			s := compileTop(of, sc, st, nullspot)
 			s.free(of)
 		}
+		sc.FreeLocalVars(of)
 		return nullspot
 	case *Funcall:
 		decl, ok := c.FuncDeclForName(ast.FName)
@@ -378,7 +415,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), mtype)
 		}
-		fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, l.ref, offset)
+		if mtype.Size(c) > 8 {
+			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", l.ref, l.ref, offset)
+			l.t = mtype
+			move(of, c, dest, l)
+		} else {
+			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, l.ref, offset)
+		}
+		//fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, l.ref, offset)
+		//move(of, c, dest,
 		return dest
 	case *Deref:
 		v := compileTop(of, c, ast.Val, nullspot)
@@ -422,14 +467,17 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	case *Index:
 		vt := ast.ASTType(c)
 		w := compileTop(of, c, ast.Val, nullspot)
+		max := newSpot(of, c, c.Temp(), numASTType())
 		var addr spot
 		if w.t.Slice {
 			t := vt
 			t.Indirection += 1
 			addr = newSpot(of, c, c.Temp(), t)
 			fmt.Fprintf(of, "\tmov %s [%s]\n", addr.ref, w.ref)
+			fmt.Fprintf(of, "\tmov %s [%s+8]\n", max.ref, w.ref)
 		} else {
 			addr = w
+			fmt.Fprintf(of, "\tmov %s %d\n", max.ref, w.t.ArraySize)
 		}
 
 		if dest.empty() {
@@ -445,6 +493,20 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			//targt := ast.ASTType(c)
 			off := uint64(vt.Size(c)) * ast.N
+			if !w.t.Slice {
+				if ast.N >= uint64(w.t.ArraySize) {
+					CompileErrorF(a, "Index %d greater than max for array of size %d", ast.N, w.t.ArraySize)
+				}
+			} else {
+				l := c.Label("icheck")
+				fmt.Fprintf(of, "\tcmp %s %d\n", max.ref, ast.N)
+				fmt.Fprintf(of, "\tjg %s\n", l)
+				fmt.Fprintf(of, "\tmov rdi %d\n", ast.N)
+				fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
+				fmt.Fprintf(of, "\tcall index_oob\n")
+				fmt.Fprintf(of, "\tlabel %s\n", l)
+			}
+			fmt.Fprintf(of, "\t// mov NAST == nil\n")
 			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, addr.ref, off)
 			return dest
 		}
@@ -466,6 +528,25 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			base := addr
 			index := compileTop(of, c, ast.NAST, nullspot)
 			scale := vt.Size(c)
+			l := c.Label("icheck")
+			if !index.t.Same(numASTType()) {
+				itmp := newSpot(of, c, c.Temp(), numASTType())
+				//move(of, c, itmp, index)
+				fmt.Fprintf(of, "\tmovzx %s %s\n", itmp.ref, index.ref)
+				fmt.Fprintf(of, "\tcmp %s %s\n", itmp.ref, max.ref)
+				itmp.free(of)
+			} else {
+				fmt.Fprintf(of, "\tcmp %s %s\n", index.ref, max.ref)
+			}
+			fmt.Fprintf(of, "\tjl %s\n", l)
+			if index.t.Same(numASTType()) {
+				fmt.Fprintf(of, "\tmov rdi %s\n", index.ref)
+			} else {
+				fmt.Fprintf(of, "\tmovzx rdi %s\n", index.ref)
+			}
+			fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
+			fmt.Fprintf(of, "\tcall index_oob\n")
+			fmt.Fprintf(of, "\tlabel %s\n", l)
 			fmt.Fprintf(of, "\tmov %s [%s+%s*%d]\n", dest.ref, base.ref, index.ref, scale)
 			return dest
 		} else {
@@ -508,10 +589,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		} else {
 			upper = newSpot(of, c, c.Temp(), numASTType())
 			if v.t.Slice {
-				fmt.Fprintf(of, "\tmov %s [%s+8]", upper.ref, v.ref)
+				fmt.Fprintf(of, "\tmov %s [%s+8]\n", upper.ref, v.ref)
+			} else {
+				// else if v.t.ArraySize > 0 already checked above
+				fmt.Fprintf(of, "\tmov %s %d\n", upper.ref, v.t.ArraySize)
 			}
-			// else if v.t.ArraySize > 0 already checked above
-			fmt.Fprintf(of, "\tmov %s %d\n", upper.ref, v.t.ArraySize)
 		}
 
 		if ast.Lower != nil {
@@ -564,7 +646,17 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// srctype == dsttype
 			// this means the dsttype is not a pointer to the location.
 			// and we can use lv as the dest in the compile call.
+
+			// Would be nice to be able to compile *into* lv,
+			// But sometimes lv is also in the Val AST, i.e.
+			// n = 1 - n.
+			// This (currently) can lead to n being overwritten
+			// by the compiler before it is finished being used.
+			// e.g.
+			//  mov n 1
+			//  sub n n
 			val := compileTop(of, c, ast.Val, lv)
+			//val := compileTop(of, c, ast.Val, nullspot)
 			if !val.same(&lv) {
 				move(of, c, lv, val)
 				val.free(of)
@@ -611,7 +703,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			v.free(of)
 		}
 		start := c.Label("for")
-		end := c.Label("end")
+		end := c.PushBreakLabel()
+		cont := c.PushContLabel()
 		fmt.Fprintf(of, "\tlabel %s\n", start)
 		v = compileTop(of, c, ast.Cond, nullspot)
 		fmt.Fprintf(of, "\ttest %s %s\n", v.ref, v.ref)
@@ -621,12 +714,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if !v.empty() {
 			v.free(of)
 		}
+		fmt.Fprintf(of, "\tlabel %s\n", cont)
 		v = compileTop(of, c, ast.Step, nullspot)
 		if !v.empty() {
 			v.free(of)
 		}
 		fmt.Fprintf(of, "\tjmp %s\n", start)
 		fmt.Fprintf(of, "\tlabel %s\n", end)
+		c.PopBreakLabel()
+		c.PopContLabel()
 		return nullspot
 	case *Op2:
 		return doOp2(of, c, ast, dest)
@@ -636,11 +732,21 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if !v.same(&dest) {
 			dest.free(of)
 			dest = v
-			panic("Should this happen?")
+			//panic("Should this happen?")
+			CompileErrorF(a, "Return not same as dest. Should this happen?")
 		}
 		fmt.Fprintf(of, "\tinreg %s %s\n", dest.ref, "rax")
-		c.Return(of)
+		//fmt.Fprintf(of, "\tforget %s\n", dest.ref)
 		dest.free(of)
+		//fmt.Fprintf(of, "\tforgetall\n")
+		c.Return(of)
+
+		return nullspot
+	case *Continue:
+		c.Continue(of)
+		return nullspot
+	case *Break:
+		c.Break(of)
 		return nullspot
 	case *Symbol:
 		s := spot{ref: ast.Name, t: ast.ASTType(c)}
@@ -871,32 +977,72 @@ func jumpOp(of io.Writer, c *Context, o *Op2, label string) {
 }
 
 func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
-	if dest.empty() {
-		dest = newSpot(of, c, c.Temp(), o.ASTType(c))
-	}
+	//if dest.empty() {
+	//dest = newSpot(of, c, c.Temp(), o.ASTType(c))
+	//}
 	// TODO: Validate operation types
 	// if !o.First.ASTType(c).Same(numASTType()) {
 	// 	panic("Cannot perform comparisons on non-numeric types.")
 	// }
 	switch o.Type {
 	case n_add:
-		first := compileTop(of, c, o.First, dest)
-		if first == dest {
-			// create a new dest for second arg
-			dest = newSpot(of, c, c.Temp(), o.ASTType(c))
+		fst := newSpot(of, c, c.Temp(), o.ASTType(c))
+		first := compileTop(of, c, o.First, fst)
+		var second spot
+		if o.Second.ASTType(c).Same(o.ASTType(c)) {
+			second = compileTop(of, c, o.Second, nullspot)
+		} else {
+			// If they are different types, we must create a spot
+			// with the right type so the sub operands are of the right
+			// size. This is for things like var n byte; n = n - 1
+			snd := newSpot(of, c, c.Temp(), o.ASTType(c))
+			second = compileTop(of, c, o.Second, snd)
 		}
-		second := compileTop(of, c, o.Second, dest)
 		fmt.Fprintf(of, "\tadd %s %s\n", first.ref, second.ref)
-		return first
-	case n_sub:
-		first := compileTop(of, c, o.First, dest)
-		if first == dest {
-			// create a new dest for second arg
-			dest = newSpot(of, c, c.Temp(), o.ASTType(c))
+		if dest.empty() {
+			dest = first
+		} else {
+			move(of, c, dest, first)
+			first.free(of)
 		}
-		second := compileTop(of, c, o.Second, dest)
+		second.free(of)
+		return dest
+		// first := compileTop(of, c, o.First, dest)
+		// if first == dest {
+		// 	dest = newSpot(of, c, c.Temp(), o.ASTType(c))
+		// }
+		// second := compileTop(of, c, o.Second, dest)
+		// fmt.Fprintf(of, "\tadd %s %s\n", first.ref, second.ref)
+		// return first
+	case n_sub:
+		fst := newSpot(of, c, c.Temp(), o.ASTType(c))
+		first := compileTop(of, c, o.First, fst)
+		var second spot
+		if o.Second.ASTType(c).Same(o.ASTType(c)) {
+			second = compileTop(of, c, o.Second, nullspot)
+		} else {
+			// If they are different types, we must create a spot
+			// with the right type so the sub operands are of the right
+			// size. This is for things like var n byte; n = n - 1
+			snd := newSpot(of, c, c.Temp(), o.ASTType(c))
+			second = compileTop(of, c, o.Second, snd)
+		}
 		fmt.Fprintf(of, "\tsub %s %s\n", first.ref, second.ref)
-		return first
+		if dest.empty() {
+			dest = first
+		} else {
+			move(of, c, dest, first)
+			first.free(of)
+		}
+		second.free(of)
+		return dest
+		// first := compileTop(of, c, o.First, dest)
+		// if first == dest {
+		// 	dest = newSpot(of, c, c.Temp(), o.ASTType(c))
+		// }
+		// second := compileTop(of, c, o.Second, dest)
+		// fmt.Fprintf(of, "\tsub %s %s\n", first.ref, second.ref)
+		// return first
 	case n_mul:
 		if dest.empty() {
 			dest = newSpotWithReg(of, c, c.Temp(), o.First.ASTType(c), "rax")
@@ -1037,6 +1183,29 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		fmt.Fprintf(of, "\tseta %s\n", dest.ref)
 		fbool.free(of)
 		sbool.free(of)
+		first.free(of)
+		second.free(of)
+		return dest
+	case n_boolor:
+		first := compileTop(of, c, o.First, nullspot)
+		second := compileTop(of, c, o.Second, nullspot)
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), boolASTType())
+		}
+		fbool := newSpot(of, c, c.Temp(), byteASTType())
+		sbool := newSpot(of, c, c.Temp(), byteASTType())
+		fmt.Fprintf(of, "\ttest %s %s\n", first.ref, first.ref)
+		fmt.Fprintf(of, "\tseta %s\n", fbool.ref)
+
+		fmt.Fprintf(of, "\ttest %s %s\n", second.ref, second.ref)
+		fmt.Fprintf(of, "\tseta %s\n", sbool.ref)
+
+		fmt.Fprintf(of, "\tor %s %s\n", fbool.ref, sbool.ref)
+		fmt.Fprintf(of, "\tseta %s\n", dest.ref)
+		fbool.free(of)
+		sbool.free(of)
+		first.free(of)
+		second.free(of)
 		return dest
 	}
 	panic("Could not do op\n")

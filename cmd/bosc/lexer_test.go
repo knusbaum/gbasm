@@ -40,6 +40,14 @@ func TestLexer(t *testing.T) {
 			out: []token{token{t: tok_str, sval: "hello\n world!"}},
 		},
 		{
+			in: "1-1",
+			out: []token{
+				token{t: tok_number, nval: 1},
+				token{t: tok_minus},
+				token{t: tok_number, nval: 1},
+			},
+		},
+		{
 			in: "5 + 6 + 7 * 8 + foo() - bar() / baz",
 			out: []token{
 				token{t: tok_number, nval: 5},

@@ -1,0 +1,37 @@
+package main
+
+import "string.bo"
+
+fn dumpbs(bs byte[]) {
+	var i num
+	for (i = 0; i < lenb(bs); i = i + 1) {
+		putb(bs[i])
+		putc(' ')
+	}
+	putc('\n')
+}
+
+fn main() {
+	var a byte[20]
+
+	var i byte
+	var ten byte
+	ten = 10
+	for(i = 0; i < ten; i = i + 1) {
+		a[i] = i
+	}
+	dumpbs(a[:10])
+
+	var bs byte[]
+	bs = a[10:]
+	for(i = 0; i < ten; i = i + 1) {
+		bs[i] = i+10
+	}
+	dumpbs(bs[:10])
+
+	for(i = 0; i < ten; i = i + 1) {
+		a[i] = bs[i]
+	}
+
+	dumpbs(a[:10])
+}

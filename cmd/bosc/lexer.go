@@ -68,7 +68,7 @@ var keywords map[string]toktype = map[string]toktype{
 
 const (
 	symbolset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-+*#%/.'&:><=$~"
-	numberset = "0123456789.-"
+	numberset = "0123456789."
 )
 
 type token struct {
@@ -407,9 +407,9 @@ func (l *lexer) Next() (rt token, re error) {
 		return token{t: tok_rsquare, p: l.p}, nil
 	case '-':
 		l.nextRune()
-		if strings.ContainsRune(numberset, l.headRune()) {
-			return l.parseNumber(&r), nil
-		}
+		// if strings.ContainsRune(numberset, l.headRune()) {
+		// 	return l.parseNumber(&r), nil
+		// }
 		return token{t: tok_minus, p: l.p}, nil
 	case ':':
 		l.nextRune()
@@ -440,6 +440,14 @@ func (l *lexer) Next() (rt token, re error) {
 			return token{t: tok_booland, p: l.p}, nil
 		}
 		return token{t: tok_amp, p: l.p}, nil
+	case '|':
+		l.nextRune()
+		if l.headRune() == '|' {
+			l.nextRune()
+			return token{t: tok_boolor, p: l.p}, nil
+		}
+		//return token{t: tok_amp, p: l.p}, nil
+		panic("BINARY OR NOT IMPLEMENTED")
 	case '/':
 		l.nextRune()
 		if l.headRune() == '/' {
