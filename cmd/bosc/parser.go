@@ -221,7 +221,7 @@ func (p *Parser) parseStructLiteral() []*Node {
 		}
 		p.expect(tok_colon)
 		v2 := p.parseExpression()
-		ret = append(ret, &Node{t: n_stfield, sval: v.sval, p: v.p, args: []*Node{v2}})
+		ret = append(ret, &Node{t: n_stfield, p: v.p, sval: v.sval, args: []*Node{v2}})
 		if p.current().t != tok_comma {
 			break
 		}
@@ -234,16 +234,16 @@ func (p *Parser) parseTok() *Node {
 	c := p.current()
 	if c.t == tok_number {
 		p.advance()
-		return &Node{t: n_number, ival: uint64(c.nval), p: c.p}
+		return &Node{t: n_number, p: c.p, ival: uint64(c.nval)}
 	} else if c.t == tok_str {
 		p.advance()
-		return &Node{t: n_str, sval: c.sval, p: c.p}
+		return &Node{t: n_str, p: c.p, sval: c.sval}
 	} else if c.t == tok_byte {
 		p.advance()
-		return &Node{t: n_byte, ival: uint64(c.nval), p: c.p}
+		return &Node{t: n_byte, p: c.p, ival: uint64(c.nval)}
 	} else if c.t == tok_ident {
 		p.advance()
-		return &Node{t: n_symbol, sval: c.sval, p: c.p}
+		return &Node{t: n_symbol, p: c.p, sval: c.sval}
 	} else if c.t == tok_semicolon {
 		p.advance()
 		return &Node{p: c.p}
@@ -278,25 +278,25 @@ func (p *Parser) parseTypeName() *Node {
 			p.expect(tok_rsquare)
 			return &Node{
 				t:    n_typename,
+				p:    p.current().p,
 				sval: typename,
 				ival: indirection,
-				args: []*Node{&Node{t: n_index, ival: arrsize}},
-				p:    p.current().p,
+				args: []*Node{&Node{t: n_index, p: p.current().p, ival: arrsize}},
 			}
 		} else if p.current().t == tok_rsquare {
 			p.advance()
 			return &Node{
 				t:    n_typename,
+				p:    p.current().p,
 				sval: typename,
 				ival: indirection,
 				args: []*Node{&Node{t: n_slice, p: p.current().p}},
-				p:    p.current().p,
 			}
 		}
 
 		panic(&interpreterError{fmt.Sprintf("Expected a number, but found: %s\n", c.t), c.p})
 	}
-	return &Node{t: n_typename, sval: c.sval, ival: indirection}
+	return &Node{t: n_typename, p: p.current().p, sval: c.sval, ival: indirection}
 }
 
 func (p *Parser) parseValue() *Node {
@@ -307,7 +307,7 @@ func (p *Parser) parseValue() *Node {
 			p.advance()
 			args := p.parseArgs()
 			p.expect(tok_rparen)
-			return &Node{t: n_funcall, sval: v.sval, p: v.p, args: args}
+			return &Node{t: n_funcall, p: v.p, sval: v.sval, args: args}
 		} else if p.current().t == tok_lsquare {
 			p.advance()
 			if p.current().t == tok_colon {
@@ -316,12 +316,12 @@ func (p *Parser) parseValue() *Node {
 				if p.current().t == tok_rsquare {
 					// [:]
 					p.advance()
-					return &Node{t: n_slice, sval: v.sval, p: v.p, args: []*Node{nil, nil}}
+					return &Node{t: n_slice, p: v.p, sval: v.sval, args: []*Node{nil, nil}}
 				}
 				// [: X]
 				v3 := p.parseExpression()
 				p.expect(tok_rsquare)
-				return &Node{t: n_slice, sval: v.sval, p: v.p, args: []*Node{nil, v3}}
+				return &Node{t: n_slice, p: v.p, sval: v.sval, args: []*Node{nil, v3}}
 			}
 			v2 := p.parseExpression()
 
@@ -331,20 +331,20 @@ func (p *Parser) parseValue() *Node {
 				if p.current().t == tok_rsquare {
 					// [X:]
 					p.advance()
-					return &Node{t: n_slice, sval: v.sval, p: v.p, args: []*Node{v2, nil}}
+					return &Node{t: n_slice, p: v.p, sval: v.sval, args: []*Node{v2, nil}}
 				}
 				v3 := p.parseExpression()
 				p.expect(tok_rsquare)
-				return &Node{t: n_slice, sval: v.sval, p: v.p, args: []*Node{v2, v3}}
+				return &Node{t: n_slice, p: v.p, sval: v.sval, args: []*Node{v2, v3}}
 			}
 
 			p.expect(tok_rsquare)
-			return &Node{t: n_index, sval: v.sval, p: v.p, args: []*Node{v2}}
+			return &Node{t: n_index, p: v.p, sval: v.sval, args: []*Node{v2}}
 		} else if p.current().t == tok_lcurly {
 			p.advance()
 			v2 := p.parseStructLiteral()
 			p.expect(tok_rcurly)
-			return &Node{t: n_stlit, sval: v.sval, p: v.p, args: v2}
+			return &Node{t: n_stlit, p: v.p, sval: v.sval, args: v2}
 		}
 	}
 	return v
@@ -412,7 +412,7 @@ func (p *Parser) parseParams() []*Node {
 		if v2.t != n_typename {
 			panic(&interpreterError{fmt.Sprintf("Expected type name, but found: %v\n", v), v.p})
 		}
-		ret = append(ret, &Node{t: n_arg, sval: v.sval, p: v.p, args: []*Node{v2}})
+		ret = append(ret, &Node{t: n_arg, p: v.p, sval: v.sval, args: []*Node{v2}})
 		if p.current().t != tok_comma {
 			break
 		}
@@ -432,7 +432,7 @@ func (p *Parser) parseFn() *Node {
 	params := p.parseParams()
 	p.expect(tok_rparen)
 	//fmt.Printf("############################################ Parsing RetType\n")
-	rettype := &Node{t: n_typename, sval: "void"}
+	rettype := &Node{t: n_typename, p: p.current().p, sval: "void"}
 	if p.current().t != tok_lcurly {
 		// This function has a listed return type.
 		rettype = p.parseTypeName()
@@ -447,7 +447,7 @@ func (p *Parser) parseFn() *Node {
 	args := append(params, rettype)
 	body := p.parseExpression()
 	args = append(args, body)
-	return &Node{t: n_fn, ival: uint64(len(params)), sval: fname.sval, p: fnpos, args: args}
+	return &Node{t: n_fn, p: fnpos, ival: uint64(len(params)), sval: fname.sval, args: args}
 }
 
 func (p *Parser) parseParens() *Node {
@@ -549,10 +549,11 @@ func (p *Parser) parseVarDecl() *Node {
 	if p.current().t != tok_ident {
 		panic(&interpreterError{fmt.Sprintf("Expected an identifier in var declaration, but found: %s\n", p.current().t), p.current().p})
 	}
+	pos := p.current().p
 	name := p.current().sval
 	p.advance()
 	v2 := p.parseTypeName()
-	return &Node{t: n_var, sval: name, args: []*Node{v2}}
+	return &Node{t: n_var, p: pos, sval: name, args: []*Node{v2}}
 }
 
 func (p *Parser) parseBoolOp() *Node {
@@ -633,11 +634,11 @@ func (p *Parser) parseExpression() (r *Node) {
 		}
 		name := p.current().sval
 		p.advance()
-		return &Node{t: n_address, sval: name, p: p.current().p}
+		return &Node{t: n_address, p: p.current().p, sval: name}
 	} else if p.current().t == tok_star {
 		p.advance()
 		n := p.parseExpression()
-		return &Node{t: n_deref, args: []*Node{n}, p: p.current().p}
+		return &Node{t: n_deref, p: p.current().p, args: []*Node{n}}
 		// if p.current().t != tok_ident {
 		// 	panic(&interpreterError{fmt.Sprintf("Expected an identifier in deref operation, but found: %s\n", p.current().t), p.current().p})
 		// }
@@ -648,7 +649,7 @@ func (p *Parser) parseExpression() (r *Node) {
 		p.advance()
 		cur := p.current().p
 		n := p.parseExpression()
-		return &Node{t: n_neg, args: []*Node{n}, p: cur}
+		return &Node{t: n_neg, p: cur, args: []*Node{n}}
 	} else if p.current().t == tok_none {
 		p.advance()
 		panic(eofError(0))
@@ -692,10 +693,10 @@ func (p *Parser) parseStruct() *Node {
 		if v2.t != n_typename {
 			panic(&interpreterError{fmt.Sprintf("Expected type name, but found %#v\n", v2), v2.p})
 		}
-		ret = append(ret, &Node{t: n_stfield, sval: v.sval, p: fieldpos, args: []*Node{v2}})
+		ret = append(ret, &Node{t: n_stfield, p: fieldpos, sval: v.sval, args: []*Node{v2}})
 	}
 	p.expect(tok_rcurly)
-	return &Node{t: n_struct, sval: name.sval, p: structpos, args: ret}
+	return &Node{t: n_struct, p: structpos, sval: name.sval, args: ret}
 }
 
 func (p *Parser) parseImport() *Node {
@@ -705,7 +706,7 @@ func (p *Parser) parseImport() *Node {
 	if path.t != n_str {
 		panic(&interpreterError{fmt.Sprintf("Expected a string path, but found %#v\n", path), path.p})
 	}
-	return &Node{t: n_import, sval: path.sval, p: importpos}
+	return &Node{t: n_import, p: importpos, sval: path.sval}
 }
 
 func (p *Parser) parseTopLevel() *Node {

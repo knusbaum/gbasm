@@ -68,9 +68,12 @@ func (c *Context) DefineFunc(name string, f *FuncDecl) {
 	c.funcs[name] = f
 }
 
-func (c *Context) BindVar(name string, t ASTType) {
+func (c *Context) BindVar(a AST, name string, t ASTType) {
 	if _, ok := c.bindings[name]; ok {
-		panic(fmt.Sprintf("Binding already exists: %s", name))
+		CompileErrorF(a, "Variable \"%s\" already declared in this scope.", name)
+	}
+	if _, ok := c.TypeForVar(name); ok {
+		CompileErrorF(a, "Variable \"%s\" shadows variable of same name in parent scope.", name)
 	}
 	c.bindings[name] = t
 }
@@ -137,10 +140,13 @@ func (c *Context) PopContLabel() {
 	c.contlabs = c.contlabs[:len(c.contlabs)-1]
 }
 
-func (c *Context) Continue(of io.Writer) {
+func (c *Context) Continue(a AST, of io.Writer) {
 	if c.parent != nil {
-		c.parent.Continue(of)
+		c.parent.Continue(a, of)
 		return
+	}
+	if len(c.contlabs) == 0 {
+		CompileErrorF(a, "Cannot continue, No context present.")
 	}
 	fmt.Fprintf(of, "\tjmp %s\n", c.contlabs[len(c.contlabs)-1])
 }
@@ -510,14 +516,15 @@ func (d *Dot) ASTType(c *Context) ASTType {
 	}
 	decl, ok := c.StructDeclForName(t.Name)
 	if !ok {
-		panic("No such struct. TODO: Nice error reports.")
+		CompileErrorF(d, "No such struct \"%s\"", t.Name)
 	}
 	for _, f := range decl.Fields {
 		if f.Name == d.Member {
 			return f.Type
 		}
 	}
-	panic("No such struct member. TODO: Nice error reports.")
+	CompileErrorF(d, "No such struct member \"%s\" in struct \"%s\"", d.Member, t.Name)
+	return voidASTType()
 }
 
 func (d *Dot) Note() string {
@@ -867,7 +874,7 @@ func (s *Symbol) ASTType(c *Context) ASTType {
 	t, ok := c.TypeForVar(s.Name)
 	if !ok {
 		panic(&interpreterError{
-			msg: fmt.Sprintf("Variable %s undeclared.", s.Name),
+			msg: fmt.Sprintf("Variable \"%s\" undeclared.", s.Name),
 			p:   s.p,
 		})
 	}
@@ -945,7 +952,7 @@ func (n *Node) toASTTop(c *Context) AST {
 		v.Name = n.sval
 		v.Type = mkTypename(n.args[0])
 		v.p = n.p
-		c.BindVar(v.Name, v.Type)
+		c.BindVar(&v, v.Name, v.Type)
 		return &v
 	case n_fn:
 		var fn FuncDecl

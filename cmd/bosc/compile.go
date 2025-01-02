@@ -211,6 +211,7 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), mtype)
 		}
+		fmt.Fprintf(of, "\t// ONE\n")
 		fmt.Fprintf(of, "\tlea %s [%s+%d]\n", dest.ref, l.ref, offset)
 		return dest
 	case *Deref:
@@ -331,7 +332,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		c.DefineStruct(ast.TName, ast)
 		return nullspot
 	case *VarDecl:
-		c.BindVar(ast.Name, ast.Type)
+		c.BindVar(a, ast.Name, ast.Type)
 		newSpot(of, c, ast.Name, ast.Type)
 		return nullspot
 	case *FuncDecl:
@@ -342,7 +343,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// TODO: Add function type signature
 		for i, a := range ast.Args {
 			fmt.Fprintf(of, "\targi %s %d\n", a.Name, i)
-			c.BindVar(a.Name, a.Type)
+			c.BindVar(ast, a.Name, a.Type)
 		}
 		fmt.Fprintf(of, "\n\tprologue\n\n")
 		compileTop(of, c, ast.Body, nullspot)
@@ -416,9 +417,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			dest = newSpot(of, c, c.Temp(), mtype)
 		}
 		if mtype.Size(c) > 8 {
-			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", l.ref, l.ref, offset)
+			fmt.Fprintf(of, "\t// TWO\n")
+			// have to use a tmp here, since l may be a var.
+			tmp := newSpot(of, c, c.Temp(), dest.t)
+			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", tmp.ref, l.ref, offset)
 			l.t = mtype
-			move(of, c, dest, l)
+			move(of, c, dest, tmp)
 		} else {
 			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, l.ref, offset)
 		}
@@ -743,7 +747,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 
 		return nullspot
 	case *Continue:
-		c.Continue(of)
+		c.Continue(a, of)
 		return nullspot
 	case *Break:
 		c.Break(of)
@@ -1148,8 +1152,10 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		fmt.Fprintf(of, "\tsetge %s\n", dest.ref)
 		return dest
 	case n_deq:
-		first := compileTop(of, c, o.First, nullspot)
-		second := compileTop(of, c, o.Second, nullspot)
+		fst := newSpot(of, c, c.Temp(), o.First.ASTType(c))
+		first := compileTop(of, c, o.First, fst)
+		snd := newSpot(of, c, c.Temp(), o.Second.ASTType(c))
+		second := compileTop(of, c, o.Second, snd)
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), boolASTType())
 		}
