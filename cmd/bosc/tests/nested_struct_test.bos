@@ -1,0 +1,30 @@
+package main
+
+import "string.bo"
+
+struct inner {
+	a num
+	b num
+}
+
+struct outer {
+	x num
+	i inner
+	y num
+}
+
+fn main() {
+	var o outer
+	o.x = 1
+	o.i.a = 2
+	o.i.b = 3
+	o.y = 4
+	puti(o.x)
+	puts("\n")
+	puti(o.i.a)
+	puts("\n")
+	puti(o.i.b)
+	puts("\n")
+	puti(o.y)
+	puts("\n")
+}

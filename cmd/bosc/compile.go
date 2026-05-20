@@ -417,12 +417,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			dest = newSpot(of, c, c.Temp(), mtype)
 		}
 		if mtype.Size(c) > 8 {
-			fmt.Fprintf(of, "\t// TWO\n")
-			// have to use a tmp here, since l may be a var.
-			tmp := newSpot(of, c, c.Temp(), dest.t)
-			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", tmp.ref, l.ref, offset)
-			l.t = mtype
-			move(of, c, dest, tmp)
+			addrType := mtype
+			addrType.Indirection++
+			addr := newSpot(of, c, c.Temp(), addrType)
+			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", addr.ref, l.ref, offset)
+			spot_memcpy(of, c, dest, addr, mtype.Size(c))
+			addr.free(of)
 		} else {
 			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, l.ref, offset)
 		}
