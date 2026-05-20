@@ -1,0 +1,32 @@
+package main
+
+var newline string "\n\0"
+
+// Tests the inreg directive, which pins a named local variable to a specific register.
+// After inreg, the variable's value is in that register and can be read from it directly.
+function main
+	prologue
+
+	local x 64
+	mov x 55
+
+	// Force x into r13. If x was already in another register,
+	// a MOV is emitted to transfer the value.
+	inreg x r13
+
+	// Read r13 directly (bypassing the named variable) to verify the value is there.
+	mov rdi r13
+	call puti
+	lea rdi newline
+	call puts
+
+	// The named variable x is still accessible and still backed by r13.
+	mov rdi x
+	call puti
+	lea rdi newline
+	call puts
+
+	forget x
+	epilogue
+	xor rax rax
+	ret

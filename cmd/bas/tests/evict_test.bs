@@ -1,0 +1,46 @@
+package main
+
+var newline string "\n\0"
+
+// Tests the evict directive, which spills variables from registers to memory
+// while keeping them accessible (they reload on next use).
+//
+// Two forms tested:
+//   evict          (no args) - evicts all register-held variables
+//   evict REG      (with reg) - evicts the variable in a specific register
+function main
+	prologue
+
+	// --- evict with no arguments ---
+	local x 64
+	mov x 42
+
+	// Evict all variables. x is spilled to its stack slot.
+	evict
+
+	// x is now in memory. Using it should reload it transparently.
+	mov rdi x
+	call puti
+	lea rdi newline
+	call puts
+
+	// --- evict with a specific register argument ---
+	local y 64
+	mov y 77
+
+	// Force y into r12 so we know which register to evict.
+	inreg y r12
+
+	// Evict the variable from r12 specifically. y is spilled to its stack slot.
+	evict r12
+
+	// y should still be accessible (reloaded from memory on next use).
+	mov rdi y
+	call puti
+	lea rdi newline
+	call puts
+
+	forgetall
+	epilogue
+	xor rax rax
+	ret

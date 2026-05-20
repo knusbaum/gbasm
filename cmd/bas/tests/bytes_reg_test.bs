@@ -1,0 +1,27 @@
+package main
+
+var newline string "\n\0"
+
+// Tests that a bytes variable in register operand position (mov reg bytes_var)
+// loads the address of the stack data, not the first 8 bytes of the data.
+//
+// Strategy: write a sentinel value into the bytes var, then mov it into rax,
+// then dereference rax. If rax held the address, [rax] == sentinel.
+// If rax held the first 8 bytes as a value, [rax] would be a wild dereference.
+function main
+	prologue
+
+	bytes mydata 8
+	mov [mydata+0] 42
+
+	// should load address of mydata (via LEA), not 42
+	mov rax mydata
+	// dereference: if rax was the address, rdi = 42
+	mov rdi [rax]
+	call puti
+	lea rdi newline
+	call puts
+
+	epilogue
+	xor rax rax
+	ret

@@ -1,0 +1,25 @@
+package main
+
+var newline string "\n\0"
+
+// Tests negative offsets in indirect addressing: [reg-N].
+// Loads an address above the target, then reads back via a negative offset.
+function main
+	sub rsp 32
+
+	// Write a sentinel at rsp+8.
+	mov rax 77
+	mov [rsp+8] rax
+
+	// Load the address of rsp+16 into rcx.
+	lea rcx [rsp+16]
+
+	// Read via negative offset: [rcx-8] = [rsp+16-8] = [rsp+8] = 77
+	mov rdi [rcx-8]
+	call puti
+	lea rdi newline
+	call puts
+
+	add rsp 32
+	xor rax rax
+	ret

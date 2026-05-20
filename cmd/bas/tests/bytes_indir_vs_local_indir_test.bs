@@ -1,0 +1,62 @@
+package main
+
+var newline string "\n\0"
+
+// Tests the distinction between [bytes_var+N] and [local_var+N].
+//
+// [bytes_var+N]: computes address of bytes_var's own stack storage, then reads at +N.
+//               The bytes var IS the data.
+//
+// [local_var+N]: treats local_var's VALUE as a pointer, reads at value+N.
+//               The local holds a pointer to data elsewhere.
+//
+// Both halves print 10/20/30 because ptr holds the address of bdata,
+// making the two access paths equivalent. This confirms both mechanisms
+// reach the same memory through different routes.
+function main
+	prologue
+
+	bytes bdata 24
+	mov [bdata+0]  10
+	mov [bdata+8]  20
+	mov [bdata+16] 30
+
+	// [bytes_var+N]: direct field access into bdata's own stack storage
+	mov rdi [bdata+0]
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi [bdata+8]
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi [bdata+16]
+	call puti
+	lea rdi newline
+	call puts
+
+	// [local_var+N]: dereference through the pointer value stored in local
+	local ptr 64
+	// ptr = address of bdata (bytes var in register position → LEA)
+	mov ptr bdata
+
+	mov rdi [ptr+0]
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi [ptr+8]
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi [ptr+16]
+	call puti
+	lea rdi newline
+	call puts
+
+	epilogue
+	xor rax rax
+	ret

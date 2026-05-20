@@ -1,0 +1,76 @@
+package main
+
+var newline string "\n\0"
+
+// Tests jump conditions not covered by existing tests.
+// Each block sets up a condition, takes the jump when it fires,
+// and prints 1 (condition met) or 0 (condition not met).
+// All five should print 1.
+function main
+	// JNE: 1 != 2, so JNE fires.
+	mov rax 1
+	cmp rax 2
+	jne jne_pass
+	mov rdi 0
+	jmp jne_done
+label jne_pass
+	mov rdi 1
+label jne_done
+	call puti
+	lea rdi newline
+	call puts
+
+	// JL: -1 < 0 (signed), JL fires.
+	mov rax -1
+	cmp rax 0
+	jl jl_pass
+	mov rdi 0
+	jmp jl_done
+label jl_pass
+	mov rdi 1
+label jl_done
+	call puti
+	lea rdi newline
+	call puts
+
+	// JG: 5 > 3 (signed), JG fires.
+	mov rax 5
+	cmp rax 3
+	jg jg_pass
+	mov rdi 0
+	jmp jg_done
+label jg_pass
+	mov rdi 1
+label jg_done
+	call puti
+	lea rdi newline
+	call puts
+
+	// JB: 1 < 2 (unsigned below), JB fires.
+	mov rax 1
+	cmp rax 2
+	jb jb_pass
+	mov rdi 0
+	jmp jb_done
+label jb_pass
+	mov rdi 1
+label jb_done
+	call puti
+	lea rdi newline
+	call puts
+
+	// JA: 5 > 3 (unsigned above), JA fires.
+	mov rax 5
+	cmp rax 3
+	ja ja_pass
+	mov rdi 0
+	jmp ja_done
+label ja_pass
+	mov rdi 1
+label ja_done
+	call puti
+	lea rdi newline
+	call puts
+
+	xor rax rax
+	ret

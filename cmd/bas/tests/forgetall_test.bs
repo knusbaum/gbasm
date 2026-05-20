@@ -1,0 +1,46 @@
+package main
+
+var newline string "\n\0"
+
+// Tests the forgetall directive, which releases all locals at once.
+// After forgetall, new locals can be declared and must work independently
+// of the ones that were freed.
+function main
+	prologue
+
+	local a 64
+	local b 64
+	local c 64
+	mov a 11
+	mov b 22
+	mov c 33
+
+	// Print a before releasing anything.
+	mov rdi a
+	call puti
+	lea rdi newline
+	call puts
+
+	// forgetall releases a, b, c (registers and stack space).
+	forgetall
+
+	// Declare fresh locals. The allocator may reuse the freed stack slots.
+	local x 64
+	local y 64
+	mov x 44
+	mov y 55
+
+	mov rdi x
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi y
+	call puti
+	lea rdi newline
+	call puts
+
+	forgetall
+	epilogue
+	xor rax rax
+	ret

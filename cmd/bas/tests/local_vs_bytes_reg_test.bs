@@ -1,0 +1,37 @@
+package main
+
+var newline string "\n\0"
+
+// Tests the distinction between local and bytes variables in register operand position.
+//
+// bytes var: mov reg bytes_var  →  reg = address of the stack data (LEA semantics)
+// local var: mov reg local_var  →  reg = the value stored in the local (MOV semantics)
+function main
+	prologue
+
+	// bytes: register position yields the address.
+	// Write a sentinel, load the var into rax, dereference to recover the sentinel.
+	bytes bdata 8
+	mov [bdata+0] 99
+
+	// rax = address of bdata
+	mov rax bdata
+	// *rax = 99
+	mov rdi [rax]
+	call puti
+	lea rdi newline
+	call puts
+
+	// local: register position yields the stored value directly.
+	local lval 64
+	mov lval 77
+
+	// rdi = 77
+	mov rdi lval
+	call puti
+	lea rdi newline
+	call puts
+
+	epilogue
+	xor rax rax
+	ret

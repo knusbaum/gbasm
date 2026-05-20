@@ -1,0 +1,45 @@
+package main
+
+var newline string "\n\0"
+
+// Tests that callee-saved registers (r12, r13, r14) are preserved across
+// function calls. The called function overwrites them internally, but the
+// caller's values must be restored when the callee returns.
+function main
+	prologue
+
+	mov r12 111
+	mov r13 222
+	mov r14 333
+
+	// Call a function that uses r12/r13/r14 internally.
+	// Its prologue/epilogue must save and restore them.
+	call clobber_callee_saved
+
+	// Values must be unchanged.
+	mov rdi r12
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi r13
+	call puti
+	lea rdi newline
+	call puts
+
+	mov rdi r14
+	call puti
+	lea rdi newline
+	call puts
+
+	epilogue
+	xor rax rax
+	ret
+
+function clobber_callee_saved
+	prologue
+	mov r12 999
+	mov r13 999
+	mov r14 999
+	epilogue
+	ret

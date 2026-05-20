@@ -1,0 +1,22 @@
+package main
+
+var newline string "\n\0"
+
+// Tests hex offsets in indirect addressing: [reg+0xN].
+// Writes a sentinel to a hex-specified offset, then reads it back the same way.
+function main
+	sub rsp 64
+
+	// Write sentinel at rsp+0x10 (decimal 16).
+	mov rax 42
+	mov [rsp+0x10] rax
+
+	// Read back using the hex offset.
+	mov rdi [rsp+0x10]
+	call puti
+	lea rdi newline
+	call puts
+
+	add rsp 64
+	xor rax rax
+	ret
