@@ -1,0 +1,2 @@
+Compiling tests/i64_lit_err_test.bos
+Fatal: Integer literal 9223372036854775808 does not fit in type i64

@@ -262,6 +262,7 @@ type ASTType struct {
 	Indirection int // pointer level, i.e. ***int -> Indirection: 3
 	ArraySize   int // zero for non-arrays.
 	Slice       bool
+	Signed      bool // true for signed integer types (num, i8, i16, i32, i64)
 }
 
 const PTR_SIZE = 8
@@ -277,8 +278,16 @@ func (t *ASTType) Size(c *Context) int {
 	var baseSize int
 	// builtin types
 	switch t.Name {
-	case "num":
+	case "<intlit>":
+		panic("Size() called on <intlit> type — this is a compiler bug")
+	case "num", "i64", "u64":
 		baseSize = 8
+	case "i32", "u32":
+		baseSize = 4
+	case "i16", "u16":
+		baseSize = 2
+	case "i8", "u8":
+		baseSize = 1
 	case "str":
 		baseSize = 8 // TODO: Is this right? We fucked this up with the last version.
 	case "byte":
@@ -306,7 +315,8 @@ func (t ASTType) Same(t2 ASTType) bool {
 	return t.Name == t2.Name &&
 		t.Indirection == t2.Indirection &&
 		t.ArraySize == t2.ArraySize &&
-		t.Slice == t2.Slice
+		t.Slice == t2.Slice &&
+		t.Signed == t2.Signed
 }
 
 func (t ASTType) String() string {
@@ -331,6 +341,10 @@ func mkTypename(n *Node) ASTType {
 	}
 	t.Name = n.sval
 	t.Indirection = int(n.ival)
+	switch t.Name {
+	case "num", "i8", "i16", "i32", "i64":
+		t.Signed = true
+	}
 	if len(n.args) > 0 {
 		array := n.args[0]
 		if array.t == n_index {
@@ -349,7 +363,7 @@ func voidASTType() ASTType {
 }
 
 func numASTType() ASTType {
-	return ASTType{Name: "num"}
+	return ASTType{Name: "num", Signed: true}
 }
 
 func boolASTType() ASTType {
@@ -362,6 +376,10 @@ func strASTType() ASTType {
 
 func byteASTType() ASTType {
 	return ASTType{Name: "byte"}
+}
+
+func intlitASTType() ASTType {
+	return ASTType{Name: "<intlit>"}
 }
 
 type AST interface {
@@ -682,8 +700,11 @@ func (o *Op2) ASTType(c *Context) ASTType {
 	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_booland, n_boolor:
 		return boolASTType()
 	case n_add, n_sub, n_mul, n_div:
-		return o.First.ASTType(c)
-		//return numASTType()
+		ft := o.First.ASTType(c)
+		if ft.Same(intlitASTType()) {
+			return o.Second.ASTType(c)
+		}
+		return ft
 	}
 	panic("Bad Operation. TODO: Nice error reports.")
 }
@@ -850,7 +871,7 @@ func (l *Literal) ASTType(*Context) ASTType {
 	case string:
 		return strASTType()
 	case uint64:
-		return numASTType()
+		return intlitASTType()
 	case byte:
 		return byteASTType()
 	}

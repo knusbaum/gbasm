@@ -1,0 +1,6 @@
+package main
+
+fn main() {
+	var x i16
+	x = 32768
+}

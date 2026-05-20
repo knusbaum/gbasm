@@ -1,0 +1,2 @@
+Compiling tests/i16_lit_err_test.bos
+Fatal: Integer literal 32768 does not fit in type i16

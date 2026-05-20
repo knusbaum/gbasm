@@ -1,0 +1,2 @@
+Compiling tests/u16_lit_err_test.bos
+Fatal: Integer literal 65536 does not fit in type u16

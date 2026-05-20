@@ -1,0 +1,6 @@
+package main
+
+fn main() {
+	var x u32
+	x = 4294967296
+}

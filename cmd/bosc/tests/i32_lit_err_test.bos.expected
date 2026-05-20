@@ -1,0 +1,2 @@
+Compiling tests/i32_lit_err_test.bos
+Fatal: Integer literal 2147483648 does not fit in type i32

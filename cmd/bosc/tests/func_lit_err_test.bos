@@ -1,0 +1,9 @@
+package main
+
+fn takesi8(x i8) num {
+	return 0
+}
+
+fn main() {
+	takesi8(200)
+}

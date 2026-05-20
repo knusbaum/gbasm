@@ -1,0 +1,2 @@
+Compiling tests/u8_neg_lit_err_test.bos
+Fatal: Integer literal -1 does not fit in type u8

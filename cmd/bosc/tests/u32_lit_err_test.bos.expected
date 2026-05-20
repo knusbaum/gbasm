@@ -1,0 +1,2 @@
+Compiling tests/u32_lit_err_test.bos
+Fatal: Integer literal 4294967296 does not fit in type u32

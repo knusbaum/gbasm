@@ -17,6 +17,31 @@ fail=''
 
 for t in `ls tests/*_test.bos`; do
     echo -e "\n\n############################ $t ############################"
+
+    if [[ $t == *_err_test.bos ]]; then
+        # Error test: compiler must reject this input.
+        ./bosc -o /dev/null $t >${t}.bosc.out 2>&1
+        if [[ $? == 0 ]]; then
+            echo "Expected compiler to fail but it succeeded:"
+            cat ${t}.bosc.out
+            echo ${t} FAIL
+            fail=$(echo -e "$fail\n${t} FAIL")
+            continue
+        fi
+        if [[ -f "${t}.expected" ]]; then
+            # Strip "at file:line:col: " position prefix for stable comparison.
+            sed 's/at [^:]*:[0-9]*:[0-9]*: //' ${t}.bosc.out > ${t}.bosc.stripped.out
+            diff -u "${t}.expected" "${t}.bosc.stripped.out"
+            if [[ $? != 0 ]]; then
+                echo ${t} FAIL
+                fail=$(echo -e "$fail\n${t} FAIL")
+                continue
+            fi
+        fi
+        echo ${t} PASS
+        continue
+    fi
+
     ./bosc -o ${t}.bs $t >${t}.bosc.out 2>&1
     if [[ $? != 0 ]]; then
 		echo compiler failed for ${t}:

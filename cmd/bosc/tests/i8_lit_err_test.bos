@@ -1,0 +1,6 @@
+package main
+
+fn main() {
+	var x i8
+	x = 128
+}

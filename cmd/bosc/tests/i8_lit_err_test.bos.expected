@@ -1,0 +1,2 @@
+Compiling tests/i8_lit_err_test.bos
+Fatal: Integer literal 128 does not fit in type i8

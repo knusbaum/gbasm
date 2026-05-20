@@ -1,0 +1,2 @@
+Compiling tests/func_lit_err_test.bos
+Fatal: Integer literal 200 does not fit in type i8

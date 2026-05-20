@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"math/big"
 	"strings"
 )
 
@@ -310,9 +311,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				// this is ok. void ASTs produce empty spots.
 				return
 			}
-			if _, ok := a.(*Literal); ok && expect.Same(numASTType()) {
-				// this is OK. Number literals can produce types different
-				// than their AST.
+			if expect.Same(intlitASTType()) {
+				// intlit expressions are compiled into whatever concrete
+				// integer type the context demands.
 				return
 			}
 			//panic(fmt.Sprintf("Expected type %s but compiler produced %s", expect, actual))
@@ -326,6 +327,23 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		note(of, "\t// begin %#v into %v\n", a.Note(), dest.ref)
 	}
 	defer note(of, "\t// end %#v\n", a.Note())
+
+	// Integer literal expressions are evaluated at compile time and emitted
+	// as a single immediate mov into whatever concrete type the context provides.
+	if a.ASTType(c).Same(intlitASTType()) {
+		val, ok := EvalConst(c, a)
+		if !ok {
+			CompileErrorF(a, "Could not evaluate integer literal expression at compile time")
+		}
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), numASTType())
+		}
+		if !litFitsIn(val, dest.t) {
+			CompileErrorF(a, "Integer literal %s does not fit in type %s", val.String(), dest.t.Name)
+		}
+		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, val.String())
+		return dest
+	}
 
 	switch ast := a.(type) {
 	case *StructDecl:
@@ -619,21 +637,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		srct := ast.Val.ASTType(c)
 		dstt := ast.Target.ASTType(c)
 		if !srct.Same(dstt) {
-			//panic(fmt.Sprintf("Cannot assign different types %s = %s\n", dstt, srct))
-			// TODO: Get rid of this manual munging for numeric literals.
-			srclit, ok := ast.Val.(*Literal)
-			if !ok {
-				//panic(fmt.Sprintf("Cannot assign different types %s = %s\n", dstt, srct))
+			if !srct.Same(intlitASTType()) {
 				CompileErrorF(a, "Cannot assign different types %s = %s", dstt, srct)
 			}
-			// If it's a numeric literal, we allow it to be assigned to anything,
-			// just because we don't have advanced type handling yet.
-			// This is dangerous and needs to be fixed.
-			if !srclit.ASTType(c).Same(numASTType()) {
-				//panic(fmt.Sprintf("Cannot assign different types %s = %s\n", dstt, srct))
-				CompileErrorF(a, "Cannot assign different types %s = %s", dstt, srct)
-			}
-			// pretend our source literal number is the same as the destination type
+			// intlit: compileTop shortcut handles range checking and code gen
 			dest := newSpot(of, c, c.Temp(), dstt)
 			ret := compileTop(of, c, ast.Val, dest)
 			if !ret.same(&dest) {
@@ -731,7 +738,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	case *Op2:
 		return doOp2(of, c, ast, dest)
 	case *Return:
-		dest := newSpotWithReg(of, c, c.Temp(), ast.Val.ASTType(c), "rax")
+		valType := ast.Val.ASTType(c)
+		if valType.Same(intlitASTType()) {
+			valType = numASTType()
+		}
+		dest := newSpotWithReg(of, c, c.Temp(), valType, "rax")
 		v := compileTop(of, c, ast.Val, dest)
 		if !v.same(&dest) {
 			dest.free(of)
@@ -892,8 +903,10 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 	for i := 0; i < len(f.Args); i++ {
 		arg := f.Args[i]
 		argt := arg.ASTType(c)
-		if !argt.Same(d.Args[i].Type) {
-			//panic(fmt.Sprintf("%#v BAD ARG TYPE! param: %v, passed arg: %v", f, d.Args[i].Type, argt))
+		if argt.Same(intlitASTType()) {
+			// intlit: use the declared parameter type; compileTop will range-check
+			argt = d.Args[i].Type
+		} else if !argt.Same(d.Args[i].Type) {
 			CompileErrorF(arg, "For argument %d, expected type %v but got %v",
 				i, d.Args[i].Type, argt)
 		}
@@ -922,7 +935,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		//move(of, c, s, a)
 		note(of, "\t// Ensuring argument %d (%v) is in register %v for call.\n",
 			i, argspots[i].ref, order[i])
-		argt := f.Args[i].ASTType(c)
+		argt := argspots[i].t
 		if argt.Size(c) >= PTR_SIZE {
 			// The >= requires some explanation here.
 			// It relies on the fact that for objects of size > PTR_SIZE,
@@ -931,7 +944,11 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 			fmt.Fprintf(of, "\tinreg %s %s\n", argspots[i].ref, order[i])
 		} else {
 			fmt.Fprintf(of, "\tacquire %s\n", order[i])
-			fmt.Fprintf(of, "\tmovzx %s %s\n", order[i], argspots[i].ref)
+			if argt.Signed {
+				fmt.Fprintf(of, "\tmovsx %s %s\n", order[i], argspots[i].ref)
+			} else {
+				fmt.Fprintf(of, "\tmovzx %s %s\n", order[i], argspots[i].ref)
+			}
 		}
 		argspots[i].free(of)
 	}
@@ -978,6 +995,98 @@ func jumpOp(of io.Writer, c *Context, o *Op2, label string) {
 		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
 		fmt.Fprintf(of, "\tjge %s\n", label)
 	}
+}
+
+// mulDivRegs returns the rax/rdx equivalents for a given type size in bits.
+// Used to select the right register pair for mul/div at each integer width.
+func mulDivRegs(bits int) (raxName, rdxName string) {
+	switch bits {
+	case 32:
+		return "eax", "edx"
+	case 16:
+		return "ax", "dx"
+	default:
+		return "rax", "rdx"
+	}
+}
+
+// EvalConst evaluates a pure integer literal expression (no variables) using
+// arbitrary-precision arithmetic. Returns (nil, false) if the expression
+// contains any non-literal sub-expressions.
+func EvalConst(c *Context, a AST) (*big.Int, bool) {
+	switch ast := a.(type) {
+	case *Literal:
+		if v, ok := ast.Val.(uint64); ok {
+			return new(big.Int).SetUint64(v), true
+		}
+		return nil, false
+	case *Op2:
+		fv, fok := EvalConst(c, ast.First)
+		sv, sok := EvalConst(c, ast.Second)
+		if !fok || !sok {
+			return nil, false
+		}
+		result := new(big.Int)
+		switch ast.Type {
+		case n_add:
+			result.Add(fv, sv)
+		case n_sub:
+			result.Sub(fv, sv)
+		case n_mul:
+			result.Mul(fv, sv)
+		case n_div:
+			if sv.Sign() == 0 {
+				return nil, false
+			}
+			result.Quo(fv, sv)
+		default:
+			return nil, false
+		}
+		return result, true
+	}
+	return nil, false
+}
+
+// litFitsIn reports whether val is in the mathematical range for type t.
+func litFitsIn(val *big.Int, t ASTType) bool {
+	var lo, hi *big.Int
+	switch t.Name {
+	case "i8":
+		lo, hi = big.NewInt(-128), big.NewInt(127)
+	case "u8", "byte":
+		lo, hi = big.NewInt(0), big.NewInt(255)
+	case "i16":
+		lo, hi = big.NewInt(-32768), big.NewInt(32767)
+	case "u16":
+		lo, hi = big.NewInt(0), big.NewInt(65535)
+	case "i32":
+		lo, hi = big.NewInt(-2147483648), big.NewInt(2147483647)
+	case "u32":
+		lo, hi = big.NewInt(0), new(big.Int).SetUint64(4294967295)
+	case "i64", "num":
+		lo = new(big.Int).Neg(new(big.Int).Lsh(big.NewInt(1), 63))
+		hi = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 63), big.NewInt(1))
+	case "u64":
+		lo = big.NewInt(0)
+		hi = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 64), big.NewInt(1))
+	default:
+		return false
+	}
+	return val.Cmp(lo) >= 0 && val.Cmp(hi) <= 0
+}
+
+// resolveOperandType returns the concrete type for a binary operator's operands.
+// If one side is <intlit> and the other is concrete, the concrete type wins.
+// If both are <intlit>, defaults to num.
+func resolveOperandType(ft, st ASTType) ASTType {
+	intlit := intlitASTType()
+	if !ft.Same(intlit) {
+		return ft
+	}
+	if !st.Same(intlit) {
+		return st
+	}
+	return numASTType()
 }
 
 func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
@@ -1048,8 +1157,15 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		// fmt.Fprintf(of, "\tsub %s %s\n", first.ref, second.ref)
 		// return first
 	case n_mul:
+		ot := o.ASTType(c)
+		sz := ot.Size(c)
+		if sz == 1 {
+			CompileErrorF(o.First, "8-bit multiplication not supported")
+		}
+		raxName, rdxName := mulDivRegs(sz * 8)
+		signed := ot.Signed
 		if dest.empty() {
-			dest = newSpotWithReg(of, c, c.Temp(), o.First.ASTType(c), "rax")
+			dest = newSpotWithReg(of, c, c.Temp(), ot, raxName)
 		}
 		first := compileTop(of, c, o.First, dest)
 		if !first.same(&dest) {
@@ -1059,21 +1175,34 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 			//dest.free(of)
 			dest = first
 		}
-		second := newSpotWithReg(of, c, c.Temp(), o.Second.ASTType(c), "rdx")
+		// Use ot (first operand's type) so the second slot matches the register width.
+		// Literals like `4` (type num) will be compiled into the smaller slot correctly.
+		second := newSpotWithReg(of, c, c.Temp(), ot, rdxName)
 		snd := compileTop(of, c, o.Second, second)
 		if !snd.same(&second) {
 			//second.free(of)
 			second = snd
 		}
 
-		fmt.Fprintf(of, "\tinreg %s rax\n", first.ref)
-		fmt.Fprintf(of, "\tinreg %s rdx\n", second.ref)
-		fmt.Fprintf(of, "\timul rdx\n")
+		fmt.Fprintf(of, "\tinreg %s %s\n", first.ref, raxName)
+		fmt.Fprintf(of, "\tinreg %s %s\n", second.ref, rdxName)
+		if signed {
+			fmt.Fprintf(of, "\timul %s\n", rdxName)
+		} else {
+			fmt.Fprintf(of, "\tmul %s\n", rdxName)
+		}
 		second.free(of)
 		return first
 	case n_div:
+		ot := o.ASTType(c)
+		sz := ot.Size(c)
+		if sz == 1 {
+			CompileErrorF(o.First, "8-bit division not supported")
+		}
+		raxName, rdxName := mulDivRegs(sz * 8)
+		signed := ot.Signed
 		if dest.empty() {
-			dest = newSpotWithReg(of, c, c.Temp(), o.First.ASTType(c), "rax")
+			dest = newSpotWithReg(of, c, c.Temp(), ot, raxName)
 		}
 		first := compileTop(of, c, o.First, dest)
 		if !first.same(&dest) {
@@ -1084,78 +1213,123 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 			dest = first
 		}
 		second := compileTop(of, c, o.Second, nullspot)
-		fmt.Fprintf(of, "\tinreg %s rax\n", first.ref)
-		rdx := regSpot(of, "rdx") // Use regSpot to acquire rdx for the div.
-		// div/idiv divides rdx:rax by the argument register.
-		// In order to divide signed integers, we need to sign extend
-		// the 64-bit value in rax into rdx. This is what cqo does.
-		// See: https://www.felixcloutier.com/x86/cwd:cdq:cqo
-		fmt.Fprintf(of, "\tcqo\n")
-		fmt.Fprintf(of, "\tidiv %s\n", second.ref)
+		fmt.Fprintf(of, "\tinreg %s %s\n", first.ref, raxName)
+		rdx := regSpot(of, rdxName) // acquire the rdx-equivalent for div
+		if signed {
+			// sign-extend rax-equivalent into rdx-equivalent
+			// cqo/cdq/cwd: see https://www.felixcloutier.com/x86/cwd:cdq:cqo
+			switch sz {
+			case 8:
+				fmt.Fprintf(of, "\tcqo\n")
+			case 4:
+				fmt.Fprintf(of, "\tcdq\n")
+			case 2:
+				fmt.Fprintf(of, "\tcwd\n")
+			}
+			fmt.Fprintf(of, "\tidiv %s\n", second.ref)
+		} else {
+			fmt.Fprintf(of, "\txor %s %s\n", rdxName, rdxName)
+			fmt.Fprintf(of, "\tdiv %s\n", second.ref)
+		}
 		rdx.free(of)
 		second.free(of)
 		return first
 	case n_lt:
-		first := compileTop(of, c, o.First, nullspot)
-		second := compileTop(of, c, o.Second, nullspot)
+		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
+		fst := newSpot(of, c, c.Temp(), ft)
+		first := compileTop(of, c, o.First, fst)
+		var second spot
+		if o.Second.ASTType(c).Same(ft) {
+			second = compileTop(of, c, o.Second, nullspot)
+		} else {
+			snd := newSpot(of, c, c.Temp(), ft)
+			second = compileTop(of, c, o.Second, snd)
+		}
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), boolASTType())
 		}
-
-		// TODO: For now we only use signed integers.
-		// so we will use the setl/setg etc. instructions.
-		// For unsigned integers we will need to use
-		// setb/seta etc.
 		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
-		fmt.Fprintf(of, "\tsetl %s\n", dest.ref)
+		if ft.Signed {
+			fmt.Fprintf(of, "\tsetl %s\n", dest.ref)
+		} else {
+			fmt.Fprintf(of, "\tsetb %s\n", dest.ref)
+		}
 		return dest
 	case n_le:
-		first := compileTop(of, c, o.First, nullspot)
-		second := compileTop(of, c, o.Second, nullspot)
+		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
+		fst := newSpot(of, c, c.Temp(), ft)
+		first := compileTop(of, c, o.First, fst)
+		var second spot
+		if o.Second.ASTType(c).Same(ft) {
+			second = compileTop(of, c, o.Second, nullspot)
+		} else {
+			snd := newSpot(of, c, c.Temp(), ft)
+			second = compileTop(of, c, o.Second, snd)
+		}
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), boolASTType())
 		}
-
-		// TODO: For now we only use signed integers.
-		// so we will use the setl/setg etc. instructions.
-		// For unsigned integers we will need to use
-		// setb/seta etc.
 		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
-		fmt.Fprintf(of, "\tsetle %s\n", dest.ref)
+		if ft.Signed {
+			fmt.Fprintf(of, "\tsetle %s\n", dest.ref)
+		} else {
+			fmt.Fprintf(of, "\tsetbe %s\n", dest.ref)
+		}
 		return dest
 	case n_gt:
-		first := compileTop(of, c, o.First, nullspot)
-		second := compileTop(of, c, o.Second, nullspot)
+		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
+		fst := newSpot(of, c, c.Temp(), ft)
+		first := compileTop(of, c, o.First, fst)
+		var second spot
+		if o.Second.ASTType(c).Same(ft) {
+			second = compileTop(of, c, o.Second, nullspot)
+		} else {
+			snd := newSpot(of, c, c.Temp(), ft)
+			second = compileTop(of, c, o.Second, snd)
+		}
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), boolASTType())
 		}
-
-		// TODO: For now we only use signed integers.
-		// so we will use the setl/setg etc. instructions.
-		// For unsigned integers we will need to use
-		// setb/seta etc.
 		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
-		fmt.Fprintf(of, "\tsetg %s\n", dest.ref)
+		if ft.Signed {
+			fmt.Fprintf(of, "\tsetg %s\n", dest.ref)
+		} else {
+			fmt.Fprintf(of, "\tseta %s\n", dest.ref)
+		}
 		return dest
 	case n_ge:
-		first := compileTop(of, c, o.First, nullspot)
-		second := compileTop(of, c, o.Second, nullspot)
+		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
+		fst := newSpot(of, c, c.Temp(), ft)
+		first := compileTop(of, c, o.First, fst)
+		var second spot
+		if o.Second.ASTType(c).Same(ft) {
+			second = compileTop(of, c, o.Second, nullspot)
+		} else {
+			snd := newSpot(of, c, c.Temp(), ft)
+			second = compileTop(of, c, o.Second, snd)
+		}
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), boolASTType())
 		}
-
-		// TODO: For now we only use signed integers.
-		// so we will use the setl/setg etc. instructions.
-		// For unsigned integers we will need to use
-		// setb/seta etc.
 		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
-		fmt.Fprintf(of, "\tsetge %s\n", dest.ref)
+		if ft.Signed {
+			fmt.Fprintf(of, "\tsetge %s\n", dest.ref)
+		} else {
+			fmt.Fprintf(of, "\tsetae %s\n", dest.ref)
+		}
 		return dest
 	case n_deq:
-		fst := newSpot(of, c, c.Temp(), o.First.ASTType(c))
+		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
+		fst := newSpot(of, c, c.Temp(), ft)
 		first := compileTop(of, c, o.First, fst)
-		snd := newSpot(of, c, c.Temp(), o.Second.ASTType(c))
-		second := compileTop(of, c, o.Second, snd)
+		var second spot
+		if o.Second.ASTType(c).Same(ft) {
+			snd := newSpot(of, c, c.Temp(), ft)
+			second = compileTop(of, c, o.Second, snd)
+		} else {
+			snd := newSpot(of, c, c.Temp(), ft)
+			second = compileTop(of, c, o.Second, snd)
+		}
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), boolASTType())
 		}
@@ -1163,8 +1337,16 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		fmt.Fprintf(of, "\tsete %s\n", dest.ref)
 		return dest
 	case n_neq:
-		first := compileTop(of, c, o.First, nullspot)
-		second := compileTop(of, c, o.Second, nullspot)
+		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
+		fst := newSpot(of, c, c.Temp(), ft)
+		first := compileTop(of, c, o.First, fst)
+		var second spot
+		if o.Second.ASTType(c).Same(ft) {
+			second = compileTop(of, c, o.Second, nullspot)
+		} else {
+			snd := newSpot(of, c, c.Temp(), ft)
+			second = compileTop(of, c, o.Second, snd)
+		}
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), boolASTType())
 		}

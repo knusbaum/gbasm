@@ -1,0 +1,34 @@
+package main
+
+import "string.bo"
+
+fn main() {
+	var x u32
+	x = 1000
+
+	// add/sub
+	x = x + 500
+	if (x == 1500) { puts("add ok\n") } else { puts("add fail\n") }
+
+	x = x - 750
+	if (x == 750) { puts("sub ok\n") } else { puts("sub fail\n") }
+
+	// mul/div
+	x = x * 4
+	if (x == 3000) { puts("mul ok\n") } else { puts("mul fail\n") }
+
+	x = x / 3
+	if (x == 1000) { puts("div ok\n") } else { puts("div fail\n") }
+
+	// unsigned overflow wraps: UINT32_MAX + 1 = 0
+	var mx u32
+	mx = 4294967295
+	mx = mx + 1
+	if (mx == 0) { puts("wrap ok\n") } else { puts("wrap fail\n") }
+
+	// unsigned: value 0 - 1 wraps to UINT32_MAX, which is > 0
+	var z u32
+	z = 0
+	z = z - 1
+	if (z > mx) { puts("underflow ok\n") } else { puts("underflow fail\n") }
+}

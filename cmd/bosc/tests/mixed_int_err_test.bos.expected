@@ -1,0 +1,2 @@
+Compiling tests/mixed_int_err_test.bos
+Fatal: Cannot assign different types i8 = i16

@@ -1,0 +1,27 @@
+package main
+
+import "string.bo"
+
+fn main() {
+	var x i8
+	x = 10
+
+	// add/sub
+	x = x + 5
+	if (x == 15) { puts("add ok\n") } else { puts("add fail\n") }
+
+	x = x - 7
+	if (x == 8) { puts("sub ok\n") } else { puts("sub fail\n") }
+
+	// signed: negative (neg = 0 - 1 = -1)
+	var neg i8
+	neg = 0
+	neg = neg - 1
+	if (neg < 0) { puts("neg lt ok\n") } else { puts("neg lt fail\n") }
+
+	// signed overflow: 127 + 1 = -128 (negative)
+	var mx i8
+	mx = 127
+	mx = mx + 1
+	if (mx < 0) { puts("overflow ok\n") } else { puts("overflow fail\n") }
+}

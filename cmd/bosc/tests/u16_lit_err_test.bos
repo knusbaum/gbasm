@@ -1,0 +1,6 @@
+package main
+
+fn main() {
+	var x u16
+	x = 65536
+}

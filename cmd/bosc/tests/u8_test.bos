@@ -1,0 +1,27 @@
+package main
+
+import "string.bo"
+
+fn main() {
+	var x u8
+	x = 10
+
+	// add/sub
+	x = x + 5
+	if (x == 15) { puts("add ok\n") } else { puts("add fail\n") }
+
+	x = x - 7
+	if (x == 8) { puts("sub ok\n") } else { puts("sub fail\n") }
+
+	// unsigned overflow: 255 + 1 = 0
+	var mx u8
+	mx = 255
+	mx = mx + 1
+	if (mx == 0) { puts("overflow ok\n") } else { puts("overflow fail\n") }
+
+	// unsigned underflow: 0 - 1 = 255
+	var z u8
+	z = 0
+	z = z - 1
+	if (z == 255) { puts("underflow ok\n") } else { puts("underflow fail\n") }
+}
