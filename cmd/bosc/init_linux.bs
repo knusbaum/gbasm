@@ -1,7 +1,7 @@
 package main
 
 var ioob string "Fatal: Index Out Of Bounds: index[\0"
-var ioob2 string "] for object with max index: \0"
+var ioob2 string "] for object with length: \0"
 var ioob3 string "\n\0"
 
 function start
