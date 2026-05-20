@@ -2,25 +2,25 @@ package main
 
 import "string.bo"
 
-fn putin(i num) {
+fn putin(i i64) {
    puti(i)
    puts("\n")
 }
 
-fn retten() num {
+fn retten() i64 {
    return 10
 }
 
-fn retx(x num) num {
+fn retx(x i64) i64 {
    return x
 }
 
-fn threearg(x num, y num, z num) num {
+fn threearg(x i64, y i64, z i64) i64 {
    return x + y + z
 }
 
 fn main() {
-   var x num
+   var x i64
    x = retten()
    putin(x)
    // 10

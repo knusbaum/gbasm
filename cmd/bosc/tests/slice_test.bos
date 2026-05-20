@@ -26,7 +26,7 @@ fn main() {
 	var arr byte[50]
 	slicetest(arr[:])
 
-	var i num
+	var i i64
 	var bb byte
 	for(i = 0; i < 50; i = i + 1) {
 		bb = arr[i]
@@ -65,7 +65,7 @@ fn main() {
 // }
 
 fn slicetest(bs byte[]) {
-	var i num
+	var i i64
 	i = 0
 	i = i + 5
 

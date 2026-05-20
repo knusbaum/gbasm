@@ -3,7 +3,7 @@ package main
 import "string.bo"
 
 fn main() {
-	var i num
+	var i i64
 	for (i = 0; i < 10; i = i + 1) {
 		puti(i)
 		puts("\n")
@@ -16,7 +16,7 @@ fn main() {
 
 	// nesting
 	for (i = 0; i < 5; i = i + 1) {
-		var j num
+		var j i64
 		for (j = 0; j < 2; j = j + 1) {
 			puti(i)
 			puti(j)

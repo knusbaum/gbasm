@@ -262,7 +262,7 @@ type ASTType struct {
 	Indirection int // pointer level, i.e. ***int -> Indirection: 3
 	ArraySize   int // zero for non-arrays.
 	Slice       bool
-	Signed      bool // true for signed integer types (num, i8, i16, i32, i64)
+	Signed      bool // true for signed integer types (i8, i16, i32, i64)
 }
 
 const PTR_SIZE = 8
@@ -280,7 +280,7 @@ func (t *ASTType) Size(c *Context) int {
 	switch t.Name {
 	case "<intlit>":
 		panic("Size() called on <intlit> type — this is a compiler bug")
-	case "num", "i64", "u64":
+	case "i64", "u64":
 		baseSize = 8
 	case "i32", "u32":
 		baseSize = 4
@@ -342,7 +342,7 @@ func mkTypename(n *Node) ASTType {
 	t.Name = n.sval
 	t.Indirection = int(n.ival)
 	switch t.Name {
-	case "num", "i8", "i16", "i32", "i64":
+	case "i8", "i16", "i32", "i64":
 		t.Signed = true
 	}
 	if len(n.args) > 0 {
@@ -363,7 +363,7 @@ func voidASTType() ASTType {
 }
 
 func numASTType() ASTType {
-	return ASTType{Name: "num", Signed: true}
+	return ASTType{Name: "i64", Signed: true}
 }
 
 func boolASTType() ASTType {

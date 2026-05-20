@@ -1,6 +1,6 @@
 package main
 
-fn takesi8(x i8) num {
+fn takesi8(x i8) i64 {
 	return 0
 }
 

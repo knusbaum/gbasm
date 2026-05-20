@@ -3,7 +3,7 @@ package main
 import "string.bo"
 
 fn main() {
-	var i num
+	var i i64
 	i = 10
 	if (i > 0 && i < 20) {
 		puts("between 0 and 20\n")

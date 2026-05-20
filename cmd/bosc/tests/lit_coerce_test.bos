@@ -4,13 +4,13 @@ import "string.bo"
 
 // Tests that a literal is accepted at an i8 call site without error.
 // (Using the parameter inside the function body is a separate issue.)
-fn accepti8(x i8) num {
+fn accepti8(x i8) i64 {
 	return 0
 }
 
 fn main() {
 	// literal coerced to i8 at call site; 50 fits in i8
-	var r num
+	var r i64
 	r = accepti8(50)
 	if (r == 0) { puts("func arg ok\n") } else { puts("func arg fail\n") }
 

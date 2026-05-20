@@ -36,14 +36,14 @@ function puts
 	ret
 
 function lenb
-	type fn(byte[]) num
+	type fn(byte[]) i64
 
 	mov rax [rdi+8]
 
 	ret
 
 function lenn
-	type fn(num[]) num
+	type fn(i64[]) i64
 	mov rax [rdi+8]
 	ret
 
@@ -51,7 +51,7 @@ function lenn
 // call number: 0
 function read
     // fd, data, count
-	type fn(num, byte[]) num
+	type fn(i64, byte[]) i64
 	prologue
 
 	mov rdx [rsi+8]
@@ -67,7 +67,7 @@ function read
 // call number: 1
 function write
 	// fd, data, count
-	type fn(num, byte[]) num
+	type fn(i64, byte[]) i64
 	prologue
 
 	mov rdx [rsi+8]
@@ -83,7 +83,7 @@ function write
 // call number: 2
 function open
 	// path, flags, mode
-	type fn(str, num, num) num
+	type fn(str, i64, i64) i64
 	prologue
 	nop
 	nop
@@ -100,7 +100,7 @@ function open
 // call number: 3
 function close
 	// fd
-	type fn(num) num
+	type fn(i64) i64
 	prologue
 
 	mov rax 0x3
@@ -110,14 +110,14 @@ function close
 	ret
 
 function exit
-	type fn(num) void
+	type fn(i64) void
 	// exit code already in rdi
 	mov rax 0x3C
 	syscall
 
 
 // want to be able to do this:
-// fn read(n num, b byte[]) {
+// fn read(n i64, b byte[]) {
 // 	syscall(0, n, b.addr, b.len)
 // }
 //

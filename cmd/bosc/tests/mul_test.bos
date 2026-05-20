@@ -2,11 +2,11 @@ package main
 
 import "string.bo"
 
-fn mully(x num, y num) num {
+fn mully(x i64, y i64) i64 {
    return x * y
 }
 
-fn mully2(x num, y num) num {
+fn mully2(x i64, y i64) i64 {
    return mully(x, x) * mully(y, y)
 }
 

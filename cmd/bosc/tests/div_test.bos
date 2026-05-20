@@ -2,11 +2,11 @@ package main
 
 import "string.bo"
 
-fn divvy(x num, y num) num {
+fn divvy(x i64, y i64) i64 {
    return x / y
 }
 
-fn divvy2(x num, y num) num {
+fn divvy2(x i64, y i64) i64 {
    return divvy(x, 10) / divvy(y, 10)
 }
 

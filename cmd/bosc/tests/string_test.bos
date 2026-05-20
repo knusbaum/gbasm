@@ -14,10 +14,10 @@ fn main() {
 	putc(s[0])
 	puts("\n")
 
-	var len num
+	var len i64
 	len = strlen(s)
 
-	var i num
+	var i i64
 	for (i = 0; i < len; i = i + 1) {
 		putc(s[i])
 	}

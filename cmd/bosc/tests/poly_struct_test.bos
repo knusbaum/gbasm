@@ -3,8 +3,8 @@ package main
 import "string.bo"
 
 struct poly {
-	x num
-	y num
+	x i64
+	y i64
 	bs byte[]
 }
 
@@ -22,7 +22,7 @@ fn dosth(bs byte[]) poly {
 }
 
 
-fn main() num {
+fn main() i64 {
 	var arr byte[100]
 
 	var p poly

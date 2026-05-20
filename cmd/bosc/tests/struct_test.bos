@@ -3,9 +3,9 @@ package main
 import "string.bo"
 
 struct point {
-	x num
-	y num
-	z num
+	x i64
+	y i64
+	z i64
 }
 
 fn structfn(p point) {
@@ -57,7 +57,7 @@ fn structPtrCopyFn(p *point) {
 	puts("\n")	
 }
 
-fn main() num {
+fn main() i64 {
 	var p point
 
 	p = point{

@@ -3,7 +3,7 @@ package main
 import "string.bo"
 
 fn main() {
-	var i num
+	var i i64
 	i = 0
 	if (i > 0) {
 		puts("greater than zero\n")

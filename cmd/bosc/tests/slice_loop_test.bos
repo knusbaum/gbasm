@@ -3,7 +3,7 @@ package main
 import "string.bo"
 
 fn dumpbs(bs byte[]) {
-	var i num
+	var i i64
 	for (i = 0; i < lenb(bs); i = i + 1) {
 		putb(bs[i])
 		putc(' ')

@@ -3,7 +3,7 @@ package main
 import "string.bo"
 
 fn main() {
-	var x num
+	var x i64
 	x = 0
 
 	x = x - 1

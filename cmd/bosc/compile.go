@@ -1063,7 +1063,7 @@ func litFitsIn(val *big.Int, t ASTType) bool {
 		lo, hi = big.NewInt(-2147483648), big.NewInt(2147483647)
 	case "u32":
 		lo, hi = big.NewInt(0), new(big.Int).SetUint64(4294967295)
-	case "i64", "num":
+	case "i64":
 		lo = new(big.Int).Neg(new(big.Int).Lsh(big.NewInt(1), 63))
 		hi = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 63), big.NewInt(1))
 	case "u64":
@@ -1077,7 +1077,7 @@ func litFitsIn(val *big.Int, t ASTType) bool {
 
 // resolveOperandType returns the concrete type for a binary operator's operands.
 // If one side is <intlit> and the other is concrete, the concrete type wins.
-// If both are <intlit>, defaults to num.
+// If both are <intlit>, defaults to i64.
 func resolveOperandType(ft, st ASTType) ASTType {
 	intlit := intlitASTType()
 	if !ft.Same(intlit) {
@@ -1176,7 +1176,7 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 			dest = first
 		}
 		// Use ot (first operand's type) so the second slot matches the register width.
-		// Literals like `4` (type num) will be compiled into the smaller slot correctly.
+		// Literals like `4` (type <intlit>) will be compiled into the smaller slot correctly.
 		second := newSpotWithReg(of, c, c.Temp(), ot, rdxName)
 		snd := compileTop(of, c, o.Second, second)
 		if !snd.same(&second) {

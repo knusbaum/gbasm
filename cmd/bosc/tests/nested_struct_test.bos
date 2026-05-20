@@ -3,14 +3,14 @@ package main
 import "string.bo"
 
 struct inner {
-	a num
-	b num
+	a i64
+	b i64
 }
 
 struct outer {
-	x num
+	x i64
 	i inner
-	y num
+	y i64
 }
 
 fn main() {

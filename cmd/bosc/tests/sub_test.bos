@@ -2,7 +2,7 @@ package main
 
 import "string.bo"
 
-fn subby(x num, y num) num {
+fn subby(x i64, y i64) i64 {
    return x - y
 }
 
@@ -12,7 +12,7 @@ fn main() {
 	puti(subby(10, 20))
 	puts("\n")
 
-	var n num
+	var n i64
 	n = -1
 	puti(n)
 	puts("\n")
@@ -22,7 +22,7 @@ fn main() {
 	puts("\n")
 }
 
-fn abs(n num) num {
+fn abs(n i64) i64 {
 	//if (n < 0) {
 		n = -n
 	//	return n

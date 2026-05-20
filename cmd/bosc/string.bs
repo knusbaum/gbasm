@@ -4,7 +4,7 @@ package string
 // Functions preserve the registers rbx, rsp, rbp, r12, r13, r14, and r15; 
 // while rax, rdi, rsi, rdx, rcx, r8, r9, r10, r11 are scratch registers. 
 function strlen
-	type fn(str) num
+	type fn(str) i64
 	prologue
 	//mov rax 0
 	//mov [rax] 0
@@ -130,7 +130,7 @@ function putb
 
 // puti(i int64)
 function puti
-	type fn(num) void
+	type fn(i64) void
 	prologue
 	sub rsp 22
 	mov [rsp+22] 0x00

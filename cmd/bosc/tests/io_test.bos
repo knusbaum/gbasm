@@ -7,8 +7,8 @@ import "string.bo"
 // #define O_RDWR		00000002
 // #define O_CREAT		00000100
 
-fn main() num {
-	var fd num
+fn main() i64 {
+	var fd i64
 	fd = open("./tests/io_test.bos", 0, 0)
 	if (fd < 0) {
 		puts("Failed to open io_test.bos: ")
@@ -24,7 +24,7 @@ fn main() num {
 	var bs byte[]
 	bs = buf[:]
 	
-	var n num
+	var n i64
 	n = read(fd, bs)
 	// extra security. This should not be necessary
 	// with 

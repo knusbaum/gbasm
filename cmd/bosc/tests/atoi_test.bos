@@ -3,7 +3,7 @@ package main
 import "string.bo"
 
 struct nret {
-	i num
+	i i64
 	err bool
 }
 
@@ -13,10 +13,10 @@ fn atoi(s str) nret {
 	true = (0 == 0)
 	false = (1 == 0)
 	
-	var l num
+	var l i64
 	l = strlen(s)
-	var i num
-	var r num
+	var i i64
+	var r i64
 	r = 0
 	for (i = 0; i < l; i = i + 1) {
 		r = r * 10
