@@ -1,0 +1,21 @@
+package main
+
+import "string.bo"
+
+fn fact(n num) num {
+	if (n <= 1) {
+		return 1
+	}
+	return n * fact(n - 1)
+}
+
+fn main() {
+	puti(fact(0))
+	puts("\n")
+	puti(fact(1))
+	puts("\n")
+	puti(fact(5))
+	puts("\n")
+	puti(fact(10))
+	puts("\n")
+}

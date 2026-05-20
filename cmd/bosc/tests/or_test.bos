@@ -1,0 +1,32 @@
+package main
+
+import "string.bo"
+
+fn main() {
+	var i num
+	i = 10
+
+	if (i < 0 || i > 20) {
+		puts("yes\n")
+	} else {
+		puts("no\n")
+	}
+
+	if (i > 5 || i > 20) {
+		puts("yes\n")
+	} else {
+		puts("no\n")
+	}
+
+	if (i < 0 || i > 5) {
+		puts("yes\n")
+	} else {
+		puts("no\n")
+	}
+
+	if (i > 5 || i < 20) {
+		puts("yes\n")
+	} else {
+		puts("no\n")
+	}
+}
