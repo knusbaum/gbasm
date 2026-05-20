@@ -468,18 +468,27 @@ func main() {
 			}
 			if strings.HasPrefix(line, "argi") {
 				params := SplitSpace(strings.TrimSpace(strings.TrimPrefix(line, "argi")))
-				if len(params) != 2 {
-					fmt.Printf("Fatal: Expect an argi declaration to contain a name register/offset, but have %v\n", line)
+				if len(params) < 2 || len(params) > 3 {
+					fmt.Printf("Fatal: Expect an argi declaration to contain a name, index, and optional bit size, but have %v\n", line)
 					os.Exit(1)
 				}
 				name := params[0]
-				if num, err := strconv.ParseInt(params[1], 10, 64); err == nil {
-					if _, err := f.ArgI(name, int(num)); err != nil {
-						fmt.Printf("Fatal: Failed to mark arg %s: %s\n", name, err)
+				num, err := strconv.ParseInt(params[1], 10, 64)
+				if err != nil {
+					fmt.Printf("Fatal: Expect an argi declaration to contain a name register/offset, but have %v\n", line)
+					os.Exit(1)
+				}
+				size := 64
+				if len(params) == 3 {
+					sz, err := strconv.ParseInt(params[2], 10, 64)
+					if err != nil {
+						fmt.Printf("Fatal: Expect argi size to be an integer, but have: %v\n", params[2])
 						os.Exit(1)
 					}
-				} else {
-					fmt.Printf("Fatal: Expect an argi declaration to contain a name register/offset, but have %v\n", line)
+					size = int(sz)
+				}
+				if _, err := f.ArgI(name, int(num), size); err != nil {
+					fmt.Printf("Fatal: Failed to mark arg %s: %s\n", name, err)
 					os.Exit(1)
 				}
 				continue

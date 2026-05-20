@@ -90,6 +90,9 @@ const (
 	R15D
 
 	R_RIP
+
+	R_DIL // 8-bit sub-register of RDI (requires REX prefix)
+	R_SIL // 8-bit sub-register of RSI (requires REX prefix)
 )
 
 func (r Register) String() string {
@@ -240,6 +243,11 @@ func (r Register) String() string {
 
 	case R_RIP:
 		return "RIP"
+
+	case R_DIL:
+		return "DIL"
+	case R_SIL:
+		return "SIL"
 	}
 	return "UNKNOWN"
 }
@@ -391,12 +399,20 @@ func ParseReg(r string) (Register, error) {
 	case "R15D":
 		return R15D, nil
 
+	case "DIL":
+		return R_DIL, nil
+	case "SIL":
+		return R_SIL, nil
+
 	default:
 		return 0, fmt.Errorf("No such register: %s", r)
 	}
 }
 
 func (r Register) needREX() bool {
+	if r == R_DIL || r == R_SIL {
+		return true
+	}
 	switch r.fullReg() {
 	case R8:
 		return true
@@ -479,6 +495,8 @@ func (r Register) byte() byte {
 	case R_RBP:
 		return 0b101
 
+	case R_SIL:
+		fallthrough
 	case R_SI:
 		fallthrough
 	case R_ESI:
@@ -486,6 +504,8 @@ func (r Register) byte() byte {
 	case R_RSI:
 		return 0b110
 
+	case R_DIL:
+		fallthrough
 	case R_DI:
 		fallthrough
 	case R_EDI:
@@ -577,6 +597,8 @@ func (r Register) Width() int {
 	case R_RBP:
 		return 64
 
+	case R_SIL:
+		return 8
 	case R_SI:
 		return 16
 	case R_ESI:
@@ -584,6 +606,8 @@ func (r Register) Width() int {
 	case R_RSI:
 		return 64
 
+	case R_DIL:
+		return 8
 	case R_DI:
 		return 16
 	case R_EDI:
@@ -752,6 +776,8 @@ func (r Register) fullReg() Register {
 	case R_RBP:
 		return R_RBP
 
+	case R_SIL:
+		fallthrough
 	case R_SI:
 		fallthrough
 	case R_ESI:
@@ -759,6 +785,8 @@ func (r Register) fullReg() Register {
 	case R_RSI:
 		return R_RSI
 
+	case R_DIL:
+		fallthrough
 	case R_DI:
 		fallthrough
 	case R_EDI:
@@ -802,6 +830,10 @@ func (r Register) subRegisters8() ([]Register, bool) {
 		return []Register{R_CL, R_CH}, true
 	case R_RDX:
 		return []Register{R_DL, R_DH}, true
+	case R_RDI:
+		return []Register{R_DIL}, true
+	case R_RSI:
+		return []Register{R_SIL}, true
 	case R8:
 		return []Register{R8B}, true
 	case R9:
@@ -873,7 +905,9 @@ func (r Register) partial(size int) (Register, bool) {
 			return R_RBP, true
 		}
 	case R_RSI:
-		if size == 16 {
+		if size == 8 {
+			return R_SIL, true
+		} else if size == 16 {
 			return R_SI, true
 		} else if size == 32 {
 			return R_ESI, true
@@ -881,7 +915,9 @@ func (r Register) partial(size int) (Register, bool) {
 			return R_RSI, true
 		}
 	case R_RDI:
-		if size == 16 {
+		if size == 8 {
+			return R_DIL, true
+		} else if size == 16 {
 			return R_DI, true
 		} else if size == 32 {
 			return R_EDI, true

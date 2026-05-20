@@ -400,20 +400,85 @@ func (f *Function) StackArg(name string, stacki int) (*Ralloc, error) {
 	return r, nil
 }
 
-func (f *Function) ArgI(name string, i int) (*Ralloc, error) {
+func argRegForSize(i, size int) Register {
 	switch i {
 	case 0:
-		return f.Arg(name, R_RDI)
+		switch size {
+		case 8:
+			return R_DIL
+		case 16:
+			return R_DI
+		case 32:
+			return R_EDI
+		default:
+			return R_RDI
+		}
 	case 1:
-		return f.Arg(name, R_RSI)
+		switch size {
+		case 8:
+			return R_SIL
+		case 16:
+			return R_SI
+		case 32:
+			return R_ESI
+		default:
+			return R_RSI
+		}
 	case 2:
-		return f.Arg(name, R_RDX)
+		switch size {
+		case 8:
+			return R_DL
+		case 16:
+			return R_DX
+		case 32:
+			return R_EDX
+		default:
+			return R_RDX
+		}
 	case 3:
-		return f.Arg(name, R_RCX)
+		switch size {
+		case 8:
+			return R_CL
+		case 16:
+			return R_CX
+		case 32:
+			return R_ECX
+		default:
+			return R_RCX
+		}
 	case 4:
-		return f.Arg(name, R8)
+		switch size {
+		case 8:
+			return R8B
+		case 16:
+			return R8W
+		case 32:
+			return R8D
+		default:
+			return R8
+		}
 	case 5:
-		return f.Arg(name, R9)
+		switch size {
+		case 8:
+			return R9B
+		case 16:
+			return R9W
+		case 32:
+			return R9D
+		default:
+			return R9
+		}
+	}
+	return R_RDI // unreachable for valid i
+}
+
+func (f *Function) ArgI(name string, i int, size ...int) (*Ralloc, error) {
+	sz := 64
+	if len(size) > 0 {
+		sz = size[0]
+	}
+	if i <= 5 {
+		return f.Arg(name, argRegForSize(i, sz))
 	}
 	return f.StackArg(name, i-6)
 }

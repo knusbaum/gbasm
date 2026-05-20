@@ -38,7 +38,9 @@ func NewRegisters() *Registers {
 	rs.rs[R_RSP] = &rstate{}
 	rs.rs[R_RBP] = &rstate{}
 	rs.rs[R_RSI] = &rstate{}
+	rs.rs[R_SIL] = &rstate{}
 	rs.rs[R_RDI] = &rstate{}
+	rs.rs[R_DIL] = &rstate{}
 	rs.rs[R8B] = &rstate{}
 	rs.rs[R8] = &rstate{}
 	rs.rs[R9B] = &rstate{}

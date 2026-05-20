@@ -360,7 +360,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		fmt.Fprintf(of, "function %s\n", ast.Name)
 		// TODO: Add function type signature
 		for i, a := range ast.Args {
-			fmt.Fprintf(of, "\targi %s %d\n", a.Name, i)
+			fmt.Fprintf(of, "\targi %s %d %d\n", a.Name, i, a.Type.Size(c)*8)
 			c.BindVar(ast, a.Name, a.Type)
 		}
 		fmt.Fprintf(of, "\n\tprologue\n\n")
@@ -402,9 +402,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// manage moving it around.
 		//
 		// for now, we'll just always move rax, even when nobody will use it.
-		note(of, "\t// acquire rax for call return\n")
-		rax := regSpot(of, "rax")
-		rax.t = ast.ASTType(c)
+		retType := ast.ASTType(c)
+		raxName := raxForType(retType)
+		note(of, "\t// acquire %s for call return\n", raxName)
+		rax := regSpot(of, raxName)
+		rax.t = retType
 		fmt.Fprintf(of, "\tcall %s\n", ast.FName)
 		for i := 0; i < len(ast.Args); i++ {
 			note(of, "\t// release call registers\n")
@@ -742,18 +744,27 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if valType.Same(intlitASTType()) {
 			valType = numASTType()
 		}
-		dest := newSpotWithReg(of, c, c.Temp(), valType, "rax")
+		raxName := raxForType(valType)
+		dest := newSpotWithReg(of, c, c.Temp(), valType, raxName)
 		v := compileTop(of, c, ast.Val, dest)
 		if !v.same(&dest) {
 			dest.free(of)
 			dest = v
-			//panic("Should this happen?")
 			CompileErrorF(a, "Return not same as dest. Should this happen?")
 		}
-		fmt.Fprintf(of, "\tinreg %s %s\n", dest.ref, "rax")
-		//fmt.Fprintf(of, "\tforget %s\n", dest.ref)
+		fmt.Fprintf(of, "\tinreg %s %s\n", dest.ref, raxName)
+		sz := valType.Size(c)
+		if sz == 1 || sz == 2 {
+			// Writing al/ax does not clear the upper bits of rax.
+			// The SysV ABI requires rax to hold the sign/zero-extended return value.
+			if valType.Signed {
+				fmt.Fprintf(of, "\tmovsx rax %s\n", dest.ref)
+			} else {
+				fmt.Fprintf(of, "\tmovzx rax %s\n", dest.ref)
+			}
+		}
+		// sz == 4: writing eax already zeros the upper 32 bits of rax automatically.
 		dest.free(of)
-		//fmt.Fprintf(of, "\tforgetall\n")
 		c.Return(of)
 
 		return nullspot
@@ -994,6 +1005,24 @@ func jumpOp(of io.Writer, c *Context, o *Op2, label string) {
 		// setb/seta etc.
 		fmt.Fprintf(of, "\tcmp %s %s\n", first.ref, second.ref)
 		fmt.Fprintf(of, "\tjge %s\n", label)
+	}
+}
+
+// raxForType returns the rax sub-register name appropriate for the given return type.
+// i8/u8/bool/byte → "al", i16/u16 → "ax", i32/u32 → "eax", everything else → "rax".
+func raxForType(t ASTType) string {
+	if t.Indirection > 0 || t.Slice || t.ArraySize > 0 {
+		return "rax"
+	}
+	switch t.Name {
+	case "i8", "u8", "byte", "bool":
+		return "al"
+	case "i16", "u16":
+		return "ax"
+	case "i32", "u32":
+		return "eax"
+	default:
+		return "rax"
 	}
 }
 

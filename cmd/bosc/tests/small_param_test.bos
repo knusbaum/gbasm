@@ -1,0 +1,13 @@
+package main
+
+import "string.bo"
+
+fn addone(x i16) i16 {
+	return x + 1
+}
+
+fn main() {
+	var r i16
+	r = addone(41)
+	if (r == 42) { puts("ok\n") } else { puts("fail\n") }
+}
