@@ -60,5 +60,6 @@ if [[ $fail != '' ]]; then
 fi
 
 rm tests/*.bs.o tests/*.out tests/*.stdout
+rm bas bld main.bo string.bo
 echo "SUITE PASSED"
 exit 0
