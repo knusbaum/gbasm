@@ -382,7 +382,37 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return nullspot
 	case *VarDecl:
 		c.BindVar(a, ast.Name, ast.Type, ast.IsConst)
-		newSpot(of, c, ast.Name, ast.Type)
+		s := newSpot(of, c, ast.Name, ast.Type)
+		if ast.Init != nil {
+			srct := ast.Init.ASTType(c)
+			dstt := ast.Type
+			// Ownership promotion check, unless source is an integer literal.
+			if !srct.Same(intlitASTType()) {
+				gained := dstt.OwnedMask &^ srct.OwnedMask
+				if gained != 0 {
+					if _, ok := ast.Init.(*OwnedPromotion); !ok {
+						CompileErrorF(a, "Ownership promotion requires explicit owned(): initializing %s with %s", dstt, srct)
+					}
+				}
+			}
+			// Type compatibility check.
+			if !srct.Same(intlitASTType()) && !srct.Same(dstt) && !dstt.MutCompatible(srct) {
+				CompileErrorF(a, "Cannot initialize %s with value of type %s", dstt, srct)
+			}
+			// Compile the initializer. Same-type / intlit go directly into s;
+			// coerced cases go via a temp.
+			if srct.Same(dstt) || srct.Same(intlitASTType()) {
+				val := compileTop(of, c, ast.Init, s)
+				if !val.same(&s) {
+					move(of, c, s, val)
+					val.free(of)
+				}
+			} else {
+				val := compileTop(of, c, ast.Init, nullspot)
+				move(of, c, s, val)
+				val.free(of)
+			}
+		}
 		return nullspot
 	case *FuncDecl:
 		c := c.SubContext()

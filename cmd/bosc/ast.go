@@ -696,6 +696,7 @@ type VarDecl struct {
 	Name    string
 	Type    ASTType
 	IsConst bool
+	Init    AST // optional: nil if no initializer
 	p       position
 }
 
@@ -1279,6 +1280,9 @@ func (n *Node) toASTTop(c *Context) AST {
 		v.Type = mkTypename(n.args[0])
 		v.IsConst = n.ival != 0
 		v.p = n.p
+		if len(n.args) > 1 {
+			v.Init = n.args[1].toASTTop(c)
+		}
 		c.BindVar(&v, v.Name, v.Type, v.IsConst)
 		return &v
 	case n_fn:

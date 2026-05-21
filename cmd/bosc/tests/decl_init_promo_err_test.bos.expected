@@ -1,0 +1,2 @@
+Compiling tests/decl_init_promo_err_test.bos
+Fatal: Ownership promotion requires explicit owned(): initializing owned i64 with i64

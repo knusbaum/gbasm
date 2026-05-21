@@ -676,7 +676,9 @@ func (p *Parser) parseAddSub() *Node {
 }
 
 // parseBindingDecl parses a var or const declaration after the keyword has been consumed.
+// Form: `<kw> name TypeName` or `<kw> name TypeName = expr`.
 // isConst is encoded in the node via ival: 0 = var, 1 = const.
+// args[0] is the typename node; args[1] (if present) is the initializer expression.
 func (p *Parser) parseBindingDecl(isConst bool) *Node {
 	if p.current().t != tok_ident {
 		panic(&interpreterError{fmt.Sprintf("Expected an identifier in binding declaration, but found: %s\n", p.current().t), p.current().p})
@@ -684,12 +686,17 @@ func (p *Parser) parseBindingDecl(isConst bool) *Node {
 	pos := p.current().p
 	name := p.current().sval
 	p.advance()
-	v2 := p.parseTypeName()
+	typeNode := p.parseTypeName()
 	constVal := uint64(0)
 	if isConst {
 		constVal = 1
 	}
-	return &Node{t: n_var, p: pos, sval: name, ival: constVal, args: []*Node{v2}}
+	args := []*Node{typeNode}
+	if p.current().t == tok_eq {
+		p.advance()
+		args = append(args, p.parseExpression())
+	}
+	return &Node{t: n_var, p: pos, sval: name, ival: constVal, args: args}
 }
 
 func (p *Parser) parseBoolOp() *Node {

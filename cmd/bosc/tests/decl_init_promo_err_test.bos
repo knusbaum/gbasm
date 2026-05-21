@@ -1,0 +1,8 @@
+package main
+
+fn main() {
+	var x i64
+	x = 5
+	var y owned i64 = x
+	dispose(y)
+}
