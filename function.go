@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"strings"
 )
 
 var debug bool = false
@@ -19,6 +20,47 @@ type Ralloc struct {
 	offset   int32    // if local, the offset from RBP
 	rallocs  *Rallocs // reference to ralloc to maintain LRU
 	volatile bool     // if true, always access through memory; never cache in a register
+}
+
+// RallocPartial refers to the low N bits of an allocation. It can be used
+// as either an instruction source or destination, and the semantics follow
+// naturally from where the allocation currently lives:
+//   - source from register: read the N-bit sub-register
+//   - source from memory:   read N bytes from the allocation's stack slot
+//   - dest to register:     write to the N-bit sub-register (hardware
+//                           zero-extends the full register for 32-bit writes)
+//   - dest to memory:       write N bytes to the allocation's stack slot
+//                           (upper bytes unchanged)
+//
+// The differing write semantics across storage classes are a property of
+// the hardware. Callers that need consistent extension semantics across
+// storage classes should use MOVZX/MOVSX/MOVSXD explicitly.
+type RallocPartial struct {
+	Ra   *Ralloc
+	Bits int // 8, 16, 32, or 64
+}
+
+// asOperand converts a RallocPartial into a concrete Register or Indirect
+// operand for the encoder. Uses whatever location the underlying Ralloc
+// currently occupies — does not force a load/spill.
+func (rp *RallocPartial) asOperand() (interface{}, error) {
+	ra := rp.Ra
+	if rp.Bits > ra.size {
+		return nil, fmt.Errorf("cannot take %d-bit partial of %d-bit allocation %s", rp.Bits, ra.size, ra.sym)
+	}
+	if ra.inreg {
+		partial, ok := ra.reg.partial(rp.Bits)
+		if !ok {
+			return nil, fmt.Errorf("cannot take %d-bit partial of register %v", rp.Bits, ra.reg)
+		}
+		return partial, nil
+	}
+	// In memory (spilled, volatile, or non-regable): use indirect at the
+	// requested size. Mark inmem so future evictions know not to clobber.
+	if ra.regable {
+		ra.inmem = true
+	}
+	return Indirect{Reg: R_RBP, Off: ra.offset, Size: rp.Bits}, nil
 }
 
 // size of the data held in the register in bits. For ints/other regable types, this is the size of the data.
@@ -850,6 +892,35 @@ func (f *Function) Jump(instr string, label string) error {
 	return nil
 }
 
+// fixMovzx32To64 handles the synthetic MOVZX r64, r/m32 form.
+// The real ISA has no such instruction because writing to a 32-bit
+// register automatically zero-extends to the full 64-bit register.
+// This translates `movzx dest64 src32` (when both are Rallocs) into
+// `mov dest.Register().partial(32) src`, which writes the 32-bit value
+// to the lower half of dest's register and the hardware zeros the upper half.
+//
+// Returns (newInstr, newOps, true) if the translation applies; otherwise
+// (instr, ops, false) is returned unchanged.
+func (f *Function) fixMovzx32To64(ops []interface{}) (string, []interface{}, bool) {
+	if len(ops) != 2 {
+		return "MOVZX", ops, false
+	}
+	dest, ok := ops[0].(*Ralloc)
+	if !ok || dest.size != 64 {
+		return "MOVZX", ops, false
+	}
+	src, ok := ops[1].(*Ralloc)
+	if !ok || src.size != 32 {
+		return "MOVZX", ops, false
+	}
+	destReg := dest.Register()
+	destReg32, ok := destReg.partial(32)
+	if !ok {
+		panic(fmt.Sprintf("Cannot get 32-bit partial of register %v", destReg))
+	}
+	return "MOV", []interface{}{destReg32, src}, true
+}
+
 func (f *Function) fixLEAVar(ops []interface{}) (string, []interface{}) {
 	//fmt.Printf("FIX LEA VAR\n")
 	// TODO: Is this really a good idea?
@@ -911,6 +982,17 @@ func (f *Function) Instr(instr string, ops ...interface{}) error {
 		fmt.Printf("]\n")
 	}
 
+	// Resolve any RallocPartial operands to their concrete Register or Indirect form.
+	for i, op := range ops {
+		if rp, ok := op.(*RallocPartial); ok {
+			resolved, err := rp.asOperand()
+			if err != nil {
+				return err
+			}
+			ops[i] = resolved
+		}
+	}
+
 	if instr == "LEA" {
 
 		//fmt.Printf("OPS: %#v\n", ops)
@@ -930,10 +1012,24 @@ func (f *Function) Instr(instr string, ops ...interface{}) error {
 		instr, ops = f.fixLEAVar(ops)
 	}
 
+	if instr == "MOVZX" {
+		if newInstr, newOps, fixed := f.fixMovzx32To64(ops); fixed {
+			instr, ops = newInstr, newOps
+		}
+	}
+
 	rs, err := f.a.Encode(&f.bs, instr, ops...)
 	if err != nil {
 		f.errors = append(f.errors, err)
-		panic(err)
+		var opdesc []string
+		for _, op := range ops {
+			if ra, ok := op.(*Ralloc); ok {
+				opdesc = append(opdesc, fmt.Sprintf("%s(size=%d)", ra.sym, ra.size))
+			} else {
+				opdesc = append(opdesc, fmt.Sprintf("%v", op))
+			}
+		}
+		panic(fmt.Errorf("%s [%s]: %v", instr, strings.Join(opdesc, ", "), err))
 	}
 	f.Relocations = append(f.Relocations, rs...)
 	return err

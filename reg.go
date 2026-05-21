@@ -857,7 +857,9 @@ func (r Register) subRegisters8() ([]Register, bool) {
 func (r Register) partial(size int) (Register, bool) {
 	switch r {
 	case R_RAX:
-		if size == 16 {
+		if size == 8 {
+			return R_AL, true
+		} else if size == 16 {
 			return R_AX, true
 		} else if size == 32 {
 			return R_EAX, true
@@ -865,7 +867,9 @@ func (r Register) partial(size int) (Register, bool) {
 			return R_RAX, true
 		}
 	case R_RBX:
-		if size == 16 {
+		if size == 8 {
+			return R_BL, true
+		} else if size == 16 {
 			return R_BX, true
 		} else if size == 32 {
 			return R_EBX, true
@@ -873,7 +877,9 @@ func (r Register) partial(size int) (Register, bool) {
 			return R_RBX, true
 		}
 	case R_RCX:
-		if size == 16 {
+		if size == 8 {
+			return R_CL, true
+		} else if size == 16 {
 			return R_CX, true
 		} else if size == 32 {
 			return R_ECX, true
@@ -881,7 +887,9 @@ func (r Register) partial(size int) (Register, bool) {
 			return R_RCX, true
 		}
 	case R_RDX:
-		if size == 16 {
+		if size == 8 {
+			return R_DL, true
+		} else if size == 16 {
 			return R_DX, true
 		} else if size == 32 {
 			return R_EDX, true

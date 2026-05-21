@@ -654,6 +654,22 @@ func main() {
 
 			args := make([]interface{}, len(parts)-1)
 			for i := 1; i < len(parts); i++ {
+				// Partial-of-alloc syntax: name:N where N is 8, 16, 32, or 64.
+				// Refers to the low N bits of the named allocation.
+				if colon := strings.IndexByte(parts[i], ':'); colon > 0 {
+					name := parts[i][:colon]
+					sizeStr := parts[i][colon+1:]
+					if alloc := f.AllocFor(name); alloc != nil {
+						bits, err := strconv.Atoi(sizeStr)
+						if err == nil && (bits == 8 || bits == 16 || bits == 32 || bits == 64) {
+							args[i-1] = &gbasm.RallocPartial{Ra: alloc, Bits: bits}
+							continue
+						}
+						fmt.Printf("Fatal: bad partial size in %q: must be 8, 16, 32, or 64\n", parts[i])
+						os.Exit(1)
+					}
+				}
+
 				if alloc := f.AllocFor(parts[i]); alloc != nil {
 					args[i-1] = alloc //alloc.Register()
 					continue
@@ -705,8 +721,12 @@ func main() {
 					continue
 				}
 				if num, err := strconv.ParseInt(parts[i], 10, 64); err == nil {
-					//fmt.Printf("%v -> Parsed %s into %d (%X)(%v)\n", parts, parts[i], smallestInt(num), smallestInt(num), reflect.TypeOf(smallestInt(num)).String())
 					args[i-1] = smallestInt(num)
+					continue
+				}
+				// Try unsigned for values larger than INT64_MAX.
+				if num, err := strconv.ParseUint(parts[i], 10, 64); err == nil {
+					args[i-1] = smallestUi(num)
 					continue
 				}
 				args[i-1] = parts[i]

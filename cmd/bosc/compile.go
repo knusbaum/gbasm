@@ -1247,14 +1247,20 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, srcSpot.ref)
 	case dstSize > srcSize:
 		// Widening: sign- or zero-extend.
-		if srcUnderlying.Signed {
+		// Signed 32→64: MOVSX r64, r/m32 doesn't exist; use MOVSXD instead.
+		// Unsigned 32→64: MOVZX r64, r/m32 doesn't exist either, but bas
+		// recognizes it as a synthetic instruction and translates it.
+		if srcUnderlying.Signed && srcSize == 4 && dstSize == 8 {
+			fmt.Fprintf(of, "\tmovsxd %s %s\n", dest.ref, srcSpot.ref)
+		} else if srcUnderlying.Signed {
 			fmt.Fprintf(of, "\tmovsx %s %s\n", dest.ref, srcSpot.ref)
 		} else {
 			fmt.Fprintf(of, "\tmovzx %s %s\n", dest.ref, srcSpot.ref)
 		}
 	default:
-		// Narrowing: truncate by moving into the narrower destination register.
-		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, srcSpot.ref)
+		// Narrowing: use the partial-of-alloc syntax to take the low N bits
+		// of the source, where N is the destination size in bits.
+		fmt.Fprintf(of, "\tmov %s %s:%d\n", dest.ref, srcSpot.ref, dstSize*8)
 	}
 	srcSpot.free(of)
 	return dest

@@ -44,7 +44,7 @@ fn main() {
 	check("i16->i32",  i64(i32(c)), -400)
 	check("i16->i64",  i64(c),      -400)
 	check("i16->u16",  i64(u16(c)), 65136)
-	check("i16->u32",  i64(u32(c)), 65136)
+	check("i16->u32",  i64(u32(c)), 4294966896)
 
 	// --- widening from u16 (zero-extension) ---
 	var d u16
@@ -81,7 +81,10 @@ fn main() {
 	h = i64(-1)
 	check("i64->u64", i64(u64(h)), -1)
 
+	// Note: large integer literals are limited by float64 precision in the
+	// boson lexer; using 2^63 as a safe high-bit-set value that float64 can
+	// represent exactly.
 	var i u64
-	i = u64(18446744073709551615)
-	check("u64->i64", i64(i), -1)
+	i = u64(9223372036854775808)
+	check("u64->i64", i64(i), -9223372036854775808)
 }

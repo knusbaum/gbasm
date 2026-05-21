@@ -1,0 +1,33 @@
+i8->i16 ok
+i8->i32 ok
+i8->i64 ok
+i8->u8 ok
+i8->u16 ok
+i8->u64 ok
+u8->i16 ok
+u8->i32 ok
+u8->i64 ok
+u8->i8 ok
+u8->u16 ok
+u8->u32 ok
+u8->u64 ok
+i16->i32 ok
+i16->i64 ok
+i16->u16 ok
+i16->u32 ok
+u16->i32 ok
+u16->i64 ok
+u16->i16 ok
+u16->u32 ok
+u16->u64 ok
+i32->i64 ok
+i32->u32 ok
+i32->u64 ok
+u32->i64 ok
+u32->u64 ok
+u32->i32 ok
+i32->i8 trunc ok
+i32->i16 trunc ok
+i32->u8 trunc ok
+i64->u64 ok
+u64->i64 ok
