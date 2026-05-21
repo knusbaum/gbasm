@@ -66,6 +66,9 @@ func (r *Ralloc) Location(preferRegister bool) interface{} {
 }
 
 func (r *Ralloc) UseRegister(reg Register) {
+	if r.volatile {
+		panic(fmt.Sprintf("UseRegister called on volatile allocation %s: volatile variables must never be cached in a register", r.sym))
+	}
 	if r.inreg && r.reg == reg {
 		// We're already in reg.
 		return
@@ -123,6 +126,9 @@ func (r *Ralloc) UseRegister(reg Register) {
 }
 
 func (r *Ralloc) Register() Register {
+	if r.volatile {
+		panic(fmt.Sprintf("Register() called on volatile allocation %s: volatile variables must never be cached in a register", r.sym))
+	}
 	if r.inreg {
 		r.rallocs.updateLRU(r.reg)
 		return r.reg
@@ -504,10 +510,12 @@ func (f *Function) ArgI(name string, i int, size ...int) (*Ralloc, error) {
 // immediately take on the value currently in 'reg'. Any other variable currently in 'reg' will be
 // evicted.
 func (ra *Rallocs) takeoverRegister(name string, reg Register) (*Ralloc, error) {
-	//fmt.Printf("Took over register %s for %s\n", reg, name)
 	r, ok := ra.names[name]
 	if !ok {
 		return nil, fmt.Errorf("No such Ralloc %s.", name)
+	}
+	if r.volatile {
+		return nil, fmt.Errorf("takeoverRegister called on volatile allocation %s", name)
 	}
 
 	if alloc, ok := ra.regs[reg]; ok {
