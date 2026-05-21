@@ -1,0 +1,63 @@
+package main
+
+var newline string "\n\0"
+
+// Tests size-qualified memory operands: byte[...], word[...], dword[...], qword[...]
+//
+// The key property under test: without a qualifier, 'mov [mem] small_imm' uses
+// the byte-store encoding (C6 opcode). With a qualifier the correct width is
+// selected.  We verify this by poisoning memory with 0xFF bytes first: if the
+// store is too narrow, the upper bytes remain 0xFF and the read-back is wrong.
+
+function main
+	prologue
+	sub rsp 32
+
+	// --- qword qualifier ---
+	// Poison 8 bytes then store 1 as a 64-bit value.
+	// Without qword: byte store → upper 7 bytes stay 0xFF → read back ≠ 1.
+	// With qword:    64-bit store → all 8 bytes written  → read back = 1.
+	mov rax 0xFFFFFFFFFFFFFFFF
+	mov [rsp] rax
+	mov qword[rsp] 1
+	mov rdi [rsp]
+	call puti
+	lea rdi newline
+	call puts
+
+	// --- dword qualifier ---
+	// Poison, store 42 as 32-bit, read back the 32-bit field via 32-bit reg.
+	// Without dword: byte store → upper 3 bytes stay 0xFF → mov edi [rsp+8] = 0xFFFFFF2A ≠ 42.
+	// With dword:    32-bit store → 4 bytes written        → mov edi [rsp+8] = 42.
+	mov [rsp+8] rax
+	mov dword[rsp+8] 42
+	mov edi [rsp+8]
+	call puti
+	lea rdi newline
+	call puts
+
+	// --- word qualifier ---
+	// Poison, store 100 as 16-bit, read back zero-extended.
+	// Without word: byte store → [rsp+17] stays 0xFF → movzx rdi word[rsp+16] = 0xFF64 ≠ 100.
+	// With word:    16-bit store → 2 bytes written   → movzx rdi word[rsp+16] = 100.
+	mov [rsp+16] rax
+	mov word[rsp+16] 100
+	movzx rdi word[rsp+16]
+	call puti
+	lea rdi newline
+	call puts
+
+	// --- byte qualifier ---
+	// Syntax check: store a byte-sized value explicitly.
+	// Both qualified and unqualified produce a byte store for a value ≤ 255,
+	// so this tests that the syntax is accepted and the value is correct.
+	mov [rsp+24] rax
+	mov byte[rsp+24] 200
+	movzx rdi byte[rsp+24]
+	call puti
+	lea rdi newline
+	call puts
+
+	epilogue
+	xor rax rax
+	ret

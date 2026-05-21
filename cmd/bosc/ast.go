@@ -10,6 +10,15 @@ import (
 	"github.com/knusbaum/gbasm"
 )
 
+type interpreterError struct {
+	msg string
+	p   position
+}
+
+func (e *interpreterError) Error() string {
+	return fmt.Sprintf("at %s: %s", e.p, e.msg)
+}
+
 // Context holds types and bindings for the current lexical environment.
 type Context struct {
 	parent *Context
@@ -288,8 +297,6 @@ func (t *ASTType) Size(c *Context) int {
 		baseSize = 2
 	case "i8", "u8":
 		baseSize = 1
-	case "str":
-		baseSize = 8 // TODO: Is this right? We fucked this up with the last version.
 	case "byte":
 		baseSize = 1
 	case "bool":
@@ -370,12 +377,12 @@ func boolASTType() ASTType {
 	return ASTType{Name: "bool"}
 }
 
-func strASTType() ASTType {
-	return ASTType{Name: "str"}
-}
-
 func byteASTType() ASTType {
 	return ASTType{Name: "byte"}
+}
+
+func byteSliceASTType() ASTType {
+	return ASTType{Name: "byte", Slice: true}
 }
 
 func intlitASTType() ASTType {
@@ -814,12 +821,6 @@ func (i *Index) ASTType(c *Context) ASTType {
 		t.ArraySize = 0
 		return t
 	}
-	// SPECIAL CASE
-	// TODO: We should generalize this into some slice-like structure
-	// so it can be reused.
-	if t.Name == "str" {
-		return byteASTType()
-	}
 	panic(fmt.Sprintf("CANNOT INDEX INTO NON-ARRAY TYPE %v", t))
 }
 
@@ -869,7 +870,7 @@ type Literal struct {
 func (l *Literal) ASTType(*Context) ASTType {
 	switch l.Val.(type) {
 	case string:
-		return strASTType()
+		return byteSliceASTType()
 	case uint64:
 		return intlitASTType()
 	case byte:

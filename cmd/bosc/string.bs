@@ -1,13 +1,13 @@
 package string
 
 // Parameters to functions are passed in the registers rdi, rsi, rdx, rcx, r8, r9
-// Functions preserve the registers rbx, rsp, rbp, r12, r13, r14, and r15; 
-// while rax, rdi, rsi, rdx, rcx, r8, r9, r10, r11 are scratch registers. 
+// Functions preserve the registers rbx, rsp, rbp, r12, r13, r14, and r15;
+// while rax, rdi, rsi, rdx, rcx, r8, r9, r10, r11 are scratch registers.
+
+// strlen(ptr *byte) i64 — internal helper, not exposed to Boson.
+// Returns the length of a null-terminated byte string.
 function strlen
-	type fn(str) i64
 	prologue
-	//mov rax 0
-	//mov [rax] 0
 	mov rax -1
 	dec rdi
 label loop
@@ -19,39 +19,14 @@ label loop
 	epilogue
 	ret
 
-// Countdigits does not work for negative numbers.
-// Instead we convert negative numbers to positive numbers,
-// call ucountdigits and add 1 for the negative sign.
-// // countdigits(i int64) -> int64 
-// // determines the minimum number of characters needed to
-// // represent the integer i
-// function countdigits
-// 	prologue
-// 	mov rax 0
-// 	mov rbx 0
-// 	
-// label loop
-// 	inc rax
-// 	imul rbx rbx 10
-// 	add rbx 9
-// 	cmp rbx rdi
-// 	jl loop
-// 
-// 	epilogue
-// 	ret
-
-// ucountdigits(i uint64) -> uint64 
-// determines the minimum number of characters needed to
-// represent the integer i
+// ucountdigits(i uint64) -> uint64
+// Determines the minimum number of characters needed to represent i.
 function ucountdigits
-	// skip prologue and epilogue.
-	// We aren't using stack or preserved registers.
-	// prologue
 	mov rcx 0
 	mov rdx 0
 	mov rax 0
 	mov r8 10
-	
+
 label loop
 	inc rcx
 	mul r8
@@ -60,121 +35,113 @@ label loop
 	ja end
 	cmp rax rdi
 	jb loop
-	
+
 label end
 	mov rax rcx
-	// epilogue
 	ret
-	
 
-// uitoa(i uint64, b [?]byte)
+
+// uitoa(i uint64, b *byte) — write decimal digits of i into buffer at b (null-terminated).
 function uitoa
-	// No saved registers used and stack use is trivial.
-	// We can skip the prologue.
-	//prologue
-
-	// lazy save
 	push rdi
 	push rsi
 	call ucountdigits
 	pop rsi
 	pop rdi
 
-
-	// Add countdigits to rsi index so we can 
-	// add characters to the array backwards.
 	add rsi rax
 	mov [rsi] 0
 	dec rsi
 
-	// Integer is in rdi
-	// Target buffer is in rsi
 	mov rax rdi
 label loop
 	mov rdx 0
 	mov rcx 10
 	div rcx
-	// Remainder (mod) is in rdx
-	// quotient remains in rax.
-	// mod = mod + '0'
 	add rdx 0x30
 	mov [rsi] dl
 	dec rsi
 	test rax rax
 	jnz loop
-	
-	//epilogue
+
 	ret
 
-// function itoa
+// itoa(i int64, b *byte) — write decimal representation of i into buffer at b (null-terminated).
 function itoa
 	prologue
 
 	cmp rdi 0
 	jge skipconvert
-	// convert negative to positive
 	neg rdi
 	mov [rsi] 0x2d
 	inc rsi
-	
+
 label skipconvert
 	call uitoa
 
 	epilogue
 	ret
 
-// putb(i byte)
+// putb(i byte) void — print byte value as a decimal integer.
 function putb
 	type fn(byte) void
 	jmp puti
 
-// puti(i int64)
+// puti(i i64) void — print a 64-bit signed integer to stdout.
+//
+// Stack layout after sub rsp 48:
+//   [rsp+0 .. rsp+23]  number string buffer (24 bytes, enough for any i64)
+//   [rsp+24.. rsp+31]  slice header: data pointer
+//   [rsp+32.. rsp+39]  slice header: length
 function puti
 	type fn(i64) void
 	prologue
-	sub rsp 22
-	mov [rsp+22] 0x00
-	mov [rsp+21] 0x00
-	
+	sub rsp 48
+
+	// Zero the last 8 bytes of the buffer so itoa always finds a null terminator.
+	mov qword[rsp+16] 0
+
+	// itoa(rdi=integer already in rdi, rsi=buffer)
 	mov rsi rsp
 	call itoa
-	
+
+	// Get string length via strlen.
 	mov rdi rsp
+	call strlen
+	// rax = length
+
+	// Build slice header: ptr at [rsp+24], len at [rsp+32].
+	mov qword[rsp+24] rsp
+	mov qword[rsp+32] rax
+
+	// Call puts with a pointer to the slice header.
+	lea rdi [rsp+24]
 	call puts
-	
-	//lea rdi [rsp+21]
-	//call puts	
-	
+
 	epilogue
 	ret
 
-// puti(i uint64)
-function uputi
-	prologue
-	sub rsp 22
-	mov [rsp+22] 0x00
-	mov [rsp+21] 0x0a
-	
-	mov rsi rsp
-	call uitoa
-	
-	mov rdi rsp
-	call puts
-	
-	lea rdi [rsp+21]
-	call puts	
-	
-	epilogue
-	ret
-	
-// putc(c byte)
+// putc(c byte) void — print a single byte as a character.
+//
+// Stack layout after sub rsp 24:
+//   [rsp+0 .. rsp+7]   character stored as 64-bit (only low byte used by write)
+//   [rsp+8 .. rsp+15]  slice header: data pointer
+//   [rsp+16.. rsp+23]  slice header: length
 function putc
 	type fn(byte) void
 	prologue
-	sub rsp 16
+	sub rsp 24
+
+	// Store rdi at [rsp]; the low byte is the character.
+	// The write syscall will only write slice.len = 1 byte from this address.
 	mov [rsp] rdi
-	movb [rsp+1] 0
-	mov rdi rsp
+
+	// Build slice header: ptr at [rsp+8], len at [rsp+16].
+	mov qword[rsp+8] rsp
+	mov qword[rsp+16] 1
+
+	// Call puts with a pointer to the slice header.
+	lea rdi [rsp+8]
 	call puts
 
 	epilogue

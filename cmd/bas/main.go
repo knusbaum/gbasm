@@ -155,6 +155,31 @@ func SplitSpace(s string) []string {
 	return ss
 }
 
+// sizeKeywords maps a size-prefix keyword to its bit width.
+// Used for size-qualified memory operands: byte[reg+off], word[reg+off], dword[reg+off], qword[reg+off].
+var sizeKeywords = []struct {
+	prefix string
+	bits   int
+}{
+	{"qword", 64},
+	{"dword", 32},
+	{"word", 16},
+	{"byte", 8},
+}
+
+// parseSizePrefix checks whether s begins with a size keyword immediately followed
+// by '[' (e.g. "qword[rsp+16]"). If so it returns the bit width and the bracket
+// portion; otherwise it returns ok=false.
+func parseSizePrefix(s string) (bits int, rest string, ok bool) {
+	for _, kw := range sizeKeywords {
+		p := kw.prefix + "["
+		if strings.HasPrefix(s, p) {
+			return kw.bits, s[len(kw.prefix):], true
+		}
+	}
+	return 0, "", false
+}
+
 func ParseIndirect(f *gbasm.Function, s string) (indirect any, err error) {
 	//(base, index string, scale int, err error) {
 	r := regexp.MustCompile(`\[([_a-zA-Z0-9]+)\s*(([+-])\s*([_x0-9a-zA-Z]+))?\s*(\*\s*([x0-9]+))?\]`)
@@ -623,6 +648,21 @@ func main() {
 
 				if reg, err := gbasm.ParseReg(parts[i]); err == nil {
 					args[i-1] = reg
+					continue
+				}
+
+				if bits, rest, ok := parseSizePrefix(parts[i]); ok {
+					ind, err := ParseIndirect(f, rest)
+					if err != nil {
+						fmt.Printf("Fatal: Failed to parse indirection: %v\n", err)
+						os.Exit(1)
+					}
+					if indirect, ok := ind.(gbasm.Indirect); ok {
+						indirect.Size = bits
+						args[i-1] = indirect
+					} else {
+						args[i-1] = ind
+					}
 					continue
 				}
 

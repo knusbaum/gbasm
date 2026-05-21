@@ -9,18 +9,17 @@ fn main() {
 	putc(b)
 	puts("\n")
 
-	var s str
+	var s byte[]
 	s = "Hello, World!"
 	putc(s[0])
 	puts("\n")
 
 	var len i64
-	len = strlen(s)
+	len = lenb(s)
 
 	var i i64
 	for (i = 0; i < len; i = i + 1) {
 		putc(s[i])
 	}
 	puts("\n")
-	
 }

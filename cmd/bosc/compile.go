@@ -508,14 +508,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			dest = newSpot(of, c, c.Temp(), vt)
 		}
 		if ast.NAST == nil {
-			// Special case for index literals.
-			if w.t.Name == "str" && w.t.Indirection == 0 && w.t.ArraySize == 0 && !w.t.Slice {
-				// SPECIAL CASE! We have a string. This needs to go away.
-				// See: Index.ASTType() documentation.
-				fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, addr.ref, ast.N)
-				return dest
-			}
-			//targt := ast.ASTType(c)
 			off := uint64(vt.Size(c)) * ast.N
 			if !w.t.Slice {
 				if ast.N >= uint64(w.t.ArraySize) {
@@ -532,20 +524,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			fmt.Fprintf(of, "\t// mov NAST == nil\n")
 			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, addr.ref, off)
-			return dest
-		}
-		// TODO: Need to add assembler support for indexing like [base + index * size].
-		// For now, we'll calculate it ourselves.
-		if w.t.Name == "str" && w.t.Indirection == 0 && w.t.ArraySize == 0 && !w.t.Slice {
-			// SPECIAL CASE! We have a string. This needs to go away.
-			// See: Index.ASTType() documentation.
-			idx := newSpot(of, c, c.Temp(), ast.NAST.ASTType(c))
-			nidx := compileTop(of, c, ast.NAST, idx)
-			if !nidx.same(&idx) {
-				idx.free(of)
-			}
-			fmt.Fprintf(of, "\tadd %s %s\n", nidx.ref, addr.ref)
-			fmt.Fprintf(of, "\tmov %s [%s]\n", dest.ref, nidx.ref)
 			return dest
 		}
 		if vt.Size(c) <= 8 {
@@ -814,8 +792,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 
 		switch v := ast.Val.(type) {
 		case string:
+			// String literals have type byte[]: a fat pointer {data_ptr, length}.
+			// dest is a bytes slot (16 bytes). Use qword[] to force 64-bit stores.
 			s := c.String(v)
-			fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, s)
+			reg := regSpot(of, "r10")
+			fmt.Fprintf(of, "\tlea r10 %s\n", s)
+			fmt.Fprintf(of, "\tmov qword[%s] r10\n", dest.ref)
+			fmt.Fprintf(of, "\tmov qword[%s+8] %d\n", dest.ref, len(v))
+			reg.free(of)
 		case uint64:
 			fmt.Fprintf(of, "\tmov %s %d\n", dest.ref, v)
 		case byte:
