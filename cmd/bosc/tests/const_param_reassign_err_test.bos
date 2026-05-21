@@ -1,0 +1,9 @@
+package main
+
+fn foo(x i64) {
+	x = 99
+}
+
+fn main() {
+	foo(0)
+}

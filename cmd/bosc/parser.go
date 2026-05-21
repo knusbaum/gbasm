@@ -140,8 +140,9 @@ type Parser struct {
 }
 
 type Node struct {
-	t    nodetype
-	ival uint64
+	t       nodetype
+	ival    uint64
+	mutmask uint64 // for n_typename: bit N = mut at pointer/slice level N
 	//fval float64 // we'll add floats later.
 	sval string
 	args []*Node
@@ -254,49 +255,73 @@ func (p *Parser) parseTok() *Node {
 }
 
 func (p *Parser) parseTypeName() *Node {
-	//c := p.current()
-	indirection := uint64(0)
-	for c := p.current(); c.t == tok_star; c = p.current() {
+	var indirection uint64
+	var mutmask uint64
+
+	// Parse leading pointer stars, each optionally followed by 'mut'.
+	// e.g. *mut *i16 → indirection=2, mutmask=0b01 (bit 0 = outermost is mut)
+	for p.current().t == tok_star {
+		p.advance()
+		if p.current().t == tok_mut {
+			mutmask |= 1 << indirection
+			p.advance()
+		}
 		indirection++
+	}
+
+	// Optional leading 'mut' before the base type name applies to the slice level.
+	// e.g. mut byte[] → slice is writable; placed at bit indirection of mutmask.
+	sliceMut := false
+	if p.current().t == tok_mut {
+		sliceMut = true
 		p.advance()
 	}
+
 	c := p.current()
 	if c.t != tok_ident {
 		panic(&interpreterError{fmt.Sprintf("Expected a type name, but found: %s\n", c.t), c.p})
 	}
 	typename := c.sval
 	p.advance()
-	//fmt.Printf("NEXT TOKEN: %v\n", p.current())
+
 	if p.current().t == tok_lsquare {
 		p.advance()
 		if p.current().t == tok_number {
-			// if p.current().t != tok_number {
-			// 	panic(&interpreterError{fmt.Sprintf("Expected a number, but found: %s\n", c.t), c.p})
-			// }
 			arrsize := uint64(p.current().nval)
 			p.advance()
 			p.expect(tok_rsquare)
+			if sliceMut {
+				panic(&interpreterError{fmt.Sprintf("'mut' is only valid on slice types, not fixed-size arrays"), c.p})
+			}
 			return &Node{
-				t:    n_typename,
-				p:    p.current().p,
-				sval: typename,
-				ival: indirection,
-				args: []*Node{&Node{t: n_index, p: p.current().p, ival: arrsize}},
+				t:       n_typename,
+				p:       c.p,
+				sval:    typename,
+				ival:    indirection,
+				mutmask: mutmask,
+				args:    []*Node{{t: n_index, p: c.p, ival: arrsize}},
 			}
 		} else if p.current().t == tok_rsquare {
 			p.advance()
+			if sliceMut {
+				mutmask |= 1 << indirection
+			}
 			return &Node{
-				t:    n_typename,
-				p:    p.current().p,
-				sval: typename,
-				ival: indirection,
-				args: []*Node{&Node{t: n_slice, p: p.current().p}},
+				t:       n_typename,
+				p:       c.p,
+				sval:    typename,
+				ival:    indirection,
+				mutmask: mutmask,
+				args:    []*Node{{t: n_slice, p: c.p}},
 			}
 		}
-
-		panic(&interpreterError{fmt.Sprintf("Expected a number, but found: %s\n", c.t), c.p})
+		panic(&interpreterError{fmt.Sprintf("Expected a number or ']', but found: %s\n", p.current().t), c.p})
 	}
-	return &Node{t: n_typename, p: p.current().p, sval: c.sval, ival: indirection}
+
+	if sliceMut {
+		panic(&interpreterError{fmt.Sprintf("'mut' before '%s' has no effect: 'mut' is only valid on slice or pointer types", typename), c.p})
+	}
+	return &Node{t: n_typename, p: c.p, sval: typename, ival: indirection, mutmask: mutmask}
 }
 
 func (p *Parser) parseValue() *Node {
@@ -400,10 +425,15 @@ func (p *Parser) parseFor() *Node {
 }
 
 func (p *Parser) parseParams() []*Node {
-	//fmt.Printf("Parsing params...\n")
-	//defer fmt.Printf("Parsing params done.\n")
 	var ret []*Node
 	for p.current().t != tok_rparen {
+		// Optional 'var' makes the parameter rebindable inside the function body.
+		// Parameters are const by default; ival=0 means const, ival=1 means var.
+		isVar := uint64(0)
+		if p.current().t == tok_var {
+			isVar = 1
+			p.advance()
+		}
 		v := p.parseTok()
 		if v.t != n_symbol {
 			panic(&interpreterError{fmt.Sprintf("Expected variable name, but found: %v\n", v), v.p})
@@ -412,7 +442,7 @@ func (p *Parser) parseParams() []*Node {
 		if v2.t != n_typename {
 			panic(&interpreterError{fmt.Sprintf("Expected type name, but found: %v\n", v), v.p})
 		}
-		ret = append(ret, &Node{t: n_arg, p: v.p, sval: v.sval, args: []*Node{v2}})
+		ret = append(ret, &Node{t: n_arg, p: v.p, sval: v.sval, ival: isVar, args: []*Node{v2}})
 		if p.current().t != tok_comma {
 			break
 		}
@@ -452,7 +482,6 @@ func (p *Parser) parseFn() *Node {
 
 func (p *Parser) parseParens() *Node {
 	c := p.current()
-	//fmt.Printf("CURRENT TOKEN IS %#v\n", c)
 	if c.t == tok_lparen {
 		p.advance()
 		v := p.parseExpression()
@@ -493,6 +522,31 @@ func (p *Parser) parseParens() *Node {
 	return pv
 }
 
+// parseUnary handles prefix unary operators: *, -, &.
+// It sits above parseSubexpr (which handles . and []) so that
+// *x.y parses as *(x.y), and below parseAddSub so that *p + 1 = (*p) + 1.
+func (p *Parser) parseUnary() *Node {
+	c := p.current()
+	if c.t == tok_star {
+		p.advance()
+		operand := p.parseUnary() // right-associative: **p = *(*p)
+		return &Node{t: n_deref, p: c.p, args: []*Node{operand}}
+	} else if c.t == tok_minus {
+		p.advance()
+		operand := p.parseUnary()
+		return &Node{t: n_neg, p: c.p, args: []*Node{operand}}
+	} else if c.t == tok_amp {
+		p.advance()
+		if p.current().t != tok_ident {
+			panic(&interpreterError{fmt.Sprintf("Expected an identifier in address operation, but found: %s\n", p.current().t), p.current().p})
+		}
+		name := p.current().sval
+		p.advance()
+		return &Node{t: n_address, p: c.p, sval: name}
+	}
+	return p.parseSubexpr()
+}
+
 func (p *Parser) parseSubexpr() *Node {
 	//fmt.Printf("PARSING PARENS\n")
 	v := p.parseParens()
@@ -523,8 +577,7 @@ func (p *Parser) parseSubexpr() *Node {
 }
 
 func (p *Parser) parseAddSub() *Node {
-	//fmt.Printf("Parsing Subexpr\n")
-	v := p.parseSubexpr()
+	v := p.parseUnary()
 	//fmt.Printf("GOT SUBEXPR: %#v\n", v)
 	for {
 		c := p.current()
@@ -545,15 +598,21 @@ func (p *Parser) parseAddSub() *Node {
 	return v
 }
 
-func (p *Parser) parseVarDecl() *Node {
+// parseBindingDecl parses a var or const declaration after the keyword has been consumed.
+// isConst is encoded in the node via ival: 0 = var, 1 = const.
+func (p *Parser) parseBindingDecl(isConst bool) *Node {
 	if p.current().t != tok_ident {
-		panic(&interpreterError{fmt.Sprintf("Expected an identifier in var declaration, but found: %s\n", p.current().t), p.current().p})
+		panic(&interpreterError{fmt.Sprintf("Expected an identifier in binding declaration, but found: %s\n", p.current().t), p.current().p})
 	}
 	pos := p.current().p
 	name := p.current().sval
 	p.advance()
 	v2 := p.parseTypeName()
-	return &Node{t: n_var, p: pos, sval: name, args: []*Node{v2}}
+	constVal := uint64(0)
+	if isConst {
+		constVal = 1
+	}
+	return &Node{t: n_var, p: pos, sval: name, ival: constVal, args: []*Node{v2}}
 }
 
 func (p *Parser) parseBoolOp() *Node {
@@ -624,32 +683,12 @@ func (p *Parser) parseExpression() (r *Node) {
 	if p.current().t == tok_semicolon {
 		p.advance()
 		return &Node{p: p.current().p}
-	} else if p.current().t == tok_ident && p.current().sval == "var" {
+	} else if p.current().t == tok_var {
 		p.advance()
-		return p.parseVarDecl()
-	} else if p.current().t == tok_amp {
+		return p.parseBindingDecl(false)
+	} else if p.current().t == tok_const {
 		p.advance()
-		if p.current().t != tok_ident {
-			panic(&interpreterError{fmt.Sprintf("Expected an identifier in address operation, but found: %s\n", p.current().t), p.current().p})
-		}
-		name := p.current().sval
-		p.advance()
-		return &Node{t: n_address, p: p.current().p, sval: name}
-	} else if p.current().t == tok_star {
-		p.advance()
-		n := p.parseExpression()
-		return &Node{t: n_deref, p: p.current().p, args: []*Node{n}}
-		// if p.current().t != tok_ident {
-		// 	panic(&interpreterError{fmt.Sprintf("Expected an identifier in deref operation, but found: %s\n", p.current().t), p.current().p})
-		// }
-		// name := p.current().sval
-		// p.advance()
-		// return &Node{t: n_deref, sval: name, p: p.current().p}
-	} else if p.current().t == tok_minus {
-		p.advance()
-		cur := p.current().p
-		n := p.parseExpression()
-		return &Node{t: n_neg, p: cur, args: []*Node{n}}
+		return p.parseBindingDecl(true)
 	} else if p.current().t == tok_none {
 		p.advance()
 		panic(eofError(0))

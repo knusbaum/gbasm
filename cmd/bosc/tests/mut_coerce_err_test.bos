@@ -1,0 +1,15 @@
+package main
+
+fn increment(p *mut i64) {
+	*p = *p + 1
+}
+
+fn tryincrement(x i64) {
+	increment(&x)
+}
+
+fn main() {
+	var n i64
+	n = 0
+	tryincrement(n)
+}

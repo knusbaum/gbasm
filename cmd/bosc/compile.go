@@ -152,6 +152,7 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 	}
 	depoint := dest.t
 	depoint.Indirection--
+	depoint.MutMask >>= 1 // consume the outermost pointer level's mut bit
 	if depoint.Same(src.t) {
 		// dest was *T and src is T
 		fmt.Fprintf(of, "\tmov [%s] %s\n", dest.ref, src.ref)
@@ -350,7 +351,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		c.DefineStruct(ast.TName, ast)
 		return nullspot
 	case *VarDecl:
-		c.BindVar(a, ast.Name, ast.Type)
+		c.BindVar(a, ast.Name, ast.Type, ast.IsConst)
 		newSpot(of, c, ast.Name, ast.Type)
 		return nullspot
 	case *FuncDecl:
@@ -361,7 +362,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// TODO: Add function type signature
 		for i, a := range ast.Args {
 			fmt.Fprintf(of, "\targi %s %d %d\n", a.Name, i, a.Type.Size(c)*8)
-			c.BindVar(ast, a.Name, a.Type)
+			c.BindVar(ast, a.Name, a.Type, a.IsConst)
 		}
 		fmt.Fprintf(of, "\n\tprologue\n\n")
 		compileTop(of, c, ast.Body, nullspot)
@@ -453,10 +454,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		v := compileTop(of, c, ast.Val, nullspot)
 		t := v.t
 		if t.Indirection == 0 {
-			//panic("Cannot dereference non-pointer type")
 			CompileErrorF(a, "Cannot dereference non-pointer type %s", t)
 		}
 		t.Indirection -= 1
+		t.MutMask >>= 1 // consume the outermost pointer level's mut bit
 
 		if t.Indirection > 0 {
 			if dest.empty() {
@@ -613,12 +614,21 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return newslice
 
 	case *Assignment:
+		// Reject assignment to const-bound variables.
+		if sym, ok := ast.Target.(*Symbol); ok {
+			if c.IsConst(sym.Name) {
+				CompileErrorF(a, "Cannot assign to const binding \"%s\"", sym.Name)
+			}
+		}
 		lv := compileLval(of, c, ast.Target, nullspot)
 		srct := ast.Val.ASTType(c)
 		dstt := ast.Target.ASTType(c)
 		if !srct.Same(dstt) {
 			if !srct.Same(intlitASTType()) {
-				CompileErrorF(a, "Cannot assign different types %s = %s", dstt, srct)
+				// Allow *mut T → *T coercion (dropping mut is always safe).
+				if !dstt.MutCompatible(srct) {
+					CompileErrorF(a, "Cannot assign different types %s = %s", dstt, srct)
+				}
 			}
 			// intlit: compileTop shortcut handles range checking and code gen
 			dest := newSpot(of, c, c.Temp(), dstt)
@@ -901,7 +911,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		if argt.Same(intlitASTType()) {
 			// intlit: use the declared parameter type; compileTop will range-check
 			argt = d.Args[i].Type
-		} else if !argt.Same(d.Args[i].Type) {
+		} else if !d.Args[i].Type.MutCompatible(argt) {
 			CompileErrorF(arg, "For argument %d, expected type %v but got %v",
 				i, d.Args[i].Type, argt)
 		}

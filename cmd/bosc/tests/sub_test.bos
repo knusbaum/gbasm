@@ -22,7 +22,7 @@ fn main() {
 	puts("\n")
 }
 
-fn abs(n i64) i64 {
+fn abs(var n i64) i64 {
 	//if (n < 0) {
 		n = -n
 	//	return n

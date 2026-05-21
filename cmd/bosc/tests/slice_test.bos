@@ -64,7 +64,7 @@ fn main() {
 // 	//puts("\n")
 // }
 
-fn slicetest(bs byte[]) {
+fn slicetest(var bs byte[]) {
 	var i i64
 	i = 0
 	i = i + 5

@@ -1,0 +1,6 @@
+package main
+
+fn main() {
+	const x i64
+	x = 5
+}

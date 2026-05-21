@@ -25,6 +25,8 @@ type Context struct {
 
 	// maps variable names to their types.
 	bindings map[string]ASTType
+	// tracks which bindings are const (true) vs var (false).
+	constBindings map[string]bool
 	// maps struct names to their declarations.
 	structs map[string]*StructDecl
 	// maps function names to their declarations.
@@ -46,10 +48,11 @@ type Context struct {
 
 func NewContext() *Context {
 	return &Context{
-		bindings: make(map[string]ASTType),
-		structs:  make(map[string]*StructDecl),
-		funcs:    make(map[string]*FuncDecl),
-		strngs:   make(map[string]string),
+		bindings:      make(map[string]ASTType),
+		constBindings: make(map[string]bool),
+		structs:       make(map[string]*StructDecl),
+		funcs:         make(map[string]*FuncDecl),
+		strngs:        make(map[string]string),
 	}
 }
 
@@ -58,6 +61,7 @@ func (c *Context) SubContext() *Context {
 	sc.parent = c
 	return sc
 }
+
 
 func (c *Context) DefineStruct(name string, s *StructDecl) {
 	if es, ok := c.structs[name]; ok {
@@ -77,7 +81,7 @@ func (c *Context) DefineFunc(name string, f *FuncDecl) {
 	c.funcs[name] = f
 }
 
-func (c *Context) BindVar(a AST, name string, t ASTType) {
+func (c *Context) BindVar(a AST, name string, t ASTType, isConst bool) {
 	if _, ok := c.bindings[name]; ok {
 		CompileErrorF(a, "Variable \"%s\" already declared in this scope.", name)
 	}
@@ -85,6 +89,17 @@ func (c *Context) BindVar(a AST, name string, t ASTType) {
 		CompileErrorF(a, "Variable \"%s\" shadows variable of same name in parent scope.", name)
 	}
 	c.bindings[name] = t
+	c.constBindings[name] = isConst
+}
+
+func (c *Context) IsConst(name string) bool {
+	if c == nil {
+		return false
+	}
+	if v, ok := c.constBindings[name]; ok {
+		return v
+	}
+	return c.parent.IsConst(name)
 }
 
 func (c *Context) FreeLocalVars(of io.Writer) {
@@ -268,10 +283,11 @@ func (c *Context) WriteStrings(of io.Writer) {
 
 type ASTType struct {
 	Name        string
-	Indirection int // pointer level, i.e. ***int -> Indirection: 3
-	ArraySize   int // zero for non-arrays.
+	Indirection int    // pointer level, i.e. ***int -> Indirection: 3
+	ArraySize   int    // zero for non-arrays.
 	Slice       bool
-	Signed      bool // true for signed integer types (i8, i16, i32, i64)
+	Signed      bool   // true for signed integer types (i8, i16, i32, i64)
+	MutMask     uint64 // bit N = write-through allowed at level N (0 = outermost pointer/slice)
 }
 
 const PTR_SIZE = 8
@@ -323,13 +339,36 @@ func (t ASTType) Same(t2 ASTType) bool {
 		t.Indirection == t2.Indirection &&
 		t.ArraySize == t2.ArraySize &&
 		t.Slice == t2.Slice &&
-		t.Signed == t2.Signed
+		t.Signed == t2.Signed &&
+		t.MutMask == t2.MutMask
+}
+
+// MutCompatible reports whether a value of type src can be used where dst is
+// expected, accounting for write-through coercion. A more-permissive reference
+// (*mut T) is always acceptable where a less-permissive one (*T) is expected;
+// the reverse is not allowed. All other fields must match exactly.
+func (dst ASTType) MutCompatible(src ASTType) bool {
+	if dst.Name != src.Name ||
+		dst.Indirection != src.Indirection ||
+		dst.ArraySize != src.ArraySize ||
+		dst.Slice != src.Slice ||
+		dst.Signed != src.Signed {
+		return false
+	}
+	// Every mut bit required by dst must be present in src.
+	return dst.MutMask&src.MutMask == dst.MutMask
 }
 
 func (t ASTType) String() string {
 	var sb strings.Builder
 	for i := 0; i < t.Indirection; i++ {
 		sb.WriteRune('*')
+		if t.MutMask&(1<<uint(i)) != 0 {
+			sb.WriteString("mut ")
+		}
+	}
+	if t.Slice && t.MutMask&(1<<uint(t.Indirection)) != 0 {
+		sb.WriteString("mut ")
 	}
 	sb.WriteString(t.Name)
 	if t.ArraySize > 0 {
@@ -348,6 +387,7 @@ func mkTypename(n *Node) ASTType {
 	}
 	t.Name = n.sval
 	t.Indirection = int(n.ival)
+	t.MutMask = n.mutmask
 	switch t.Name {
 	case "i8", "i16", "i32", "i64":
 		t.Signed = true
@@ -399,11 +439,9 @@ type AST interface {
 // A binding represents a name which is bound to a value of type Type
 // in a specific context, such as struct members or function arguments.
 type Binding struct {
-	Name string
-	Type ASTType
-	// TODO: completeType(t *ASTType) BosonType
-	// should fill out a complete BosonType based on the type name
-	// given in the AST. For use in compile()
+	Name    string
+	Type    ASTType
+	IsConst bool // false = var (rebindable); always false for struct fields
 }
 
 type StructDecl struct {
@@ -447,9 +485,10 @@ func (s *StructDecl) ByteOffset(c *Context, field string) (int, ASTType) {
 }
 
 type VarDecl struct {
-	Name string
-	Type ASTType
-	p    position
+	Name    string
+	Type    ASTType
+	IsConst bool
+	p       position
 }
 
 func (*VarDecl) ASTType(*Context) ASTType {
@@ -570,6 +609,7 @@ func (d *Deref) ASTType(c *Context) ASTType {
 		panic("Cannot dereference non-pointer. TODO: Nice error reports.")
 	}
 	t.Indirection -= 1
+	t.MutMask >>= 1 // consume the outermost pointer level's mut bit
 	return t
 }
 
@@ -595,6 +635,12 @@ func (a *Address) ASTType(c *Context) ASTType {
 	t, ok := c.TypeForVar(a.Var)
 	if !ok {
 		panic("Variable is not bound. TODO: Nice error reports.")
+	}
+	// Shift existing mut bits up one level to make room for the new outermost pointer.
+	t.MutMask <<= 1
+	// The new outermost pointer is mut iff the source binding is var.
+	if !c.IsConst(a.Var) {
+		t.MutMask |= 1
 	}
 	t.Indirection += 1
 	return t
@@ -973,8 +1019,9 @@ func (n *Node) toASTTop(c *Context) AST {
 		var v VarDecl
 		v.Name = n.sval
 		v.Type = mkTypename(n.args[0])
+		v.IsConst = n.ival != 0
 		v.p = n.p
-		c.BindVar(&v, v.Name, v.Type)
+		c.BindVar(&v, v.Name, v.Type, v.IsConst)
 		return &v
 	case n_fn:
 		var fn FuncDecl
@@ -986,9 +1033,11 @@ func (n *Node) toASTTop(c *Context) AST {
 			a := args[0]
 			name := a.sval
 			t := mkTypename(a.args[0])
+			// n_arg ival: 0 = const by default, 1 = var (explicitly declared)
 			fn.Args = append(fn.Args, Binding{
-				Name: name,
-				Type: t,
+				Name:    name,
+				Type:    t,
+				IsConst: a.ival == 0,
 			})
 			args = args[1:]
 		}

@@ -9,7 +9,7 @@ struct state {
 	complete i64
 }
 
-fn skip(bs byte[]) byte[] {
+fn skip(var bs byte[]) byte[] {
 	var i i64
 	for (i = 0; i < lenb(bs); i = i+1) {
 		if ((bs[i] >= '0') && (bs[i] <= '9')) {
@@ -20,7 +20,7 @@ fn skip(bs byte[]) byte[] {
 	return bs
 }
 
-fn readRow(bs byte[]) state {
+fn readRow(var bs byte[]) state {
 	var onea byte[10]
 	var twoa byte[10]
 

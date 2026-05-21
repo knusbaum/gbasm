@@ -1,0 +1,2 @@
+Compiling tests/mut_coerce_err_test.bos
+Fatal: For argument 0, expected type *mut i64 but got *i64

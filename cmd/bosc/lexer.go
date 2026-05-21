@@ -52,6 +52,9 @@ const (
 	tok_continue
 	tok_struct
 	tok_import
+	tok_var
+	tok_const
+	tok_mut
 )
 
 var keywords map[string]toktype = map[string]toktype{
@@ -64,6 +67,9 @@ var keywords map[string]toktype = map[string]toktype{
 	"continue": tok_continue,
 	"struct":   tok_struct,
 	"import":   tok_import,
+	"var":      tok_var,
+	"const":    tok_const,
+	"mut":      tok_mut,
 }
 
 const (
@@ -154,6 +160,12 @@ func (t toktype) String() string {
 		return "tok_continue"
 	case tok_struct:
 		return "tok_struct"
+	case tok_var:
+		return "tok_var"
+	case tok_const:
+		return "tok_const"
+	case tok_mut:
+		return "tok_mut"
 	}
 	return "UNKNOWN"
 }
