@@ -66,7 +66,7 @@ func (r *Ralloc) Location(preferRegister bool) interface{} {
 }
 
 func (r *Ralloc) UseRegister(reg Register) {
-	if r.volatile {
+	if r.volatile && r.regable {
 		panic(fmt.Sprintf("UseRegister called on volatile allocation %s: volatile variables must never be cached in a register", r.sym))
 	}
 	if r.inreg && r.reg == reg {
@@ -126,7 +126,7 @@ func (r *Ralloc) UseRegister(reg Register) {
 }
 
 func (r *Ralloc) Register() Register {
-	if r.volatile {
+	if r.volatile && r.regable {
 		panic(fmt.Sprintf("Register() called on volatile allocation %s: volatile variables must never be cached in a register", r.sym))
 	}
 	if r.inreg {
@@ -365,6 +365,11 @@ func (ra *Rallocs) VolatileLocal(name string) error {
 	r, ok := ra.names[name]
 	if !ok {
 		return fmt.Errorf("no such local: %s", name)
+	}
+	if !r.regable {
+		// Non-regable variables (structs, arrays) are always in memory already;
+		// volatile has no effect on them.
+		return nil
 	}
 	if r.inreg {
 		r.Evict()

@@ -528,6 +528,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), ast.ASTType(c))
 		}
+		// Mark the variable as volatile so bas keeps it in memory from
+		// this point on, ensuring coherence with any pointer aliases.
+		fmt.Fprintf(of, "\tvolatile %s\n", ast.Var)
 		fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, ast.Var)
 		return dest
 	case *Index:
