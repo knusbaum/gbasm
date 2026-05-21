@@ -339,7 +339,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), numASTType())
 		}
-		if !litFitsIn(val, dest.t) {
+		if !litFitsIn(val, c.ResolveUnderlying(dest.t)) {
 			CompileErrorF(a, "Integer literal %s does not fit in type %s", val.String(), dest.t.Name)
 		}
 		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, val.String())
@@ -347,6 +347,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	}
 
 	switch ast := a.(type) {
+	case *TypeAliasDecl:
+		// Already registered in toASTTop; nothing to emit.
+		return nullspot
 	case *StructDecl:
 		c.DefineStruct(ast.TName, ast)
 		return nullspot
@@ -388,9 +391,16 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		sc.FreeLocalVars(of)
 		return nullspot
 	case *Funcall:
+		// Cast expression: type name used as a single-argument function.
+		if destType, ok := c.TypeByName(ast.FName); ok {
+			if len(ast.Args) != 1 {
+				CompileErrorF(a, "Type cast %s() requires exactly one argument", ast.FName)
+			}
+			return compileCast(of, c, ast.Args[0], destType, dest)
+		}
+
 		decl, ok := c.FuncDeclForName(ast.FName)
 		if !ok {
-			//panic(fmt.Sprintf("No such func \"%v\" TODO: error messages", ast.FName))
 			CompileErrorF(a, "No such function \"%v\"", ast.FName)
 		}
 		if len(ast.Args) != len(decl.Args) {
@@ -1152,7 +1162,58 @@ func EvalConst(c *Context, a AST) (*big.Int, bool) {
 	return nil, false
 }
 
+// compileCast compiles a type cast expression: destType(srcExpr).
+// Handles integer literal coercion, same-size reinterpretation, widening, and narrowing.
+func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot) spot {
+	if dest.empty() {
+		dest = newSpot(of, c, c.Temp(), destType)
+	}
+
+	srcType := src.ASTType(c)
+
+	// Integer literal: compile directly into the destination type.
+	if srcType.Same(intlitASTType()) {
+		val, ok := EvalConst(c, src)
+		if !ok {
+			panic("compileCast: could not evaluate integer literal at compile time")
+		}
+		underlying := c.ResolveUnderlying(destType)
+		if !litFitsIn(val, underlying) {
+			panic(fmt.Sprintf("compileCast: literal %s does not fit in type %s", val, destType))
+		}
+		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, val.String())
+		return dest
+	}
+
+	// Compile the source value.
+	srcSpot := compileTop(of, c, src, nullspot)
+
+	srcUnderlying := c.ResolveUnderlying(srcType)
+	dstUnderlying := c.ResolveUnderlying(destType)
+	srcSize := srcUnderlying.Size(c)
+	dstSize := dstUnderlying.Size(c)
+
+	switch {
+	case srcSize == dstSize:
+		// Same size: just copy and relabel the type. Zero cost for same-width aliases.
+		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, srcSpot.ref)
+	case dstSize > srcSize:
+		// Widening: sign- or zero-extend.
+		if srcUnderlying.Signed {
+			fmt.Fprintf(of, "\tmovsx %s %s\n", dest.ref, srcSpot.ref)
+		} else {
+			fmt.Fprintf(of, "\tmovzx %s %s\n", dest.ref, srcSpot.ref)
+		}
+	default:
+		// Narrowing: truncate by moving into the narrower destination register.
+		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, srcSpot.ref)
+	}
+	srcSpot.free(of)
+	return dest
+}
+
 // litFitsIn reports whether val is in the mathematical range for type t.
+// Caller should pass c.ResolveUnderlying(t) when t may be a type alias.
 func litFitsIn(val *big.Int, t ASTType) bool {
 	var lo, hi *big.Int
 	switch t.Name {

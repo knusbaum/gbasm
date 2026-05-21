@@ -33,6 +33,8 @@ type Context struct {
 	structs map[string]*StructDecl
 	// maps function names to their declarations.
 	funcs map[string]*FuncDecl
+	// maps user-defined type alias names to their underlying types.
+	typeAliases map[string]ASTType
 
 	// return, continue, break label stack. Return returns from the current Context
 	// by jumping to the label. Continue and break do the usual within loops.
@@ -55,6 +57,7 @@ func NewContext() *Context {
 		movedBindings: make(map[string]bool),
 		structs:       make(map[string]*StructDecl),
 		funcs:         make(map[string]*FuncDecl),
+		typeAliases:   make(map[string]ASTType),
 		strngs:        make(map[string]string),
 	}
 }
@@ -158,6 +161,85 @@ func (c *Context) RestoreOwnedBindings(snap map[string]bool) {
 			}
 		}
 	}
+}
+
+// DefineTypeAlias records a user-defined type alias.
+func (c *Context) DefineTypeAlias(p position, name string, underlying ASTType) {
+	if _, ok := c.typeAliases[name]; ok {
+		panic(&interpreterError{fmt.Sprintf("Type \"%s\" already declared", name), p})
+	}
+	c.typeAliases[name] = underlying
+}
+
+// TypeAliasFor returns the underlying ASTType for a user-defined alias, searching
+// up the parent chain.
+func (c *Context) TypeAliasFor(name string) (ASTType, bool) {
+	if c == nil {
+		return ASTType{}, false
+	}
+	if t, ok := c.typeAliases[name]; ok {
+		return t, true
+	}
+	return c.parent.TypeAliasFor(name)
+}
+
+// TypeByName returns the ASTType for any named type: built-ins, user aliases,
+// and structs (as pointer-sized indirect types). Returns false if not found.
+// This is used by the cast expression logic.
+func (c *Context) TypeByName(name string) (ASTType, bool) {
+	switch name {
+	case "i8":
+		return ASTType{Name: "i8", Signed: true}, true
+	case "i16":
+		return ASTType{Name: "i16", Signed: true}, true
+	case "i32":
+		return ASTType{Name: "i32", Signed: true}, true
+	case "i64":
+		return ASTType{Name: "i64", Signed: true}, true
+	case "u8":
+		return ASTType{Name: "u8"}, true
+	case "u16":
+		return ASTType{Name: "u16"}, true
+	case "u32":
+		return ASTType{Name: "u32"}, true
+	case "u64":
+		return ASTType{Name: "u64"}, true
+	case "byte":
+		return ASTType{Name: "byte"}, true
+	case "bool":
+		return ASTType{Name: "bool"}, true
+	}
+	if t, ok := c.TypeAliasFor(name); ok {
+		return ASTType{Name: name, Signed: t.Signed}, true
+	}
+	return ASTType{}, false
+}
+
+// ResolveUnderlying follows type aliases to their underlying built-in ASTType,
+// preserving qualifiers. Used where the concrete representation matters.
+func (c *Context) ResolveUnderlying(t ASTType) ASTType {
+	if t.Indirection > 0 || t.Slice || t.ArraySize > 0 {
+		return t
+	}
+	if underlying, ok := c.TypeAliasFor(t.Name); ok {
+		result := underlying
+		result.MutMask = t.MutMask
+		result.OwnedMask = t.OwnedMask
+		return result
+	}
+	return t
+}
+
+// AugmentType propagates properties (Signed) from a type alias definition
+// while keeping the alias name intact for type-distinctness checks.
+func (c *Context) AugmentType(t ASTType) ASTType {
+	if t.Indirection > 0 || t.Slice || t.ArraySize > 0 {
+		return t
+	}
+	if underlying, ok := c.TypeAliasFor(t.Name); ok {
+		t.Signed = underlying.Signed
+	}
+	return t
 }
 
 func (c *Context) IsConst(name string) bool {
@@ -399,6 +481,10 @@ func (t *ASTType) Size(c *Context) int {
 	case "bool":
 		baseSize = 1
 	default:
+		// Check user-defined type aliases.
+		if underlying, ok := c.TypeAliasFor(t.Name); ok {
+			return underlying.Size(c)
+		}
 		d, ok := c.StructDeclForName(t.Name)
 		if !ok {
 			panic(fmt.Sprintf("No such type %v. TODO: Errors", t.Name))
@@ -416,11 +502,14 @@ func (t *ASTType) Size(c *Context) int {
 }
 
 func (t ASTType) Same(t2 ASTType) bool {
+	// Signed is not included: types with different signedness already have
+	// different names (i64 vs u64, i8 vs u8, etc.), so Name alone distinguishes
+	// them. Excluding Signed avoids false mismatches when aliases are created
+	// without uniform Signed propagation through the AST construction phase.
 	return t.Name == t2.Name &&
 		t.Indirection == t2.Indirection &&
 		t.ArraySize == t2.ArraySize &&
 		t.Slice == t2.Slice &&
-		t.Signed == t2.Signed &&
 		t.MutMask == t2.MutMask &&
 		t.OwnedMask == t2.OwnedMask
 }
@@ -446,8 +535,7 @@ func (dst ASTType) MutCompatible(src ASTType) bool {
 	if dst.Name != src.Name ||
 		dst.Indirection != src.Indirection ||
 		dst.ArraySize != src.ArraySize ||
-		dst.Slice != src.Slice ||
-		dst.Signed != src.Signed {
+		dst.Slice != src.Slice {
 		return false
 	}
 	return dst.MutMask&src.MutMask == dst.MutMask
@@ -670,6 +758,10 @@ type Funcall struct {
 }
 
 func (f *Funcall) ASTType(c *Context) ASTType {
+	// Cast expression: type name used as a function.
+	if t, ok := c.TypeByName(f.FName); ok {
+		return t
+	}
 	decl, ok := c.FuncDeclForName(f.FName)
 	if !ok {
 		panic(&interpreterError{
@@ -951,6 +1043,16 @@ func (*Continue) Note() string {
 func (c *Continue) Pos() position {
 	return c.p
 }
+
+type TypeAliasDecl struct {
+	Name       string
+	Underlying ASTType
+	p          position
+}
+
+func (*TypeAliasDecl) ASTType(*Context) ASTType { return voidASTType() }
+func (d *TypeAliasDecl) Note() string           { return fmt.Sprintf("type %s %s", d.Name, d.Underlying) }
+func (d *TypeAliasDecl) Pos() position          { return d.p }
 
 type Dispose struct {
 	Var string
@@ -1317,6 +1419,15 @@ func (n *Node) toASTTop(c *Context) AST {
 		}
 	case n_dispose:
 		return &Dispose{Var: n.sval, p: n.p}
+	case n_typedecl:
+		underlying := mkTypename(n.args[0])
+		// Propagate Signed from base type if it's a built-in.
+		switch underlying.Name {
+		case "i8", "i16", "i32", "i64":
+			underlying.Signed = true
+		}
+		c.DefineTypeAlias(n.p, n.sval, underlying)
+		return &TypeAliasDecl{Name: n.sval, Underlying: underlying, p: n.p}
 	}
 	spew.Dump(n)
 	ParseErrorF(n, "Node Type %s Fell through AST Generator.\n", n.t)

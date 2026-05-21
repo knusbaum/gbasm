@@ -1,0 +1,2 @@
+Compiling tests/typedecl_mismatch_err_test.bos
+Fatal: For argument 0, expected type FD but got i64

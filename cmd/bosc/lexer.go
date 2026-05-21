@@ -57,6 +57,7 @@ const (
 	tok_mut
 	tok_owned
 	tok_dispose
+	tok_type
 )
 
 var keywords map[string]toktype = map[string]toktype{
@@ -74,6 +75,7 @@ var keywords map[string]toktype = map[string]toktype{
 	"mut":     tok_mut,
 	"owned":   tok_owned,
 	"dispose": tok_dispose,
+	"type":    tok_type,
 }
 
 const (
@@ -174,6 +176,8 @@ func (t toktype) String() string {
 		return "tok_owned"
 	case tok_dispose:
 		return "tok_dispose"
+	case tok_type:
+		return "tok_type"
 	}
 	return "UNKNOWN"
 }

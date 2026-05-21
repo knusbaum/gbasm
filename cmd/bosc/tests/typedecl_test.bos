@@ -1,0 +1,37 @@
+package main
+
+import "string.bo"
+
+type FD i64
+type Tag i16
+
+fn openfd() owned FD {
+	var fd FD
+	fd = FD(3)
+	return fd
+}
+
+fn closeit(fd owned FD) {
+	puti(i64(fd))
+	puts("\n")
+	dispose(fd)
+}
+
+fn tagval(t Tag) {
+	puti(i64(t))
+	puts("\n")
+}
+
+fn main() {
+	var fd owned FD
+	fd = openfd()
+	closeit(fd)
+
+	var t Tag
+	t = Tag(42)
+	tagval(t)
+
+	var n i16
+	n = 100
+	tagval(Tag(n))
+}

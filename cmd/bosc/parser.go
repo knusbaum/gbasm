@@ -48,6 +48,7 @@ const (
 	n_address
 	n_deref
 	n_dispose
+	n_typedecl
 )
 
 func (t nodetype) String() string {
@@ -132,6 +133,8 @@ func (t nodetype) String() string {
 		return "n_deref"
 	case n_dispose:
 		return "n_dispose"
+	case n_typedecl:
+		return "n_typedecl"
 	}
 	return "UNKNOWN"
 }
@@ -809,11 +812,24 @@ func (p *Parser) parseImport() *Node {
 	return &Node{t: n_import, p: importpos, sval: path.sval}
 }
 
+func (p *Parser) parseTypeDecl() *Node {
+	pos := p.current().p
+	p.expect(tok_type)
+	name := p.parseTok()
+	if name.t != n_symbol {
+		panic(&interpreterError{fmt.Sprintf("Expected type name, but found: %v\n", name), name.p})
+	}
+	base := p.parseTypeName()
+	return &Node{t: n_typedecl, p: pos, sval: name.sval, args: []*Node{base}}
+}
+
 func (p *Parser) parseTopLevel() *Node {
 	if p.current().t == tok_struct {
 		return p.parseStruct()
 	} else if p.current().t == tok_import {
 		return p.parseImport()
+	} else if p.current().t == tok_type {
+		return p.parseTypeDecl()
 	}
 	return p.parseExpression()
 }

@@ -1,0 +1,16 @@
+package main
+
+import "string.bo"
+
+type FD i64
+
+fn takesfd(fd FD) {
+	puti(i64(fd))
+	puts("\n")
+}
+
+fn main() {
+	var n i64
+	n = 3
+	takesfd(n)
+}
