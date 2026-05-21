@@ -1,0 +1,16 @@
+package main
+
+import "string.bo"
+
+fn main() {
+	var x i64
+	x = 6
+
+	var y *mut i64
+	y = &x
+
+	x = x * 7
+
+	puti(*y)
+	puts("\n")
+}
