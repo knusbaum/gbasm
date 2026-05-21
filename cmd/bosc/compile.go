@@ -381,6 +381,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			s := compileTop(of, sc, st, nullspot)
 			s.free(of)
 		}
+		// Scope-exit: every owned binding declared in this block must be consumed.
+		for _, name := range sc.UnconsumedOwned() {
+			CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
+		}
 		sc.FreeLocalVars(of)
 		return nullspot
 	case *Funcall:
@@ -619,6 +623,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if c.IsConst(sym.Name) {
 				CompileErrorF(a, "Cannot assign to const binding \"%s\"", sym.Name)
 			}
+			// Re-establishment: assigning to a var binding clears the moved flag.
+			c.Unmove(sym.Name)
 		}
 		// Reject write-through on a non-mut pointer: *p = x requires p: *mut T.
 		if deref, ok := ast.Target.(*Deref); ok {
@@ -691,18 +697,43 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		fmt.Fprintf(of, "\ttest %s %s\n", v.ref, v.ref)
 		v.free(of)
 		fmt.Fprintf(of, "\tjz %s\n", labelse)
+
+		// Snapshot owned-binding move state before branches.
+		snapBefore := c.OwnedBindingsSnapshot()
+
 		v = compileTop(of, c, ast.Then, nullspot)
 		if !v.empty() {
 			v.free(of)
 		}
+		snapAfterThen := c.OwnedBindingsSnapshot()
+
 		fmt.Fprintf(of, "\tjmp %s\n", labend)
 		fmt.Fprintf(of, "\tlabel %s\n", labelse)
+
+		// Restore to pre-branch state for the else branch.
+		c.RestoreOwnedBindings(snapBefore)
+
 		if ast.Else != nil {
 			v = compileTop(of, c, ast.Else, nullspot)
 			if !v.empty() {
 				v.free(of)
 			}
 		}
+		snapAfterElse := c.OwnedBindingsSnapshot()
+
+		// Both branches must agree on which pre-existing owned vars are consumed.
+		for name, movedInThen := range snapAfterThen {
+			if _, existed := snapBefore[name]; !existed {
+				continue // declared inside a branch, not our concern here
+			}
+			movedInElse := snapAfterElse[name]
+			if movedInThen != movedInElse {
+				CompileErrorF(a, "Owned binding \"%s\" is consumed on one branch but not the other", name)
+			}
+		}
+		// Apply the agreed post-branch state.
+		c.RestoreOwnedBindings(snapAfterThen)
+
 		fmt.Fprintf(of, "\tlabel %s\n", labend)
 		return nullspot
 	case *For:
@@ -710,6 +741,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if !v.empty() {
 			v.free(of)
 		}
+		// Snapshot owned state before the loop body executes.
+		// Owned vars in outer scopes must not be consumed inside the loop.
+		snapBeforeLoop := c.OwnedBindingsSnapshot()
+
 		start := c.Label("for")
 		end := c.PushBreakLabel()
 		cont := c.PushContLabel()
@@ -731,6 +766,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		fmt.Fprintf(of, "\tlabel %s\n", end)
 		c.PopBreakLabel()
 		c.PopContLabel()
+
+		// Check that no pre-loop owned var was consumed inside the loop body.
+		// If it was, the second iteration would enter with an invalid variable.
+		snapAfterLoop := c.OwnedBindingsSnapshot()
+		for name, wasMoved := range snapBeforeLoop {
+			if !wasMoved && snapAfterLoop[name] {
+				CompileErrorF(a, "Owned binding \"%s\" is consumed inside a loop body; this would be invalid on the second iteration", name)
+			}
+		}
 		return nullspot
 	case *Op2:
 		return doOp2(of, c, ast, dest)
@@ -763,6 +807,20 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		c.Return(of)
 
 		return nullspot
+	case *Dispose:
+		t, ok := c.TypeForVar(ast.Var)
+		if !ok {
+			CompileErrorF(a, "dispose: \"%s\" is not declared", ast.Var)
+		}
+		if !t.HasOwned() {
+			CompileErrorF(a, "dispose: \"%s\" has type %s which has no owned obligation", ast.Var, t)
+		}
+		if c.IsMoved(ast.Var) {
+			CompileErrorF(a, "dispose: \"%s\" was already moved", ast.Var)
+		}
+		c.Move(ast.Var)
+		note(of, "\t// dispose %s — obligation satisfied, no runtime effect\n", ast.Var)
+		return nullspot
 	case *Continue:
 		c.Continue(a, of)
 		return nullspot
@@ -770,6 +828,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		c.Break(of)
 		return nullspot
 	case *Symbol:
+		if c.IsMoved(ast.Name) {
+			CompileErrorF(a, "Use of \"%s\" after it was moved", ast.Name)
+		}
 		s := spot{ref: ast.Name, t: ast.ASTType(c)}
 		if dest.same(&nullspot) {
 			return s
@@ -915,12 +976,21 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 	for i := 0; i < len(f.Args); i++ {
 		arg := f.Args[i]
 		argt := arg.ASTType(c)
+		param := d.Args[i].Type
 		if argt.Same(intlitASTType()) {
-			// intlit: use the declared parameter type; compileTop will range-check
-			argt = d.Args[i].Type
-		} else if !d.Args[i].Type.MutCompatible(argt) {
+			argt = param
+		} else if !param.OwnedCompatible(argt) {
 			CompileErrorF(arg, "For argument %d, expected type %v but got %v",
-				i, d.Args[i].Type, argt)
+				i, param, argt)
+		}
+		// If the parameter has owned, this is a move. Check for double-move now,
+		// but defer the actual marking until after the argument is compiled.
+		if param.HasOwned() {
+			if sym, ok := arg.(*Symbol); ok {
+				if c.IsMoved(sym.Name) {
+					CompileErrorF(arg, "Cannot move \"%s\": it was already moved", sym.Name)
+				}
+			}
 		}
 		if i > 5 {
 			panic("More than 6 args not supported yet (TODO)")
@@ -941,10 +1011,15 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		}
 		argspots = append(argspots, dest)
 	}
+	// Now that all argument values are compiled, mark any consumed owned variables.
 	for i := 0; i < len(f.Args); i++ {
-		//s := regSpot(of, order[i])
-		//a := argspots[i]
-		//move(of, c, s, a)
+		if d.Args[i].Type.HasOwned() {
+			if sym, ok := f.Args[i].(*Symbol); ok {
+				c.Move(sym.Name)
+			}
+		}
+	}
+	for i := 0; i < len(f.Args); i++ {
 		note(of, "\t// Ensuring argument %d (%v) is in register %v for call.\n",
 			i, argspots[i].ref, order[i])
 		argt := argspots[i].t

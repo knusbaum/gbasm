@@ -55,6 +55,8 @@ const (
 	tok_var
 	tok_const
 	tok_mut
+	tok_owned
+	tok_dispose
 )
 
 var keywords map[string]toktype = map[string]toktype{
@@ -67,9 +69,11 @@ var keywords map[string]toktype = map[string]toktype{
 	"continue": tok_continue,
 	"struct":   tok_struct,
 	"import":   tok_import,
-	"var":      tok_var,
-	"const":    tok_const,
-	"mut":      tok_mut,
+	"var":     tok_var,
+	"const":   tok_const,
+	"mut":     tok_mut,
+	"owned":   tok_owned,
+	"dispose": tok_dispose,
 }
 
 const (
@@ -166,6 +170,10 @@ func (t toktype) String() string {
 		return "tok_const"
 	case tok_mut:
 		return "tok_mut"
+	case tok_owned:
+		return "tok_owned"
+	case tok_dispose:
+		return "tok_dispose"
 	}
 	return "UNKNOWN"
 }

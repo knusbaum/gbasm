@@ -1,0 +1,14 @@
+package main
+
+fn consume(v owned i64) {
+	dispose(v)
+}
+
+fn main() {
+	var x owned i64
+	x = 0
+	var i i64
+	for (i = 0; i < 3; i = i + 1) {
+		consume(x)
+	}
+}

@@ -1,0 +1,12 @@
+package main
+
+fn mkval() owned i64 {
+	var v i64
+	v = 0
+	return v
+}
+
+fn main() {
+	var x owned i64
+	x = mkval()
+}

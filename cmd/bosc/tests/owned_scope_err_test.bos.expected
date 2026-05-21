@@ -1,0 +1,2 @@
+Compiling tests/owned_scope_err_test.bos
+Fatal: Owned binding "x" goes out of scope without being consumed; call dispose() or pass it to a consuming function

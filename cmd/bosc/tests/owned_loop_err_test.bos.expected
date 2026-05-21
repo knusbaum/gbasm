@@ -1,0 +1,2 @@
+Compiling tests/owned_loop_err_test.bos
+Fatal: Owned binding "x" is consumed inside a loop body; this would be invalid on the second iteration

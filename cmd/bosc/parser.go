@@ -47,6 +47,7 @@ const (
 	n_import
 	n_address
 	n_deref
+	n_dispose
 )
 
 func (t nodetype) String() string {
@@ -129,6 +130,8 @@ func (t nodetype) String() string {
 		return "n_address"
 	case n_deref:
 		return "n_deref"
+	case n_dispose:
+		return "n_dispose"
 	}
 	return "UNKNOWN"
 }
@@ -140,9 +143,10 @@ type Parser struct {
 }
 
 type Node struct {
-	t       nodetype
-	ival    uint64
-	mutmask uint64 // for n_typename: bit N = mut at pointer/slice level N
+	t         nodetype
+	ival      uint64
+	mutmask   uint64 // for n_typename: bit N = mut at pointer/slice level N
+	ownedmask uint64 // for n_typename: bit N = owned at pointer/slice level N
 	//fval float64 // we'll add floats later.
 	sval string
 	args []*Node
@@ -257,24 +261,44 @@ func (p *Parser) parseTok() *Node {
 func (p *Parser) parseTypeName() *Node {
 	var indirection uint64
 	var mutmask uint64
+	var ownedmask uint64
 
-	// Parse leading pointer stars, each optionally followed by 'mut'.
-	// e.g. *mut *i16 → indirection=2, mutmask=0b01 (bit 0 = outermost is mut)
-	for p.current().t == tok_star {
-		p.advance()
-		if p.current().t == tok_mut {
-			mutmask |= 1 << indirection
+	// Qualifier placement rules:
+	//   Before a '*' or before the base type: applies to current level (bit = indirection).
+	//   'mut' after a '*': applies to that '*' (bit = indirection-1 after consuming).
+	//   'owned' after a '*': applies to what that '*' points to (bit = indirection).
+	//
+	// Examples:
+	//   *mut T         → MutMask  bit 0  (pointer is mutable)
+	//   owned *T       → OwnedMask bit 0 (pointer is owned)
+	//   *owned T       → OwnedMask bit 1 (pointed-to T is owned)
+	//   owned *owned T → OwnedMask bits 0+1 (two independent obligations)
+	for {
+		// Leading qualifiers before a '*' (or before base type) → current level.
+		for p.current().t == tok_owned || p.current().t == tok_mut {
+			if p.current().t == tok_owned {
+				ownedmask |= 1 << indirection
+			} else {
+				mutmask |= 1 << indirection
+			}
 			p.advance()
 		}
+		if p.current().t != tok_star {
+			break
+		}
+		p.advance() // consume '*'
 		indirection++
-	}
-
-	// Optional leading 'mut' before the base type name applies to the slice level.
-	// e.g. mut byte[] → slice is writable; placed at bit indirection of mutmask.
-	sliceMut := false
-	if p.current().t == tok_mut {
-		sliceMut = true
-		p.advance()
+		// Trailing qualifiers after a '*':
+		// mut  → the '*' just consumed (bit indirection-1).
+		// owned → what this '*' points to (bit indirection).
+		for p.current().t == tok_owned || p.current().t == tok_mut {
+			if p.current().t == tok_mut {
+				mutmask |= 1 << (indirection - 1)
+			} else {
+				ownedmask |= 1 << indirection
+			}
+			p.advance()
+		}
 	}
 
 	c := p.current()
@@ -290,38 +314,34 @@ func (p *Parser) parseTypeName() *Node {
 			arrsize := uint64(p.current().nval)
 			p.advance()
 			p.expect(tok_rsquare)
-			if sliceMut {
-				panic(&interpreterError{fmt.Sprintf("'mut' is only valid on slice types, not fixed-size arrays"), c.p})
+			if mutmask&(1<<indirection) != 0 || ownedmask&(1<<indirection) != 0 {
+				panic(&interpreterError{fmt.Sprintf("'mut'/'owned' is only valid on slice types, not fixed-size arrays"), c.p})
 			}
 			return &Node{
-				t:       n_typename,
-				p:       c.p,
-				sval:    typename,
-				ival:    indirection,
-				mutmask: mutmask,
-				args:    []*Node{{t: n_index, p: c.p, ival: arrsize}},
+				t:         n_typename,
+				p:         c.p,
+				sval:      typename,
+				ival:      indirection,
+				mutmask:   mutmask,
+				ownedmask: ownedmask,
+				args:      []*Node{{t: n_index, p: c.p, ival: arrsize}},
 			}
 		} else if p.current().t == tok_rsquare {
 			p.advance()
-			if sliceMut {
-				mutmask |= 1 << indirection
-			}
 			return &Node{
-				t:       n_typename,
-				p:       c.p,
-				sval:    typename,
-				ival:    indirection,
-				mutmask: mutmask,
-				args:    []*Node{{t: n_slice, p: c.p}},
+				t:         n_typename,
+				p:         c.p,
+				sval:      typename,
+				ival:      indirection,
+				mutmask:   mutmask,
+				ownedmask: ownedmask,
+				args:      []*Node{{t: n_slice, p: c.p}},
 			}
 		}
 		panic(&interpreterError{fmt.Sprintf("Expected a number or ']', but found: %s\n", p.current().t), c.p})
 	}
 
-	if sliceMut {
-		panic(&interpreterError{fmt.Sprintf("'mut' before '%s' has no effect: 'mut' is only valid on slice or pointer types", typename), c.p})
-	}
-	return &Node{t: n_typename, p: c.p, sval: typename, ival: indirection, mutmask: mutmask}
+	return &Node{t: n_typename, p: c.p, sval: typename, ival: indirection, mutmask: mutmask, ownedmask: ownedmask}
 }
 
 func (p *Parser) parseValue() *Node {
@@ -515,8 +535,18 @@ func (p *Parser) parseParens() *Node {
 		return &Node{t: n_return, p: c.p, args: []*Node{val}}
 	} else if c.t == tok_fn {
 		return p.parseFn()
+	} else if c.t == tok_dispose {
+		p.advance()
+		p.expect(tok_lparen)
+		if p.current().t != tok_ident {
+			panic(&interpreterError{fmt.Sprintf("dispose requires a variable name, but found: %s\n", p.current().t), p.current().p})
+		}
+		name := p.current().sval
+		namepos := p.current().p
+		p.advance()
+		p.expect(tok_rparen)
+		return &Node{t: n_dispose, p: namepos, sval: name}
 	}
-	//fmt.Printf("PARSING VALUE\n")
 	pv := p.parseValue()
 	//fmt.Printf("PARSED VALUE: %#v\n", pv)
 	return pv

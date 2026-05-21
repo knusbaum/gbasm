@@ -27,6 +27,8 @@ type Context struct {
 	bindings map[string]ASTType
 	// tracks which bindings are const (true) vs var (false).
 	constBindings map[string]bool
+	// tracks which owned bindings have been consumed (moved or disposed).
+	movedBindings map[string]bool
 	// maps struct names to their declarations.
 	structs map[string]*StructDecl
 	// maps function names to their declarations.
@@ -50,6 +52,7 @@ func NewContext() *Context {
 	return &Context{
 		bindings:      make(map[string]ASTType),
 		constBindings: make(map[string]bool),
+		movedBindings: make(map[string]bool),
 		structs:       make(map[string]*StructDecl),
 		funcs:         make(map[string]*FuncDecl),
 		strngs:        make(map[string]string),
@@ -92,6 +95,71 @@ func (c *Context) BindVar(a AST, name string, t ASTType, isConst bool) {
 	c.constBindings[name] = isConst
 }
 
+// Move marks an owned binding as consumed. Walks the parent chain to find the
+// context that owns the binding so the state is stored in the right place.
+func (c *Context) Move(name string) {
+	if c == nil {
+		return
+	}
+	if _, ok := c.bindings[name]; ok {
+		c.movedBindings[name] = true
+		return
+	}
+	c.parent.Move(name)
+}
+
+// Unmove clears the consumed flag on a var binding after re-assignment.
+func (c *Context) Unmove(name string) {
+	if c == nil {
+		return
+	}
+	if _, ok := c.bindings[name]; ok {
+		c.movedBindings[name] = false
+		return
+	}
+	c.parent.Unmove(name)
+}
+
+// IsMoved reports whether an owned binding has been consumed.
+func (c *Context) IsMoved(name string) bool {
+	if c == nil {
+		return false
+	}
+	if _, ok := c.bindings[name]; ok {
+		return c.movedBindings[name]
+	}
+	return c.parent.IsMoved(name)
+}
+
+// OwnedBindingsSnapshot returns a map of name→moved-state for all owned
+// bindings visible in this context and its parents. Used for branch analysis.
+func (c *Context) OwnedBindingsSnapshot() map[string]bool {
+	snap := make(map[string]bool)
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for name, t := range ctx.bindings {
+			if t.HasOwned() {
+				if _, exists := snap[name]; !exists {
+					snap[name] = ctx.movedBindings[name]
+				}
+			}
+		}
+	}
+	return snap
+}
+
+// RestoreOwnedBindings restores move state from a snapshot, for each owned
+// binding named in the snapshot that still exists in the context chain.
+func (c *Context) RestoreOwnedBindings(snap map[string]bool) {
+	for name, moved := range snap {
+		for ctx := c; ctx != nil; ctx = ctx.parent {
+			if _, ok := ctx.bindings[name]; ok {
+				ctx.movedBindings[name] = moved
+				break
+			}
+		}
+	}
+}
+
 func (c *Context) IsConst(name string) bool {
 	if c == nil {
 		return false
@@ -106,6 +174,18 @@ func (c *Context) FreeLocalVars(of io.Writer) {
 	for n := range c.bindings {
 		fmt.Fprintf(of, "\tforget %s\n", n)
 	}
+}
+
+// UnconsumedOwned returns the names of any owned bindings in this (non-parent)
+// scope that have not yet been consumed. Used for scope-exit checks.
+func (c *Context) UnconsumedOwned() []string {
+	var out []string
+	for name, t := range c.bindings {
+		if t.HasOwned() && !c.movedBindings[name] {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func (c *Context) TypeForVar(name string) (ASTType, bool) {
@@ -288,6 +368,7 @@ type ASTType struct {
 	Slice       bool
 	Signed      bool   // true for signed integer types (i8, i16, i32, i64)
 	MutMask     uint64 // bit N = write-through allowed at level N (0 = outermost pointer/slice)
+	OwnedMask   uint64 // bit N = owned obligation at level N (same convention as MutMask)
 }
 
 const PTR_SIZE = 8
@@ -340,13 +421,27 @@ func (t ASTType) Same(t2 ASTType) bool {
 		t.ArraySize == t2.ArraySize &&
 		t.Slice == t2.Slice &&
 		t.Signed == t2.Signed &&
-		t.MutMask == t2.MutMask
+		t.MutMask == t2.MutMask &&
+		t.OwnedMask == t2.OwnedMask
+}
+
+// HasOwned reports whether the type carries any ownership obligation.
+func (t ASTType) HasOwned() bool { return t.OwnedMask != 0 }
+
+// StripOwned returns a copy of the type with all owned bits cleared.
+// Used when passing an owned value to a non-owned parameter (plain borrow).
+func (t ASTType) StripOwned() ASTType {
+	t.OwnedMask = 0
+	return t
 }
 
 // MutCompatible reports whether a value of type src can be used where dst is
 // expected, accounting for write-through coercion. A more-permissive reference
 // (*mut T) is always acceptable where a less-permissive one (*T) is expected;
 // the reverse is not allowed. All other fields must match exactly.
+// MutCompatible reports whether src can be used where dst is expected,
+// considering only write-through (mut) coercion. Owned bits are ignored here;
+// ownership compatibility is checked separately by OwnedCompatible.
 func (dst ASTType) MutCompatible(src ASTType) bool {
 	if dst.Name != src.Name ||
 		dst.Indirection != src.Indirection ||
@@ -355,20 +450,42 @@ func (dst ASTType) MutCompatible(src ASTType) bool {
 		dst.Signed != src.Signed {
 		return false
 	}
-	// Every mut bit required by dst must be present in src.
 	return dst.MutMask&src.MutMask == dst.MutMask
+}
+
+// OwnedCompatible reports whether an argument of type src can be passed to a
+// parameter of type dst, accounting for ownership:
+//   - If dst has no owned bits: borrow — src's owned bits are stripped and ignored.
+//   - If dst has owned bits: src must carry exactly the same owned bits (move).
+func (dst ASTType) OwnedCompatible(src ASTType) bool {
+	if !dst.HasOwned() {
+		return dst.MutCompatible(src.StripOwned())
+	}
+	return dst.Same(src)
 }
 
 func (t ASTType) String() string {
 	var sb strings.Builder
+	// Emit leading "owned" if the outermost level (level 0) is owned before any pointer.
+	if t.Indirection == 0 && t.OwnedMask&1 != 0 {
+		sb.WriteString("owned ")
+	}
 	for i := 0; i < t.Indirection; i++ {
+		if t.OwnedMask&(1<<uint(i)) != 0 {
+			sb.WriteString("owned ")
+		}
 		sb.WriteRune('*')
 		if t.MutMask&(1<<uint(i)) != 0 {
 			sb.WriteString("mut ")
 		}
 	}
-	if t.Slice && t.MutMask&(1<<uint(t.Indirection)) != 0 {
-		sb.WriteString("mut ")
+	if t.Slice {
+		if t.OwnedMask&(1<<uint(t.Indirection)) != 0 {
+			sb.WriteString("owned ")
+		}
+		if t.MutMask&(1<<uint(t.Indirection)) != 0 {
+			sb.WriteString("mut ")
+		}
 	}
 	sb.WriteString(t.Name)
 	if t.ArraySize > 0 {
@@ -388,6 +505,7 @@ func mkTypename(n *Node) ASTType {
 	t.Name = n.sval
 	t.Indirection = int(n.ival)
 	t.MutMask = n.mutmask
+	t.OwnedMask = n.ownedmask
 	switch t.Name {
 	case "i8", "i16", "i32", "i64":
 		t.Signed = true
@@ -830,6 +948,15 @@ func (c *Continue) Pos() position {
 	return c.p
 }
 
+type Dispose struct {
+	Var string
+	p   position
+}
+
+func (*Dispose) ASTType(*Context) ASTType { return voidASTType() }
+func (d *Dispose) Note() string           { return fmt.Sprintf("dispose(%s)", d.Var) }
+func (d *Dispose) Pos() position          { return d.p }
+
 type Break struct {
 	p position
 }
@@ -1184,6 +1311,8 @@ func (n *Node) toASTTop(c *Context) AST {
 		return &Break{
 			p: n.p,
 		}
+	case n_dispose:
+		return &Dispose{Var: n.sval, p: n.p}
 	}
 	spew.Dump(n)
 	ParseErrorF(n, "Node Type %s Fell through AST Generator.\n", n.t)

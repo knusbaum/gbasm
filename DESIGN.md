@@ -437,6 +437,10 @@ const greeting byte[] = "hello\n"   // typical string constant
 
 A mutable byte buffer has type `mut byte[]`. String literals cannot have type `mut byte[]` since they live in read-only data.
 
+### Future: unused-mutability warning
+
+The compiler could warn when a `var` binding is never directly reassigned and no mutable reference to it (`&x`) is ever taken: "var x i16 never mutated — use const instead." Taking `&x` (which yields `*mut T` for a `var` binding) counts as a potential mutation even if the callee only reads through the pointer, to avoid false positives. The check fires at the end of each scope and at function exit for `var` parameters.
+
 ---
 
 ## The Boson Compiler (bosc)

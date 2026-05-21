@@ -1,0 +1,44 @@
+package main
+
+import "string.bo"
+
+fn mkval() owned i64 {
+	var v i64
+	v = 42
+	return v
+}
+
+fn consume(v owned i64) {
+	puti(v)
+	puts("\n")
+	dispose(v)
+}
+
+fn borrow(v i64) {
+	puti(v)
+	puts("\n")
+}
+
+fn doconstparam(a owned i64) {
+	borrow(a)
+	consume(a)
+}
+
+fn main() {
+	doconstparam(mkval())
+
+	var b owned i64
+	b = mkval()
+	borrow(b)
+	consume(b)
+
+	var c owned i64
+	c = mkval()
+	dispose(c)
+
+	var d owned i64
+	d = mkval()
+	consume(d)
+	d = mkval()
+	consume(d)
+}
