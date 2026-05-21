@@ -49,7 +49,11 @@ type spot struct {
 func newSpot(of io.Writer, c *Context, ref string, t ASTType) spot {
 	s := spot{ref: ref, t: t}
 	sz := t.Size(c)
-	if sz <= 8 {
+	// Struct values must use stack allocation (bytes) even when small, because
+	// field access uses lea/indirect addressing and requires a stable memory address.
+	// Only scalar and pointer types may live in registers (local).
+	_, isStruct := c.StructDeclForName(t.Name)
+	if sz <= 8 && !isStruct {
 		fmt.Fprintf(of, "\tlocal %s %d\n", ref, sz*8)
 	} else {
 		fmt.Fprintf(of, "\tbytes %s %d\n", ref, sz)
