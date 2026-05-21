@@ -1,0 +1,38 @@
+package main
+
+// Tests idiv: rax=dividend low, rdx=sign-extension (from cqo), rcx=divisor.
+// Result: quotient in rax, remainder in rdx.
+function main
+	prologue
+
+	// 100 / 7 = 14 remainder 2
+	local dividend  64
+	local divisor   64
+	local quotient  64
+	local remainder 64
+
+	mov dividend 100
+	mov divisor  7
+
+	inreg dividend rax
+	cqo
+	local divcopy 64
+	mov divcopy divisor
+	acquire rcx
+	inreg divcopy rcx
+	idiv rcx
+	release rcx
+	forget divcopy
+
+	mov quotient rax
+	mov remainder rdx
+
+	mov rdi quotient
+	call puti
+
+	mov rdi remainder
+	call puti
+
+	epilogue
+	xor rax rax
+	ret

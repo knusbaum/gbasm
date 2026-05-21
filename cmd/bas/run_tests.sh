@@ -12,6 +12,29 @@ rm tests/*.bs.o tests/*.out tests/*.stdout
 fail=''
 for t in `ls tests/*_test.bs`; do
     echo -e "\n\n############################ $t ############################"
+
+    if [[ $t == *_err_test.bs ]]; then
+        # Error test: assembler must reject this input.
+        ./bas init_linux.bs $t >${t}.bas.out 2>&1
+        if [[ $? == 0 ]]; then
+            echo "Expected assembler to fail but it succeeded:"
+            cat ${t}.bas.out
+            echo ${t} FAIL
+            fail=$(echo -e "$fail\n${t} FAIL")
+            continue
+        fi
+        if [[ -f "${t}.expected" ]]; then
+            diff -u "${t}.expected" "${t}.bas.out"
+            if [[ $? != 0 ]]; then
+                echo ${t} FAIL
+                fail=$(echo -e "$fail\n${t} FAIL")
+                continue
+            fi
+        fi
+        echo ${t} PASS
+        continue
+    fi
+
     ./bas init_linux.bs $t >${t}.bas.out 2>&1
     if [[ $? != 0 ]]; then
 		echo assembler failed for ${t}:

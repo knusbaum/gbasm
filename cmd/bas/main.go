@@ -270,6 +270,16 @@ var out = flag.String("o", "", "Write the linked executable to this file")
 var help = flag.Bool("h", false, "Print this help message.")
 
 func main() {
+	// Convert any panic from the assembler library into a clean fatal error.
+	// Without this, volatile enforcement and other invariant panics produce
+	// unreadable Go tracebacks.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "Fatal: %v\n", r)
+			os.Exit(1)
+		}
+	}()
+
 	flag.Parse()
 
 	if *help {

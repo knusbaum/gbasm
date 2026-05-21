@@ -1,0 +1,12 @@
+package main
+
+// inreg on a volatile variable must be rejected.
+// The bosc compiler generates 'inreg x rax' for the first operand of
+// multiplication, so this covers both the direct inreg case and the
+// multiply-into-volatile case.
+function main
+	local x 64
+	volatile x
+	inreg x rdi
+	xor rax rax
+	ret

@@ -1,0 +1,3 @@
+Assembling init_linux.bs
+Assembling tests/volatile_inreg_err_test.bs
+Fatal: UseRegister called on volatile allocation x: volatile variables must never be cached in a register

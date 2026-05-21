@@ -1,0 +1,6 @@
+package main
+
+function main
+	volatile undefined_var
+	xor rax rax
+	ret
