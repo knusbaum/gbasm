@@ -1,0 +1,34 @@
+package main
+
+// Tests that volatile forces a variable to memory so writes through a pointer
+// are visible when reading the variable by name, and vice versa.
+function main
+	prologue
+
+	local x 64
+
+	mov x 10
+
+	// Take the address of x. Mark it volatile so x stays in memory
+	// and reads/writes by name stay coherent with accesses through the pointer.
+	volatile x
+	local ptr 64
+	lea ptr x
+
+	// Write through the pointer.
+	mov qword[ptr] 20
+
+	// Read x by name — must see 20, not the stale register value 10.
+	mov rdi x
+	call puti
+
+	// Write x by name.
+	mov x 30
+
+	// Read through the pointer — must see 30.
+	mov rdi [ptr]
+	call puti
+
+	epilogue
+	xor rax rax
+	ret

@@ -9,15 +9,16 @@ import (
 var debug bool = false
 
 type Ralloc struct {
-	sym     string   // Name of the allocation
-	size    int      // Size of the allocation in bits
-	inreg   bool     // Whether or not this allocation is is a register
-	inmem   bool     // Whether or not this allocation is live in memory
-	reg     Register // The register the allocation is in.
-	regable bool     // Whether or not this allocation can fit in a register (int vs struct{})
-	addr    uint64   // if not local, the global address
-	offset  int32    // if local, the offset from RBP
-	rallocs *Rallocs // reference to ralloc to maintain LRU
+	sym      string   // Name of the allocation
+	size     int      // Size of the allocation in bits
+	inreg    bool     // Whether or not this allocation is is a register
+	inmem    bool     // Whether or not this allocation is live in memory
+	reg      Register // The register the allocation is in.
+	regable  bool     // Whether or not this allocation can fit in a register (int vs struct{})
+	addr     uint64   // if not local, the global address
+	offset   int32    // if local, the offset from RBP
+	rallocs  *Rallocs // reference to ralloc to maintain LRU
+	volatile bool     // if true, always access through memory; never cache in a register
 }
 
 // size of the data held in the register in bits. For ints/other regable types, this is the size of the data.
@@ -349,6 +350,22 @@ func (ra *Rallocs) AllocBytes(name string, size int) (*Ralloc, error) {
 
 func (ra *Rallocs) AllocFor(name string) *Ralloc {
 	return ra.names[name]
+}
+
+// VolatileLocal permanently marks a named local as memory-resident.
+// It is evicted from any register it currently occupies and will never
+// be cached in a register again. Used when the address of a local is taken.
+func (ra *Rallocs) VolatileLocal(name string) error {
+	r, ok := ra.names[name]
+	if !ok {
+		return fmt.Errorf("no such local: %s", name)
+	}
+	if r.inreg {
+		r.Evict()
+	}
+	r.volatile = true
+	r.inmem = true
+	return nil
 }
 
 // Arg creates a new local variable for an argument passed in register r.

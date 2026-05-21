@@ -778,7 +778,7 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 	//case "cl":
 	case "r8":
 		if ra, ok := op.(*Ralloc); ok {
-			return ra.RegSize() == 8, 8
+			return !ra.volatile && ra.RegSize() == 8, 8
 		}
 		if r, ok := op.(Register); ok {
 			//return r == R_AL || r == R_AH || r == R_BL || r == R_BH || r == R_CL || r == R_CH || r == R_DL || r == R_DH
@@ -788,7 +788,7 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 	//case "ax":
 	case "r16":
 		if ra, ok := op.(*Ralloc); ok {
-			return ra.RegSize() == 16, 16
+			return !ra.volatile && ra.RegSize() == 16, 16
 		}
 		if r, ok := op.(Register); ok {
 			//return r == R_AX || r == R_BX || r == R_CX || r == R_DX || r == R_SP || r == R_BP || r == R_SI || r == R_DI
@@ -798,7 +798,7 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 	//case "eax":
 	case "r32":
 		if ra, ok := op.(*Ralloc); ok {
-			return ra.RegSize() == 32, 32
+			return !ra.volatile && ra.RegSize() == 32, 32
 		}
 		if r, ok := op.(Register); ok {
 			//return r == R_EAX || r == R_EBX || r == R_ECX || r == R_EDX || r == R_ESP || r == R_EBP || r == R_ESI || r == R_EDI
@@ -808,7 +808,7 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 	//case "rax":
 	case "r64":
 		if ra, ok := op.(*Ralloc); ok {
-			return ra.RegSize() == 64, 64
+			return !ra.volatile && ra.RegSize() == 64, 64
 		}
 		if r, ok := op.(Register); ok {
 			//return r == R_RAX || r == R_RBX || r == R_RCX || r == R_RDX || r == R_RSP || r == R_RBP || r == R_RSI || r == R_RDI ||

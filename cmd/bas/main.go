@@ -440,6 +440,14 @@ func main() {
 				}
 				continue
 			}
+			if strings.HasPrefix(line, "volatile") {
+				name := strings.TrimSpace(strings.TrimPrefix(line, "volatile"))
+				if err := f.VolatileLocal(name); err != nil {
+					fmt.Printf("Fatal: volatile %s: %s\n", name, err)
+					os.Exit(1)
+				}
+				continue
+			}
 			if strings.HasPrefix(line, "forgetall") {
 				f.ForgetAll()
 				continue
