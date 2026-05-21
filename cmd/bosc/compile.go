@@ -134,6 +134,16 @@ func spot_memcpy(of io.Writer, c *Context, dst, src spot, bytes int) {
 // 	fmt.Fprintf(of, "\trelease rax\n")
 // }
 
+// shapeMatch reports whether two types have the same physical representation:
+// same name, indirection depth, array size, and slice flag. MutMask and
+// OwnedMask are type-system annotations with no runtime effect and are ignored.
+func shapeMatch(a, b ASTType) bool {
+	return a.Name == b.Name &&
+		a.Indirection == b.Indirection &&
+		a.ArraySize == b.ArraySize &&
+		a.Slice == b.Slice
+}
+
 // can move T to T or T into *T
 func move(of io.Writer, c *Context, dest spot, src spot) {
 	if dest.t == regtype || src.t == regtype {
@@ -145,15 +155,15 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 		spot_memcpy(of, c, dest, src, src.t.Size(c))
 		return
 	}
-	// TODO: other types, array stuff, etc.
-	if dest.t.Same(src.t) {
+	if shapeMatch(dest.t, src.t) {
 		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, src.ref)
 		return
 	}
 	depoint := dest.t
 	depoint.Indirection--
-	depoint.MutMask >>= 1 // consume the outermost pointer level's mut bit
-	if depoint.Same(src.t) {
+	depoint.MutMask >>= 1
+	depoint.OwnedMask >>= 1
+	if shapeMatch(depoint, src.t) {
 		// dest was *T and src is T
 		fmt.Fprintf(of, "\tmov [%s] %s\n", dest.ref, src.ref)
 		if src.t.Size(c) > 8 {
@@ -347,6 +357,19 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	}
 
 	switch ast := a.(type) {
+	case *OwnedPromotion:
+		// Compile the inner expression without a typed dest (the inner type differs
+		// from the promoted type). Relabel the result with the promoted type.
+		// The inner variable is deliberately NOT marked as moved — this is unsafe.
+		s := compileTop(of, c, ast.Val, nullspot)
+		s.t = ast.ASTType(c)
+		if !dest.empty() && !s.same(&dest) {
+			move(of, c, dest, s)
+			s.free(of)
+			dest.t = ast.ASTType(c)
+			return dest
+		}
+		return s
 	case *TypeAliasDecl:
 		// Already registered in toASTTop; nothing to emit.
 		return nullspot
@@ -635,6 +658,21 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			// Re-establishment: assigning to a var binding clears the moved flag.
 			c.Unmove(sym.Name)
+		}
+		// Reject implicit ownership promotion: if the destination has owned bits
+		// that the source doesn't, the source must be wrapped in owned().
+		// Integer literals are exempt — they initialize owned values without a wrapper.
+		{
+			dsttmp := ast.Target.ASTType(c)
+			srctmp := ast.Val.ASTType(c)
+			if !srctmp.Same(intlitASTType()) {
+				gained := dsttmp.OwnedMask &^ srctmp.OwnedMask
+				if gained != 0 {
+					if _, ok := ast.Val.(*OwnedPromotion); !ok {
+						CompileErrorF(a, "Ownership promotion requires explicit owned(): assigning %s to %s", srctmp, dsttmp)
+					}
+				}
+			}
 		}
 		// Reject write-through on a non-mut pointer: *p = x requires p: *mut T.
 		if deref, ok := ast.Target.(*Deref); ok {

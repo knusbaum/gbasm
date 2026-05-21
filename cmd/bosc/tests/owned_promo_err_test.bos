@@ -1,0 +1,11 @@
+package main
+
+struct Res {
+	val i64
+}
+
+fn main() {
+	var r Res
+	var res *owned Res
+	res = &r
+}

@@ -1044,6 +1044,26 @@ func (c *Continue) Pos() position {
 	return c.p
 }
 
+// OwnedPromotion wraps an expression to assert ownership: owned(x).
+// This is an unsafe escape hatch — the compiler accepts the expression
+// where an owned type is required, but does NOT mark the inner variable
+// as moved. The programmer is responsible for the aliasing invariant.
+type OwnedPromotion struct {
+	Val AST
+	p   position
+}
+
+func (o *OwnedPromotion) ASTType(c *Context) ASTType {
+	t := o.Val.ASTType(c)
+	// Set owned at the innermost level: for a plain value (Ind=0) this is bit 0
+	// (the value itself is owned); for a pointer (Ind=1) this is bit 1 (the
+	// pointed-to value is owned), matching the '*owned T' convention.
+	t.OwnedMask |= 1 << uint(t.Indirection)
+	return t
+}
+func (o *OwnedPromotion) Note() string  { return fmt.Sprintf("owned(%s)", o.Val.Note()) }
+func (o *OwnedPromotion) Pos() position { return o.p }
+
 type TypeAliasDecl struct {
 	Name       string
 	Underlying ASTType
@@ -1419,6 +1439,8 @@ func (n *Node) toASTTop(c *Context) AST {
 		}
 	case n_dispose:
 		return &Dispose{Var: n.sval, p: n.p}
+	case n_ownedpromo:
+		return &OwnedPromotion{Val: n.args[0].toASTTop(c), p: n.p}
 	case n_typedecl:
 		underlying := mkTypename(n.args[0])
 		// Propagate Signed from base type if it's a built-in.

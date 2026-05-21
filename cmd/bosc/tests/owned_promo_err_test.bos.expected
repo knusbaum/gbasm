@@ -1,0 +1,2 @@
+Compiling tests/owned_promo_err_test.bos
+Fatal: Ownership promotion requires explicit owned(): assigning *mut Res to *owned Res

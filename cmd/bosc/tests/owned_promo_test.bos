@@ -1,0 +1,28 @@
+package main
+
+import "string.bo"
+
+struct Res {
+	val i64
+}
+
+fn initialize(r *mut Res, v i64) {
+	r.val = v
+}
+
+fn cleanup(r *owned Res) {
+	puti(r.val)
+	puts("\n")
+	dispose(r)
+}
+
+fn main() {
+	var r Res
+
+	initialize(&r, 42)
+
+	var res *owned Res
+	res = owned(&r)
+
+	cleanup(res)
+}

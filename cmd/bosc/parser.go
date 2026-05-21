@@ -49,6 +49,7 @@ const (
 	n_deref
 	n_dispose
 	n_typedecl
+	n_ownedpromo
 )
 
 func (t nodetype) String() string {
@@ -135,6 +136,8 @@ func (t nodetype) String() string {
 		return "n_dispose"
 	case n_typedecl:
 		return "n_typedecl"
+	case n_ownedpromo:
+		return "n_ownedpromo"
 	}
 	return "UNKNOWN"
 }
@@ -569,6 +572,16 @@ func (p *Parser) parseParens() *Node {
 		return &Node{t: n_return, p: c.p, args: []*Node{val}}
 	} else if c.t == tok_fn {
 		return p.parseFn()
+	} else if c.t == tok_owned {
+		// owned(expr) — unsafe ownership promotion expression.
+		p.advance()
+		if p.current().t != tok_lparen {
+			panic(&interpreterError{fmt.Sprintf("'owned' in expression context must be followed by '(', but found %s", p.current().t), c.p})
+		}
+		p.advance()
+		inner := p.parseExpression()
+		p.expect(tok_rparen)
+		return &Node{t: n_ownedpromo, p: c.p, args: []*Node{inner}}
 	} else if c.t == tok_dispose {
 		p.advance()
 		p.expect(tok_lparen)
