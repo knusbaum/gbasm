@@ -1373,7 +1373,7 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		if sz == 1 {
 			CompileErrorF(o.First, "8-bit multiplication not supported")
 		}
-		raxName, _ := mulDivRegs(sz * 8)
+		raxName, rdxName := mulDivRegs(sz * 8)
 		signed := ot.Signed
 
 		// Always compute into a fresh temporary, never into the caller's dest
@@ -1408,11 +1408,15 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 			// Ensure first is in rax; compiling second may have evicted it.
 			// Safe: tmp is a fresh Temp, never volatile.
 			fmt.Fprintf(of, "\tinreg %s %s\n", tmp.ref, raxName)
+			// Acquire the rdx-equivalent to protect any live variable there.
+			// One-operand MUL/IMUL writes the high half to rdx as a side effect.
+			rdx := regSpot(of, rdxName)
 			if signed {
 				fmt.Fprintf(of, "\timul %s\n", second.ref)
 			} else {
 				fmt.Fprintf(of, "\tmul %s\n", second.ref)
 			}
+			rdx.free(of)
 			second.free(of)
 			result = tmp
 		}
