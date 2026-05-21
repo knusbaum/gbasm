@@ -1,0 +1,2 @@
+Compiling tests/mut_write_err_test.bos
+Fatal: Cannot write through read-only pointer of type *i64; pointer must be *mut
