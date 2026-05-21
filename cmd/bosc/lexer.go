@@ -86,7 +86,7 @@ const (
 type token struct {
 	t    toktype
 	sval string
-	nval float64
+	nval uint64
 	p    position
 }
 
@@ -303,11 +303,23 @@ func (l *lexer) parseNumber(head *rune) token {
 	if string(ret) == "." {
 		return token{t: tok_dot, p: l.p}
 	}
-	f, err := strconv.ParseFloat(string(ret), 64)
-	if err != nil {
-		panic(&interpreterError{fmt.Sprintf("parsing number: %v", err), l.p})
+	// Parse the integer portion losslessly. A trailing fractional part (e.g.
+	// "1234.5") is silently truncated — boson does not yet have float support,
+	// but the language has historically accepted decimal syntax. Using uint64
+	// instead of float64 avoids precision loss for large integer literals
+	// near UINT64_MAX.
+	intStr := string(ret)
+	if dot := strings.IndexByte(intStr, '.'); dot >= 0 {
+		intStr = intStr[:dot]
+		if intStr == "" {
+			intStr = "0"
+		}
 	}
-	return token{t: tok_number, nval: f, p: l.p}
+	n, err := strconv.ParseUint(intStr, 10, 64)
+	if err != nil {
+		panic(&interpreterError{fmt.Sprintf("parsing number %q: %v", string(ret), err), l.p})
+	}
+	return token{t: tok_number, nval: n, p: l.p}
 }
 
 func (l *lexer) parseIdent() token {
@@ -365,7 +377,7 @@ func (l *lexer) parseChar() token {
 	if r != '\'' {
 		panic(&interpreterError{fmt.Sprintf("too many characters in char literal"), l.p})
 	}
-	return token{t: tok_byte, nval: float64(ret), p: l.p}
+	return token{t: tok_byte, nval: uint64(ret), p: l.p}
 }
 
 func unparseString(s string) string {

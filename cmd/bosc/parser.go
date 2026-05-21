@@ -245,13 +245,13 @@ func (p *Parser) parseTok() *Node {
 	c := p.current()
 	if c.t == tok_number {
 		p.advance()
-		return &Node{t: n_number, p: c.p, ival: uint64(c.nval)}
+		return &Node{t: n_number, p: c.p, ival: c.nval}
 	} else if c.t == tok_str {
 		p.advance()
 		return &Node{t: n_str, p: c.p, sval: c.sval}
 	} else if c.t == tok_byte {
 		p.advance()
-		return &Node{t: n_byte, p: c.p, ival: uint64(c.nval)}
+		return &Node{t: n_byte, p: c.p, ival: c.nval}
 	} else if c.t == tok_ident {
 		p.advance()
 		return &Node{t: n_symbol, p: c.p, sval: c.sval}
@@ -332,7 +332,7 @@ func (p *Parser) parseTypeName() *Node {
 	if p.current().t == tok_lsquare {
 		p.advance()
 		if p.current().t == tok_number {
-			arrsize := uint64(p.current().nval)
+			arrsize := p.current().nval
 			p.advance()
 			p.expect(tok_rsquare)
 			if mutmask&(1<<indirection) != 0 || ownedmask&(1<<indirection) != 0 {
