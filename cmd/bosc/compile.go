@@ -1373,37 +1373,55 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		if sz == 1 {
 			CompileErrorF(o.First, "8-bit multiplication not supported")
 		}
-		raxName, rdxName := mulDivRegs(sz * 8)
+		raxName, _ := mulDivRegs(sz * 8)
 		signed := ot.Signed
-		if dest.empty() {
-			dest = newSpotWithReg(of, c, c.Temp(), ot, raxName)
-		}
-		first := compileTop(of, c, o.First, dest)
-		if !first.same(&dest) {
-			// TODO: Is this actually an error? We should be able to handle
-			// first != dest.
-			panic(fmt.Sprintf("Expected to get %#v but got %#v from %#v\n", dest, first, o.First))
-			//dest.free(of)
-			dest = first
-		}
-		// Use ot (first operand's type) so the second slot matches the register width.
-		// Literals like `4` (type <intlit>) will be compiled into the smaller slot correctly.
-		second := newSpotWithReg(of, c, c.Temp(), ot, rdxName)
-		snd := compileTop(of, c, o.Second, second)
-		if !snd.same(&second) {
-			//second.free(of)
-			second = snd
-		}
 
-		fmt.Fprintf(of, "\tinreg %s %s\n", first.ref, raxName)
-		fmt.Fprintf(of, "\tinreg %s %s\n", second.ref, rdxName)
-		if signed {
-			fmt.Fprintf(of, "\timul %s\n", rdxName)
+		// Always compute into a fresh temporary, never into the caller's dest
+		// directly. This avoids 'inreg' on user variables (which breaks volatile).
+		// The result is moved into dest at the end if needed.
+		var result spot
+		if signed && sz == 8 {
+			// 64-bit signed: two-operand IMUL r64, r/m64.
+			// No implicit rax dependency, no inreg on user variables.
+			// Second operand can be register or memory — bas picks the form.
+			tmp := newSpot(of, c, c.Temp(), ot)
+			first := compileTop(of, c, o.First, tmp)
+			if !first.same(&tmp) {
+				move(of, c, tmp, first)
+				first.free(of)
+			}
+			second := compileTop(of, c, o.Second, nullspot)
+			fmt.Fprintf(of, "\timul %s %s\n", tmp.ref, second.ref)
+			second.free(of)
+			result = tmp
 		} else {
-			fmt.Fprintf(of, "\tmul %s\n", rdxName)
+			// For sub-64-bit signed and all unsigned: one-operand form via rax.
+			// Load first into a fresh rax-pinned temp (uses 'mov', not 'inreg').
+			// Then inreg the temp (safe: fresh temp is never volatile).
+			tmp := newSpotWithReg(of, c, c.Temp(), ot, raxName)
+			first := compileTop(of, c, o.First, tmp)
+			if !first.same(&tmp) {
+				move(of, c, tmp, first)
+				first.free(of)
+			}
+			second := compileTop(of, c, o.Second, nullspot)
+			// Ensure first is in rax; compiling second may have evicted it.
+			// Safe: tmp is a fresh Temp, never volatile.
+			fmt.Fprintf(of, "\tinreg %s %s\n", tmp.ref, raxName)
+			if signed {
+				fmt.Fprintf(of, "\timul %s\n", second.ref)
+			} else {
+				fmt.Fprintf(of, "\tmul %s\n", second.ref)
+			}
+			second.free(of)
+			result = tmp
 		}
-		second.free(of)
-		return first
+		if !dest.empty() && !result.same(&dest) {
+			move(of, c, dest, result)
+			result.free(of)
+			return dest
+		}
+		return result
 	case n_div:
 		ot := o.ASTType(c)
 		sz := ot.Size(c)
@@ -1412,23 +1430,24 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		raxName, rdxName := mulDivRegs(sz * 8)
 		signed := ot.Signed
-		if dest.empty() {
-			dest = newSpotWithReg(of, c, c.Temp(), ot, raxName)
-		}
-		first := compileTop(of, c, o.First, dest)
-		if !first.same(&dest) {
-			// TODO: Is this actually an error? We should be able to handle
-			// first != dest.
-			panic(fmt.Sprintf("Expected to get %#v but got %#v from %#v\n", dest, first, o.First))
-			//dest.free(of)
-			dest = first
+
+		// Always compute into a fresh rax-pinned temporary (never the caller's
+		// dest). compileTop loads the dividend via 'mov rax src', which handles
+		// the memory form for volatile variables without needing 'inreg'.
+		tmp := newSpotWithReg(of, c, c.Temp(), ot, raxName)
+		first := compileTop(of, c, o.First, tmp)
+		if !first.same(&tmp) {
+			move(of, c, tmp, first)
+			first.free(of)
 		}
 		second := compileTop(of, c, o.Second, nullspot)
-		fmt.Fprintf(of, "\tinreg %s %s\n", first.ref, raxName)
-		rdx := regSpot(of, rdxName) // acquire the rdx-equivalent for div
+		// Ensure the dividend is in rax before the division instruction.
+		// Compiling the second operand (e.g. a funcall) may have evicted tmp
+		// from rax to its stack slot. inreg reloads it. tmp is always a fresh
+		// Temp (never volatile), so this is safe.
+		fmt.Fprintf(of, "\tinreg %s %s\n", tmp.ref, raxName)
+		rdx := regSpot(of, rdxName)
 		if signed {
-			// sign-extend rax-equivalent into rdx-equivalent
-			// cqo/cdq/cwd: see https://www.felixcloutier.com/x86/cwd:cdq:cqo
 			switch sz {
 			case 8:
 				fmt.Fprintf(of, "\tcqo\n")
@@ -1444,7 +1463,12 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		rdx.free(of)
 		second.free(of)
-		return first
+		if !dest.empty() && !tmp.same(&dest) {
+			move(of, c, dest, tmp)
+			tmp.free(of)
+			return dest
+		}
+		return tmp
 	case n_lt:
 		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
 		fst := newSpot(of, c, c.Temp(), ft)
