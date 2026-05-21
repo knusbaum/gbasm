@@ -1,0 +1,32 @@
+package main
+
+import "string.bo"
+
+fn main() {
+	var x i64
+	x = 42
+
+	var y i64
+	y = 6
+
+	var px *mut i64
+	px = &x
+
+	var py *mut i64
+	py = &y
+
+	// Volatile first operand.
+	x = x / 7
+	puti(*px)
+	puts("\n")
+
+	// Volatile second operand.
+	y = 100 / y
+	puti(*py)
+	puts("\n")
+
+	// Both volatile.
+	x = x * y
+	puti(*px)
+	puts("\n")
+}

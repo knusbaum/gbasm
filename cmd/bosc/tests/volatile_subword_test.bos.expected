@@ -1,0 +1,5 @@
+i16 volatile mul first ok
+i16 volatile mul second ok
+i16 volatile div ok
+u32 volatile mul ok
+u32 volatile div ok

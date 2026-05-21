@@ -499,6 +499,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		t.Indirection -= 1
 		t.MutMask >>= 1 // consume the outermost pointer level's mut bit
+		if t.Indirection == 0 && !t.Slice && t.ArraySize == 0 {
+			t.MutMask = 0 // plain value: MutMask is not meaningful
+		}
 
 		if t.Indirection > 0 {
 			if dest.empty() {

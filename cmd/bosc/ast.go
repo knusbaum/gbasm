@@ -822,6 +822,11 @@ func (d *Deref) ASTType(c *Context) ASTType {
 	}
 	t.Indirection -= 1
 	t.MutMask >>= 1 // consume the outermost pointer level's mut bit
+	// If the result is a plain non-pointer, non-slice value, MutMask is
+	// meaningless (binding mutability is tracked in constBindings, not here).
+	if t.Indirection == 0 && !t.Slice && t.ArraySize == 0 {
+		t.MutMask = 0
+	}
 	return t
 }
 
