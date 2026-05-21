@@ -263,39 +263,54 @@ func (p *Parser) parseTypeName() *Node {
 	var mutmask uint64
 	var ownedmask uint64
 
-	// Qualifier placement rules:
-	//   Before a '*' or before the base type: applies to current level (bit = indirection).
-	//   'mut' after a '*': applies to that '*' (bit = indirection-1 after consuming).
-	//   'owned' after a '*': applies to what that '*' points to (bit = indirection).
+	// Bit numbering convention (bit 0 = outermost, bit N = after N dereferences):
+	//   owned/mut before '*' at level N  → applies to the pointer itself  → bit N
+	//   owned/mut after  '*' (before next '*' or base type) → applies to what the '*' points to → bit N+1
+	//   owned/mut before a base type (no '*') → bit N (the value itself)
+	//   mut before a slice base type (T[]) → bit N+1 (elements, like *mut T for pointers)
+	//
+	// 'mut' before a '*' is illegal — 'mut' on a pointer means write-through,
+	// which is expressed as '*mut T'. Binding mutability is expressed with var/const.
 	//
 	// Examples:
-	//   *mut T         → MutMask  bit 0  (pointer is mutable)
-	//   owned *T       → OwnedMask bit 0 (pointer is owned)
-	//   *owned T       → OwnedMask bit 1 (pointed-to T is owned)
-	//   owned *owned T → OwnedMask bits 0+1 (two independent obligations)
+	//   owned i64       → OwnedMask bit 0  (the i64 itself is owned)
+	//   owned *T        → OwnedMask bit 0  (the pointer is owned)
+	//   *mut T          → MutMask   bit 1  (write-through to T, symmetric with *owned T)
+	//   *owned T        → OwnedMask bit 1  (T is owned, accessed through the pointer)
+	//   owned *owned T  → OwnedMask bits 0+1 (two independent obligations)
+	//   mut byte[]      → MutMask   bit 1  (elements writable, analogous to *mut byte)
 	for {
-		// Leading qualifiers before a '*' (or before base type) → current level.
+		// Read qualifiers at the current level (before the next '*' or base type).
 		for p.current().t == tok_owned || p.current().t == tok_mut {
 			if p.current().t == tok_owned {
 				ownedmask |= 1 << indirection
+				p.advance()
 			} else {
-				mutmask |= 1 << indirection
+				// 'mut' before a '*' is illegal.
+				if p.current().t == tok_mut {
+					mutPos := p.current().p
+					p.advance()
+					if p.current().t == tok_star {
+						panic(&interpreterError{"'mut' before '*' is not valid; use '*mut T' for write-through", mutPos})
+					}
+					// 'mut' before base type (non-pointer): recorded at current level.
+					// For slices (T[]) this will be bumped to +1 below.
+					mutmask |= 1 << indirection
+				}
 			}
-			p.advance()
 		}
 		if p.current().t != tok_star {
 			break
 		}
 		p.advance() // consume '*'
 		indirection++
-		// Trailing qualifiers after a '*':
-		// mut  → the '*' just consumed (bit indirection-1).
-		// owned → what this '*' points to (bit indirection).
+		// Qualifiers after the '*' apply to what it points to (bit = indirection, i.e. N+1).
+		// Both 'mut' and 'owned' are symmetric here.
 		for p.current().t == tok_owned || p.current().t == tok_mut {
-			if p.current().t == tok_mut {
-				mutmask |= 1 << (indirection - 1)
-			} else {
+			if p.current().t == tok_owned {
 				ownedmask |= 1 << indirection
+			} else {
+				mutmask |= 1 << indirection
 			}
 			p.advance()
 		}
@@ -315,7 +330,7 @@ func (p *Parser) parseTypeName() *Node {
 			p.advance()
 			p.expect(tok_rsquare)
 			if mutmask&(1<<indirection) != 0 || ownedmask&(1<<indirection) != 0 {
-				panic(&interpreterError{fmt.Sprintf("'mut'/'owned' is only valid on slice types, not fixed-size arrays"), c.p})
+				panic(&interpreterError{"'mut'/'owned' is only valid on slice types, not fixed-size arrays", c.p})
 			}
 			return &Node{
 				t:         n_typename,
@@ -328,6 +343,16 @@ func (p *Parser) parseTypeName() *Node {
 			}
 		} else if p.current().t == tok_rsquare {
 			p.advance()
+			// mut/owned before a slice base type apply to the element level (bit+1),
+			// analogous to *mut T where mut is after the '*'.
+			if mutmask&(1<<indirection) != 0 {
+				mutmask &^= 1 << indirection
+				mutmask |= 1 << (indirection + 1)
+			}
+			if ownedmask&(1<<indirection) != 0 {
+				ownedmask &^= 1 << indirection
+				ownedmask |= 1 << (indirection + 1)
+			}
 			return &Node{
 				t:         n_typename,
 				p:         c.p,
@@ -341,6 +366,12 @@ func (p *Parser) parseTypeName() *Node {
 		panic(&interpreterError{fmt.Sprintf("Expected a number or ']', but found: %s\n", p.current().t), c.p})
 	}
 
+	// 'mut' on a plain non-pointer, non-slice type is meaningless.
+	// Only fires when indirection==0 (no pointer stars): any mut bits must have
+	// come from a leading qualifier directly before the base type.
+	if indirection == 0 && mutmask != 0 {
+		panic(&interpreterError{fmt.Sprintf("'mut' on non-reference type '%s' has no effect; 'mut' is only valid on pointer or slice types", typename), c.p})
+	}
 	return &Node{t: n_typename, p: c.p, sval: typename, ival: indirection, mutmask: mutmask, ownedmask: ownedmask}
 }
 

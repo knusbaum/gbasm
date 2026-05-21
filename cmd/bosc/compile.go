@@ -629,7 +629,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// Reject write-through on a non-mut pointer: *p = x requires p: *mut T.
 		if deref, ok := ast.Target.(*Deref); ok {
 			ptype := deref.Val.ASTType(c)
-			if ptype.MutMask&1 == 0 {
+			if ptype.MutMask&(1<<uint(ptype.Indirection)) == 0 {
 				CompileErrorF(a, "Cannot write through read-only pointer of type %s; pointer must be *mut", ptype)
 			}
 		}

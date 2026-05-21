@@ -466,25 +466,27 @@ func (dst ASTType) OwnedCompatible(src ASTType) bool {
 
 func (t ASTType) String() string {
 	var sb strings.Builder
-	// Emit leading "owned" if the outermost level (level 0) is owned before any pointer.
-	if t.Indirection == 0 && t.OwnedMask&1 != 0 {
+	// Bit 0 = position 0 (before any '*'): owned qualifier on the outermost pointer/value.
+	if t.OwnedMask&1 != 0 {
 		sb.WriteString("owned ")
 	}
 	for i := 0; i < t.Indirection; i++ {
-		if t.OwnedMask&(1<<uint(i)) != 0 {
-			sb.WriteString("owned ")
-		}
 		sb.WriteRune('*')
-		if t.MutMask&(1<<uint(i)) != 0 {
+		// Qualifiers between this '*' and the next token are at position i+1.
+		if t.MutMask&(1<<uint(i+1)) != 0 {
 			sb.WriteString("mut ")
+		}
+		if t.OwnedMask&(1<<uint(i+1)) != 0 {
+			sb.WriteString("owned ")
 		}
 	}
 	if t.Slice {
-		if t.OwnedMask&(1<<uint(t.Indirection)) != 0 {
-			sb.WriteString("owned ")
-		}
-		if t.MutMask&(1<<uint(t.Indirection)) != 0 {
+		// Slice element qualifiers are at position Indirection+1.
+		if t.MutMask&(1<<uint(t.Indirection+1)) != 0 {
 			sb.WriteString("mut ")
+		}
+		if t.OwnedMask&(1<<uint(t.Indirection+1)) != 0 {
+			sb.WriteString("owned ")
 		}
 	}
 	sb.WriteString(t.Name)
@@ -754,11 +756,13 @@ func (a *Address) ASTType(c *Context) ASTType {
 	if !ok {
 		panic("Variable is not bound. TODO: Nice error reports.")
 	}
-	// Shift existing mut bits up one level to make room for the new outermost pointer.
+	// Adding one pointer level: shift existing mut/owned bits up by one position.
 	t.MutMask <<= 1
-	// The new outermost pointer is mut iff the source binding is var.
+	t.OwnedMask <<= 1
+	// &x places x at position 1 in the new type (one deref through the new pointer
+	// reaches x's binding). If x is var, bit 1 = write-through to x's value.
 	if !c.IsConst(a.Var) {
-		t.MutMask |= 1
+		t.MutMask |= 1 << 1
 	}
 	t.Indirection += 1
 	return t
