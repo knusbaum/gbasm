@@ -1,0 +1,87 @@
+package main
+
+import "string.bo"
+
+fn check(label byte[], got i64, expected i64) {
+	if (got == expected) {
+		puts(label)
+		puts(" ok\n")
+	} else {
+		puts(label)
+		puts(" FAIL (got ")
+		puti(got)
+		puts(" expected ")
+		puti(expected)
+		puts(")\n")
+	}
+}
+
+fn main() {
+	// --- widening from i8 (sign-extension) ---
+	var a i8
+	a = i8(-1)
+	check("i8->i16",  i64(i16(a)), -1)
+	check("i8->i32",  i64(i32(a)), -1)
+	check("i8->i64",  i64(a),      -1)
+	check("i8->u8",   i64(u8(a)),  255)
+	check("i8->u16",  i64(u16(a)), 65535)
+	check("i8->u64",  i64(u64(a)), -1)
+
+	// --- widening from u8 (zero-extension) ---
+	var b u8
+	b = u8(200)
+	check("u8->i16",  i64(i16(b)), 200)
+	check("u8->i32",  i64(i32(b)), 200)
+	check("u8->i64",  i64(b),      200)
+	check("u8->i8",   i64(i8(b)),  -56)
+	check("u8->u16",  i64(u16(b)), 200)
+	check("u8->u32",  i64(u32(b)), 200)
+	check("u8->u64",  i64(u64(b)), 200)
+
+	// --- widening from i16 (sign-extension) ---
+	var c i16
+	c = i16(-400)
+	check("i16->i32",  i64(i32(c)), -400)
+	check("i16->i64",  i64(c),      -400)
+	check("i16->u16",  i64(u16(c)), 65136)
+	check("i16->u32",  i64(u32(c)), 65136)
+
+	// --- widening from u16 (zero-extension) ---
+	var d u16
+	d = u16(60000)
+	check("u16->i32",  i64(i32(d)), 60000)
+	check("u16->i64",  i64(d),      60000)
+	check("u16->i16",  i64(i16(d)), -5536)
+	check("u16->u32",  i64(u32(d)), 60000)
+	check("u16->u64",  i64(u64(d)), 60000)
+
+	// --- widening from i32 (sign-extension) ---
+	var e i32
+	e = i32(-70000)
+	check("i32->i64",  i64(e),      -70000)
+	check("i32->u32",  i64(u32(e)), 4294897296)
+	check("i32->u64",  i64(u64(e)), -70000)
+
+	// --- widening from u32 (zero-extension, exercises the MOVZX r64,r32 path) ---
+	var f u32
+	f = u32(3000000000)
+	check("u32->i64",  i64(f),      3000000000)
+	check("u32->u64",  i64(u64(f)), 3000000000)
+	check("u32->i32",  i64(i32(f)), -1294967296)
+
+	// --- truncation ---
+	var g i32
+	g = i32(257)
+	check("i32->i8 trunc",  i64(i8(g)),  1)
+	check("i32->i16 trunc", i64(i16(g)), 257)
+	check("i32->u8 trunc",  i64(u8(g)),  1)
+
+	// --- same-size signed/unsigned reinterpretation ---
+	var h i64
+	h = i64(-1)
+	check("i64->u64", i64(u64(h)), -1)
+
+	var i u64
+	i = u64(18446744073709551615)
+	check("u64->i64", i64(i), -1)
+}
