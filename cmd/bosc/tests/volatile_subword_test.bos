@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var a i16
@@ -17,15 +17,15 @@ fn main() {
 
 	// i16: volatile first operand — *pa should see 42 after a = a * 7.
 	a = a * 7
-	if (*pa == 42) { puts("i16 volatile mul first ok\n") } else { puts("i16 volatile mul first fail\n") }
+	if (*pa == 42) { string.puts("i16 volatile mul first ok\n") } else { string.puts("i16 volatile mul first fail\n") }
 
 	// i16: volatile second operand — b = 3 * b = 21.
 	b = 3 * b
-	if (*pb == 21) { puts("i16 volatile mul second ok\n") } else { puts("i16 volatile mul second fail\n") }
+	if (*pb == 21) { string.puts("i16 volatile mul second ok\n") } else { string.puts("i16 volatile mul second fail\n") }
 
 	// i16: volatile in division — a = 42 / 7 = 6.
 	a = a / 7
-	if (*pa == 6) { puts("i16 volatile div ok\n") } else { puts("i16 volatile div fail\n") }
+	if (*pa == 6) { string.puts("i16 volatile div ok\n") } else { string.puts("i16 volatile div fail\n") }
 
 	var c u32
 	c = 10
@@ -35,9 +35,9 @@ fn main() {
 
 	// u32: volatile multiplication — c = 10 * 5 = 50.
 	c = c * 5
-	if (*pc == 50) { puts("u32 volatile mul ok\n") } else { puts("u32 volatile mul fail\n") }
+	if (*pc == 50) { string.puts("u32 volatile mul ok\n") } else { string.puts("u32 volatile mul fail\n") }
 
 	// u32: volatile division — c = 50 / 2 = 25.
 	c = c / 2
-	if (*pc == 25) { puts("u32 volatile div ok\n") } else { puts("u32 volatile div fail\n") }
+	if (*pc == 25) { string.puts("u32 volatile div ok\n") } else { string.puts("u32 volatile div fail\n") }
 }

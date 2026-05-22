@@ -1,12 +1,12 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn addy(x i64, y i64) i64 {
    return x + y
 }
 
 fn main() {
-   puti(addy(10, 20))
-   puts("\n")
+   string.puti(addy(10, 20))
+   string.puts("\n")
 }

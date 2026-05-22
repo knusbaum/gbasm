@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn fact(n i64) i64 {
 	if (n <= 1) {
@@ -10,12 +10,12 @@ fn fact(n i64) i64 {
 }
 
 fn main() {
-	puti(fact(0))
-	puts("\n")
-	puti(fact(1))
-	puts("\n")
-	puti(fact(5))
-	puts("\n")
-	puti(fact(10))
-	puts("\n")
+	string.puti(fact(0))
+	string.puts("\n")
+	string.puti(fact(1))
+	string.puts("\n")
+	string.puti(fact(5))
+	string.puts("\n")
+	string.puti(fact(10))
+	string.puts("\n")
 }

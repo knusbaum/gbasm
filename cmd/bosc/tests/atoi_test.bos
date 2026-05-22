@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 struct nret {
 	i i64
@@ -14,7 +14,7 @@ fn atoi(s byte[]) nret {
 	false = (1 == 0)
 
 	var l i64
-	l = lenb(s)
+	l = string.lenb(s)
 	var i i64
 	var r i64
 	r = 0
@@ -53,19 +53,19 @@ fn main() {
 	var r nret
 	r = atoi("Hello, World!\n")
 	if (r.err) {
-		puts("ATOI FAILED!\n")
+		string.puts("ATOI FAILED!\n")
 	} else {
-		puts("ATOI RETURNED: ")
-		puti(r.i)
-		puts("\n")
+		string.puts("ATOI RETURNED: ")
+		string.puti(r.i)
+		string.puts("\n")
 	}
 
 	r = atoi("12345")
 	if (r.err) {
-		puts("ATOI FAILED!\n")
+		string.puts("ATOI FAILED!\n")
 	} else {
-		puts("ATOI RETURNED: ")
-		puti(r.i)
-		puts("\n")
+		string.puts("ATOI RETURNED: ")
+		string.puti(r.i)
+		string.puts("\n")
 	}
 }

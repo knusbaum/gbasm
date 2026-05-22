@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 struct point {
 	x i64
@@ -9,14 +9,14 @@ struct point {
 }
 
 fn structfn(p point) {
-	puti(p.x)
-	puts("\n")
+	string.puti(p.x)
+	string.puts("\n")
 
-	puti(p.y)
-	puts("\n")
+	string.puti(p.y)
+	string.puts("\n")
 	
-	puti(p.z)
-	puts("\n")
+	string.puti(p.z)
+	string.puts("\n")
 
 	p.x = p.x + 100
 	p.y = p.y + 100
@@ -24,14 +24,14 @@ fn structfn(p point) {
 }
 
 fn structPtrFn(p *point) {
- 	puti(p.x)
- 	puts("\n")
+ 	string.puti(p.x)
+ 	string.puts("\n")
 
-	puti(p.y)
-	puts("\n")
+	string.puti(p.y)
+	string.puts("\n")
 	
-	puti(p.z)
-	puts("\n")
+	string.puti(p.z)
+	string.puts("\n")
 
 	p.x = p.x + 100
 	p.y = p.y + 100
@@ -47,14 +47,14 @@ fn structPtrCopyFn(p *point) {
 	p2.y = p2.y + 100
 	p2.z = p2.z + 100
 	
- 	puti(p2.x)
- 	puts("\n")
+ 	string.puti(p2.x)
+ 	string.puts("\n")
 
-	puti(p2.y)
-	puts("\n")
+	string.puti(p2.y)
+	string.puts("\n")
 	
-	puti(p2.z)
-	puts("\n")	
+	string.puti(p2.z)
+	string.puts("\n")	
 }
 
 fn main() i64 {
@@ -72,39 +72,39 @@ fn main() i64 {
 	
 	structfn(p)
 	
-	puti(p.x)
-	puts("\n")
+	string.puti(p.x)
+	string.puts("\n")
 
-	puti(p.y)
-	puts("\n")
+	string.puti(p.y)
+	string.puts("\n")
 	
-	puti(p.z)
-	puts("\n")
+	string.puti(p.z)
+	string.puts("\n")
 
 	p.x = 100
 	p.y = 200
 	p.z = 300
 	structPtrFn(&p)
 
-	puti(p.x)
-	puts("\n")
+	string.puti(p.x)
+	string.puts("\n")
 
-	puti(p.y)
-	puts("\n")
+	string.puti(p.y)
+	string.puts("\n")
 	
-	puti(p.z)
-	puts("\n")
+	string.puti(p.z)
+	string.puts("\n")
 
 
 	structPtrCopyFn(&p)
 
-	puti(p.x)
-	puts("\n")
+	string.puti(p.x)
+	string.puts("\n")
 
-	puti(p.y)
-	puts("\n")
+	string.puti(p.y)
+	string.puts("\n")
 	
-	puti(p.z)
-	puts("\n")
+	string.puti(p.z)
+	string.puts("\n")
 	
 }

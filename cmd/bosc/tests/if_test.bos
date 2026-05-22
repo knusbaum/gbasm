@@ -1,13 +1,13 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var i i64
 	i = 0
 	if (i > 0) {
-		puts("greater than zero\n")
+		string.puts("greater than zero\n")
 	} else {
-		puts("not greater than zero\n")
+		string.puts("not greater than zero\n")
 	}
 }

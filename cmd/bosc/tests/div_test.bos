@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn divvy(x i64, y i64) i64 {
    return x / y
@@ -11,9 +11,9 @@ fn divvy2(x i64, y i64) i64 {
 }
 
 fn main() {
-   puti(divvy(100, 20))
-   puts("\n")
+   string.puti(divvy(100, 20))
+   string.puts("\n")
 
-   puti(divvy2(1000, 200))
-   puts("\n")
+   string.puti(divvy2(1000, 200))
+   string.puts("\n")
 }

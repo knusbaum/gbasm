@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn mkval() owned i64 {
 	var v i64
@@ -9,14 +9,14 @@ fn mkval() owned i64 {
 }
 
 fn consume(v owned i64) {
-	puti(v)
-	puts("\n")
+	string.puti(v)
+	string.puts("\n")
 	dispose(v)
 }
 
 fn borrow(v i64) {
-	puti(v)
-	puts("\n")
+	string.puti(v)
+	string.puts("\n")
 }
 
 fn doconstparam(a owned i64) {

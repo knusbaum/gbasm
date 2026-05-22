@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var x i32
@@ -8,27 +8,27 @@ fn main() {
 
 	// add/sub
 	x = x + 500
-	if (x == 1500) { puts("add ok\n") } else { puts("add fail\n") }
+	if (x == 1500) { string.puts("add ok\n") } else { string.puts("add fail\n") }
 
 	x = x - 750
-	if (x == 750) { puts("sub ok\n") } else { puts("sub fail\n") }
+	if (x == 750) { string.puts("sub ok\n") } else { string.puts("sub fail\n") }
 
 	// mul/div
 	x = x * 4
-	if (x == 3000) { puts("mul ok\n") } else { puts("mul fail\n") }
+	if (x == 3000) { string.puts("mul ok\n") } else { string.puts("mul fail\n") }
 
 	x = x / 3
-	if (x == 1000) { puts("div ok\n") } else { puts("div fail\n") }
+	if (x == 1000) { string.puts("div ok\n") } else { string.puts("div fail\n") }
 
 	// signed: negative
 	var neg i32
 	neg = 0
 	neg = neg - 1
-	if (neg < 0) { puts("neg lt ok\n") } else { puts("neg lt fail\n") }
+	if (neg < 0) { string.puts("neg lt ok\n") } else { string.puts("neg lt fail\n") }
 
 	// signed overflow wraps: INT32_MAX + 1 = INT32_MIN
 	var mx i32
 	mx = 2147483647
 	mx = mx + 1
-	if (mx < 0) { puts("overflow ok\n") } else { puts("overflow fail\n") }
+	if (mx < 0) { string.puts("overflow ok\n") } else { string.puts("overflow fail\n") }
 }

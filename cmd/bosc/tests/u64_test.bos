@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var x u64
@@ -8,26 +8,26 @@ fn main() {
 
 	// add/sub
 	x = x + 50
-	if (x == 150) { puts("add ok\n") } else { puts("add fail\n") }
+	if (x == 150) { string.puts("add ok\n") } else { string.puts("add fail\n") }
 
 	x = x - 75
-	if (x == 75) { puts("sub ok\n") } else { puts("sub fail\n") }
+	if (x == 75) { string.puts("sub ok\n") } else { string.puts("sub fail\n") }
 
 	// mul/div
 	x = x * 4
-	if (x == 300) { puts("mul ok\n") } else { puts("mul fail\n") }
+	if (x == 300) { string.puts("mul ok\n") } else { string.puts("mul fail\n") }
 
 	x = x / 3
-	if (x == 100) { puts("div ok\n") } else { puts("div fail\n") }
+	if (x == 100) { string.puts("div ok\n") } else { string.puts("div fail\n") }
 
 	// unsigned: large value compares greater
 	var big u64
 	big = 10000000000
-	if (big > 1000) { puts("big gt ok\n") } else { puts("big gt fail\n") }
+	if (big > 1000) { string.puts("big gt ok\n") } else { string.puts("big gt fail\n") }
 
 	// unsigned underflow wraps: 0 - 1 = UINT64_MAX, which is > 0
 	var z u64
 	z = 0
 	z = z - 1
-	if (z > big) { puts("wrap ok\n") } else { puts("wrap fail\n") }
+	if (z > big) { string.puts("wrap ok\n") } else { string.puts("wrap fail\n") }
 }

@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var a byte[10]
@@ -10,18 +10,18 @@ fn main() {
 	a[3] = 4
 	var b byte[]
 	b = a[:]
-	putb(b[0])
-	puts("\n")
-	putb(b[1])
-	puts("\n")
+	string.putb(b[0])
+	string.puts("\n")
+	string.putb(b[1])
+	string.puts("\n")
 
 	b = a[:2]
-	putb(b[0])
-	puts("\n")
+	string.putb(b[0])
+	string.puts("\n")
 
 	b = a[2:]
-	putb(b[0])
-	puts("\n")
+	string.putb(b[0])
+	string.puts("\n")
 
 	var arr byte[50]
 	slicetest(arr[:])
@@ -53,15 +53,15 @@ fn main() {
 // 	var b byte
 	
 // 	b = bs[0]
-// 	putb(b)
-// 	puts("\n")
+// 	string.putb(b)
+// 	string.puts("\n")
 // 	b = bs[49]
-// 	putb(b)
-// 	puts("\n")
+// 	string.putb(b)
+// 	string.puts("\n")
 // 	// index out of bounds
 // 	//b = bs[50]
-// 	//putb(b)
-// 	//puts("\n")
+// 	//string.putb(b)
+// 	//string.puts("\n")
 // }
 
 fn slicetest(var bs byte[]) {
@@ -72,25 +72,25 @@ fn slicetest(var bs byte[]) {
 	bs[5] = 10
 	bs[6] = 20
 
-	puti(lenb(bs))
-	puts("\n")
+	string.puti(string.lenb(bs))
+	string.puts("\n")
 	
 	bs = bs[i:]
-	puti(lenb(bs))
-	puts("\n")
+	string.puti(string.lenb(bs))
+	string.puts("\n")
 
-	putb(bs[0])
-	puts("\n")
+	string.putb(bs[0])
+	string.puts("\n")
 
 	bs = bs[:i]
-	puti(lenb(bs))
-	puts("\n")
+	string.puti(string.lenb(bs))
+	string.puts("\n")
 
 	i = 1
 	bs = bs[i:i+1]
-	puti(lenb(bs))
-	puts("\n")
+	string.puti(string.lenb(bs))
+	string.puts("\n")
 	
-	putb(bs[0])
-	puts("\n")
+	string.putb(bs[0])
+	string.puts("\n")
 }

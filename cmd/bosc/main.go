@@ -149,19 +149,11 @@ func main() {
 			}
 			if n.t == n_import {
 				// n.sval is the package name from `import "name"`. Look up its
-				// .bo path in the importcfg. Backward compat: if the name ends
-				// in `.bo`, treat it as a literal file path (transitional).
+				// .bo path in the importcfg.
 				pkgName := n.sval
-				var path string
-				if strings.HasSuffix(pkgName, ".bo") {
-					path = pkgName
-					pkgName = strings.TrimSuffix(pkgName, ".bo")
-				} else {
-					p, ok := imports[pkgName]
-					if !ok {
-						log.Fatalf("import %q: not found in importcfg\n", pkgName)
-					}
-					path = p
+				path, ok := imports[pkgName]
+				if !ok {
+					log.Fatalf("import %q: not found in importcfg\n", pkgName)
 				}
 				err = actx.Import(pkgName, path)
 				if err != nil {

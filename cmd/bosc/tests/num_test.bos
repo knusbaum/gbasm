@@ -1,20 +1,20 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var x i64
 	x = 0
 
 	x = x - 1
-	puti(x)
-	puts("\n")
+	string.puti(x)
+	string.puts("\n")
 
 	x = x * 20
-	puti(x)
-	puts("\n")
+	string.puti(x)
+	string.puts("\n")
 
 	x = x / 2
-	puti(x)
-	puts("\n")
+	string.puti(x)
+	string.puts("\n")
 }

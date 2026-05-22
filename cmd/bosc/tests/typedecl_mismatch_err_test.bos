@@ -1,12 +1,12 @@
 package main
 
-import "string.bo"
+import "string"
 
 type FD i64
 
 fn takesfd(fd FD) {
-	puti(i64(fd))
-	puts("\n")
+	string.puti(i64(fd))
+	string.puts("\n")
 }
 
 fn main() {

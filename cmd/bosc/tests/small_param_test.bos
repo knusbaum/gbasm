@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn addone(x i16) i16 {
 	return x + 1
@@ -9,5 +9,5 @@ fn addone(x i16) i16 {
 fn main() {
 	var r i16
 	r = addone(41)
-	if (r == 42) { puts("ok\n") } else { puts("fail\n") }
+	if (r == 42) { string.puts("ok\n") } else { string.puts("fail\n") }
 }

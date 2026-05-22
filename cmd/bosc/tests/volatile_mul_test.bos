@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var x i64
@@ -11,6 +11,6 @@ fn main() {
 
 	x = x * 7
 
-	puti(*y)
-	puts("\n")
+	string.puti(*y)
+	string.puts("\n")
 }

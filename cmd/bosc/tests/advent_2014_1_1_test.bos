@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 struct state {
 	one i64
@@ -11,7 +11,7 @@ struct state {
 
 fn skip(var bs byte[]) byte[] {
 	var i i64
-	for (i = 0; i < lenb(bs); i = i+1) {
+	for (i = 0; i < string.lenb(bs); i = i+1) {
 		if ((bs[i] >= '0') && (bs[i] <= '9')) {
 			bs = bs[i:]
 			break
@@ -35,7 +35,7 @@ fn readRow(var bs byte[]) state {
 	var i i64
 	var bsi i64
 	bsi = 0
-	for (i = 0; i < lenb(bs); i=i+1) {
+	for (i = 0; i < string.lenb(bs); i=i+1) {
 		if (bs[i] < '0' || bs[i] > '9') {
 			// we're out of the number
 			// slice the slice
@@ -51,7 +51,7 @@ fn readRow(var bs byte[]) state {
 	bs = skip(bs)
 
 	bsi = 0
-	for (i = 0; i < lenb(bs); i=i+1) {
+	for (i = 0; i < string.lenb(bs); i=i+1) {
 		if (bs[i] < '0' || bs[i] > '9') {
 			// we're out of the number
 			// slice the slice
@@ -66,7 +66,7 @@ fn readRow(var bs byte[]) state {
 	// look for newline to ensure we read the full line.
 	var found i64
 	found = 0
-	for (i = 0; i < lenb(bs); i = i+1) {
+	for (i = 0; i < string.lenb(bs); i = i+1) {
 	 	if(bs[i] == '\n') {
 	 		found = 1
 	 		bs = bs[i:]
@@ -79,15 +79,15 @@ fn readRow(var bs byte[]) state {
 	var twoi i64
 	pnum = atoi(onebs)
 	if (pnum.err) {
-		puts("failed to atoi.\n")
-		exit(1)
+		string.puts("failed to atoi.\n")
+		string.exit(1)
 	}
 	onei = pnum.i
 
 	pnum = atoi(twobs)
 	if (pnum.err) {
-		puts("failed to atoi.\n")
-		exit(1)
+		string.puts("failed to atoi.\n")
+		string.exit(1)
 	}
 	twoi = pnum.i
 	
@@ -103,23 +103,23 @@ fn readRow(var bs byte[]) state {
 
 fn dumpbs(bs byte[]) {
 	var i i64
-	for (i = 0; i < lenb(bs); i = i + 1) {
-		putc(bs[i])
+	for (i = 0; i < string.lenb(bs); i = i + 1) {
+		string.putc(bs[i])
 	}
-	puts("\n")
+	string.puts("\n")
 }
 
 fn dumpns(ns i64[]) {
 	var i i64
-	for (i = 0; i < lenn(ns); i = i + 1) {
-		puti(ns[i])
-		putc(' ')
+	for (i = 0; i < string.lenn(ns); i = i + 1) {
+		string.puti(ns[i])
+		string.putc(' ')
 	}
-	puts("\n")
+	string.puts("\n")
 }
 
 fn qsort(ns i64[]) {
-	if (lenn(ns) <= 0) {
+	if (string.lenn(ns) <= 0) {
 		return 0
 	}
 	var pi i64
@@ -129,7 +129,7 @@ fn qsort(ns i64[]) {
 		t = pi
 		qsort(ns[:t])
 	}
-	if (pi < lenn(ns)-1) {
+	if (pi < string.lenn(ns)-1) {
 		var t2 i64
 		t2 = pi + 1
 		qsort(ns[t2:])
@@ -139,11 +139,11 @@ fn qsort(ns i64[]) {
 fn partition(ns i64[]) i64 {
 	var pivot i64
 	var i i64
-	pivot = ns[lenn(ns) - 1]	
+	pivot = ns[string.lenn(ns) - 1]	
 	i = 0
 
 	var j i64
-	for (j = 0; j < lenn(ns) - 1; j = j + 1) {
+	for (j = 0; j < string.lenn(ns) - 1; j = j + 1) {
 		if (ns[j] <= pivot) {
 			var tmp i64
 			tmp = ns[i]
@@ -154,19 +154,19 @@ fn partition(ns i64[]) i64 {
 	}
 	var tmp i64
 	tmp = ns[i]
-	ns[i] = ns[lenn(ns) - 1]
-	ns[lenn(ns)- 1] = tmp
+	ns[i] = ns[string.lenn(ns) - 1]
+	ns[string.lenn(ns)- 1] = tmp
 	return i
 }
 
 
 fn main() i64 {
 	var fd i64
-	fd = open("tests/advent_2014_1.txt", 0, 0)
+	fd = string.open("tests/advent_2014_1.txt", 0, 0)
 	if (fd < 0) {
-		puts("Failed to open io_test.bos: ")
-		puti(fd)
-		puts("\n")
+		string.puts("Failed to open io_test.bos: ")
+		string.puti(fd)
+		string.puts("\n")
 		return 1
 	}
 	var left i64[1000]
@@ -181,15 +181,15 @@ fn main() i64 {
 	remaining = 0
 	for(0; 1 == 1 ; 0) {
 		var n i64
-		n = read(fd, bs)
+		n = string.read(fd, bs)
 		bs = buf[:n+remaining]
 		if(n <= 0) {
-			puts("Completed reading.\n")
+			string.puts("Completed reading.\n")
 			break
 		}
 
 		var s state
-		for(0; lenb(bs) > 4; 0) {
+		for(0; string.lenb(bs) > 4; 0) {
 			s = readRow(bs)
 			if ( s.complete == 0 ) {
 				s.remaining = bs
@@ -204,11 +204,11 @@ fn main() i64 {
 		// copy out the remaining buffer for the next round.
 		var i i64
 		bs = s.remaining
-		for (i = 0; i < lenb(bs); i = i + 1) {
+		for (i = 0; i < string.lenb(bs); i = i + 1) {
 			buf[i] = bs[i]
 		}
 		bs = buf[i:]
-		remaining = lenb(s.remaining)
+		remaining = string.lenb(s.remaining)
 	}
 
 	var i i64
@@ -225,17 +225,17 @@ fn main() i64 {
 		var tmpi i64
 		diffi = diffi + ti
 	}
-	puts("Part 1 Result: ")
-	puti(diffi)
-	puts("\n")
+	string.puts("Part 1 Result: ")
+	string.puti(diffi)
+	string.puts("\n")
 
 	// Part 2 (similarity)
 	var sim i64
 	sim = similarity(left[:row], right[:row])
 
-	puts("Part 2 Result: ")
-	puti(sim)
-	puts("\n")
+	string.puts("Part 2 Result: ")
+	string.puti(sim)
+	string.puts("\n")
 }
 
 fn similarity(left i64[], right i64[]) i64 {
@@ -243,12 +243,12 @@ fn similarity(left i64[], right i64[]) i64 {
 	var j i64
 	var sim i64
 	sim = 0
-	for (i = 0; i < lenn(left); i = i + 1) {
+	for (i = 0; i < string.lenn(left); i = i + 1) {
 		var ln i64
 		ln = left[i]
 		var instances i64
 		instances = 0
-		for (j = 0; j < lenn(right); j = j + 1) {
+		for (j = 0; j < string.lenn(right); j = j + 1) {
 			var rn i64
 			rn = right[j]
 			if(ln == rn) {
@@ -276,7 +276,7 @@ fn atoi(s byte[]) nret {
 	false = (1 == 0)
 	
 	var l i64
-	l = lenb(s)
+	l = string.lenb(s)
 	var i i64
 	var r i64
 	r = 0

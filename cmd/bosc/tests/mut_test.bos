@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn increment(p *mut i64) {
 	*p = *p + 1
@@ -11,8 +11,8 @@ fn readval(p *i64) i64 {
 }
 
 fn showconstparam(x i64) {
-	puti(readval(&x))
-	puts("\n")
+	string.puti(readval(&x))
+	string.puts("\n")
 }
 
 fn main() {
@@ -20,11 +20,11 @@ fn main() {
 	x = 10
 
 	increment(&x)
-	puti(x)
-	puts("\n")
+	string.puti(x)
+	string.puts("\n")
 
-	puti(readval(&x))
-	puts("\n")
+	string.puti(readval(&x))
+	string.puts("\n")
 
 	showconstparam(42)
 }

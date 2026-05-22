@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 // #define O_RDONLY	00000000
 // #define O_WRONLY	00000001
@@ -9,11 +9,11 @@ import "string.bo"
 
 fn main() i64 {
 	var fd i64
-	fd = open("./tests/io_test.bos", 0, 0)
+	fd = string.open("./tests/io_test.bos", 0, 0)
 	if (fd < 0) {
-		puts("Failed to open io_test.bos: ")
-		puti(fd)
-		puts("\n")
+		string.puts("Failed to open io_test.bos: ")
+		string.puti(fd)
+		string.puts("\n")
 		return 1
 	}
 
@@ -25,12 +25,12 @@ fn main() i64 {
 	bs = buf[:]
 	
 	var n i64
-	n = read(fd, bs)
+	n = string.read(fd, bs)
 	// extra security. This should not be necessary
 	// with 
 	bs[10] = 'a'
 
 	// write stdout
-	n = write(1, bs[:n])
+	n = string.write(1, bs[:n])
 	return 0
 }

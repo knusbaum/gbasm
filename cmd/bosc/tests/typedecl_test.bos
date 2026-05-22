@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 type FD i64
 type Tag i16
@@ -12,14 +12,14 @@ fn openfd() owned FD {
 }
 
 fn closeit(fd owned FD) {
-	puti(i64(fd))
-	puts("\n")
+	string.puti(i64(fd))
+	string.puts("\n")
 	dispose(fd)
 }
 
 fn tagval(t Tag) {
-	puti(i64(t))
-	puts("\n")
+	string.puti(i64(t))
+	string.puts("\n")
 }
 
 fn main() {

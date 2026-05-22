@@ -17,19 +17,19 @@ function index_oob
 	
 	
 	lea rdi ioob
-	call puts
+	call string.puts
 
 	pop rdi
-	call puti
+	call string.puti
 
 	lea rdi ioob2
-	call puts
+	call string.puts
 
 	pop rdi
-	call puti
+	call string.puti
 
 	lea rdi ioob3
-	call puts
+	call string.puts
 
 	mov rdi 1
 	mov rax 0x3C

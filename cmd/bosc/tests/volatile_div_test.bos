@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var x i64
@@ -17,16 +17,16 @@ fn main() {
 
 	// Volatile first operand.
 	x = x / 7
-	puti(*px)
-	puts("\n")
+	string.puti(*px)
+	string.puts("\n")
 
 	// Volatile second operand.
 	y = 100 / y
-	puti(*py)
-	puts("\n")
+	string.puti(*py)
+	string.puts("\n")
 
 	// Both volatile.
 	x = x * y
-	puti(*px)
-	puts("\n")
+	string.puti(*px)
+	string.puts("\n")
 }

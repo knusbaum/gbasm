@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 struct Res {
 	val i64
@@ -11,8 +11,8 @@ fn initialize(r *mut Res, v i64) {
 }
 
 fn cleanup(r *owned Res) {
-	puti(r.val)
-	puts("\n")
+	string.puti(r.val)
+	string.puts("\n")
 	dispose(r)
 }
 

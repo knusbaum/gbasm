@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var x u8
@@ -8,20 +8,20 @@ fn main() {
 
 	// add/sub
 	x = x + 5
-	if (x == 15) { puts("add ok\n") } else { puts("add fail\n") }
+	if (x == 15) { string.puts("add ok\n") } else { string.puts("add fail\n") }
 
 	x = x - 7
-	if (x == 8) { puts("sub ok\n") } else { puts("sub fail\n") }
+	if (x == 8) { string.puts("sub ok\n") } else { string.puts("sub fail\n") }
 
 	// unsigned overflow: 255 + 1 = 0
 	var mx u8
 	mx = 255
 	mx = mx + 1
-	if (mx == 0) { puts("overflow ok\n") } else { puts("overflow fail\n") }
+	if (mx == 0) { string.puts("overflow ok\n") } else { string.puts("overflow fail\n") }
 
 	// unsigned underflow: 0 - 1 = 255
 	var z u8
 	z = 0
 	z = z - 1
-	if (z == 255) { puts("underflow ok\n") } else { puts("underflow fail\n") }
+	if (z == 255) { string.puts("underflow ok\n") } else { string.puts("underflow fail\n") }
 }

@@ -1,38 +1,38 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var x i64
 	x = 5
 
 	if (x != 5) {
-		puts("wrong\n")
+		string.puts("wrong\n")
 	} else {
-		puts("equal\n")
+		string.puts("equal\n")
 	}
 
 	if (x != 4) {
-		puts("not equal\n")
+		string.puts("not equal\n")
 	} else {
-		puts("wrong\n")
+		string.puts("wrong\n")
 	}
 
 	if (x <= 5) {
-		puts("le 5\n")
+		string.puts("le 5\n")
 	} else {
-		puts("wrong\n")
+		string.puts("wrong\n")
 	}
 
 	if (x <= 6) {
-		puts("le 6\n")
+		string.puts("le 6\n")
 	} else {
-		puts("wrong\n")
+		string.puts("wrong\n")
 	}
 
 	if (x <= 4) {
-		puts("wrong\n")
+		string.puts("wrong\n")
 	} else {
-		puts("not le 4\n")
+		string.puts("not le 4\n")
 	}
 }

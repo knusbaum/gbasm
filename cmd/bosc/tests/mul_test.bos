@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn mully(x i64, y i64) i64 {
    return x * y
@@ -11,9 +11,9 @@ fn mully2(x i64, y i64) i64 {
 }
 
 fn main() {
-   puti(mully(10, 20))
-   puts("\n")
+   string.puti(mully(10, 20))
+   string.puts("\n")
 
-   puti(mully2(10, 20))
-   puts("\n")
+   string.puti(mully2(10, 20))
+   string.puts("\n")
 }

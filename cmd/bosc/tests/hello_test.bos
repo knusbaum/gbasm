@@ -1,7 +1,7 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
-   puts("Hello, World!\n")
+   string.puts("Hello, World!\n")
 }

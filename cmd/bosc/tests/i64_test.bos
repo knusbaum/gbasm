@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var x i64
@@ -8,24 +8,24 @@ fn main() {
 
 	// add/sub
 	x = x + 50
-	if (x == 150) { puts("add ok\n") } else { puts("add fail\n") }
+	if (x == 150) { string.puts("add ok\n") } else { string.puts("add fail\n") }
 
 	x = x - 75
-	if (x == 75) { puts("sub ok\n") } else { puts("sub fail\n") }
+	if (x == 75) { string.puts("sub ok\n") } else { string.puts("sub fail\n") }
 
 	// mul/div
 	x = x * 4
-	if (x == 300) { puts("mul ok\n") } else { puts("mul fail\n") }
+	if (x == 300) { string.puts("mul ok\n") } else { string.puts("mul fail\n") }
 
 	x = x / 3
-	if (x == 100) { puts("div ok\n") } else { puts("div fail\n") }
+	if (x == 100) { string.puts("div ok\n") } else { string.puts("div fail\n") }
 
 	// signed comparisons: neg = -1
 	var neg i64
 	neg = 0
 	neg = neg - 1
-	if (neg < 0) { puts("neg lt ok\n") } else { puts("neg lt fail\n") }
-	if (neg > 0) { puts("neg gt fail\n") } else { puts("neg gt ok\n") }
+	if (neg < 0) { string.puts("neg lt ok\n") } else { string.puts("neg lt fail\n") }
+	if (neg > 0) { string.puts("neg gt fail\n") } else { string.puts("neg gt ok\n") }
 
 	// negative division
 	var a i64
@@ -35,5 +35,5 @@ fn main() {
 	var expected i64
 	expected = 0
 	expected = expected - 5
-	if (a == expected) { puts("neg div ok\n") } else { puts("neg div fail\n") }
+	if (a == expected) { string.puts("neg div ok\n") } else { string.puts("neg div fail\n") }
 }

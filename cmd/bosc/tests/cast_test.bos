@@ -1,18 +1,18 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn check(label byte[], got i64, expected i64) {
 	if (got == expected) {
-		puts(label)
-		puts(" ok\n")
+		string.puts(label)
+		string.puts(" ok\n")
 	} else {
-		puts(label)
-		puts(" FAIL (got ")
-		puti(got)
-		puts(" expected ")
-		puti(expected)
-		puts(")\n")
+		string.puts(label)
+		string.puts(" FAIL (got ")
+		string.puti(got)
+		string.puts(" expected ")
+		string.puti(expected)
+		string.puts(")\n")
 	}
 }
 

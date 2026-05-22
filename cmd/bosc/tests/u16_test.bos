@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var x u16
@@ -8,27 +8,27 @@ fn main() {
 
 	// add/sub
 	x = x + 50
-	if (x == 150) { puts("add ok\n") } else { puts("add fail\n") }
+	if (x == 150) { string.puts("add ok\n") } else { string.puts("add fail\n") }
 
 	x = x - 75
-	if (x == 75) { puts("sub ok\n") } else { puts("sub fail\n") }
+	if (x == 75) { string.puts("sub ok\n") } else { string.puts("sub fail\n") }
 
 	// mul/div
 	x = x * 4
-	if (x == 300) { puts("mul ok\n") } else { puts("mul fail\n") }
+	if (x == 300) { string.puts("mul ok\n") } else { string.puts("mul fail\n") }
 
 	x = x / 3
-	if (x == 100) { puts("div ok\n") } else { puts("div fail\n") }
+	if (x == 100) { string.puts("div ok\n") } else { string.puts("div fail\n") }
 
 	// unsigned overflow: UINT16_MAX + 1 = 0
 	var mx u16
 	mx = 65535
 	mx = mx + 1
-	if (mx == 0) { puts("wrap ok\n") } else { puts("wrap fail\n") }
+	if (mx == 0) { string.puts("wrap ok\n") } else { string.puts("wrap fail\n") }
 
 	// unsigned underflow: 0 - 1 = 65535
 	var z u16
 	z = 0
 	z = z - 1
-	if (z == 65535) { puts("underflow ok\n") } else { puts("underflow fail\n") }
+	if (z == 65535) { string.puts("underflow ok\n") } else { string.puts("underflow fail\n") }
 }

@@ -1,10 +1,10 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn putin(i i64) {
-   puti(i)
-   puts("\n")
+   string.puti(i)
+   string.puts("\n")
 }
 
 fn retten() i64 {

@@ -1,12 +1,12 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn rmul() i64 {
    return 10 * 10
 }
 
 fn main() {
-   puti(rmul())
-   puts("\n")
+   string.puti(rmul())
+   string.puts("\n")
 }

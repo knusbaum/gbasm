@@ -1,25 +1,25 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var b byte
 	b = 'h'
 
-	putc(b)
-	puts("\n")
+	string.putc(b)
+	string.puts("\n")
 
 	var s byte[]
 	s = "Hello, World!"
-	putc(s[0])
-	puts("\n")
+	string.putc(s[0])
+	string.puts("\n")
 
 	var len i64
-	len = lenb(s)
+	len = string.lenb(s)
 
 	var i i64
 	for (i = 0; i < len; i = i + 1) {
-		putc(s[i])
+		string.putc(s[i])
 	}
-	puts("\n")
+	string.puts("\n")
 }

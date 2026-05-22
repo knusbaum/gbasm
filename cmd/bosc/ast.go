@@ -304,20 +304,17 @@ func (c *Context) FuncDeclForName(name string) (*FuncDecl, bool) {
 }
 
 // FuncDeclForCall resolves a function call and returns the resolved package
-// name (which may differ from the input pkg if a transitional fallback
-// matched the call against an imported package).
+// name (always equal to the input pkg).
 //
-// Lookup order:
-//   - If pkg is set, look only in that imported package.
-//   - If pkg is empty, look in local funcs first (returns pkg="").
-//   - As a transitional fallback (Phase A → B), if no local match, search all
-//     imported packages and return the owning package name.
+// Lookup:
+//   - If pkg is set, look in the named imported package.
+//   - If pkg is empty, look only in local funcs.
+//
+// Calls to imported functions must be qualified (e.g. string.puts, not puts).
 func (c *Context) FuncDeclForCall(pkg, name string) (*FuncDecl, string, bool) {
 	if pkg == "" {
-		if d, ok := c.FuncDeclForName(name); ok {
-			return d, "", true
-		}
-		return c.findInImports(name)
+		d, ok := c.FuncDeclForName(name)
+		return d, "", ok
 	}
 	if c == nil {
 		return nil, "", false
@@ -327,18 +324,6 @@ func (c *Context) FuncDeclForCall(pkg, name string) (*FuncDecl, string, bool) {
 		return d, pkg, ok
 	}
 	return c.parent.FuncDeclForCall(pkg, name)
-}
-
-func (c *Context) findInImports(name string) (*FuncDecl, string, bool) {
-	if c == nil {
-		return nil, "", false
-	}
-	for pkgName, pkgFuncs := range c.imports {
-		if d, ok := pkgFuncs[name]; ok {
-			return d, pkgName, true
-		}
-	}
-	return c.parent.findInImports(name)
 }
 
 // DefineImportedFunc registers a function from an imported package.

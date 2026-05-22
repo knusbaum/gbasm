@@ -1,25 +1,25 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn subby(x i64, y i64) i64 {
    return x - y
 }
 
 fn main() {
-	puti(subby(20, 10))
-	puts("\n")
-	puti(subby(10, 20))
-	puts("\n")
+	string.puti(subby(20, 10))
+	string.puts("\n")
+	string.puti(subby(10, 20))
+	string.puts("\n")
 
 	var n i64
 	n = -1
-	puti(n)
-	puts("\n")
+	string.puti(n)
+	string.puts("\n")
 
 	n = abs(n)
-	puti(n)
-	puts("\n")
+	string.puti(n)
+	string.puts("\n")
 }
 
 fn abs(var n i64) i64 {

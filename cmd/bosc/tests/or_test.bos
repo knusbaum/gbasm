@@ -1,32 +1,32 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var i i64
 	i = 10
 
 	if (i < 0 || i > 20) {
-		puts("yes\n")
+		string.puts("yes\n")
 	} else {
-		puts("no\n")
+		string.puts("no\n")
 	}
 
 	if (i > 5 || i > 20) {
-		puts("yes\n")
+		string.puts("yes\n")
 	} else {
-		puts("no\n")
+		string.puts("no\n")
 	}
 
 	if (i < 0 || i > 5) {
-		puts("yes\n")
+		string.puts("yes\n")
 	} else {
-		puts("no\n")
+		string.puts("no\n")
 	}
 
 	if (i > 5 || i < 20) {
-		puts("yes\n")
+		string.puts("yes\n")
 	} else {
-		puts("no\n")
+		string.puts("no\n")
 	}
 }

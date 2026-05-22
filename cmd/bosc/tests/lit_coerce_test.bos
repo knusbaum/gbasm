@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 // Tests that a literal is accepted at an i8 call site without error.
 // (Using the parameter inside the function body is a separate issue.)
@@ -12,15 +12,15 @@ fn main() {
 	// literal coerced to i8 at call site; 50 fits in i8
 	var r i64
 	r = accepti8(50)
-	if (r == 0) { puts("func arg ok\n") } else { puts("func arg fail\n") }
+	if (r == 0) { string.puts("func arg ok\n") } else { string.puts("func arg fail\n") }
 
 	// negative literal expression assigned directly to i8
 	var y i8
 	y = 0 - 5
-	if (y < 0) { puts("neg lit ok\n") } else { puts("neg lit fail\n") }
+	if (y < 0) { string.puts("neg lit ok\n") } else { string.puts("neg lit fail\n") }
 
 	// literal expression folded and coerced to i16
 	var z i16
 	z = 100 + 200
-	if (z == 300) { puts("lit fold ok\n") } else { puts("lit fold fail\n") }
+	if (z == 300) { string.puts("lit fold ok\n") } else { string.puts("lit fold fail\n") }
 }

@@ -1,26 +1,26 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var i i64
 	for (i = 0; i < 10; i = i + 1) {
-		puti(i)
-		puts("\n")
+		string.puti(i)
+		string.puts("\n")
 	}
 
 	for (i = 10; i >= 0; i = i - 1) {
-		puti(i)
-		puts("\n")
+		string.puti(i)
+		string.puts("\n")
 	}
 
 	// nesting
 	for (i = 0; i < 5; i = i + 1) {
 		var j i64
 		for (j = 0; j < 2; j = j + 1) {
-			puti(i)
-			puti(j)
-			puts("\n")
+			string.puti(i)
+			string.puti(j)
+			string.puts("\n")
 		}
 	}
 
@@ -29,15 +29,15 @@ fn main() {
 		if (i == 5) {
 			continue
 		}
-		puti(i)
+		string.puti(i)
 	}
-	puts("\n")
+	string.puts("\n")
 	// break
 	for (i = 0; i < 10; i = i+1) {
 		if (i == 5) {
 			break
 		}
-		puti(i)
+		string.puti(i)
 	}
-	puts("\n")
+	string.puts("\n")
 }

@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 struct inner {
 	a i64
@@ -19,12 +19,12 @@ fn main() {
 	o.i.a = 2
 	o.i.b = 3
 	o.y = 4
-	puti(o.x)
-	puts("\n")
-	puti(o.i.a)
-	puts("\n")
-	puti(o.i.b)
-	puts("\n")
-	puti(o.y)
-	puts("\n")
+	string.puti(o.x)
+	string.puts("\n")
+	string.puti(o.i.a)
+	string.puts("\n")
+	string.puti(o.i.b)
+	string.puts("\n")
+	string.puti(o.y)
+	string.puts("\n")
 }

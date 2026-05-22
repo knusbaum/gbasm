@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn mkowned() owned i64 {
 	var v i64 = 99
@@ -12,31 +12,31 @@ fn borrow(p *i64) i64 {
 }
 
 fn consume(v owned i64) {
-	puti(v)
-	puts("\n")
+	string.puti(v)
+	string.puts("\n")
 	dispose(v)
 }
 
 fn main() {
 	// Plain var with integer literal.
 	var a i64 = 42
-	puti(a)
-	puts("\n")
+	string.puti(a)
+	string.puts("\n")
 
 	// const with integer literal: bound and unmodifiable.
 	const b i64 = 100
-	puti(b)
-	puts("\n")
+	string.puti(b)
+	string.puts("\n")
 
 	// Sub-word integer type.
 	var c i16 = -400
-	puti(i64(c))
-	puts("\n")
+	string.puti(i64(c))
+	string.puts("\n")
 
 	// var with function-call initializer.
 	var d i64 = borrow(&a)
-	puti(d)
-	puts("\n")
+	string.puti(d)
+	string.puts("\n")
 
 	// Owned binding initialized from owned-producing function.
 	var e owned i64 = mkowned()
@@ -48,6 +48,6 @@ fn main() {
 
 	// var x i64 = -1 — the -1 is a unary-minus on the literal 1.
 	var g i64 = -1
-	puti(g)
-	puts("\n")
+	string.puti(g)
+	string.puts("\n")
 }

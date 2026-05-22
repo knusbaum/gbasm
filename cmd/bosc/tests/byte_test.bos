@@ -1,21 +1,21 @@
 package main
 
-import "string.bo"
+import "string"
 
 fn main() {
 	var b byte
 	b = 'a'
-	putb(b)
-	puts("\n")
+	string.putb(b)
+	string.puts("\n")
 	// 97
 
 	b = b + 1
-	putb(b)
-	puts("\n")
+	string.putb(b)
+	string.puts("\n")
 	// 98
 
 	b = b + 200
-	putb(b)
-	puts("\n")
+	string.putb(b)
+	string.puts("\n")
 	// 42 (overflow)
 }

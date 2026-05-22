@@ -1,6 +1,6 @@
 package main
 
-import "string.bo"
+import "string"
 
 struct poly {
 	x i64
@@ -28,11 +28,11 @@ fn main() i64 {
 	var p poly
 	p = dosth(arr[:])
 
-	puts("X: ")
-	puti(p.x)
-	puts("\nY: ")
-	puti(p.y)
-	puts("\nbs: ")
-	puti(lenb(p.bs))
-	puts("\n")
+	string.puts("X: ")
+	string.puti(p.x)
+	string.puts("\nY: ")
+	string.puti(p.y)
+	string.puts("\nbs: ")
+	string.puti(string.lenb(p.bs))
+	string.puts("\n")
 }
