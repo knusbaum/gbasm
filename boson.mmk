@@ -24,8 +24,8 @@
 BOSC=${BOSC:-bosc}
 BAS=${BAS:-bas}
 BLD=${BLD:-bld}
-BDOC=${BDOC:-bdoc}
 BOSON_HOME=${BOSON_HOME:-$(dirname $(which $BOSC))}
+BDOC=${BDOC:-$BOSON_HOME/bdoc}
 BOSONPATH=${BOSONPATH:-$BOSON_HOME/runtime:.}
 BDOC_ADDR=${BDOC_ADDR:-:8686}
 

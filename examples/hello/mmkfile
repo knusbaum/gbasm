@@ -9,6 +9,7 @@ BOSON_HOME=${BOSON_HOME:-../..}
 BOSC=${BOSC:-$BOSON_HOME/bosc}
 BAS=${BAS:-$BOSON_HOME/bas}
 BLD=${BLD:-$BOSON_HOME/bld}
+BDOC=${BDOC:-$BOSON_HOME/bdoc}
 
 include $BOSON_HOME/boson.mmk
 
