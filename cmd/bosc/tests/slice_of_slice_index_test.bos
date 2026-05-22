@@ -1,0 +1,26 @@
+package main
+
+import "string"
+
+// Build a byte[][] by slicing an array-of-slices. Indexing into the
+// resulting byte[][] yields a byte[]. This exercises the slice-of-slice
+// codegen end-to-end: slice header construction over 16-byte elements,
+// indexing with element-size > pointer-size, and parameter passing.
+
+fn show(ss byte[][]) {
+	var i i64
+	for (i = 0; i < 3; i = i + 1) {
+		string.puts(ss[i])
+		string.putc('\n')
+	}
+}
+
+fn main() {
+	var arr byte[][3]
+	arr[0] = "one"
+	arr[1] = "two"
+	arr[2] = "three"
+
+	var ss byte[][] = arr[:]
+	show(ss)
+}

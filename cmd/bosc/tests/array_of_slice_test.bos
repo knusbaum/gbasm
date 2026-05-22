@@ -1,0 +1,21 @@
+package main
+
+import "string"
+
+// Exercise a fixed array whose elements are byte[] slices. Indexing into
+// this array yields a byte[] (a wrapper type), which exposes the
+// pointer-arithmetic and element-size codegen paths for slice-valued
+// elements.
+fn main() {
+	var arr byte[][3]
+	arr[0] = "alpha"
+	arr[1] = "beta"
+	arr[2] = "gamma"
+
+	string.puts(arr[0])
+	string.putc('\n')
+	string.puts(arr[1])
+	string.putc('\n')
+	string.puts(arr[2])
+	string.putc('\n')
+}

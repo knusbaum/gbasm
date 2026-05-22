@@ -105,8 +105,8 @@ func spot_memcpy(of io.Writer, c *Context, dst, src spot, bytes int) {
 	qwords := bytes / 8
 	singles := bytes % 8
 
-	//fmt.Fprintf(of, "\tacquire rax\n")
-	tmp := newSpot(of, c, c.Temp(), ASTType{Name: "byte", ArraySize: 8})
+	// 8-byte scratch local for the qword copies.
+	tmp := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
 	for i := 0; i < qwords; i++ {
 		fmt.Fprintf(of, "\tmov %s [%s+%d]\n", tmp.ref, src.ref, i*8)
 		fmt.Fprintf(of, "\tmov [%s+%d] %s\n", dst.ref, i*8, tmp.ref)
@@ -118,7 +118,6 @@ func spot_memcpy(of io.Writer, c *Context, dst, src spot, bytes int) {
 			fmt.Fprintf(of, "\tmovb %s [%s+%d]\n", tmp.ref, src.ref, qwords*8+i)
 			fmt.Fprintf(of, "\tmovb [%s+%d] %s\n", dst.ref, qwords*8+i, tmp.ref)
 		}
-		//fmt.Fprintf(of, "\trelease rax\n")
 		tmp.free(of)
 	}
 }
@@ -142,10 +141,18 @@ func spot_memcpy(of io.Writer, c *Context, dst, src spot, bytes int) {
 // same name, indirection depth, array size, and slice flag. MutMask and
 // OwnedMask are type-system annotations with no runtime effect and are ignored.
 func shapeMatch(a, b ASTType) bool {
-	return a.Name == b.Name &&
-		a.Indirection == b.Indirection &&
-		a.ArraySize == b.ArraySize &&
-		a.Slice == b.Slice
+	if a.Name != b.Name ||
+		a.Indirection != b.Indirection ||
+		a.ArraySize != b.ArraySize {
+		return false
+	}
+	if (a.Element == nil) != (b.Element == nil) {
+		return false
+	}
+	if a.Element != nil && !shapeMatch(*a.Element, *b.Element) {
+		return false
+	}
+	return true
 }
 
 // can move T to T or T into *T
@@ -243,7 +250,7 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		vt := ast.ASTType(c)
 		max := newSpot(of, c, c.Temp(), numASTType())
 		var addr spot
-		if w.t.Slice {
+		if w.t.IsSlice() {
 			t := vt
 			t.Indirection += 1
 			addr = newSpot(of, c, c.Temp(), t)
@@ -261,7 +268,7 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		if ast.NAST == nil {
 			// fixed offset at compile time
 			off := uint64(vt.Size(c)) * ast.N
-			if !w.t.Slice {
+			if !w.t.IsSlice() {
 				if ast.N >= uint64(w.t.ArraySize) {
 					CompileErrorF(a, "Index %d greater than max for array of size %d", ast.N, w.t.ArraySize)
 				}
@@ -535,7 +542,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		t.Indirection -= 1
 		t.MutMask >>= 1 // consume the outermost pointer level's mut bit
-		if t.Indirection == 0 && !t.Slice && t.ArraySize == 0 {
+		if t.Indirection == 0 && !t.IsSliceOrArray() {
 			t.MutMask = 0 // plain value: MutMask is not meaningful
 		}
 
@@ -577,7 +584,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		w := compileTop(of, c, ast.Val, nullspot)
 		max := newSpot(of, c, c.Temp(), numASTType())
 		var addr spot
-		if w.t.Slice {
+		if w.t.IsSlice() {
 			t := vt
 			t.Indirection += 1
 			addr = newSpot(of, c, c.Temp(), t)
@@ -593,7 +600,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		if ast.NAST == nil {
 			off := uint64(vt.Size(c)) * ast.N
-			if !w.t.Slice {
+			if !w.t.IsSlice() {
 				if ast.N >= uint64(w.t.ArraySize) {
 					CompileErrorF(a, "Index %d greater than max for array of size %d", ast.N, w.t.ArraySize)
 				}
@@ -667,29 +674,24 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	case *SliceOp:
 		// TODO: dest optimization
 		v := compileTop(of, c, ast.Val, nullspot)
-		//addr := newSpot(of, c, c.Temp(), voidASTType())
-		var baset ASTType
-		var newt ASTType
+		if !v.t.IsSliceOrArray() {
+			panic("Somehow slicing a non-array, non-slice")
+		}
+		// baset is the element type; newt is the resulting slice type.
+		baset := *v.t.Element
+		elem := baset
+		newt := ASTType{Element: &elem}
 		var addr spot
-		if v.t.Slice {
-			baset = v.t
-			newt = v.t
-			baset.Slice = false
+		if v.t.IsSlice() {
 			addrt := baset
 			addrt.Indirection += 1
 			addr = newSpot(of, c, c.Temp(), addrt)
 			fmt.Fprintf(of, "\tmov %s [%s]\n", addr.ref, v.ref)
-		} else if v.t.ArraySize > 0 {
-			baset = v.t
-			baset.ArraySize = 0
-			newt = baset
-			newt.Slice = true
+		} else {
+			// Fixed array: addr points at the array storage itself.
 			addr = v
 			addr.t = baset
 			addr.t.Indirection++
-			//fmt.Fprintf(of, "\tmov %s %s\n", addr, v)
-		} else {
-			panic("Somehow slicing a non-array, non-slice")
 		}
 
 		var upper spot
@@ -697,10 +699,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			upper = compileTop(of, c, ast.Upper, nullspot)
 		} else {
 			upper = newSpot(of, c, c.Temp(), numASTType())
-			if v.t.Slice {
+			if v.t.IsSlice() {
 				fmt.Fprintf(of, "\tmov %s [%s+8]\n", upper.ref, v.ref)
 			} else {
-				// else if v.t.ArraySize > 0 already checked above
+				// v.t is a fixed array; use its declared size.
 				fmt.Fprintf(of, "\tmov %s %d\n", upper.ref, v.t.ArraySize)
 			}
 		}
@@ -1204,7 +1206,7 @@ func jumpOp(of io.Writer, c *Context, o *Op2, label string) {
 // raxForType returns the rax sub-register name appropriate for the given return type.
 // i8/u8/bool/byte → "al", i16/u16 → "ax", i32/u32 → "eax", everything else → "rax".
 func raxForType(t ASTType) string {
-	if t.Indirection > 0 || t.Slice || t.ArraySize > 0 {
+	if t.Indirection > 0 || t.IsSliceOrArray() {
 		return "rax"
 	}
 	switch t.Name {

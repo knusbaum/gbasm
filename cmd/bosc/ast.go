@@ -244,7 +244,7 @@ func (c *Context) TypeByName(name string) (ASTType, bool) {
 // ResolveUnderlying follows type aliases to their underlying built-in ASTType,
 // preserving qualifiers. Used where the concrete representation matters.
 func (c *Context) ResolveUnderlying(t ASTType) ASTType {
-	if t.Indirection > 0 || t.Slice || t.ArraySize > 0 {
+	if t.Indirection > 0 || t.IsSliceOrArray() {
 		return t
 	}
 	if underlying, ok := c.TypeAliasFor(t.Name); ok {
@@ -259,7 +259,7 @@ func (c *Context) ResolveUnderlying(t ASTType) ASTType {
 // AugmentType propagates properties (Signed) from a type alias definition
 // while keeping the alias name intact for type-distinctness checks.
 func (c *Context) AugmentType(t ASTType) ASTType {
-	if t.Indirection > 0 || t.Slice || t.ArraySize > 0 {
+	if t.Indirection > 0 || t.IsSliceOrArray() {
 		return t
 	}
 	if underlying, ok := c.TypeAliasFor(t.Name); ok {
@@ -523,20 +523,62 @@ func (c *Context) WriteStrings(of io.Writer) {
 	}
 }
 
+// ASTType represents a Boson type as a small recursive tree.
+//
+// A type is one of four shapes (read off in this order):
+//
+//   1. Slice:   Element != nil and ArraySize == 0
+//   2. Array:   Element != nil and ArraySize >  0
+//   3. Pointer: Element == nil and Indirection > 0; Name/Signed describe the leaf pointee
+//   4. Scalar:  Element == nil and Indirection == 0; Name/Signed describe the value
+//
+// For slice/array types, Element is the canonical description of what each
+// element is — including its own qualifiers and possible further nesting.
+// For those outer types, Name/Indirection/Signed are not meaningful and
+// should not be inspected directly; use the predicate and accessor methods
+// instead (IsSlice, IsArray, ElementType, BaseType).
+//
+// ASTType contains a pointer (Element), so DO NOT compare two values with
+// '==' or '!=': use the Same method, which compares structurally. Likewise
+// ASTType is not suitable as a Go map key; if you need that, hash the
+// String() form or intern types.
 type ASTType struct {
-	Name        string
-	Indirection int  // pointer level, i.e. ***int -> Indirection: 3
-	ArraySize   int  // zero for non-arrays.
-	Slice       bool
-	Signed      bool // true for signed integer types (i8, i16, i32, i64)
-	// Element describes the contained type when Slice is true or ArraySize > 0.
-	// nil for non-slice/non-array types. When set, it overrides the size and
-	// "peeling" semantics: indexing yields *Element, and the element width
-	// used by codegen is Element.Size(). Element may itself be a slice/array,
-	// enabling T[][] and friends.
-	Element   *ASTType
-	MutMask   uint64 // bit N = write-through allowed at level N (0 = outermost pointer/slice)
-	OwnedMask uint64 // bit N = owned obligation at level N (same convention as MutMask)
+	Name        string    // scalar/pointee-leaf name (for shapes 3 and 4)
+	Indirection int       // pointer depth (for shapes 3 and 4)
+	ArraySize   int       // element count (for shape 2); 0 otherwise
+	Element     *ASTType  // element type (for shapes 1 and 2); nil otherwise
+	Signed      bool      // signed integer marker for scalar/pointee leaf
+	MutMask     uint64    // write-through bit per level
+	OwnedMask   uint64    // ownership bit per level
+}
+
+// IsSlice reports whether the type is a slice (T[]).
+func (t *ASTType) IsSlice() bool { return t.Element != nil && t.ArraySize == 0 }
+
+// IsArray reports whether the type is a fixed-size array (T[N]).
+func (t *ASTType) IsArray() bool { return t.Element != nil && t.ArraySize > 0 }
+
+// IsSliceOrArray reports whether the type is either a slice or an array.
+func (t *ASTType) IsSliceOrArray() bool { return t.Element != nil }
+
+// ElementType returns the element type for slice/array types. It panics if
+// the type is not a slice or array.
+func (t *ASTType) ElementType() ASTType {
+	if t.Element == nil {
+		panic(fmt.Sprintf("ElementType called on non-slice/array type %s", t))
+	}
+	return *t.Element
+}
+
+// BaseType walks the Element chain down to the leaf (the type that is
+// neither a slice nor an array) and returns it. For a non-slice/non-array
+// type, returns the type itself.
+func (t *ASTType) BaseType() ASTType {
+	cur := *t
+	for cur.Element != nil {
+		cur = *cur.Element
+	}
+	return cur
 }
 
 const PTR_SIZE = 8
@@ -546,50 +588,42 @@ const PTR_SIZE = 8
 // For instance, arrays and structs are held in registers
 // as pointers.
 func (t *ASTType) Size(c *Context) int {
+	// Indirection is the outermost wrapper at every level: a pointer to
+	// anything (scalar, slice, array, struct) is pointer-sized.
 	if t.Indirection > 0 {
 		return PTR_SIZE
 	}
-	// Compute the element width — for slices/arrays this is the per-element
-	// size; for plain types this is the type's own size.
-	var elemSize int
-	if t.Element != nil {
-		elemSize = t.Element.Size(c)
-	} else {
-		switch t.Name {
-		case "<intlit>":
-			panic("Size() called on <intlit> type — this is a compiler bug")
-		case "i64", "u64":
-			elemSize = 8
-		case "i32", "u32":
-			elemSize = 4
-		case "i16", "u16":
-			elemSize = 2
-		case "i8", "u8":
-			elemSize = 1
-		case "byte":
-			elemSize = 1
-		case "bool":
-			elemSize = 1
-		default:
-			// Check user-defined type aliases.
-			if underlying, ok := c.TypeAliasFor(t.Name); ok {
-				return underlying.Size(c)
-			}
-			d, ok := c.StructDeclForName(t.Name)
-			if !ok {
-				panic(fmt.Sprintf("No such type %v. TODO: Errors", t.Name))
-			}
-			elemSize = d.Size(c)
-		}
-	}
-	if t.ArraySize > 0 {
-		return elemSize * t.ArraySize
-	}
-	if t.Slice {
-		// slice header is struct{ptr, size} = 16 bytes regardless of element type
+	// Slice header is fixed-width regardless of element type.
+	if t.IsSlice() {
 		return 16
 	}
-	return elemSize
+	// Array: total bytes = element size × element count.
+	if t.IsArray() {
+		return t.Element.Size(c) * t.ArraySize
+	}
+	// Scalar.
+	switch t.Name {
+	case "<intlit>":
+		panic("Size() called on <intlit> type — this is a compiler bug")
+	case "i64", "u64":
+		return 8
+	case "i32", "u32":
+		return 4
+	case "i16", "u16":
+		return 2
+	case "i8", "u8", "byte", "bool":
+		return 1
+	}
+	// User-defined type aliases (resolve to underlying).
+	if underlying, ok := c.TypeAliasFor(t.Name); ok {
+		return underlying.Size(c)
+	}
+	// Structs.
+	d, ok := c.StructDeclForName(t.Name)
+	if !ok {
+		panic(fmt.Sprintf("No such type %v. TODO: Errors", t.Name))
+	}
+	return d.Size(c)
 }
 
 func (t ASTType) Same(t2 ASTType) bool {
@@ -600,7 +634,6 @@ func (t ASTType) Same(t2 ASTType) bool {
 	if t.Name != t2.Name ||
 		t.Indirection != t2.Indirection ||
 		t.ArraySize != t2.ArraySize ||
-		t.Slice != t2.Slice ||
 		t.MutMask != t2.MutMask ||
 		t.OwnedMask != t2.OwnedMask {
 		return false
@@ -635,8 +668,13 @@ func (t ASTType) StripOwned() ASTType {
 func (dst ASTType) MutCompatible(src ASTType) bool {
 	if dst.Name != src.Name ||
 		dst.Indirection != src.Indirection ||
-		dst.ArraySize != src.ArraySize ||
-		dst.Slice != src.Slice {
+		dst.ArraySize != src.ArraySize {
+		return false
+	}
+	if (dst.Element == nil) != (src.Element == nil) {
+		return false
+	}
+	if dst.Element != nil && !dst.Element.MutCompatible(*src.Element) {
 		return false
 	}
 	return dst.MutMask&src.MutMask == dst.MutMask
@@ -654,26 +692,13 @@ func (dst ASTType) OwnedCompatible(src ASTType) bool {
 }
 
 func (t ASTType) String() string {
-	// When Element is set, we have a nested slice/array (e.g. byte[][]).
-	// Render the element followed by our own []/[N] marker.
-	if t.Element != nil {
-		s := t.Element.String()
-		if t.ArraySize > 0 {
-			return fmt.Sprintf("%s[%d]", s, t.ArraySize)
-		}
-		if t.Slice {
-			return s + "[]"
-		}
-		return s
-	}
+	// Outer pointer qualifiers (if any) wrap the rest of the type.
 	var sb strings.Builder
-	// Bit 0 = position 0 (before any '*'): owned qualifier on the outermost pointer/value.
 	if t.OwnedMask&1 != 0 {
 		sb.WriteString("owned ")
 	}
 	for i := 0; i < t.Indirection; i++ {
 		sb.WriteRune('*')
-		// Qualifiers between this '*' and the next token are at position i+1.
 		if t.MutMask&(1<<uint(i+1)) != 0 {
 			sb.WriteString("mut ")
 		}
@@ -681,21 +706,26 @@ func (t ASTType) String() string {
 			sb.WriteString("owned ")
 		}
 	}
-	if t.Slice {
-		// Slice element qualifiers are at position Indirection+1.
-		if t.MutMask&(1<<uint(t.Indirection+1)) != 0 {
-			sb.WriteString("mut ")
+	if t.IsSliceOrArray() {
+		s := t.Element.String()
+		var inner string
+		if t.IsArray() {
+			inner = fmt.Sprintf("%s[%d]", s, t.ArraySize)
+		} else {
+			inner = s + "[]"
 		}
-		if t.OwnedMask&(1<<uint(t.Indirection+1)) != 0 {
-			sb.WriteString("owned ")
+		// Parenthesize when there is outer pointer indirection so "*byte[]"
+		// (slice of *byte) is distinguishable from "*(byte[])" (pointer to
+		// a byte slice).
+		if t.Indirection > 0 {
+			sb.WriteString("(")
+			sb.WriteString(inner)
+			sb.WriteString(")")
+		} else {
+			sb.WriteString(inner)
 		}
-	}
-	sb.WriteString(t.Name)
-	if t.ArraySize > 0 {
-		fmt.Fprintf(&sb, "[%d]", t.ArraySize)
-	}
-	if t.Slice {
-		sb.WriteString("[]")
+	} else {
+		sb.WriteString(t.Name)
 	}
 	return sb.String()
 }
@@ -704,9 +734,9 @@ func mkTypename(n *Node) ASTType {
 	if n.t != n_typename {
 		ParseErrorF(n, "Expected type name but found %v", n.t)
 	}
-	// Start with the bare base type. n.args lists slice/array wrappers in
-	// innermost-first order; each successive wrapper makes the current type
-	// the *element* of a new slice/array layer.
+	// Start with the bare base type (scalar or pointer). n.args lists
+	// slice/array wrappers in innermost-first order; each wrapper produces
+	// a new outer ASTType whose Element is the previous level.
 	base := ASTType{
 		Name:        n.sval,
 		Indirection: int(n.ival),
@@ -722,40 +752,17 @@ func mkTypename(n *Node) ASTType {
 		return base
 	}
 
-	// Apply wrappers from innermost to outermost.
-	// Innermost wrapper hugs the base type directly (no Element pointer needed
-	// for the legacy flat representation; preserves the old shape for the
-	// single-wrapper case so existing code paths still see Element == nil).
+	// Wrap from innermost to outermost. Each iteration takes the current
+	// type and makes it the Element of a new outer slice/array.
 	cur := base
-	for i, wrap := range n.args {
-		if i == 0 {
-			// First wrapper: apply directly to cur (the base type).
-			switch wrap.t {
-			case n_index:
-				cur.ArraySize = int(wrap.ival)
-			case n_slice:
-				cur.Slice = true
-			default:
-				ParseErrorF(wrap, "Expected an array specifier, but found %v", wrap.t)
-			}
-			continue
-		}
-		// Subsequent wrappers: cur becomes the element of a new outer type.
-		// The outer type inherits the base type's Name/Indirection/Signed for
-		// compatibility with code that inspects those fields, but its Element
-		// is the truth of what each element actually is.
+	for _, wrap := range n.args {
 		inner := cur
-		outer := ASTType{
-			Name:        base.Name,
-			Indirection: base.Indirection,
-			Signed:      base.Signed,
-			Element:     &inner,
-		}
+		outer := ASTType{Element: &inner}
 		switch wrap.t {
 		case n_index:
 			outer.ArraySize = int(wrap.ival)
 		case n_slice:
-			outer.Slice = true
+			// ArraySize stays 0 — IsSlice() returns true.
 		default:
 			ParseErrorF(wrap, "Expected an array specifier, but found %v", wrap.t)
 		}
@@ -781,7 +788,8 @@ func byteASTType() ASTType {
 }
 
 func byteSliceASTType() ASTType {
-	return ASTType{Name: "byte", Slice: true}
+	elem := ASTType{Name: "byte"}
+	return ASTType{Element: &elem}
 }
 
 func intlitASTType() ASTType {
@@ -985,9 +993,9 @@ func (d *Deref) ASTType(c *Context) ASTType {
 	}
 	t.Indirection -= 1
 	t.MutMask >>= 1 // consume the outermost pointer level's mut bit
-	// If the result is a plain non-pointer, non-slice value, MutMask is
+	// If the result is a plain non-pointer, non-slice/array value, MutMask is
 	// meaningless (binding mutability is tracked in constBindings, not here).
-	if t.Indirection == 0 && !t.Slice && t.ArraySize == 0 {
+	if t.Indirection == 0 && !t.IsSliceOrArray() {
 		t.MutMask = 0
 	}
 	return t
@@ -1275,17 +1283,10 @@ type Index struct {
 
 func (i *Index) ASTType(c *Context) ASTType {
 	t := i.Val.ASTType(c)
-	if !t.Slice && t.ArraySize == 0 {
+	if !t.IsSliceOrArray() {
 		panic(fmt.Sprintf("CANNOT INDEX INTO NON-ARRAY TYPE %v", t))
 	}
-	// Element-typed slices/arrays return their element type directly.
-	if t.Element != nil {
-		return *t.Element
-	}
-	// Legacy flat type: clear the slice/array marker and keep the rest.
-	t.Slice = false
-	t.ArraySize = 0
-	return t
+	return t.ElementType()
 }
 
 func (i *Index) Note() string {
@@ -1304,15 +1305,14 @@ type SliceOp struct {
 
 func (s *SliceOp) ASTType(c *Context) ASTType {
 	t := s.Val.ASTType(c)
-	if t.Slice {
+	if t.IsSlice() {
 		return t
 	}
-	if t.ArraySize > 0 {
+	if t.IsArray() {
+		// Slicing an array yields a slice over the same element type.
 		t.ArraySize = 0
-		t.Slice = true
 		return t
 	}
-	// No slicing pointers.
 	panic("Cannot perform slice operation on non-array or non-slice")
 }
 
