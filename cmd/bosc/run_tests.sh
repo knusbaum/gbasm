@@ -9,6 +9,11 @@ fi
 rm string.bo
 ./bas puts_linux.bs string.bs >/dev/null 2>&1
 
+# Generate a project-wide importcfg.
+cat > test.importcfg <<EOF
+string=string.bo
+EOF
+
 #set -e
 #set -x
 rm tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout
@@ -20,7 +25,7 @@ for t in `ls tests/*_test.bos`; do
 
     if [[ $t == *_err_test.bos ]]; then
         # Error test: compiler must reject this input.
-        ./bosc -o /dev/null $t >${t}.bosc.out 2>&1
+        ./bosc -importcfg=test.importcfg -o /dev/null $t >${t}.bosc.out 2>&1
         if [[ $? == 0 ]]; then
             echo "Expected compiler to fail but it succeeded:"
             cat ${t}.bosc.out
@@ -42,7 +47,7 @@ for t in `ls tests/*_test.bos`; do
         continue
     fi
 
-    ./bosc -o ${t}.bs $t >${t}.bosc.out 2>&1
+    ./bosc -importcfg=test.importcfg -o ${t}.bs $t >${t}.bosc.out 2>&1
     if [[ $? != 0 ]]; then
 		echo compiler failed for ${t}:
 		cat ${t}.bosc.out
@@ -97,6 +102,6 @@ if [[ $fail != '' ]]; then
 fi
 
 rm tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout
-rm bosc bas bld string.bo
+rm bosc bas bld string.bo test.importcfg
 echo "SUITE PASSED"
 exit 0

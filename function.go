@@ -731,6 +731,7 @@ func (ra *Rallocs) Acquire(r Register) {
 
 type Function struct {
 	Name        string
+	Pkgname     string // owning package; set by loader, used by linker for namespacing
 	Type        string
 	SrcFile     string
 	SrcLine     int

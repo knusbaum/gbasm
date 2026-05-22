@@ -33,6 +33,8 @@ type Context struct {
 	structs map[string]*StructDecl
 	// maps function names to their declarations.
 	funcs map[string]*FuncDecl
+	// maps imported package names to that package's function declarations.
+	imports map[string]map[string]*FuncDecl
 	// maps user-defined type alias names to their underlying types.
 	typeAliases map[string]ASTType
 
@@ -57,6 +59,7 @@ func NewContext() *Context {
 		movedBindings: make(map[string]bool),
 		structs:       make(map[string]*StructDecl),
 		funcs:         make(map[string]*FuncDecl),
+		imports:       make(map[string]map[string]*FuncDecl),
 		typeAliases:   make(map[string]ASTType),
 		strngs:        make(map[string]string),
 	}
@@ -300,6 +303,64 @@ func (c *Context) FuncDeclForName(name string) (*FuncDecl, bool) {
 	return c.parent.FuncDeclForName(name)
 }
 
+// FuncDeclForCall resolves a function call and returns the resolved package
+// name (which may differ from the input pkg if a transitional fallback
+// matched the call against an imported package).
+//
+// Lookup order:
+//   - If pkg is set, look only in that imported package.
+//   - If pkg is empty, look in local funcs first (returns pkg="").
+//   - As a transitional fallback (Phase A → B), if no local match, search all
+//     imported packages and return the owning package name.
+func (c *Context) FuncDeclForCall(pkg, name string) (*FuncDecl, string, bool) {
+	if pkg == "" {
+		if d, ok := c.FuncDeclForName(name); ok {
+			return d, "", true
+		}
+		return c.findInImports(name)
+	}
+	if c == nil {
+		return nil, "", false
+	}
+	if pkgFuncs, ok := c.imports[pkg]; ok {
+		d, ok := pkgFuncs[name]
+		return d, pkg, ok
+	}
+	return c.parent.FuncDeclForCall(pkg, name)
+}
+
+func (c *Context) findInImports(name string) (*FuncDecl, string, bool) {
+	if c == nil {
+		return nil, "", false
+	}
+	for pkgName, pkgFuncs := range c.imports {
+		if d, ok := pkgFuncs[name]; ok {
+			return d, pkgName, true
+		}
+	}
+	return c.parent.findInImports(name)
+}
+
+// DefineImportedFunc registers a function from an imported package.
+func (c *Context) DefineImportedFunc(pkg, name string, f *FuncDecl) {
+	if c.imports[pkg] == nil {
+		c.imports[pkg] = make(map[string]*FuncDecl)
+	}
+	c.imports[pkg][name] = f
+}
+
+// IsImportedPackage reports whether the given name refers to an imported package
+// in this context chain. Used to distinguish qualified calls from struct accesses.
+func (c *Context) IsImportedPackage(name string) bool {
+	if c == nil {
+		return false
+	}
+	if _, ok := c.imports[name]; ok {
+		return true
+	}
+	return c.parent.IsImportedPackage(name)
+}
+
 func (c *Context) Label(tag string) string {
 	if c.parent != nil {
 		return c.parent.Label(tag)
@@ -406,8 +467,11 @@ func parseFuncType(ftype string) (FuncDecl, error) {
 	return p.ParseFunctype()
 }
 
-func (c *Context) Import(f string) error {
-	o, err := gbasm.ReadOFile(f)
+// Import loads a precompiled .bo file at path and registers its exported
+// functions under the given package name. Cross-package calls are resolved
+// against c.imports[pkgName].
+func (c *Context) Import(pkgName, path string) error {
+	o, err := gbasm.ReadOFile(path)
 	if err != nil {
 		return err
 	}
@@ -418,7 +482,7 @@ func (c *Context) Import(f string) error {
 				return err
 			}
 			t.Name = fn.Name
-			c.DefineFunc(fn.Name, &t)
+			c.DefineImportedFunc(pkgName, fn.Name, &t)
 		}
 	}
 	return nil
@@ -753,20 +817,31 @@ func (b *Block) Pos() position {
 }
 
 type Funcall struct {
+	Pkg   string // empty for in-package calls; package name for qualified calls
 	FName string
 	Args  []AST
 	p     position
 }
 
-func (f *Funcall) ASTType(c *Context) ASTType {
-	// Cast expression: type name used as a function.
-	if t, ok := c.TypeByName(f.FName); ok {
-		return t
+// QualifiedName returns "pkg.fname" for qualified calls, just "fname" otherwise.
+func (f *Funcall) QualifiedName() string {
+	if f.Pkg != "" {
+		return f.Pkg + "." + f.FName
 	}
-	decl, ok := c.FuncDeclForName(f.FName)
+	return f.FName
+}
+
+func (f *Funcall) ASTType(c *Context) ASTType {
+	// Cast expression: type name used as a function. Only valid for unqualified calls.
+	if f.Pkg == "" {
+		if t, ok := c.TypeByName(f.FName); ok {
+			return t
+		}
+	}
+	decl, _, ok := c.FuncDeclForCall(f.Pkg, f.FName)
 	if !ok {
 		panic(&interpreterError{
-			msg: fmt.Sprintf("No such function \"%s\"", f.FName),
+			msg: fmt.Sprintf("No such function \"%s\"", f.QualifiedName()),
 			p:   f.p,
 		})
 	}
@@ -774,7 +849,7 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 }
 
 func (f *Funcall) Note() string {
-	return fmt.Sprintf("call %s(#%d)", f.FName, len(f.Args))
+	return fmt.Sprintf("call %s(#%d)", f.QualifiedName(), len(f.Args))
 }
 
 func (f *Funcall) Pos() position {
@@ -1331,6 +1406,20 @@ func (n *Node) toASTTop(c *Context) AST {
 		//return &Literal{Val: str}
 		return &Literal{Val: n.sval, p: n.p}
 	case n_dot:
+		// pkg.fn(args) — left is a bare symbol, right is a function call.
+		// Construct a qualified Funcall. The parser produces this shape because
+		// parseSubexpr handles dot then parseValue which may yield a Funcall.
+		if n.args[0].t == n_symbol && n.args[1].t == n_funcall {
+			fcall := n.args[1]
+			var f Funcall
+			f.Pkg = n.args[0].sval
+			f.FName = fcall.sval
+			f.p = n.p
+			for _, a := range fcall.args {
+				f.Args = append(f.Args, a.toASTTop(NewContext()))
+			}
+			return &f
+		}
 		var d Dot
 		d.Val = n.args[0].toASTTop(NewContext())
 		if n.args[1].t != n_symbol {

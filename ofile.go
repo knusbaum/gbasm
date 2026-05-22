@@ -153,6 +153,10 @@ func ReadOFile(filename string) (*OFile, error) {
 		return nil, err
 	}
 	o.Filename = filename
+	// Stamp every function with its owning package so the linker can namespace.
+	for _, fn := range o.Funcs {
+		fn.Pkgname = o.Pkgname
+	}
 	return o, nil
 }
 

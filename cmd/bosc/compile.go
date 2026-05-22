@@ -449,37 +449,40 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return nullspot
 	case *Funcall:
 		// Cast expression: type name used as a single-argument function.
-		if destType, ok := c.TypeByName(ast.FName); ok {
-			if len(ast.Args) != 1 {
-				CompileErrorF(a, "Type cast %s() requires exactly one argument", ast.FName)
+		// Only valid for unqualified calls.
+		if ast.Pkg == "" {
+			if destType, ok := c.TypeByName(ast.FName); ok {
+				if len(ast.Args) != 1 {
+					CompileErrorF(a, "Type cast %s() requires exactly one argument", ast.FName)
+				}
+				return compileCast(of, c, ast.Args[0], destType, dest)
 			}
-			return compileCast(of, c, ast.Args[0], destType, dest)
 		}
 
-		decl, ok := c.FuncDeclForName(ast.FName)
+		decl, resolvedPkg, ok := c.FuncDeclForCall(ast.Pkg, ast.FName)
 		if !ok {
-			CompileErrorF(a, "No such function \"%v\"", ast.FName)
+			CompileErrorF(a, "No such function \"%v\"", ast.QualifiedName())
 		}
 		if len(ast.Args) != len(decl.Args) {
-			//panic(fmt.Sprintf("BAD NUMBER OF ARGS for %s (TODO)\n", ast.FName))
 			CompileErrorF(a, "%s expected %d arguments, but was called with %d",
-				ast.FName, len(decl.Args), len(ast.Args))
+				ast.QualifiedName(), len(decl.Args), len(ast.Args))
 		}
 
 		argorder := setupArgs(of, c, ast, decl)
 
-		// We want some kind of to_var asm instruction
-		// that can tell the assembler "this variable is in this register now"
-		// that way we can point a temporary at rax and have the assembler
-		// manage moving it around.
-		//
-		// for now, we'll just always move rax, even when nobody will use it.
 		retType := ast.ASTType(c)
 		raxName := raxForType(retType)
 		note(of, "\t// acquire %s for call return\n", raxName)
 		rax := regSpot(of, raxName)
 		rax.t = retType
-		fmt.Fprintf(of, "\tcall %s\n", ast.FName)
+		// Emit the qualified call name. If the call came in as unqualified
+		// but resolved through the import fallback, prepend the package name
+		// so the linker sees an unambiguous symbol.
+		callName := ast.FName
+		if resolvedPkg != "" {
+			callName = resolvedPkg + "." + ast.FName
+		}
+		fmt.Fprintf(of, "\tcall %s\n", callName)
 		for i := 0; i < len(ast.Args); i++ {
 			note(of, "\t// release call registers\n")
 			fmt.Fprintf(of, "\trelease %s\n", argorder[i])

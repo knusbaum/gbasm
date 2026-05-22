@@ -1,0 +1,13 @@
+package main
+
+import "string"
+
+fn main() {
+	// Call puts and puti via qualified name from package "string".
+	// string.bo is mapped to "string" via the test runner's importcfg.
+	string.puts("qualified call works\n")
+
+	var x i64 = 42
+	string.puti(x)
+	string.puts("\n")
+}

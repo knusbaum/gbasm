@@ -13,6 +13,42 @@ import (
 
 var out = flag.String("o", "", "Write the linked executable to this file")
 var help = flag.Bool("h", false, "Print this help message.")
+var importcfg = flag.String("importcfg", "", "Path to importcfg file mapping package names to .bo paths")
+
+// loadImportcfg reads a file with lines of the form `name=path/to/file.bo` and
+// returns a map from package name to file path. Blank lines and lines beginning
+// with '#' are skipped.
+func loadImportcfg(path string) (map[string]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	m := make(map[string]string)
+	scanner := bufio.NewScanner(f)
+	lineno := 0
+	for scanner.Scan() {
+		lineno++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		eq := strings.IndexByte(line, '=')
+		if eq < 0 {
+			return nil, fmt.Errorf("%s:%d: expected name=path, got %q", path, lineno, line)
+		}
+		name := strings.TrimSpace(line[:eq])
+		fpath := strings.TrimSpace(line[eq+1:])
+		if name == "" || fpath == "" {
+			return nil, fmt.Errorf("%s:%d: empty name or path", path, lineno)
+		}
+		m[name] = fpath
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
 
 func main() {
 	flag.Parse()
@@ -26,6 +62,15 @@ func main() {
 	if flag.NArg() < 1 {
 		fmt.Printf("Fatal: Expected file name to open.\n")
 		os.Exit(1)
+	}
+
+	imports := map[string]string{}
+	if *importcfg != "" {
+		m, err := loadImportcfg(*importcfg)
+		if err != nil {
+			log.Fatalf("Failed to load importcfg %s: %s", *importcfg, err)
+		}
+		imports = m
 	}
 
 	var pkgname string
@@ -103,17 +148,22 @@ func main() {
 				break
 			}
 			if n.t == n_import {
-				// err := c.Import(n.sval)
-				// if err != nil {
-				// 	log.Fatalf("%v\n", err)
-				// }
-				// // TODO: get rid of double imports. CompileContext should have access to VContext eventually.
-				// err = ctx.Import(n.sval)
-				// if err != nil {
-				// 	log.Fatalf("%v\n", err)
-				// }
-				// continue
-				err = actx.Import(n.sval)
+				// n.sval is the package name from `import "name"`. Look up its
+				// .bo path in the importcfg. Backward compat: if the name ends
+				// in `.bo`, treat it as a literal file path (transitional).
+				pkgName := n.sval
+				var path string
+				if strings.HasSuffix(pkgName, ".bo") {
+					path = pkgName
+					pkgName = strings.TrimSuffix(pkgName, ".bo")
+				} else {
+					p, ok := imports[pkgName]
+					if !ok {
+						log.Fatalf("import %q: not found in importcfg\n", pkgName)
+					}
+					path = p
+				}
+				err = actx.Import(pkgName, path)
 				if err != nil {
 					log.Fatalf("%v\n", err)
 				}

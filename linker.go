@@ -118,31 +118,47 @@ type LinkedBin struct {
 	Sections []*Section
 }
 
+// qualify returns "<pkg>.<name>" for non-empty pkg, otherwise just name.
+func qualify(pkg, name string) string {
+	if pkg == "" {
+		return name
+	}
+	return pkg + "." + name
+}
+
 func Link(os []*OFile, textoff uint64) LinkedBin {
 	funcs := make(map[string]*Function)
 	data := make(map[string]*Var)
 	vars := make(map[string]*Var)
 	for _, o := range os {
 		for fname, f := range o.Funcs {
-			if _, ok := funcs[fname]; ok {
-				log.Fatalf("Duplicate definitions of function %s", fname)
+			// Defined functions live under their qualified name (pkg.func).
+			// The init runtime (pkg=main) defines `start` which is the entry
+			// point — it stays callable as just "start" because it's the
+			// linker-recognized entry symbol.
+			qname := qualify(o.Pkgname, fname)
+			if _, ok := funcs[qname]; ok {
+				log.Fatalf("Duplicate definitions of function %s", qname)
 			}
-			funcs[fname] = f
-			//fmt.Printf("FUNCTION %s.%s\n", o.Pkgname, fname)
+			funcs[qname] = f
+			// Also register unqualified for backward-compat lookups (e.g. the
+			// entry symbol `start`, and any in-package callers that emit
+			// unqualified call names).
+			if _, ok := funcs[fname]; !ok {
+				funcs[fname] = f
+			}
 		}
 		for dname, v := range o.Data {
 			if _, ok := data[dname]; ok {
 				log.Fatalf("Duplicate definitions of data %s", dname)
 			}
 			data[dname] = v
-			//fmt.Printf("DATA %s %s (%d bytes)\n", dname, v.VType, len(v.Val))
 		}
 		for vname, v := range o.Vars {
 			if _, ok := vars[vname]; ok {
 				log.Fatalf("Duplicate definitions of data %s", vname)
 			}
 			vars[vname] = v
-			//fmt.Printf("VAR %s %s (%d bytes)\n", vname, v.VType, len(v.Val))
 		}
 	}
 
@@ -183,8 +199,14 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 			log.Fatalf("Failed to resolve function body: %s", err)
 		}
 		foffset := uint32(fnbs.Len())
-		//fmt.Printf("ADDING %s to funclocs.\n", current.name)
+		// Register the function under both its qualified (pkg.func) and
+		// bare (func) names so cross-package and in-package relocations
+		// both resolve.
 		funclocs[current.Name] = foffset
+		if current.Pkgname != "" {
+			qname := qualify(current.Pkgname, current.Name)
+			funclocs[qname] = foffset
+		}
 		funcsyms = append(funcsyms, SectSym{
 			Name:    current.Name,
 			Type:    SYM_FUNC,
