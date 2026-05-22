@@ -14,6 +14,7 @@ import (
 var out = flag.String("o", "", "Write the linked executable to this file")
 var help = flag.Bool("h", false, "Print this help message.")
 var importcfg = flag.String("importcfg", "", "Path to importcfg file mapping package names to .bo paths")
+var listImports = flag.Bool("listimports", false, "Print all import paths from the input files (one per line) and exit. No compilation is performed.")
 
 // loadImportcfg reads a file with lines of the form `name=path/to/file.bo` and
 // returns a map from package name to file path. Blank lines and lines beginning
@@ -50,6 +51,62 @@ func loadImportcfg(path string) (map[string]string, error) {
 	return m, nil
 }
 
+// runListImports prints the import paths declared in each input file, one per
+// line, deduplicated across all inputs. Used by the build system to determine
+// the dependency set of a package without compiling it.
+func runListImports() {
+	seen := make(map[string]bool)
+	var order []string
+	for fi := 0; fi < flag.NArg(); fi++ {
+		fname := flag.Arg(fi)
+		file, err := os.Open(fname)
+		if err != nil {
+			log.Fatalf("Failed to open %s: %s", fname, err)
+		}
+		reader := bufio.NewReader(file)
+
+		// Consume the leading 'package <name>' line, matching the main
+		// flow's expectation that bosc files start with a package decl.
+		var ln []byte
+		var rerr error
+		for ln, _, rerr = reader.ReadLine(); rerr == nil; ln, _, rerr = reader.ReadLine() {
+			line := strings.TrimSpace(string(ln))
+			if line == "" || strings.HasPrefix(line, "//") {
+				continue
+			}
+			if strings.HasPrefix(line, "package") {
+				break
+			}
+			log.Fatalf("%s: must start with a package name, but found %s\n", fname, line)
+		}
+
+		p := NewParser(fname, reader)
+		for {
+			n, err := p.Next()
+			if err != nil {
+				log.Fatalf("%s: parse error: %v", fname, err)
+			}
+			if n == nil {
+				break
+			}
+			if n.t == n_import {
+				if !seen[n.sval] {
+					seen[n.sval] = true
+					order = append(order, n.sval)
+				}
+				continue
+			}
+			// First non-import (and non-empty) node: stop parsing this file.
+			// Imports must appear before any other top-level declarations.
+			break
+		}
+		file.Close()
+	}
+	for _, p := range order {
+		fmt.Println(p)
+	}
+}
+
 func main() {
 	flag.Parse()
 
@@ -62,6 +119,11 @@ func main() {
 	if flag.NArg() < 1 {
 		fmt.Printf("Fatal: Expected file name to open.\n")
 		os.Exit(1)
+	}
+
+	if *listImports {
+		runListImports()
+		return
 	}
 
 	imports := map[string]string{}
