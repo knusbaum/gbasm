@@ -1,0 +1,7 @@
+package main
+
+import "string"
+
+fn main() {
+	string.puts("Hello from the mmk-built example.\n")
+}

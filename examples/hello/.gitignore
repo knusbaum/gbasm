@@ -1,0 +1,4 @@
+# mmk-built artifacts
+hello
+*.bo
+*.work/
