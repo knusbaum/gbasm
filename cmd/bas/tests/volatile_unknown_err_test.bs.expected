@@ -1,3 +1,2 @@
-Assembling init_linux.bs
 Assembling tests/volatile_unknown_err_test.bs
 Fatal: volatile undefined_var: no such local: undefined_var

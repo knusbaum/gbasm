@@ -768,6 +768,7 @@ func (o *OFile) NewFunction(srcFile string, srcLine int, name string, args ...*V
 		SrcFile:        srcFile,
 		SrcLine:        srcLine,
 		Name:           name,
+		Pkgname:        o.Pkgname,
 		Args:           args,
 		labels:         make(map[string]int),
 		a:              o.a,
@@ -1038,23 +1039,27 @@ func (f *Function) Instr(instr string, ops ...interface{}) error {
 
 func (f *Function) Resolve() error {
 	if f.bodyBs != nil {
-		//log.Printf("Function %s already resolved.", f.name)
 		return nil
 	}
 	bs := f.bs.Bytes()
 	for _, rel := range f.jumps {
 		if loff, ok := f.labels[rel.Symbol]; ok {
-			//log.Printf("APPLYING RELOCATION AT OFFSET 0x%02x to symbol %s at offset 0x%02x", rel.offset, rel.symbol, loff)
 			rel.Apply(bs, int32(loff))
 		} else {
-			//log.Printf("Adding Relocation for symbol %s at offset 0x%02x", rel.symbol, rel.offset)
-			//rel.rel_type = R_386_PC32
 			f.Relocations = append(f.Relocations, rel)
 		}
 	}
 	f.jumps = make([]Relocation, 0)
 	f.bodyBs = bs
-	//log.Printf("FUNCTION %s BODYBS LEN: %d", f.name, len(f.bodyBs))
+	// Qualify any bare symbol in our relocations with our package name, so
+	// the linker only ever sees fully-qualified cross-file references.
+	if f.Pkgname != "" {
+		for i, rel := range f.Relocations {
+			if !strings.ContainsRune(rel.Symbol, '.') {
+				f.Relocations[i].Symbol = f.Pkgname + "." + rel.Symbol
+			}
+		}
+	}
 	return nil
 }
 

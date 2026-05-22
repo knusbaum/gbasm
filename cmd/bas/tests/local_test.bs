@@ -31,7 +31,7 @@ function main
 
 	// move 200 into rdi, the first argument for puti, then call puti.
 	mov rdi rax
-	call puti
+	call string.puti
 	release rdi rax
 
 
@@ -73,7 +73,7 @@ function main
 	mov rdi T6
 	forget T6
 	// should print -55
-	call puti
+	call string.puti
 	release rdi
 
 	// calculate (9 + 1) + (1 - (5 + 6) * (2 + 4)) using doSomeMath
@@ -90,7 +90,7 @@ function main
 
 	// should print -55 again.
 	mov rdi rax
-	call puti
+	call string.puti
 	
 
 	epilogue

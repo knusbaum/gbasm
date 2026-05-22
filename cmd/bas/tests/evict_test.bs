@@ -20,9 +20,9 @@ function main
 
 	// x is now in memory. Using it should reload it transparently.
 	mov rdi x
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// --- evict with a specific register argument ---
 	local y 64
@@ -36,9 +36,9 @@ function main
 
 	// y should still be accessible (reloaded from memory on next use).
 	mov rdi y
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	forgetall
 	epilogue

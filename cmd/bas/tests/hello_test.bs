@@ -24,19 +24,19 @@ function print
 
 	// Write hello world
 	mov rdi rsp
-	call puts
+	call string.puts
 
 	mov rdi 1000
 	mov rsi rsp
-	call itoa
+	call string.itoa
 	// rsp now contains "1000\x0..."
 	
 	mov rdi rsp
-	call puts
+	call string.puts
 
 	// newline and terminating zero
 	lea rdi [rsp+11]
-	call puts
+	call string.puts
 
 	epilogue
 	ret

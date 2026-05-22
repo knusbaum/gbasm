@@ -6,8 +6,9 @@ if [[ $? != 0 ]]; then
 	exit 1
 fi
 
-rm string.bo
+rm string.bo init.bo
 ./bas puts_linux.bs string.bs >/dev/null 2>&1
+./bas -o init.bo init_linux.bs >/dev/null 2>&1
 
 # Generate a project-wide importcfg.
 cat > test.importcfg <<EOF
@@ -55,7 +56,7 @@ for t in `ls tests/*_test.bos`; do
 		fail=$(echo -e "$fail\n${t} FAIL")
 		continue
     fi
-    ./bas -o ${t}.bo init_linux.bs ${t}.bs >${t}.bas.out 2>&1
+    ./bas -o ${t}.bo ${t}.bs >${t}.bas.out 2>&1
     if [[ $? != 0 ]]; then
 		echo assembler failed for ${t}:
 		cat ${t}.bas.out
@@ -64,7 +65,7 @@ for t in `ls tests/*_test.bos`; do
 		continue
     fi
     # cat ${t}.bas.out
-    ./bld -o ${t}.o ${t}.bo string.bo >${t}.bld.out 2>&1
+    ./bld -o ${t}.o ${t}.bo string.bo init.bo >${t}.bld.out 2>&1
     if [[ $? != 0 ]]; then
 		echo linker failed for ${t}:
 		cat ${t}.bld.out
@@ -102,6 +103,6 @@ if [[ $fail != '' ]]; then
 fi
 
 rm tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout
-rm bosc bas bld string.bo test.importcfg
+rm bosc bas bld string.bo init.bo test.importcfg
 echo "SUITE PASSED"
 exit 0

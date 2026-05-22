@@ -13,9 +13,9 @@ function main
 
 	// Read back using the hex offset.
 	mov rdi [rsp+0x10]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	add rsp 64
 	xor rax rax

@@ -22,7 +22,7 @@ function main
 
 	acquire rdi
 	mov rdi hello
-	call puts
+	call string.puts
 	release rdi
 	forget hello
 
@@ -49,7 +49,7 @@ function main
 
 	acquire rdi
 	mov rdi goodbye
-	call puts
+	call string.puts
 	release rdi
 	forget goodbye
 
@@ -58,7 +58,7 @@ function main
 	mov rdi helloagain
 	call fillWithHelloWorld
 	mov rdi helloagain
-	call puts	
+	call string.puts	
 	release rdi
 	
 	epilogue

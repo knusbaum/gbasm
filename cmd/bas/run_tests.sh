@@ -4,10 +4,11 @@ make clean
 make bas bld
 
 ./bas puts_linux.bs string.bs >/dev/null 2>&1
+./bas -o init.bo init_linux.bs >/dev/null 2>&1
 
 #set -e
 #set -x
-rm tests/*.bs.o tests/*.out tests/*.stdout
+rm tests/*.bs.o tests/*.bs.bo tests/*.out tests/*.stdout
 
 fail=''
 for t in `ls tests/*_test.bs`; do
@@ -15,7 +16,7 @@ for t in `ls tests/*_test.bs`; do
 
     if [[ $t == *_err_test.bs ]]; then
         # Error test: assembler must reject this input.
-        ./bas init_linux.bs $t >${t}.bas.out 2>&1
+        ./bas -o ${t}.bs.bo $t >${t}.bas.out 2>&1
         if [[ $? == 0 ]]; then
             echo "Expected assembler to fail but it succeeded:"
             cat ${t}.bas.out
@@ -35,7 +36,7 @@ for t in `ls tests/*_test.bs`; do
         continue
     fi
 
-    ./bas init_linux.bs $t >${t}.bas.out 2>&1
+    ./bas -o ${t}.bs.bo $t >${t}.bas.out 2>&1
     if [[ $? != 0 ]]; then
 		echo assembler failed for ${t}:
 		cat ${t}.bas.out
@@ -44,7 +45,7 @@ for t in `ls tests/*_test.bs`; do
 		continue
     fi
     # cat ${t}.bas.out
-    ./bld -o ${t}.o main.bo string.bo >${t}.bld.out 2>&1
+    ./bld -o ${t}.o ${t}.bs.bo string.bo init.bo >${t}.bld.out 2>&1
     if [[ $? != 0 ]]; then
 		echo linker failed for ${t}:
 		cat ${t}.bld.out
@@ -82,7 +83,7 @@ if [[ $fail != '' ]]; then
 	exit 1
 fi
 
-rm tests/*.bs.o tests/*.out tests/*.stdout
-rm bas bld main.bo string.bo
+rm tests/*.bs.o tests/*.bs.bo tests/*.out tests/*.stdout
+rm bas bld string.bo init.bo
 echo "SUITE PASSED"
 exit 0

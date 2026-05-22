@@ -21,9 +21,9 @@ function main
 	mov [rsp] rax
 	mov qword[rsp] 1
 	mov rdi [rsp]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// --- dword qualifier ---
 	// Poison, store 42 as 32-bit, read back the 32-bit field via 32-bit reg.
@@ -32,9 +32,9 @@ function main
 	mov [rsp+8] rax
 	mov dword[rsp+8] 42
 	mov edi [rsp+8]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// --- word qualifier ---
 	// Poison, store 100 as 16-bit, read back zero-extended.
@@ -43,9 +43,9 @@ function main
 	mov [rsp+16] rax
 	mov word[rsp+16] 100
 	movzx rdi word[rsp+16]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// --- byte qualifier ---
 	// Syntax check: store a byte-sized value explicitly.
@@ -54,9 +54,9 @@ function main
 	mov [rsp+24] rax
 	mov byte[rsp+24] 200
 	movzx rdi byte[rsp+24]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	epilogue
 	xor rax rax

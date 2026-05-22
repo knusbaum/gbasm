@@ -16,9 +16,9 @@ function main
 
 	// Read via negative offset: [rcx-8] = [rsp+16-8] = [rsp+8] = 77
 	mov rdi [rcx-8]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	add rsp 32
 	xor rax rax

@@ -47,7 +47,7 @@ function main
 	 add rdi r14
 	 // 1260
 	 add rdi r15	
-	 call puti
+	 call string.puti
 
 	 xor rax rax
 	 ret

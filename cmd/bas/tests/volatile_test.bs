@@ -20,14 +20,14 @@ function main
 
 	// Read x by name — must see 20, not the stale register value 10.
 	mov rdi x
-	call puti
+	call string.puti
 
 	// Write x by name.
 	mov x 30
 
 	// Read through the pointer — must see 30.
 	mov rdi [ptr]
-	call puti
+	call string.puti
 
 	epilogue
 	xor rax rax

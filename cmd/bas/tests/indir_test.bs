@@ -17,7 +17,7 @@ function main
 	 mov [rsp+11] 0x00
 
 	 mov rdi rsp
-	 call puts
+	 call string.puts
 
 	 // fix the stack
 	 add rsp 12

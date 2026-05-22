@@ -132,33 +132,31 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 	vars := make(map[string]*Var)
 	for _, o := range os {
 		for fname, f := range o.Funcs {
-			// Defined functions live under their qualified name (pkg.func).
-			// The init runtime (pkg=main) defines `start` which is the entry
-			// point — it stays callable as just "start" because it's the
-			// linker-recognized entry symbol.
+			// All defined functions live under their qualified name (pkg.func).
+			// The compiler always emits fully-qualified call symbols, so the
+			// linker never needs to resolve a bare function name.
+			if o.Pkgname == "" {
+				log.Fatalf("object file %s has no package name", o.Filename)
+			}
 			qname := qualify(o.Pkgname, fname)
 			if _, ok := funcs[qname]; ok {
 				log.Fatalf("Duplicate definitions of function %s", qname)
 			}
 			funcs[qname] = f
-			// Also register unqualified for backward-compat lookups (e.g. the
-			// entry symbol `start`, and any in-package callers that emit
-			// unqualified call names).
-			if _, ok := funcs[fname]; !ok {
-				funcs[fname] = f
-			}
 		}
 		for dname, v := range o.Data {
-			if _, ok := data[dname]; ok {
-				log.Fatalf("Duplicate definitions of data %s", dname)
+			qname := qualify(o.Pkgname, dname)
+			if _, ok := data[qname]; ok {
+				log.Fatalf("Duplicate definitions of data %s", qname)
 			}
-			data[dname] = v
+			data[qname] = v
 		}
 		for vname, v := range o.Vars {
-			if _, ok := vars[vname]; ok {
-				log.Fatalf("Duplicate definitions of data %s", vname)
+			qname := qualify(o.Pkgname, vname)
+			if _, ok := vars[qname]; ok {
+				log.Fatalf("Duplicate definitions of data %s", qname)
 			}
-			vars[vname] = v
+			vars[qname] = v
 		}
 	}
 
@@ -175,9 +173,11 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 	}
 
 	//needvar := make([]*Var, 0)
-	main, ok := funcs["start"]
+	// The ELF entry point. The init runtime package _init exports `start`,
+	// which calls the user's main and exits.
+	main, ok := funcs["_init.start"]
 	if !ok {
-		log.Fatalf("No such function start")
+		log.Fatalf("No such function _init.start (the entry point must be defined in package _init)")
 	}
 	needfn[0] = main
 	relocations := make([]Relocation, 0)
@@ -199,16 +199,11 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 			log.Fatalf("Failed to resolve function body: %s", err)
 		}
 		foffset := uint32(fnbs.Len())
-		// Register the function under both its qualified (pkg.func) and
-		// bare (func) names so cross-package and in-package relocations
-		// both resolve.
-		funclocs[current.Name] = foffset
-		if current.Pkgname != "" {
-			qname := qualify(current.Pkgname, current.Name)
-			funclocs[qname] = foffset
-		}
+		// All relocations are qualified, so funclocs uses qualified names.
+		qname := qualify(current.Pkgname, current.Name)
+		funclocs[qname] = foffset
 		funcsyms = append(funcsyms, SectSym{
-			Name:    current.Name,
+			Name:    qname,
 			Type:    SYM_FUNC,
 			Address: uint64(foffset),
 			Size:    len(fbs),

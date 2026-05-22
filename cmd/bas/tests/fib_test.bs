@@ -11,13 +11,13 @@ function main
 	push rax
 
 	lea rdi fibprint
-	call puts
+	call string.puts
 
 	pop rdi
-	call puti
+	call string.puti
 
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// Second Fib call
  	mov rdi 20
@@ -25,13 +25,13 @@ function main
 	push rax
 
 	lea rdi fibprint
-	call puts
+	call string.puts
 
 	pop rdi
-	call puti
+	call string.puti
 
 	lea rdi newline
-	call puts
+	call string.puts
 
  	mov rax 0
 	epilogue

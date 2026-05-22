@@ -17,9 +17,9 @@ function main
 
 	// Print a before releasing anything.
 	mov rdi a
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// forgetall releases a, b, c (registers and stack space).
 	forgetall
@@ -31,14 +31,14 @@ function main
 	mov y 55
 
 	mov rdi x
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	mov rdi y
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	forgetall
 	epilogue

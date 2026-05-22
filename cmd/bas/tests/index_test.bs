@@ -15,9 +15,9 @@ function main
 label loop
 	mov rdi [rsp+rcx*8]
 	push rcx
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 	pop rcx
 	inc rcx
 
@@ -57,9 +57,9 @@ function vartest
 label loop2
 	mov v [array+i*8]
 	mov rdi v
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 	inc i
 
 	// cond

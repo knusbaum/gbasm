@@ -1,11 +1,11 @@
-package main
+package _init
 
 var ioob string "Fatal: Index Out Of Bounds: index[\0"
 var ioob2 string "] for object with length: \0"
 var ioob3 string "\n\0"
 
 function start
-	call main
+	call main.main
 	mov rdi rax
 	mov rax 0x3C
 	syscall

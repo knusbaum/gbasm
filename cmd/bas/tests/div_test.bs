@@ -28,10 +28,10 @@ function main
 	mov remainder rdx
 
 	mov rdi quotient
-	call puti
+	call string.puti
 
 	mov rdi remainder
-	call puti
+	call string.puti
 
 	epilogue
 	xor rax rax

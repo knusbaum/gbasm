@@ -271,7 +271,7 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 				fmt.Fprintf(of, "\tjg %s\n", l)
 				fmt.Fprintf(of, "\tmov rdi %d\n", ast.N)
 				fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
-				fmt.Fprintf(of, "\tcall index_oob\n")
+				fmt.Fprintf(of, "\tcall _init.index_oob\n")
 				fmt.Fprintf(of, "\tlabel %s\n", l)
 			}
 			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", dest.ref, addr.ref, off)
@@ -299,7 +299,7 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 				fmt.Fprintf(of, "\tmovzx rdi %s\n", index.ref)
 			}
 			fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
-			fmt.Fprintf(of, "\tcall index_oob\n")
+			fmt.Fprintf(of, "\tcall _init.index_oob\n")
 			fmt.Fprintf(of, "\tlabel %s\n", l)
 			fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", dest.ref, base.ref, index.ref, scale)
 			return dest
@@ -475,14 +475,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		note(of, "\t// acquire %s for call return\n", raxName)
 		rax := regSpot(of, raxName)
 		rax.t = retType
-		// Emit the qualified call name. If the call came in as unqualified
-		// but resolved through the import fallback, prepend the package name
-		// so the linker sees an unambiguous symbol.
-		callName := ast.FName
-		if resolvedPkg != "" {
-			callName = resolvedPkg + "." + ast.FName
+		// Always emit a fully-qualified call name so the linker sees
+		// unambiguous symbols. Cross-package calls use the imported
+		// package's name; in-package calls use the current package's name.
+		callPkg := resolvedPkg
+		if callPkg == "" {
+			callPkg = c.Pkgname()
 		}
-		fmt.Fprintf(of, "\tcall %s\n", callName)
+		fmt.Fprintf(of, "\tcall %s.%s\n", callPkg, ast.FName)
 		for i := 0; i < len(ast.Args); i++ {
 			note(of, "\t// release call registers\n")
 			fmt.Fprintf(of, "\trelease %s\n", argorder[i])
@@ -600,7 +600,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				fmt.Fprintf(of, "\tjg %s\n", l)
 				fmt.Fprintf(of, "\tmov rdi %d\n", ast.N)
 				fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
-				fmt.Fprintf(of, "\tcall index_oob\n")
+				fmt.Fprintf(of, "\tcall _init.index_oob\n")
 				fmt.Fprintf(of, "\tlabel %s\n", l)
 			}
 			fmt.Fprintf(of, "\t// mov NAST == nil\n")
@@ -628,7 +628,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				fmt.Fprintf(of, "\tmovzx rdi %s\n", index.ref)
 			}
 			fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
-			fmt.Fprintf(of, "\tcall index_oob\n")
+			fmt.Fprintf(of, "\tcall _init.index_oob\n")
 			fmt.Fprintf(of, "\tlabel %s\n", l)
 			fmt.Fprintf(of, "\tmov %s [%s+%s*%d]\n", dest.ref, base.ref, index.ref, scale)
 			return dest

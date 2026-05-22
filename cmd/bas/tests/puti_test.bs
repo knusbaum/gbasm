@@ -2,6 +2,6 @@ package main
 
 function main
 	 mov rdi 10
-	 call puti
+	 call string.puti
 	 xor rax rax
 	 ret

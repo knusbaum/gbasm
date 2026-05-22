@@ -23,19 +23,19 @@ function main
 
 	// [bytes_var+N]: direct field access into bdata's own stack storage
 	mov rdi [bdata+0]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	mov rdi [bdata+8]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	mov rdi [bdata+16]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// [local_var+N]: dereference through the pointer value stored in local
 	local ptr 64
@@ -43,19 +43,19 @@ function main
 	mov ptr bdata
 
 	mov rdi [ptr+0]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	mov rdi [ptr+8]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	mov rdi [ptr+16]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	epilogue
 	xor rax rax

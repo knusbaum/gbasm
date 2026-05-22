@@ -14,30 +14,30 @@ function main
 	// scale=1, index=8:  rsp + 8*1 = rsp+8
 	mov rcx 8
 	mov rdi [rsp+rcx*1]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// scale=2, index=4:  rsp + 4*2 = rsp+8
 	mov rcx 4
 	mov rdi [rsp+rcx*2]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// scale=4, index=2:  rsp + 2*4 = rsp+8
 	mov rcx 2
 	mov rdi [rsp+rcx*4]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// scale=8, index=1:  rsp + 1*8 = rsp+8
 	mov rcx 1
 	mov rdi [rsp+rcx*8]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	add rsp 32
 	xor rax rax

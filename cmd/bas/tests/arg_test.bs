@@ -44,7 +44,7 @@ function main
 	mov rdi T6
 	forget T6
 	// should print -55
-	call puti
+	call string.puti
 	release rdi
 
 	// calculate (9 + 1) + (1 - (5 + 6) * (2 + 4)) using doSomeMath
@@ -128,44 +128,44 @@ function argprinter
 	prologue
 
 	mov rdi one
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	mov rdi two
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	mov rdi three
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	mov rdi four
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	mov rdi five
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	mov rdi six
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	mov rdi seven
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	mov rdi eight
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	epilogue
 	ret

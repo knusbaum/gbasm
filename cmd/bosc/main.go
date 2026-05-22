@@ -139,6 +139,7 @@ func main() {
 		var bs bytes.Buffer
 		var asts []AST
 		actx := NewContext()
+		actx.SetPkgname(pkgname)
 		for {
 			n, err := p.Next()
 			if err != nil {

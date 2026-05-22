@@ -23,6 +23,11 @@ func (e *interpreterError) Error() string {
 type Context struct {
 	parent *Context
 
+	// the name of the package being compiled. Used to qualify in-package
+	// calls so the linker sees unambiguous symbol names. Set at the root
+	// context by the driver; child contexts inherit via the parent chain.
+	pkgname string
+
 	// maps variable names to their types.
 	bindings map[string]ASTType
 	// tracks which bindings are const (true) vs var (false).
@@ -69,6 +74,24 @@ func (c *Context) SubContext() *Context {
 	sc := NewContext()
 	sc.parent = c
 	return sc
+}
+
+// Pkgname returns the name of the package being compiled, walking up the
+// parent chain to find the root context that has it set.
+func (c *Context) Pkgname() string {
+	if c == nil {
+		return ""
+	}
+	if c.pkgname != "" {
+		return c.pkgname
+	}
+	return c.parent.Pkgname()
+}
+
+// SetPkgname records the package name on this context. Should only be called
+// on the root context.
+func (c *Context) SetPkgname(name string) {
+	c.pkgname = name
 }
 
 

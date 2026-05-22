@@ -16,15 +16,15 @@ function main
 
 	// Read r13 directly (bypassing the named variable) to verify the value is there.
 	mov rdi r13
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// The named variable x is still accessible and still backed by r13.
 	mov rdi x
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	forget x
 	epilogue

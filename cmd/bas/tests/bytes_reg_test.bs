@@ -18,9 +18,9 @@ function main
 	mov rax mydata
 	// dereference: if rax was the address, rdi = 42
 	mov rdi [rax]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	epilogue
 	xor rax rax

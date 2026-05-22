@@ -28,7 +28,7 @@ function main
 	 push rax
 	 
 	 mov rdi rsp
-	 call puts
+	 call string.puts
 
 	 pop rdi
 	 pop rdi

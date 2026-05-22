@@ -18,9 +18,9 @@ function main
 	mov rax bdata
 	// *rax = 99
 	mov rdi [rax]
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// local: register position yields the stored value directly.
 	local lval 64
@@ -28,9 +28,9 @@ function main
 
 	// rdi = 77
 	mov rdi lval
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	epilogue
 	xor rax rax

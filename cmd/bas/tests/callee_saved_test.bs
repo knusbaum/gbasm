@@ -18,19 +18,19 @@ function main
 
 	// Values must be unchanged.
 	mov rdi r12
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	mov rdi r13
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	mov rdi r14
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	epilogue
 	xor rax rax

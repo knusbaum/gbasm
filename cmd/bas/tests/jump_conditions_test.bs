@@ -16,9 +16,9 @@ function main
 label jne_pass
 	mov rdi 1
 label jne_done
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// JL: -1 < 0 (signed), JL fires.
 	mov rax -1
@@ -29,9 +29,9 @@ label jne_done
 label jl_pass
 	mov rdi 1
 label jl_done
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// JG: 5 > 3 (signed), JG fires.
 	mov rax 5
@@ -42,9 +42,9 @@ label jl_done
 label jg_pass
 	mov rdi 1
 label jg_done
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// JB: 1 < 2 (unsigned below), JB fires.
 	mov rax 1
@@ -55,9 +55,9 @@ label jg_done
 label jb_pass
 	mov rdi 1
 label jb_done
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	// JA: 5 > 3 (unsigned above), JA fires.
 	mov rax 5
@@ -68,9 +68,9 @@ label jb_done
 label ja_pass
 	mov rdi 1
 label ja_done
-	call puti
+	call string.puti
 	lea rdi newline
-	call puts
+	call string.puts
 
 	xor rax rax
 	ret
