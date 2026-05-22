@@ -6,9 +6,10 @@ if [[ $? != 0 ]]; then
 	exit 1
 fi
 
-rm string.bo init.bo
-./bas puts_linux.bs string.bs >/dev/null 2>&1
-./bas -o init.bo init_linux.bs >/dev/null 2>&1
+RUNTIME=../../runtime
+rm -f string.bo init.bo
+./bas -o string.bo $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs >/dev/null 2>&1
+./bas -o init.bo $RUNTIME/_init/init_linux.bs >/dev/null 2>&1
 
 # Generate a project-wide importcfg.
 cat > test.importcfg <<EOF

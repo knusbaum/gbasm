@@ -1,6 +1,5 @@
 package main
 
-var newline string "\n\0"
 
 // Tests that a bytes variable in register operand position (mov reg bytes_var)
 // loads the address of the stack data, not the first 8 bytes of the data.
@@ -19,8 +18,8 @@ function main
 	// dereference: if rax was the address, rdi = 42
 	mov rdi [rax]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	epilogue
 	xor rax rax

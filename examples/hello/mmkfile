@@ -1,29 +1,19 @@
-## Example project showing how to build a Boson program with mmk.
+## A minimal Boson project. Builds an executable from src/ and links
+## against whatever packages the source imports.
 ##
-## Run with:
+## Build with:
 ##   BOSON_HOME=../.. mmk
-## (or set BOSON_HOME / BOSC / BAS / BLD / BOSON_RUNTIME explicitly)
 
 # Defaults: use binaries from the gbasm repo build outputs.
 BOSON_HOME=${BOSON_HOME:-../..}
 BOSC=${BOSC:-$BOSON_HOME/bosc}
 BAS=${BAS:-$BOSON_HOME/bas}
 BLD=${BLD:-$BOSON_HOME/bld}
-BOSON_RUNTIME=${BOSON_RUNTIME:-runtime/init}
 
 include $BOSON_HOME/boson.mmk
 
 all : hello
 
-## Runtime: hand-written assembly providing puts/puti/etc.
-STRING_SRCS=$(ls runtime/string/*.bs)
-bos_asmpkg string srcdir=runtime/string : $STRING_SRCS
-
-## Application code: depends on the string runtime and its own sources.
-MAIN_SRCS=$(ls src/*.bos)
-bos_pkg main srcdir=src : string $MAIN_SRCS
-
-## Final executable. Lists every package that contributes .bo files.
-boson_exe hello : main string
+bos_exe hello source=src :
 
 [run all] : hello { ./hello }

@@ -1,6 +1,5 @@
 package main
 
-var newline string "\n\0"
 
 // Tests the distinction between [bytes_var+N] and [local_var+N].
 //
@@ -24,18 +23,18 @@ function main
 	// [bytes_var+N]: direct field access into bdata's own stack storage
 	mov rdi [bdata+0]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	mov rdi [bdata+8]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	mov rdi [bdata+16]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	// [local_var+N]: dereference through the pointer value stored in local
 	local ptr 64
@@ -44,18 +43,18 @@ function main
 
 	mov rdi [ptr+0]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	mov rdi [ptr+8]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	mov rdi [ptr+16]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	epilogue
 	xor rax rax

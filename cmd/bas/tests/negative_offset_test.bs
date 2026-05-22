@@ -1,6 +1,5 @@
 package main
 
-var newline string "\n\0"
 
 // Tests negative offsets in indirect addressing: [reg-N].
 // Loads an address above the target, then reads back via a negative offset.
@@ -17,8 +16,8 @@ function main
 	// Read via negative offset: [rcx-8] = [rsp+16-8] = [rsp+8] = 77
 	mov rdi [rcx-8]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	add rsp 32
 	xor rax rax

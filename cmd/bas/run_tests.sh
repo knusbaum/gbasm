@@ -3,8 +3,9 @@
 make clean
 make bas bld
 
-./bas puts_linux.bs string.bs >/dev/null 2>&1
-./bas -o init.bo init_linux.bs >/dev/null 2>&1
+RUNTIME=../../runtime
+./bas -o string.bo $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs >/dev/null 2>&1
+./bas -o init.bo $RUNTIME/_init/init_linux.bs >/dev/null 2>&1
 
 #set -e
 #set -x

@@ -1,6 +1,5 @@
 package main
 
-var newline string "\n\0"
 
 // Tests the distinction between local and bytes variables in register operand position.
 //
@@ -19,8 +18,8 @@ function main
 	// *rax = 99
 	mov rdi [rax]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	// local: register position yields the stored value directly.
 	local lval 64
@@ -29,8 +28,8 @@ function main
 	// rdi = 77
 	mov rdi lval
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	epilogue
 	xor rax rax

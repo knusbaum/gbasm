@@ -1,6 +1,5 @@
 package main
 
-var newline string "\n\0"
 
 // Tests that callee-saved registers (r12, r13, r14) are preserved across
 // function calls. The called function overwrites them internally, but the
@@ -19,18 +18,18 @@ function main
 	// Values must be unchanged.
 	mov rdi r12
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	mov rdi r13
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	mov rdi r14
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	epilogue
 	xor rax rax

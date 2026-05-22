@@ -1,6 +1,5 @@
 package main
 
-var newline string "\n\0"
 
 // Tests the forgetall directive, which releases all locals at once.
 // After forgetall, new locals can be declared and must work independently
@@ -18,8 +17,8 @@ function main
 	// Print a before releasing anything.
 	mov rdi a
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	// forgetall releases a, b, c (registers and stack space).
 	forgetall
@@ -32,13 +31,13 @@ function main
 
 	mov rdi x
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	mov rdi y
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	forgetall
 	epilogue

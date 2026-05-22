@@ -1,25 +1,28 @@
 package main
 
 function main
-	 // Enough for "hello world\0"
-	 sub rsp 12
-	 mov [rsp] 0x48
-	 mov [rsp+1] 0x45
-	 mov [rsp+2] 0x4C
-	 mov [rsp+3] 0x4C
-	 mov [rsp+4] 0x4F
-	 mov [rsp+5] 0x20
-	 mov [rsp+6] 0x57
-	 mov [rsp+7] 0x4F
-	 mov [rsp+8] 0x52
-	 mov [rsp+9] 0x4C
+	 // Stack layout: 11 bytes for "HELLO WORLD" + 16 bytes for slice header.
+	 sub rsp 32
+	 // String at [rsp..rsp+11]
+	 mov [rsp]    0x48
+	 mov [rsp+1]  0x45
+	 mov [rsp+2]  0x4C
+	 mov [rsp+3]  0x4C
+	 mov [rsp+4]  0x4F
+	 mov [rsp+5]  0x20
+	 mov [rsp+6]  0x57
+	 mov [rsp+7]  0x4F
+	 mov [rsp+8]  0x52
+	 mov [rsp+9]  0x4C
 	 mov [rsp+10] 0x44
-	 mov [rsp+11] 0x00
 
-	 mov rdi rsp
+	 // Slice header at [rsp+16]: ptr=rsp, len=11
+	 mov qword[rsp+16] rsp
+	 mov qword[rsp+24] 11
+
+	 lea rdi [rsp+16]
 	 call string.puts
 
-	 // fix the stack
-	 add rsp 12
+	 add rsp 32
 	 xor rax rax
 	 ret

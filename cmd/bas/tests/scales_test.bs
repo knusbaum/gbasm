@@ -1,6 +1,5 @@
 package main
 
-var newline string "\n\0"
 
 // Tests all four valid scale values (1, 2, 4, 8) in base+index*scale addressing.
 // All four expressions are constructed to compute the same address (rsp+8),
@@ -15,29 +14,29 @@ function main
 	mov rcx 8
 	mov rdi [rsp+rcx*1]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	// scale=2, index=4:  rsp + 4*2 = rsp+8
 	mov rcx 4
 	mov rdi [rsp+rcx*2]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	// scale=4, index=2:  rsp + 2*4 = rsp+8
 	mov rcx 2
 	mov rdi [rsp+rcx*4]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	// scale=8, index=1:  rsp + 1*8 = rsp+8
 	mov rcx 1
 	mov rdi [rsp+rcx*8]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	add rsp 32
 	xor rax rax

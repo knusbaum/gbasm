@@ -1,6 +1,5 @@
 package main
 
-var newline string "\n\0"
 
 // Tests size-qualified memory operands: byte[...], word[...], dword[...], qword[...]
 //
@@ -22,8 +21,8 @@ function main
 	mov qword[rsp] 1
 	mov rdi [rsp]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	// --- dword qualifier ---
 	// Poison, store 42 as 32-bit, read back the 32-bit field via 32-bit reg.
@@ -33,8 +32,8 @@ function main
 	mov dword[rsp+8] 42
 	mov edi [rsp+8]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	// --- word qualifier ---
 	// Poison, store 100 as 16-bit, read back zero-extended.
@@ -44,8 +43,8 @@ function main
 	mov word[rsp+16] 100
 	movzx rdi word[rsp+16]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	// --- byte qualifier ---
 	// Syntax check: store a byte-sized value explicitly.
@@ -55,8 +54,8 @@ function main
 	mov byte[rsp+24] 200
 	movzx rdi byte[rsp+24]
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	epilogue
 	xor rax rax

@@ -1,6 +1,7 @@
 package main
 
 function main
+	 // Build "HELLO WORLD" on the stack via PUSH, 8 bytes at a time.
 	 mov rax 0x00
 	 shl rax 8
 	 add rax 0x44
@@ -9,7 +10,7 @@ function main
 	 shl rax 8
 	 add rax 0x52
 	 push rax
-	 
+
 	 mov rax 0x4F
 	 shl rax 8
 	 add rax 0x57
@@ -26,10 +27,22 @@ function main
 	 shl rax 8
 	 add rax 0x48
 	 push rax
-	 
+
+	 // Slice header on stack: 16 more bytes (ptr=rsp+16, len=11).
+	 // After two pushes above, rsp points at the 16 bytes of string data.
+	 // Push len first (will end up at higher address), then ptr.
+	 push 11
+	 // ptr = rsp+8 right now (just below the two string qwords above)
+	 // We need to push (rsp+8). Compute it.
+	 lea rax [rsp+8]
+	 push rax
+
 	 mov rdi rsp
 	 call string.puts
 
+	 // Clean stack: 2 (header) + 2 (string) = 4 pops
+	 pop rdi
+	 pop rdi
 	 pop rdi
 	 pop rdi
 

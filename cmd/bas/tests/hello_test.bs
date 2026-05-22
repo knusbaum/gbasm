@@ -3,40 +3,44 @@ package main
 function print
 	prologue
 	sub rsp 200
-//0x1000
-//
 
-
-	// Hello world ascii
-	mov [rsp+12] 0x0
-	mov [rsp+11] 0x0a
+	// "hello world\n" in stack bytes [rsp..rsp+12)
+	mov [rsp]    0x68
+	mov [rsp+1]  0x65
+	mov [rsp+2]  0x6c
+	mov [rsp+3]  0x6c
+	mov [rsp+4]  0x6f
+	mov [rsp+5]  0x20
+	mov [rsp+6]  0x77
+	mov [rsp+7]  0x6f
+	mov [rsp+8]  0x72
+	mov [rsp+9]  0x6c
 	mov [rsp+10] 0x64
-	mov [rsp+9] 0x6c 
-	mov [rsp+8] 0x72  
-	mov [rsp+7] 0x6f
-	mov [rsp+6] 0x77 
-	mov [rsp+5] 0x20
-	mov [rsp+4] 0x6f
-	mov [rsp+3] 0x6c
-	mov [rsp+2] 0x6c  
-	mov [rsp+1] 0x65
-	mov [rsp] 0x68
+	mov [rsp+11] 0x0a
 
-	// Write hello world
-	mov rdi rsp
+	// Slice header at [rsp+16]: ptr=rsp, len=12
+	mov qword[rsp+16] rsp
+	mov qword[rsp+24] 12
+	lea rdi [rsp+16]
 	call string.puts
 
+	// Print 1000 via itoa into [rsp+40], then a slice over it.
 	mov rdi 1000
-	mov rsi rsp
+	lea rsi [rsp+40]
 	call string.itoa
-	// rsp now contains "1000\x0..."
-	
-	mov rdi rsp
+	// itoa writes a null-terminated decimal. Use strlen to get length.
+	lea rdi [rsp+40]
+	call string.strlen
+	// rax = length. Build slice header at [rsp+64].
+	lea rcx [rsp+40]
+	mov qword[rsp+64] rcx
+	mov [rsp+72] rax
+	lea rdi [rsp+64]
 	call string.puts
 
-	// newline and terminating zero
-	lea rdi [rsp+11]
-	call string.puts
+	// Trailing newline.
+	mov rdi 0x0A
+	call string.putc
 
 	epilogue
 	ret

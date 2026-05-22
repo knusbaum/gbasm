@@ -4,63 +4,75 @@ function main
 	// Do the function prologue.
 	prologue
 
-	// HELLO WORLD\n\0
-	bytes hello 13
-	mov [hello+0] 0x48
-	mov [hello+1] 0x45
-	mov [hello+2] 0x4C
-	mov [hello+3] 0x4C
-	mov [hello+4] 0x4F
-	mov [hello+5] 0x20
-	mov [hello+6] 0x57
-	mov [hello+7] 0x4F
-	mov [hello+8] 0x52
-	mov [hello+9] 0x4C
+	// HELLO WORLD\n  (12 bytes, no null terminator needed for slice form)
+	bytes hello 12
+	mov [hello+0]  0x48
+	mov [hello+1]  0x45
+	mov [hello+2]  0x4C
+	mov [hello+3]  0x4C
+	mov [hello+4]  0x4F
+	mov [hello+5]  0x20
+	mov [hello+6]  0x57
+	mov [hello+7]  0x4F
+	mov [hello+8]  0x52
+	mov [hello+9]  0x4C
 	mov [hello+10] 0x44
 	mov [hello+11] 0x0A
-	mov [hello+12] 0x00
+
+	// Slice header: ptr at [hdr], len at [hdr+8]
+	bytes hdr 16
+	mov qword[hdr] hello
+	mov qword[hdr+8] 12
 
 	acquire rdi
-	mov rdi hello
+	mov rdi hdr
 	call string.puts
 	release rdi
 	forget hello
+	forget hdr
 
-	// GOODBYE WORLD\n\0
-	bytes goodbye 15
+	// GOODBYE WORLD\n  (14 bytes)
+	bytes goodbye 14
 	local ptr 64
 
 	mov ptr goodbye
-	mov [ptr+0] 0x47
-	mov [ptr+1] 0x4F
-	mov [ptr+2] 0x4F
-	mov [ptr+3] 0x44
-	mov [ptr+4] 0x42
-	mov [ptr+5] 0x59
-	mov [ptr+6] 0x45
-	mov [ptr+7] 0x20
-	mov [ptr+8] 0x57
-	mov [ptr+9] 0x4F
+	mov [ptr+0]  0x47
+	mov [ptr+1]  0x4F
+	mov [ptr+2]  0x4F
+	mov [ptr+3]  0x44
+	mov [ptr+4]  0x42
+	mov [ptr+5]  0x59
+	mov [ptr+6]  0x45
+	mov [ptr+7]  0x20
+	mov [ptr+8]  0x57
+	mov [ptr+9]  0x4F
 	mov [ptr+10] 0x52
 	mov [ptr+11] 0x4C
 	mov [ptr+12] 0x44
 	mov [ptr+13] 0x0A
-	mov [ptr+14] 0x00
+
+	bytes hdr2 16
+	mov qword[hdr2] goodbye
+	mov qword[hdr2+8] 14
 
 	acquire rdi
-	mov rdi goodbye
+	mov rdi hdr2
 	call string.puts
 	release rdi
 	forget goodbye
+	forget hdr2
 
-	bytes helloagain 13
+	bytes helloagain 12
 	acquire rdi
 	mov rdi helloagain
 	call fillWithHelloWorld
-	mov rdi helloagain
-	call string.puts	
+	bytes hdr3 16
+	mov qword[hdr3] helloagain
+	mov qword[hdr3+8] 12
+	mov rdi hdr3
+	call string.puts
 	release rdi
-	
+
 	epilogue
 	xor rax rax
 	ret
@@ -68,16 +80,16 @@ function main
 function fillWithHelloWorld
 	argi ptr 0
 
-	mov [ptr+0] 0x48
-	mov [ptr+1] 0x45
-	mov [ptr+2] 0x4C
-	mov [ptr+3] 0x4C
-	mov [ptr+4] 0x4F
-	mov [ptr+5] 0x20
-	mov [ptr+6] 0x57
-	mov [ptr+7] 0x4F
-	mov [ptr+8] 0x52
-	mov [ptr+9] 0x4C
+	mov [ptr+0]  0x48
+	mov [ptr+1]  0x45
+	mov [ptr+2]  0x4C
+	mov [ptr+3]  0x4C
+	mov [ptr+4]  0x4F
+	mov [ptr+5]  0x20
+	mov [ptr+6]  0x57
+	mov [ptr+7]  0x4F
+	mov [ptr+8]  0x52
+	mov [ptr+9]  0x4C
 	mov [ptr+10] 0x44
 	mov [ptr+11] 0x0A
-	mov [ptr+12] 0x00	
+	ret

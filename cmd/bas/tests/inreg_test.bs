@@ -1,6 +1,5 @@
 package main
 
-var newline string "\n\0"
 
 // Tests the inreg directive, which pins a named local variable to a specific register.
 // After inreg, the variable's value is in that register and can be read from it directly.
@@ -17,14 +16,14 @@ function main
 	// Read r13 directly (bypassing the named variable) to verify the value is there.
 	mov rdi r13
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	// The named variable x is still accessible and still backed by r13.
 	mov rdi x
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	forget x
 	epilogue

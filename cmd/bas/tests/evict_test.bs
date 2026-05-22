@@ -1,6 +1,5 @@
 package main
 
-var newline string "\n\0"
 
 // Tests the evict directive, which spills variables from registers to memory
 // while keeping them accessible (they reload on next use).
@@ -21,8 +20,8 @@ function main
 	// x is now in memory. Using it should reload it transparently.
 	mov rdi x
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	// --- evict with a specific register argument ---
 	local y 64
@@ -37,8 +36,8 @@ function main
 	// y should still be accessible (reloaded from memory on next use).
 	mov rdi y
 	call string.puti
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	forgetall
 	epilogue

@@ -1,7 +1,19 @@
 package main
 
-var fibprint string "Fib was: \0"
-var newline string "\n\0"
+var fibprint string "Fib was: "
+
+function printfibprint
+	prologue
+	// Build a slice header on the stack pointing at fibprint with len=9.
+	sub rsp 16
+	lea rax fibprint
+	mov [rsp]   rax
+	mov qword[rsp+8] 9
+	mov rdi rsp
+	call string.puts
+	add rsp 16
+	epilogue
+	ret
 
 function main
 	prologue
@@ -10,28 +22,26 @@ function main
  	call fib
 	push rax
 
-	lea rdi fibprint
-	call string.puts
+	call printfibprint
 
 	pop rdi
 	call string.puti
 
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
 	// Second Fib call
  	mov rdi 20
  	call newfib
 	push rax
 
-	lea rdi fibprint
-	call string.puts
+	call printfibprint
 
 	pop rdi
 	call string.puti
 
-	lea rdi newline
-	call string.puts
+	mov rdi 0x0A
+	call string.putc
 
  	mov rax 0
 	epilogue

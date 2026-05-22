@@ -1,115 +1,204 @@
 # boson.mmk — mmk types for building Boson packages and binaries.
 #
-# Include this from your project's mmkfile, then declare your packages:
+# Usage:
 #
 #   include $BOSON_HOME/boson.mmk
+#   bos_exe hello source=src
 #
-#   bos_pkg string srcdir=runtime
-#   bos_pkg main   srcdir=src : string
+# That's it. The body discovers imports via `bosc -listimports`, locates each
+# package's source via BOSONPATH, and builds a target/<import-path>.bo for it
+# using the bos_pkg pattern rule. Sources for the executable's own package
+# come from $source.
 #
-#   boson_exe myapp : main string
+# Configuration (env vars):
+#   BOSON_HOME      root of the boson toolchain (defaults to dir of bosc)
+#   BOSC, BAS, BLD  paths to toolchain binaries
+#   BOSONPATH       colon-separated package search path
+#                   (default: $BOSON_HOME/runtime:.)
 #
-# A bos_pkg target produces <target>.bo by compiling all .bos files in
-# srcdir with bosc, then assembling all .bs files (including those bosc
-# emits) with bas. Its deps must list every package it imports.
-#
-# A boson_exe target produces <target> (an ELF executable) by linking
-# its dep .bo files plus the runtime init code with bld.
-#
-# Required env vars:
-#   BOSC     path to bosc binary
-#   BAS      path to bas binary
-#   BLD      path to bld binary
-#   BOSON_RUNTIME  path to dir containing init_linux.bs (and any other
-#                  runtime .bs files that need to be assembled into binaries)
+# An import "foo/bar" in source code is resolved by walking BOSONPATH entries
+# and selecting the first directory containing foo/bar/. That directory holds
+# .bos and/or .bs files. The package's compiled artifact lives at
+# target/foo/bar.bo.
 
 BOSC=${BOSC:-bosc}
 BAS=${BAS:-bas}
 BLD=${BLD:-bld}
-BOSON_RUNTIME=${BOSON_RUNTIME:-$(dirname $(which $BOSC))}
+BOSON_HOME=${BOSON_HOME:-$(dirname $(which $BOSC))}
+BOSONPATH=${BOSONPATH:-$BOSON_HOME/runtime:.}
 
-# A Boson package. The 'srcdir' option points at the directory containing
-# the .bos source files (defaults to a directory named after the target).
-# Deps are other bos_pkg targets — the packages this one imports.
-deftype bos_pkg {
-    stat -c %Y "$target.bo" 2>/dev/null || return 1
+# ---- Helpers ---------------------------------------------------------------
+
+# resolve_pkg <import-path>: prints the source directory for the package, by
+# walking BOSONPATH and returning the first entry containing <import-path>/.
+# Returns nonzero (with no output) if not found.
+resolve_pkg() {
+    local imp=$1
+    local d
+    local IFS=":"
+    for d in $BOSONPATH; do
+        if [ -d "$d/$imp" ]; then
+            echo "$d/$imp"
+            return 0
+        fi
+    done
+    return 1
 }
 
-defbody bos_pkg {
-    srcdir=${srcdir:-$target}
-    # Build the importcfg from declared package deps. A dep is treated as a
-    # package iff it has no file-extension suffix; source-file deps (used
-    # only for mtime tracking) are skipped.
-    cfg=$(mktemp)
-    trap 'rm -f $cfg' EXIT
-    for d in "${dep[@]}"; do
+# pkg_sources <srcdir>: print all .bos and .bs files in the package's source
+# directory, sorted for reproducibility.
+pkg_sources() {
+    local d=$1
+    ls "$d"/*.bos "$d"/*.bs 2>/dev/null | sort
+}
+
+# pkg_import_targets <srcdir>: print target/<path>.bo for each import declared
+# by .bos files in srcdir.
+pkg_import_targets() {
+    local d=$1
+    local bos
+    bos=$(ls "$d"/*.bos 2>/dev/null)
+    [ -z "$bos" ] && return 0
+    $BOSC -listimports $bos | sed 's|^|target/|; s|$|.bo|'
+}
+
+# write_importcfg <out-file> <dep>...: writes pkg=path lines for each dep that
+# matches the target/<path>.bo pattern.
+# pkg_resolve_and_deps <import-path>: resolve to srcdir via BOSONPATH, then
+# print source files and import-targets. Fails if the package is not found.
+# bos_exe_deps <source-dir>: print the deps for a bos_exe target — local
+# source files, target/<path>.bo for each import, plus the runtime init .bo.
+bos_exe_deps() {
+    local d=$1
+    pkg_sources "$d"
+    pkg_import_targets "$d"
+    echo "target/_init.bo"
+}
+
+pkg_resolve_and_deps() {
+    local imp=$1
+    local srcdir
+    srcdir=$(resolve_pkg "$imp")
+    if [ -z "$srcdir" ]; then
+        echo "boson.mmk: cannot find package '$imp' in BOSONPATH=$BOSONPATH" >&2
+        exit 1
+    fi
+    pkg_sources "$srcdir"
+    pkg_import_targets "$srcdir"
+}
+
+write_importcfg() {
+    local out=$1; shift
+    true > "$out"
+    local d pkg
+    for d in "$@"; do
         case "$d" in
-            *.bos|*.bs) ;;        # source files — skip
-            *) echo "$d=$d.bo" >> $cfg ;;
+            target/*.bo)
+                pkg="${d#target/}"
+                pkg="${pkg%.bo}"
+                echo "$pkg=$d" >> "$out"
+                ;;
         esac
     done
-    # Find all .bos sources in the package's srcdir.
-    sources=("$srcdir"/*.bos)
-    # bosc emits a .bs file per source. Use a per-package work directory.
-    workdir=$target.work
-    mkdir -p $workdir
-    asm_files=()
-    for src in "${sources[@]}"; do
-        bs=$workdir/$(basename "$src" .bos).bs
+}
+
+# build_package <srcdir> <target.bo> <dep>...: compile .bos sources in srcdir,
+# assemble all .bos and .bs files (after compilation) into target.bo.
+# The deps are used to construct the importcfg.
+build_package() {
+    local srcdir=$1 outbo=$2; shift 2
+    local workdir="${outbo%.bo}.work"
+    mkdir -p "$(dirname $outbo)" "$workdir"
+
+    local cfg
+    cfg=$(mktemp)
+    write_importcfg "$cfg" "$@"
+
+    local asm_files=()
+    local src bs
+    for src in "$srcdir"/*.bos; do
+        [ -e "$src" ] || continue
+        bs="$workdir/$(basename $src .bos).bs"
         $BOSC -importcfg=$cfg -o $bs "$src"
         asm_files+=("$bs")
     done
-    # Assemble all .bs into a single .bo for the package.
-    $BAS -o "$target.bo" "${asm_files[@]}"
+    for src in "$srcdir"/*.bs; do
+        [ -e "$src" ] || continue
+        asm_files+=("$src")
+    done
+
+    $BAS -o "$outbo" "${asm_files[@]}"
+
+    rm -f $cfg
 }
 
-defbody bos_pkg clean {
-    rm -f "$target.bo"
-    rm -rf "$target.work"
-}
+# ---- bos_pkg ---------------------------------------------------------------
+# Pattern rule for building target/<import-path>.bo. The import path is the
+# pattern capture group; the source directory is found via BOSONPATH.
 
-# A hand-written assembly-only package. Used for runtime libraries written
-# directly in .bs (no Boson source). All .bs files in srcdir are assembled
-# into a single <target>.bo. The .bs files' 'package' declarations must
-# match the target name.
-deftype bos_asmpkg {
-    stat -c %Y "$target.bo" 2>/dev/null || return 1
-}
-
-defbody bos_asmpkg {
-    srcdir=${srcdir:-$target}
-    sources=("$srcdir"/*.bs)
-    $BAS -o "$target.bo" "${sources[@]}"
-}
-
-defbody bos_asmpkg clean {
-    rm -f "$target.bo"
-}
-
-# A Boson executable. Deps must list every package that contributes
-# .bo files to the link. The runtime init code is added automatically.
-deftype boson_exe {
+deftype bos_pkg {
     stat -c %Y "$target" 2>/dev/null || return 1
 }
 
-defbody boson_exe {
-    # The runtime init code provides the ELF entry symbol 'start'.
-    # Assemble it once per build into a known location.
-    initbo=$BOSON_RUNTIME/init_linux.bo
-    $BAS -o "$initbo" $BOSON_RUNTIME/init_linux.bs
-    # Link all package .bo files plus the runtime init. Same convention as
-    # bos_pkg: package deps have no extension; source-file deps are skipped.
-    bo_files=("$initbo")
+bos_pkg 'target/(.*)\.bo' : $(pkg_resolve_and_deps "$1") {
+    imp="${target#target/}"
+    imp="${imp%.bo}"
+    srcdir=$(resolve_pkg "$imp")
+    build_package "$srcdir" "$target" "${dep[@]}"
+}
+
+defbody bos_pkg clean {
+    rm -f "$target"
+    rm -rf "${target%.bo}.work"
+}
+
+# ---- bos_exe ---------------------------------------------------------------
+# A Boson executable. The user names a source directory; the body discovers
+# imports, depends on each as target/<path>.bo, and links the whole thing
+# together with the runtime init.
+
+deftype bos_exe {
+    stat -c %Y "$target" 2>/dev/null || return 1
+}
+
+defbody bos_exe : $(bos_exe_deps "$source") {
+    # Build the executable's own package into a local .bo (not in target/,
+    # since it isn't importable by name).
+    workdir="$target.work"
+    mkdir -p "$workdir"
+
+    cfg=$(mktemp)
+    trap 'rm -f $cfg' EXIT
+    write_importcfg "$cfg" "${dep[@]}"
+
+    asm_files=()
+    for src in "$source"/*.bos; do
+        [ -e "$src" ] || continue
+        bs="$workdir/$(basename $src .bos).bs"
+        $BOSC -importcfg=$cfg -o $bs "$src"
+        asm_files+=("$bs")
+    done
+    for src in "$source"/*.bs; do
+        [ -e "$src" ] || continue
+        asm_files+=("$src")
+    done
+
+    mainbo="$workdir/main.bo"
+    $BAS -o "$mainbo" "${asm_files[@]}"
+
+    # Collect all package .bo files from the deps.
+    link_files=("$mainbo")
     for d in "${dep[@]}"; do
         case "$d" in
-            *.bos|*.bs) ;;
-            *) bo_files+=("$d.bo") ;;
+            target/*.bo) link_files+=("$d") ;;
         esac
     done
-    $BLD -o "$target" "${bo_files[@]}"
+
+    $BLD -o "$target" "${link_files[@]}"
     chmod +x "$target"
 }
 
-defbody boson_exe clean {
+defbody bos_exe clean {
     rm -f "$target"
+    rm -rf "$target.work"
 }
