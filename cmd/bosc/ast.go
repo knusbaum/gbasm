@@ -478,10 +478,18 @@ func parseFuncType(ftype string) (FuncDecl, error) {
 // Import loads a precompiled .bo file at path and registers its exported
 // functions under the given package name. Cross-package calls are resolved
 // against c.imports[pkgName].
-func (c *Context) Import(pkgName, path string) error {
+// Import loads a precompiled .bo file at path and registers its exported
+// functions under the .bo's own pkgname. The importKey is the string the
+// source code used in its `import "..."` declaration; it's only used here
+// for diagnostics — what makes a package callable in source is the pkgname
+// embedded in the .bo file.
+func (c *Context) Import(importKey, path string) error {
 	o, err := gbasm.ReadOFile(path)
 	if err != nil {
 		return err
+	}
+	if o.Pkgname == "" {
+		return fmt.Errorf("import %q: .bo at %s has no package name", importKey, path)
 	}
 	for _, fn := range o.Funcs {
 		if fn.Type != "" {
@@ -490,7 +498,7 @@ func (c *Context) Import(pkgName, path string) error {
 				return err
 			}
 			t.Name = fn.Name
-			c.DefineImportedFunc(pkgName, fn.Name, &t)
+			c.DefineImportedFunc(o.Pkgname, fn.Name, &t)
 		}
 	}
 	return nil
