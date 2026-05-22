@@ -35,6 +35,11 @@ function lenn
 	mov rax [rdi+8]
 	ret
 
+function lenbb
+	type fn(byte[][]) i64
+	mov rax [rdi+8]
+	ret
+
 // SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 // call number: 0
 function read

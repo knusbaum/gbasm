@@ -4,8 +4,81 @@ var ioob string "Fatal: Index Out Of Bounds: index[\0"
 var ioob2 string "] for object with length: \0"
 var ioob3 string "\n\0"
 
+// Linux process entry. On entry:
+//   [rsp+0]            = argc
+//   [rsp+8..]          = argv[0..argc-1]    (each a NUL-terminated *byte)
+//   [rsp+8+8*argc]     = NULL (argv terminator)
+//   [rsp+...]          = envp..., auxv..., strings
+//
+// We build a Boson-style byte[][] from argv: an outer 16-byte slice header
+// {data, len} where data points to a tightly-packed array of argc 16-byte
+// inner slice headers {ptr, len}. Both the inner array and the outer
+// header are placed on _start's stack; since _start never returns (it
+// finishes with the exit syscall) these allocations live for the whole
+// process lifetime.
+//
+// rdi is set to point at the outer header before we call main.main, so a
+// Boson main declared as `fn main(args byte[][])` receives argv in args.
+// A main declared as `fn main()` simply ignores rdi.
 function start
+	// Preserve the original argc/argv block address in a callee-saved reg.
+	mov r12 rsp
+	// rbx = argc
+	mov rbx [r12]
+
+	// Inner-array size = argc * 16, computed by successive doubling
+	// to avoid relying on shift-by-immediate encodings.
+	mov r9 rbx
+	add r9 r9
+	add r9 r9
+	add r9 r9
+	add r9 r9
+
+	// Allocate inner array; r13 = base.
+	sub rsp r9
+	mov r13 rsp
+
+	// Allocate outer slice header; r14 = address.
+	sub rsp 16
+	mov r14 rsp
+
+	// Walking pointers across argv and into the inner array.
+	// r15 = &argv[0]; rbp = inner-array write cursor.
+	lea r15 [r12+8]
+	mov rbp r13
+
+label argv_loop
+	// rdi = argv[i]; bail when we hit the NULL terminator.
+	mov rdi [r15]
+	test rdi rdi
+	jz argv_done
+
+	// strlen(argv[i]) -> rax. strlen preserves r12..r15 and rbp via its
+	// prologue/epilogue, so our walking state survives the call.
+	call string.strlen
+
+	// inner[i].ptr = argv[i], inner[i].len = strlen result.
+	mov rdx [r15]
+	mov [rbp] rdx
+	mov [rbp+8] rax
+
+	add r15 8
+	add rbp 16
+	jmp argv_loop
+
+label argv_done
+
+	// Outer slice header = { inner_array_base, argc }.
+	mov [r14] r13
+	mov [r14+8] rbx
+
+	// Pass &outer_header in rdi to main.main, then exit with its return.
+	// Zero rax so a hand-written main that just `ret`s exits with 0,
+	// rather than inheriting strlen's residual value.
+	mov rdi r14
+	mov rax 0
 	call main.main
+
 	mov rdi rax
 	mov rax 0x3C
 	syscall
@@ -14,8 +87,8 @@ function index_oob
 	prologue
 	push rsi
 	push rdi
-	
-	
+
+
 	lea rdi ioob
 	call string.puts
 

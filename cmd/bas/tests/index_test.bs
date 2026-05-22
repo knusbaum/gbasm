@@ -3,10 +3,10 @@ package main
 	
 function main
 	sub rsp 32
-	mov [rsp]    1
-	mov [rsp+8]  2
-	mov [rsp+16] 3
-	mov [rsp+24] 4
+	mov qword[rsp]    1
+	mov qword[rsp+8]  2
+	mov qword[rsp+16] 3
+	mov qword[rsp+24] 4
 
 	// loop with registers
 	// init

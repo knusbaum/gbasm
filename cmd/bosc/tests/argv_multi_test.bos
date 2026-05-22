@@ -1,0 +1,19 @@
+package main
+
+import "string"
+
+// Exercise a multi-arg main. The accompanying argv_multi_test.bos.args
+// file causes the test runner to invoke this with the listed words,
+// so args is { argv[0], "alpha", "beta", "gamma" } at runtime.
+fn main(args byte[][]) {
+	var n i64 = string.lenbb(args)
+	string.puti(n)
+	string.putc('\n')
+
+	// Print every arg after argv[0] (the program path) on its own line.
+	var i i64
+	for (i = 1; i < n; i = i + 1) {
+		string.puts(args[i])
+		string.putc('\n')
+	}
+}

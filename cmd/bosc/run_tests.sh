@@ -74,7 +74,14 @@ for t in `ls tests/*_test.bos`; do
 		fail=$(echo -e "$fail\n${t} FAIL")
 		continue
     fi
-    ${t}.o > ${t}.stdout
+    # If the test has a matching .args file, pass its contents as
+    # process arguments. Otherwise invoke with no arguments.
+    if [[ -f "${t}.args" ]]; then
+        # shellcheck disable=SC2046 — intentional word splitting on argv tokens.
+        ${t}.o $(cat ${t}.args) > ${t}.stdout
+    else
+        ${t}.o > ${t}.stdout
+    fi
     ecode="$?"
     if [[ "$ecode" != "0" ]]; then
 		echo $t exited with $ecode

@@ -1,0 +1,19 @@
+package main
+
+import "string"
+
+// Exercise main(args byte[][]). The test runner invokes the executable
+// directly with no extra args, so argc == 1 and args[0] is the kernel-
+// supplied program path. We can't compare against the path itself (it
+// varies by invocation cwd), but we can confirm args was constructed
+// and indexable by checking the count and reading args[0].
+fn main(args byte[][]) {
+	if (string.lenbb(args) == 1) {
+		string.puts("argc=1\n")
+	}
+
+	var first byte[] = args[0]
+	if (string.lenb(first) > 0) {
+		string.puts("argv0 non-empty\n")
+	}
+}
