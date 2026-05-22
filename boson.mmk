@@ -24,8 +24,10 @@
 BOSC=${BOSC:-bosc}
 BAS=${BAS:-bas}
 BLD=${BLD:-bld}
+BDOC=${BDOC:-bdoc}
 BOSON_HOME=${BOSON_HOME:-$(dirname $(which $BOSC))}
 BOSONPATH=${BOSONPATH:-$BOSON_HOME/runtime:.}
+BDOC_ADDR=${BDOC_ADDR:-:8686}
 
 # ---- Helpers ---------------------------------------------------------------
 
@@ -201,4 +203,16 @@ defbody bos_exe : $(bos_exe_deps "$source") {
 defbody bos_exe clean {
     rm -f "$target"
     rm -rf "$target.work"
+}
+
+# ---- docs ------------------------------------------------------------------
+# `mmk docs` launches bdoc with the project's BOSONPATH so the documentation
+# server can see every package on the search path — not only the ones this
+# project's executables happen to import.
+
+## Run the bdoc documentation server against the project's BOSONPATH.
+[docs all] : {
+    echo "BOSONPATH=$BOSONPATH"
+    echo "Serving on http://localhost${BDOC_ADDR}/"
+    BOSONPATH="$BOSONPATH" $BDOC -addr "$BDOC_ADDR"
 }
