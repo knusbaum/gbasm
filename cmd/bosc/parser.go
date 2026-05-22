@@ -329,26 +329,31 @@ func (p *Parser) parseTypeName() *Node {
 	typename := c.sval
 	p.advance()
 
-	if p.current().t == tok_lsquare {
+	// Collect a chain of [...] / [N] wrappers. The first wrapper (innermost) is
+	// the one that hugs the base type; successive ones wrap. The compiler
+	// applies them in args-order to build a nested Element chain.
+	var wrappers []*Node
+	firstWrapperPos := c.p
+	for p.current().t == tok_lsquare {
 		p.advance()
 		if p.current().t == tok_number {
 			arrsize := p.current().nval
 			p.advance()
 			p.expect(tok_rsquare)
-			if mutmask&(1<<indirection) != 0 || ownedmask&(1<<indirection) != 0 {
-				panic(&interpreterError{"'mut'/'owned' is only valid on slice types, not fixed-size arrays", c.p})
-			}
-			return &Node{
-				t:         n_typename,
-				p:         c.p,
-				sval:      typename,
-				ival:      indirection,
-				mutmask:   mutmask,
-				ownedmask: ownedmask,
-				args:      []*Node{{t: n_index, p: c.p, ival: arrsize}},
-			}
+			wrappers = append(wrappers, &Node{t: n_index, p: c.p, ival: arrsize})
 		} else if p.current().t == tok_rsquare {
 			p.advance()
+			wrappers = append(wrappers, &Node{t: n_slice, p: c.p})
+		} else {
+			panic(&interpreterError{fmt.Sprintf("Expected a number or ']', but found: %s\n", p.current().t), c.p})
+		}
+	}
+
+	if len(wrappers) > 0 {
+		// Outermost wrapper determines slice-vs-array semantics for the
+		// mut/owned check on the level just above the base type.
+		outer := wrappers[len(wrappers)-1]
+		if outer.t == n_slice {
 			// mut/owned before a slice base type apply to the element level (bit+1),
 			// analogous to *mut T where mut is after the '*'.
 			if mutmask&(1<<indirection) != 0 {
@@ -359,17 +364,20 @@ func (p *Parser) parseTypeName() *Node {
 				ownedmask &^= 1 << indirection
 				ownedmask |= 1 << (indirection + 1)
 			}
-			return &Node{
-				t:         n_typename,
-				p:         c.p,
-				sval:      typename,
-				ival:      indirection,
-				mutmask:   mutmask,
-				ownedmask: ownedmask,
-				args:      []*Node{{t: n_slice, p: c.p}},
+		} else { // outermost is a fixed array
+			if mutmask&(1<<indirection) != 0 || ownedmask&(1<<indirection) != 0 {
+				panic(&interpreterError{"'mut'/'owned' is only valid on slice types, not fixed-size arrays", firstWrapperPos})
 			}
 		}
-		panic(&interpreterError{fmt.Sprintf("Expected a number or ']', but found: %s\n", p.current().t), c.p})
+		return &Node{
+			t:         n_typename,
+			p:         c.p,
+			sval:      typename,
+			ival:      indirection,
+			mutmask:   mutmask,
+			ownedmask: ownedmask,
+			args:      wrappers,
+		}
 	}
 
 	// 'mut' on a plain non-pointer, non-slice type is meaningless.

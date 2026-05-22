@@ -525,12 +525,18 @@ func (c *Context) WriteStrings(of io.Writer) {
 
 type ASTType struct {
 	Name        string
-	Indirection int    // pointer level, i.e. ***int -> Indirection: 3
-	ArraySize   int    // zero for non-arrays.
+	Indirection int  // pointer level, i.e. ***int -> Indirection: 3
+	ArraySize   int  // zero for non-arrays.
 	Slice       bool
-	Signed      bool   // true for signed integer types (i8, i16, i32, i64)
-	MutMask     uint64 // bit N = write-through allowed at level N (0 = outermost pointer/slice)
-	OwnedMask   uint64 // bit N = owned obligation at level N (same convention as MutMask)
+	Signed      bool // true for signed integer types (i8, i16, i32, i64)
+	// Element describes the contained type when Slice is true or ArraySize > 0.
+	// nil for non-slice/non-array types. When set, it overrides the size and
+	// "peeling" semantics: indexing yields *Element, and the element width
+	// used by codegen is Element.Size(). Element may itself be a slice/array,
+	// enabling T[][] and friends.
+	Element   *ASTType
+	MutMask   uint64 // bit N = write-through allowed at level N (0 = outermost pointer/slice)
+	OwnedMask uint64 // bit N = owned obligation at level N (same convention as MutMask)
 }
 
 const PTR_SIZE = 8
@@ -543,42 +549,47 @@ func (t *ASTType) Size(c *Context) int {
 	if t.Indirection > 0 {
 		return PTR_SIZE
 	}
-	var baseSize int
-	// builtin types
-	switch t.Name {
-	case "<intlit>":
-		panic("Size() called on <intlit> type — this is a compiler bug")
-	case "i64", "u64":
-		baseSize = 8
-	case "i32", "u32":
-		baseSize = 4
-	case "i16", "u16":
-		baseSize = 2
-	case "i8", "u8":
-		baseSize = 1
-	case "byte":
-		baseSize = 1
-	case "bool":
-		baseSize = 1
-	default:
-		// Check user-defined type aliases.
-		if underlying, ok := c.TypeAliasFor(t.Name); ok {
-			return underlying.Size(c)
+	// Compute the element width — for slices/arrays this is the per-element
+	// size; for plain types this is the type's own size.
+	var elemSize int
+	if t.Element != nil {
+		elemSize = t.Element.Size(c)
+	} else {
+		switch t.Name {
+		case "<intlit>":
+			panic("Size() called on <intlit> type — this is a compiler bug")
+		case "i64", "u64":
+			elemSize = 8
+		case "i32", "u32":
+			elemSize = 4
+		case "i16", "u16":
+			elemSize = 2
+		case "i8", "u8":
+			elemSize = 1
+		case "byte":
+			elemSize = 1
+		case "bool":
+			elemSize = 1
+		default:
+			// Check user-defined type aliases.
+			if underlying, ok := c.TypeAliasFor(t.Name); ok {
+				return underlying.Size(c)
+			}
+			d, ok := c.StructDeclForName(t.Name)
+			if !ok {
+				panic(fmt.Sprintf("No such type %v. TODO: Errors", t.Name))
+			}
+			elemSize = d.Size(c)
 		}
-		d, ok := c.StructDeclForName(t.Name)
-		if !ok {
-			panic(fmt.Sprintf("No such type %v. TODO: Errors", t.Name))
-		}
-		baseSize = d.Size(c)
 	}
 	if t.ArraySize > 0 {
-		return baseSize * t.ArraySize
+		return elemSize * t.ArraySize
 	}
 	if t.Slice {
-		// slice is struct{ptr, size}
+		// slice header is struct{ptr, size} = 16 bytes regardless of element type
 		return 16
 	}
-	return baseSize
+	return elemSize
 }
 
 func (t ASTType) Same(t2 ASTType) bool {
@@ -586,12 +597,22 @@ func (t ASTType) Same(t2 ASTType) bool {
 	// different names (i64 vs u64, i8 vs u8, etc.), so Name alone distinguishes
 	// them. Excluding Signed avoids false mismatches when aliases are created
 	// without uniform Signed propagation through the AST construction phase.
-	return t.Name == t2.Name &&
-		t.Indirection == t2.Indirection &&
-		t.ArraySize == t2.ArraySize &&
-		t.Slice == t2.Slice &&
-		t.MutMask == t2.MutMask &&
-		t.OwnedMask == t2.OwnedMask
+	if t.Name != t2.Name ||
+		t.Indirection != t2.Indirection ||
+		t.ArraySize != t2.ArraySize ||
+		t.Slice != t2.Slice ||
+		t.MutMask != t2.MutMask ||
+		t.OwnedMask != t2.OwnedMask {
+		return false
+	}
+	// Compare Element recursively when present.
+	if (t.Element == nil) != (t2.Element == nil) {
+		return false
+	}
+	if t.Element != nil && !t.Element.Same(*t2.Element) {
+		return false
+	}
+	return true
 }
 
 // HasOwned reports whether the type carries any ownership obligation.
@@ -633,6 +654,18 @@ func (dst ASTType) OwnedCompatible(src ASTType) bool {
 }
 
 func (t ASTType) String() string {
+	// When Element is set, we have a nested slice/array (e.g. byte[][]).
+	// Render the element followed by our own []/[N] marker.
+	if t.Element != nil {
+		s := t.Element.String()
+		if t.ArraySize > 0 {
+			return fmt.Sprintf("%s[%d]", s, t.ArraySize)
+		}
+		if t.Slice {
+			return s + "[]"
+		}
+		return s
+	}
 	var sb strings.Builder
 	// Bit 0 = position 0 (before any '*'): owned qualifier on the outermost pointer/value.
 	if t.OwnedMask&1 != 0 {
@@ -668,29 +701,67 @@ func (t ASTType) String() string {
 }
 
 func mkTypename(n *Node) ASTType {
-	var t ASTType
 	if n.t != n_typename {
 		ParseErrorF(n, "Expected type name but found %v", n.t)
 	}
-	t.Name = n.sval
-	t.Indirection = int(n.ival)
-	t.MutMask = n.mutmask
-	t.OwnedMask = n.ownedmask
-	switch t.Name {
+	// Start with the bare base type. n.args lists slice/array wrappers in
+	// innermost-first order; each successive wrapper makes the current type
+	// the *element* of a new slice/array layer.
+	base := ASTType{
+		Name:        n.sval,
+		Indirection: int(n.ival),
+		MutMask:     n.mutmask,
+		OwnedMask:   n.ownedmask,
+	}
+	switch base.Name {
 	case "i8", "i16", "i32", "i64":
-		t.Signed = true
+		base.Signed = true
 	}
-	if len(n.args) > 0 {
-		array := n.args[0]
-		if array.t == n_index {
-			t.ArraySize = int(array.ival)
-		} else if array.t == n_slice {
-			t.Slice = true
-		} else {
-			ParseErrorF(array, "Expected an array specifier, but found %v", array.t)
+
+	if len(n.args) == 0 {
+		return base
+	}
+
+	// Apply wrappers from innermost to outermost.
+	// Innermost wrapper hugs the base type directly (no Element pointer needed
+	// for the legacy flat representation; preserves the old shape for the
+	// single-wrapper case so existing code paths still see Element == nil).
+	cur := base
+	for i, wrap := range n.args {
+		if i == 0 {
+			// First wrapper: apply directly to cur (the base type).
+			switch wrap.t {
+			case n_index:
+				cur.ArraySize = int(wrap.ival)
+			case n_slice:
+				cur.Slice = true
+			default:
+				ParseErrorF(wrap, "Expected an array specifier, but found %v", wrap.t)
+			}
+			continue
 		}
+		// Subsequent wrappers: cur becomes the element of a new outer type.
+		// The outer type inherits the base type's Name/Indirection/Signed for
+		// compatibility with code that inspects those fields, but its Element
+		// is the truth of what each element actually is.
+		inner := cur
+		outer := ASTType{
+			Name:        base.Name,
+			Indirection: base.Indirection,
+			Signed:      base.Signed,
+			Element:     &inner,
+		}
+		switch wrap.t {
+		case n_index:
+			outer.ArraySize = int(wrap.ival)
+		case n_slice:
+			outer.Slice = true
+		default:
+			ParseErrorF(wrap, "Expected an array specifier, but found %v", wrap.t)
+		}
+		cur = outer
 	}
-	return t
+	return cur
 }
 
 func voidASTType() ASTType {
@@ -1204,20 +1275,17 @@ type Index struct {
 
 func (i *Index) ASTType(c *Context) ASTType {
 	t := i.Val.ASTType(c)
-	// Probably shouldn't allow indexing pointers.
-	// if t.Indirection > 0 {
-	// 	t.Indirection -= 1
-	// 	return t
-	// }
-	if t.Slice {
-		t.Slice = false
-		return t
+	if !t.Slice && t.ArraySize == 0 {
+		panic(fmt.Sprintf("CANNOT INDEX INTO NON-ARRAY TYPE %v", t))
 	}
-	if t.ArraySize > 0 {
-		t.ArraySize = 0
-		return t
+	// Element-typed slices/arrays return their element type directly.
+	if t.Element != nil {
+		return *t.Element
 	}
-	panic(fmt.Sprintf("CANNOT INDEX INTO NON-ARRAY TYPE %v", t))
+	// Legacy flat type: clear the slice/array marker and keep the rest.
+	t.Slice = false
+	t.ArraySize = 0
+	return t
 }
 
 func (i *Index) Note() string {

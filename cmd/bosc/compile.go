@@ -277,37 +277,40 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", dest.ref, addr.ref, off)
 			return dest
 		}
-		if vt.Size(c) <= 8 {
-			// We can use base + index * scale
-			base := addr
-			index := compileTop(of, c, ast.NAST, nullspot)
-			scale := vt.Size(c)
-			l := c.Label("icheck")
-			if !index.t.Same(numASTType()) {
-				itmp := newSpot(of, c, c.Temp(), numASTType())
-				//move(of, c, itmp, index)
-				fmt.Fprintf(of, "\tmovzx %s %s\n", itmp.ref, index.ref)
-				fmt.Fprintf(of, "\tcmp %s %s\n", itmp.ref, max.ref)
-				itmp.free(of)
-			} else {
-				fmt.Fprintf(of, "\tcmp %s %s\n", index.ref, max.ref)
-			}
-			fmt.Fprintf(of, "\tjl %s\n", l)
-			if index.t.Same(numASTType()) {
-				fmt.Fprintf(of, "\tmov rdi %s\n", index.ref)
-			} else {
-				fmt.Fprintf(of, "\tmovzx rdi %s\n", index.ref)
-			}
-			fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
-			fmt.Fprintf(of, "\tcall _init.index_oob\n")
-			fmt.Fprintf(of, "\tlabel %s\n", l)
-			fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", dest.ref, base.ref, index.ref, scale)
-			return dest
+		base := addr
+		index := compileTop(of, c, ast.NAST, nullspot)
+		scale := vt.Size(c)
+		l := c.Label("icheck")
+		if !index.t.Same(numASTType()) {
+			itmp := newSpot(of, c, c.Temp(), numASTType())
+			fmt.Fprintf(of, "\tmovzx %s %s\n", itmp.ref, index.ref)
+			fmt.Fprintf(of, "\tcmp %s %s\n", itmp.ref, max.ref)
+			itmp.free(of)
 		} else {
-			// These objects are too large to use base + index * scale
-			// and we must calculate the offset manually.
-			panic("Not implemented Scale + Index * Scale when scale > 8")
+			fmt.Fprintf(of, "\tcmp %s %s\n", index.ref, max.ref)
 		}
+		fmt.Fprintf(of, "\tjl %s\n", l)
+		if index.t.Same(numASTType()) {
+			fmt.Fprintf(of, "\tmov rdi %s\n", index.ref)
+		} else {
+			fmt.Fprintf(of, "\tmovzx rdi %s\n", index.ref)
+		}
+		fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
+		fmt.Fprintf(of, "\tcall _init.index_oob\n")
+		fmt.Fprintf(of, "\tlabel %s\n", l)
+		switch scale {
+		case 1, 2, 4, 8:
+			fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", dest.ref, base.ref, index.ref, scale)
+		default:
+			// Multi-word element: compute base + index * scale manually.
+			fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, index.ref)
+			scaleTmp := newSpot(of, c, c.Temp(), numASTType())
+			fmt.Fprintf(of, "\tmov %s %d\n", scaleTmp.ref, scale)
+			fmt.Fprintf(of, "\timul %s %s\n", dest.ref, scaleTmp.ref)
+			scaleTmp.free(of)
+			fmt.Fprintf(of, "\tadd %s %s\n", dest.ref, base.ref)
+		}
+		return dest
 	}
 	panic(fmt.Sprintf("(LVAL) FALLTHROUGH: %#v\n", a))
 }
@@ -603,41 +606,64 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				fmt.Fprintf(of, "\tcall _init.index_oob\n")
 				fmt.Fprintf(of, "\tlabel %s\n", l)
 			}
-			fmt.Fprintf(of, "\t// mov NAST == nil\n")
-			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, addr.ref, off)
+			if vt.Size(c) > 8 {
+				// Multi-word element (struct, slice, etc.): memcpy via a
+				// computed pointer.
+				elemAddrT := vt
+				elemAddrT.Indirection++
+				elemAddr := newSpot(of, c, c.Temp(), elemAddrT)
+				fmt.Fprintf(of, "\tlea %s [%s+%d]\n", elemAddr.ref, addr.ref, off)
+				spot_memcpy(of, c, dest, elemAddr, vt.Size(c))
+				elemAddr.free(of)
+			} else {
+				fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, addr.ref, off)
+			}
 			return dest
 		}
-		if vt.Size(c) <= 8 {
-			base := addr
-			index := compileTop(of, c, ast.NAST, nullspot)
-			scale := vt.Size(c)
-			l := c.Label("icheck")
-			if !index.t.Same(numASTType()) {
-				itmp := newSpot(of, c, c.Temp(), numASTType())
-				//move(of, c, itmp, index)
-				fmt.Fprintf(of, "\tmovzx %s %s\n", itmp.ref, index.ref)
-				fmt.Fprintf(of, "\tcmp %s %s\n", itmp.ref, max.ref)
-				itmp.free(of)
-			} else {
-				fmt.Fprintf(of, "\tcmp %s %s\n", index.ref, max.ref)
-			}
-			fmt.Fprintf(of, "\tjl %s\n", l)
-			if index.t.Same(numASTType()) {
-				fmt.Fprintf(of, "\tmov rdi %s\n", index.ref)
-			} else {
-				fmt.Fprintf(of, "\tmovzx rdi %s\n", index.ref)
-			}
-			fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
-			fmt.Fprintf(of, "\tcall _init.index_oob\n")
-			fmt.Fprintf(of, "\tlabel %s\n", l)
-			fmt.Fprintf(of, "\tmov %s [%s+%s*%d]\n", dest.ref, base.ref, index.ref, scale)
-			return dest
+		// Bounds check + index normalization. Common to both small- and
+		// multi-word element paths.
+		base := addr
+		index := compileTop(of, c, ast.NAST, nullspot)
+		l := c.Label("icheck")
+		if !index.t.Same(numASTType()) {
+			itmp := newSpot(of, c, c.Temp(), numASTType())
+			fmt.Fprintf(of, "\tmovzx %s %s\n", itmp.ref, index.ref)
+			fmt.Fprintf(of, "\tcmp %s %s\n", itmp.ref, max.ref)
+			itmp.free(of)
 		} else {
-			panic("Not implemented: Scale + Index * Scale when scale > 8")
+			fmt.Fprintf(of, "\tcmp %s %s\n", index.ref, max.ref)
 		}
+		fmt.Fprintf(of, "\tjl %s\n", l)
+		if index.t.Same(numASTType()) {
+			fmt.Fprintf(of, "\tmov rdi %s\n", index.ref)
+		} else {
+			fmt.Fprintf(of, "\tmovzx rdi %s\n", index.ref)
+		}
+		fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
+		fmt.Fprintf(of, "\tcall _init.index_oob\n")
+		fmt.Fprintf(of, "\tlabel %s\n", l)
 
-		// See compileLval for similar implementation.
-		panic("Generic indexing not supported yet.")
+		scale := vt.Size(c)
+		switch scale {
+		case 1, 2, 4, 8:
+			// x86 base+index*scale addressing handles these directly.
+			fmt.Fprintf(of, "\tmov %s [%s+%s*%d]\n", dest.ref, base.ref, index.ref, scale)
+		default:
+			// Multi-word element: compute &elem and memcpy.
+			elemAddrT := vt
+			elemAddrT.Indirection++
+			elemAddr := newSpot(of, c, c.Temp(), elemAddrT)
+			// elemAddr = index * scale + base.
+			fmt.Fprintf(of, "\tmov %s %s\n", elemAddr.ref, index.ref)
+			scaleTmp := newSpot(of, c, c.Temp(), numASTType())
+			fmt.Fprintf(of, "\tmov %s %d\n", scaleTmp.ref, scale)
+			fmt.Fprintf(of, "\timul %s %s\n", elemAddr.ref, scaleTmp.ref)
+			scaleTmp.free(of)
+			fmt.Fprintf(of, "\tadd %s %s\n", elemAddr.ref, base.ref)
+			spot_memcpy(of, c, dest, elemAddr, scale)
+			elemAddr.free(of)
+		}
+		return dest
 	case *SliceOp:
 		// TODO: dest optimization
 		v := compileTop(of, c, ast.Val, nullspot)
