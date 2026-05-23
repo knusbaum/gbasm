@@ -306,7 +306,7 @@ func TestParser(t *testing.T) {
 			}},
 		},
 		{
-			in: "printxy = fn bar (x num, y num) num { printf(\"X is %v\\nY is %v\\n\", x, y); return 0  }",
+			in: "printxy = fn bar (x num, y num) num { printf(\"X is %v\\nY is %v\\n\", x, y) return 0  }",
 			out: &Node{t: n_eq, args: []*Node{
 				&Node{t: n_symbol, sval: "printxy"},
 				&Node{t: n_fn, ival: 2, sval: "bar", args: []*Node{
@@ -319,7 +319,6 @@ func TestParser(t *testing.T) {
 							&Node{t: n_symbol, sval: "x"},
 							&Node{t: n_symbol, sval: "y"},
 						}},
-						&Node{},
 						&Node{t: n_return, args: []*Node{&Node{t: n_number, ival: 0}}},
 					}},
 				}},

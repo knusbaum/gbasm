@@ -255,12 +255,9 @@ func (p *Parser) parseTok() *Node {
 	} else if c.t == tok_ident {
 		p.advance()
 		return &Node{t: n_symbol, p: c.p, sval: c.sval}
-	} else if c.t == tok_semicolon {
-		p.advance()
-		return &Node{p: c.p}
 	}
 	p.advance()
-	panic(&interpreterError{fmt.Sprintf("Expected number, string, identifier or semicolon, but found: %s\n", c.t), c.p})
+	panic(&interpreterError{fmt.Sprintf("Expected number, string, or identifier, but found: %s", c.t), c.p})
 	//panic(fmt.Sprintf("Expected number, string, identifier or semicolon, but found: %s (%v)\n", c.t, c.p))
 }
 
@@ -772,10 +769,7 @@ func (p *Parser) parseCompare() *Node {
 func (p *Parser) parseExpression() (r *Node) {
 	//fmt.Printf("[Start parseExpression] %#v\n", p.current())
 	//defer func() { fmt.Printf("[Finish parseExpression]: %#v\n", r) }()
-	if p.current().t == tok_semicolon {
-		p.advance()
-		return &Node{p: p.current().p}
-	} else if p.current().t == tok_var {
+	if p.current().t == tok_var {
 		p.advance()
 		return p.parseBindingDecl(false)
 	} else if p.current().t == tok_const {
