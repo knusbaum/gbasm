@@ -91,7 +91,7 @@ func runListImports() {
 		for p.current().t == tok_import {
 			n, err := p.Next()
 			if err != nil {
-				log.Fatalf("%s: parse error: %v", fname, err)
+				fatalCtx("%s: parse error: %v", fname, err)
 			}
 			if n == nil {
 				break
@@ -109,6 +109,9 @@ func runListImports() {
 }
 
 func main() {
+	// Errors carry their own file:line:col, so log's date/time prefix
+	// just adds noise.
+	log.SetFlags(0)
 	flag.Parse()
 
 	if *help {
@@ -206,7 +209,7 @@ func main() {
 		for {
 			n, err := p.Next()
 			if err != nil {
-				log.Fatalf("Parse Error: %v\n", err)
+				fatalCtx("Parse Error: %v", err)
 			}
 			if n == nil {
 				break
@@ -227,8 +230,7 @@ func main() {
 			}
 			a, err := n.ToAST(actx)
 			if err != nil {
-				fmt.Printf("Failed to parse: %v\n", err)
-				os.Exit(1)
+				fatalCtx("Failed to parse: %v", err)
 			}
 			asts = append(asts, a)
 			// err = Validate(n, c)
@@ -244,8 +246,7 @@ func main() {
 		for _, a := range asts {
 			err := Compile(&bs, actx, a)
 			if err != nil {
-				fmt.Printf("Fatal: %v\n", err)
-				os.Exit(1)
+				fatalCtx("Fatal: %v", err)
 			}
 		}
 

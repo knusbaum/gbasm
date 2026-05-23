@@ -36,8 +36,14 @@ for t in `ls tests/*_test.bos`; do
             continue
         fi
         if [[ -f "${t}.expected" ]]; then
-            # Strip "at file:line:col: " position prefix for stable comparison.
-            sed 's/at [^:]*:[0-9]*:[0-9]*: //' ${t}.bosc.out > ${t}.bosc.stripped.out
+            # Normalize bosc's stderr for comparison: keep only the lines
+            # bosc itself originates ("Compiling …", "Fatal: …", "Parse
+            # Error: …", "Failed to parse: …", "<file>: parse error: …"),
+            # dropping the source-context snippet appended after each
+            # diagnostic. Then strip "at file:line:col: " position prefixes.
+            grep -E '^(Compiling |Fatal:|Parse Error:|Failed to parse:|[^ ]+: parse error:)' ${t}.bosc.out \
+                | sed 's/at [^:]*:[0-9]*:[0-9]*: //' \
+                > ${t}.bosc.stripped.out
             diff -u "${t}.expected" "${t}.bosc.stripped.out"
             if [[ $? != 0 ]]; then
                 echo ${t} FAIL
