@@ -61,7 +61,17 @@ pkg_import_targets() {
     local bos
     bos=$(ls "$d"/*.bos 2>/dev/null)
     [ -z "$bos" ] && return 0
-    $BOSC -listimports $bos | sed 's|^|target/|; s|$|.bo|'
+    # Capture stdout+stderr so a bosc failure is reported rather than masked
+    # by the pipe to sed (which would otherwise succeed on empty input and
+    # silently drop bosc's exit code).
+    local out
+    if ! out=$($BOSC -listimports $bos 2>&1); then
+        echo "boson.mmk: $BOSC -listimports failed in $d:" >&2
+        echo "$out" >&2
+        exit 1
+    fi
+    [ -z "$out" ] && return 0
+    echo "$out" | sed 's|^|target/|; s|$|.bo|'
 }
 
 # write_importcfg <out-file> <dep>...: writes pkg=path lines for each dep that
@@ -143,6 +153,9 @@ deftype bos_pkg {
 }
 
 bos_pkg 'target/(.*)\.bo' : $(pkg_resolve_and_deps "$1") {
+    # Exit on first failed command so a bosc/bas error aborts the build with
+    # a clean error rather than letting subsequent steps run on stale state.
+    set -e
     imp="${target#target/}"
     imp="${imp%.bo}"
     srcdir=$(resolve_pkg "$imp")
@@ -164,6 +177,10 @@ deftype bos_exe {
 }
 
 defbody bos_exe : $(bos_exe_deps "$source") {
+    # Exit on first failed command so a bosc/bas/bld error aborts the build
+    # with a clean error rather than letting subsequent steps (chmod, etc.)
+    # run on stale or missing artifacts.
+    set -e
     # Build the executable's own package into a local .bo (not in target/,
     # since it isn't importable by name).
     workdir="$target.work"

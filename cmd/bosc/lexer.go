@@ -339,8 +339,16 @@ func (l *lexer) parseString() token {
 	l.nextRune()
 	var ret []rune
 	for r := l.readRune(); r != '"'; r = l.readRune() {
+		// readRune returns 0 on EOF (no error), so a missing closing quote
+		// would otherwise spin here forever.
+		if r == 0 {
+			panic(&interpreterError{"Unterminated string literal", l.p})
+		}
 		if r == '\\' {
 			r = l.readRune()
+			if r == 0 {
+				panic(&interpreterError{"Unterminated string literal after escape", l.p})
+			}
 			switch r {
 			case 'n':
 				ret = append(ret, '\n')

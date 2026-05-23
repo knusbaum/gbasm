@@ -81,7 +81,14 @@ func runListImports() {
 		}
 
 		p := NewParser(fname, reader)
-		for {
+		// Peek the next top-level token and only consume it if it's `import`.
+		// We avoid calling p.Next() unconditionally because parseTopLevel will
+		// dispatch tok_fn into parseFn, which eagerly parses the entire function
+		// body — meaning a syntax error inside any function would abort dep
+		// discovery here, even though body content is irrelevant to imports.
+		// Imports must precede every other top-level form, so once we see a
+		// non-import token we know there are no more imports to find.
+		for p.current().t == tok_import {
 			n, err := p.Next()
 			if err != nil {
 				log.Fatalf("%s: parse error: %v", fname, err)
@@ -89,16 +96,10 @@ func runListImports() {
 			if n == nil {
 				break
 			}
-			if n.t == n_import {
-				if !seen[n.sval] {
-					seen[n.sval] = true
-					order = append(order, n.sval)
-				}
-				continue
+			if !seen[n.sval] {
+				seen[n.sval] = true
+				order = append(order, n.sval)
 			}
-			// First non-import (and non-empty) node: stop parsing this file.
-			// Imports must appear before any other top-level declarations.
-			break
 		}
 		file.Close()
 	}
