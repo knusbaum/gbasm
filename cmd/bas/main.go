@@ -373,15 +373,31 @@ func main() {
 				f = nil // A new var declaration ends any current function
 				parts := SplitNSpace(strings.TrimSpace(strings.TrimPrefix(line, "var")), 3)
 				if len(parts) != 3 {
-					fmt.Printf("Fatal: var declaration requires a name, type, and initial data, but got: %v\n", parts)
+					fmt.Printf("Fatal: var declaration requires a name, type, and either a byte-count or a string literal, but got: %v\n", parts)
 					os.Exit(1)
 				}
-				data, err := parseData(parts[2])
-				if err != nil {
-					fmt.Printf("Fatal: failed to parse data for data declaration %s: %v", parts[0], err)
-					os.Exit(1)
+				var data []byte
+				if strings.HasPrefix(parts[2], `"`) {
+					// String-literal form: "..." with escapes (\n, \\, \", \0, \xHH).
+					d, err := parseData(parts[2])
+					if err != nil {
+						fmt.Printf("Fatal: failed to parse data for var %s: %v\n", parts[0], err)
+						os.Exit(1)
+					}
+					data = d
+				} else {
+					// Size form: an integer giving the number of zero-filled bytes.
+					n, err := strconv.Atoi(parts[2])
+					if err != nil {
+						fmt.Printf("Fatal: var %s: third argument must be a string literal or an integer byte-count, got: %s\n", parts[0], parts[2])
+						os.Exit(1)
+					}
+					if n < 0 {
+						fmt.Printf("Fatal: var %s: byte-count cannot be negative: %d\n", parts[0], n)
+						os.Exit(1)
+					}
+					data = make([]byte, n)
 				}
-				//fmt.Printf("##########\n\n##########\nGot Data: [%s]\n##########\n\n##########\n", string(data))
 				o.AddVar(parts[0], parts[1], data)
 				continue
 			}
@@ -783,35 +799,54 @@ func parseData(s string) ([]byte, error) {
 }
 
 func parseString(s string) ([]byte, error) {
-	//fmt.Printf("Parsing string [%s]\n", s)
 	if !strings.HasPrefix(s, `"`) {
 		return nil, fmt.Errorf("Expected string to begin with '\"'")
 	}
-	//var closed bool
 	var bs bytes.Buffer
 	for s = s[1:]; len(s) > 0; s = s[1:] {
-		//fmt.Printf("Parsing string [%s]\n", s)
 		if s[0] == '\\' {
+			if len(s) < 2 {
+				return nil, errors.New("dangling '\\' at end of string literal")
+			}
 			switch s[1] {
 			case 'n':
-				bs.Write([]byte("\n"))
+				bs.WriteByte('\n')
+			case 'r':
+				bs.WriteByte('\r')
+			case 't':
+				bs.WriteByte('\t')
 			case '\\':
-				bs.Write([]byte("\\"))
+				bs.WriteByte('\\')
 			case '"':
-				bs.Write([]byte("\""))
+				bs.WriteByte('"')
 			case '0':
-				bs.Write([]byte{0})
+				bs.WriteByte(0)
+			case 'x':
+				// \xHH — exactly two hex digits, producing the byte HH.
+				// Compiler-emitted globals use this to encode arbitrary
+				// binary content (struct payloads, integer literals, etc.)
+				// inside the existing string-literal var directive.
+				if len(s) < 4 {
+					return nil, errors.New("\\x escape requires two hex digits")
+				}
+				b, err := strconv.ParseUint(s[2:4], 16, 8)
+				if err != nil {
+					return nil, fmt.Errorf("\\x escape: %v", err)
+				}
+				bs.WriteByte(byte(b))
+				s = s[2:] // additionally skip the two hex digits
+			default:
+				return nil, fmt.Errorf("unknown escape sequence: \\%c", s[1])
 			}
-			s = s[1:] // Skip the slash and the escaped character will be skipped by the loop.
+			s = s[1:] // skip the escape's main char; loop's s=s[1:] skips the backslash
 		} else if s[0] == '"' {
-			//closed = true
 			break
 		} else {
-			bs.Write([]byte{s[0]})
+			bs.WriteByte(s[0])
 		}
 	}
 	if len(s) != 1 || s[0] != '"' {
-		return nil, errors.New("String did not endwith a double quote.")
+		return nil, errors.New("String did not end with a double quote.")
 	}
 	return bs.Bytes(), nil
 }

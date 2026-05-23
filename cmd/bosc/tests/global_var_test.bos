@@ -1,0 +1,44 @@
+package main
+
+import "string"
+
+// File-scope (global) vars. Uninitialized globals get zero-filled by the
+// loader; integer-literal initializers are encoded directly into the data
+// section by the compiler.
+var counter i64
+var answer i64 = 42
+var bigU i32 = 65535
+var label byte = 'Z'
+var buf byte[8]
+
+fn main() {
+	// Uninitialized globals are zero.
+	string.puti(counter)
+	string.putc('\n')
+
+	// Integer-literal initializer.
+	string.puti(answer)
+	string.putc('\n')
+
+	// 32-bit value, widened for printing.
+	string.puti(i64(bigU))
+	string.putc('\n')
+
+	// Byte literal initializer.
+	string.putc(label)
+	string.putc('\n')
+
+	// Writable global: mutate from main and read back.
+	counter = counter + 7
+	string.puti(counter)
+	string.putc('\n')
+
+	// Forward reference — `helper` is declared below, reads the same `counter`.
+	helper()
+}
+
+fn helper() {
+	counter = counter * 2
+	string.puti(counter)
+	string.putc('\n')
+}

@@ -391,6 +391,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		c.DefineStruct(ast.TName, ast)
 		return nullspot
 	case *VarDecl:
+		if c.prebound[ast.Name] {
+			// Top-level var: ToAST already bound this in actx for forward
+			// references. Consume the marker, then emit a bas-level global
+			// instead of the function-local stack/register form.
+			delete(c.prebound, ast.Name)
+			emitGlobalVarDecl(of, c, a, ast)
+			return nullspot
+		}
 		c.BindVar(a, ast.Name, ast.Type, ast.IsConst)
 		s := newSpot(of, c, ast.Name, ast.Type)
 		if ast.Init != nil {

@@ -30,6 +30,13 @@ type Context struct {
 
 	// maps variable names to their types.
 	bindings map[string]ASTType
+	// names that ToAST registered into bindings at the top level so that
+	// function bodies declared earlier in source can resolve forward
+	// references. The *VarDecl handler in Compile consumes the marker
+	// when it revisits the declaration, skipping the redundant BindVar
+	// call (which would otherwise collide with the pre-binding). Empty
+	// for nested scopes, where ToAST writes to a throwaway Context.
+	prebound map[string]bool
 	// tracks which bindings are const (true) vs var (false).
 	constBindings map[string]bool
 	// tracks which owned bindings have been consumed (moved or disposed).
@@ -60,6 +67,7 @@ type Context struct {
 func NewContext() *Context {
 	return &Context{
 		bindings:      make(map[string]ASTType),
+		prebound:      make(map[string]bool),
 		constBindings: make(map[string]bool),
 		movedBindings: make(map[string]bool),
 		structs:       make(map[string]*StructDecl),
@@ -1443,6 +1451,12 @@ func (n *Node) toASTTop(c *Context) AST {
 			v.Init = n.args[1].toASTTop(c)
 		}
 		c.BindVar(&v, v.Name, v.Type, v.IsConst)
+		// Mark the binding as pre-installed by ToAST so the *VarDecl
+		// handler in Compile skips the redundant re-bind when it
+		// revisits this declaration. For nested vars, c here is the
+		// throwaway NewContext() passed by n_fn/n_block, and the
+		// marker is discarded along with that context.
+		c.prebound[v.Name] = true
 		return &v
 	case n_fn:
 		var fn FuncDecl
