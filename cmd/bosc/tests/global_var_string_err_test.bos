@@ -1,0 +1,9 @@
+package main
+
+// String-literal initializers into byte[] need a slice-header layout with
+// a pointer relocation into the string-constants area, which Phase 1 does
+// not implement. Reject with a clear "not yet implemented" message rather
+// than silently miscompiling.
+var greeting byte[] = "hello"
+
+fn main() {}

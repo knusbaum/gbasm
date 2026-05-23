@@ -1,0 +1,4 @@
+package main
+
+// \xZ is not a valid hex byte — must be exactly two hex digits after \x.
+var bad byte[1] "\xZZ"

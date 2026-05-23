@@ -1,0 +1,2 @@
+Assembling tests/var_neg_size_err_test.bs
+Fatal: var bad: byte-count cannot be negative: -3

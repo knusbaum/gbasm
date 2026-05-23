@@ -1,0 +1,9 @@
+package main
+
+// Top-level vars require pointer-free compile-time-constant initializers.
+// A function call is not a constant; reject it cleanly.
+fn one() i64 { return 1 }
+
+var x i64 = one()
+
+fn main() {}

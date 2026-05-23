@@ -1,0 +1,2 @@
+Assembling tests/var_bad_hex_escape_err_test.bs
+Fatal: failed to parse data for var bad: \x escape: strconv.ParseUint: parsing "ZZ": invalid syntax

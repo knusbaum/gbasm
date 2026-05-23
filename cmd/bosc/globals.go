@@ -78,7 +78,7 @@ func encodeStaticInit(c *Context, dstt ASTType, init AST) ([]byte, error) {
 		}
 		return nil, fmt.Errorf("initializer is not a compile-time constant")
 	default:
-		return nil, fmt.Errorf("initializer is not a compile-time constant (got %T)", init)
+		return nil, fmt.Errorf("initializer is not a compile-time constant")
 	}
 }
 

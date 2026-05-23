@@ -1,0 +1,5 @@
+package main
+
+// Negative byte-counts should be rejected up front rather than allocating
+// some implementation-defined buffer.
+var bad byte[1] -3

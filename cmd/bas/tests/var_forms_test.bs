@@ -1,0 +1,47 @@
+package main
+
+// Exercises the two `var` directive forms:
+//   - String-literal payload with the new \xHH escape, plus \r/\t.
+//   - Integer byte-count for zero-filled globals.
+//
+// All three globals are printed by writing their address + length to
+// stdout via the write(2) syscall directly. We avoid string.puts here
+// because puts expects a slice header, and we want to verify byte
+// counts that don't match slice-header layout.
+
+// 5 bytes literal: 'h', 'i' (0x68 0x69), then \xff via the new escape,
+// then \t (0x09) and \n (0x0a) for "hi\t\n" with one non-printable.
+// Output to stdout: "hi" + 0xff + "\t\n".
+var greeting byte[5] "hi\xff\t\n"
+
+// Size form: 6 zero-filled bytes. Main pokes a few values in and writes
+// them, confirming the global was allocated at the right size and
+// initialized to zero (we rely on the still-zero high bytes).
+var buf byte[6] 6
+
+function main
+	// write(1, greeting, 5)
+	mov rax 1
+	mov rdi 1
+	lea rsi greeting
+	mov rdx 5
+	syscall
+
+	// Mutate buf: 'O' 'K' then leave the rest at zero, then 'X' at end.
+	lea r10 buf
+	mov [r10]   0x4f
+	mov [r10+1] 0x4b
+	mov [r10+5] 0x58
+
+	// write(1, buf, 6) — produces "OK\0\0\0X"
+	mov rax 1
+	mov rdi 1
+	lea rsi buf
+	mov rdx 6
+	syscall
+
+	mov rdi 0x0a
+	call string.putc
+
+	xor rax rax
+	ret

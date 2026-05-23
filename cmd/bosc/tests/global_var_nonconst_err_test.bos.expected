@@ -1,0 +1,2 @@
+Compiling tests/global_var_nonconst_err_test.bos
+Fatal: initializer is not a compile-time constant
