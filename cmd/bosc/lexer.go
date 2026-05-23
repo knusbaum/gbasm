@@ -324,7 +324,7 @@ func (l *lexer) parseNumber(head *rune) token {
 
 func (l *lexer) parseIdent() token {
 	var ret []rune
-	for r := l.headRune(); unicode.IsLetter(r) || unicode.IsNumber(r); r = l.headRune() {
+	for r := l.headRune(); unicode.IsLetter(r) || unicode.IsNumber(r) || r == '_'; r = l.headRune() {
 		ret = append(ret, r)
 		l.nextRune()
 	}
@@ -531,7 +531,7 @@ func (l *lexer) Next() (rt token, re error) {
 	}
 	if strings.ContainsRune(numberset, r) {
 		return l.parseNumber(nil), nil
-	} else if unicode.IsLetter(r) {
+	} else if unicode.IsLetter(r) || r == '_' {
 		return l.parseIdent(), nil
 	}
 	if r == 0 {
