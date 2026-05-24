@@ -18,6 +18,11 @@ import (
 // (slice headers, pointer initializers) is rejected; relocation support is
 // scheduled for a follow-up phase.
 func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
+	// Record the name as a global so codegen sites that build indirect
+	// addressing know to materialize the address into a register before
+	// using a register-scaled index (x86-64 RIP-relative addressing
+	// can't combine with a base+index*scale form).
+	c.MarkGlobal(ast.Name)
 	size := ast.Type.Size(c)
 	if ast.Init == nil {
 		// Zero-init form: bas allocates `size` zero bytes.

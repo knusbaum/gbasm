@@ -285,6 +285,16 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 			return dest
 		}
 		base := addr
+		// Same global-vs-local-base concern as the read path: a global
+		// can't be the base of a '[name + reg*scale]' SIB form.
+		// Materialize its address into a register first.
+		if c.IsGlobal(base.ref) {
+			addrT := vt
+			addrT.Indirection++
+			baseAddr := newSpot(of, c, c.Temp(), addrT)
+			fmt.Fprintf(of, "\tlea %s %s\n", baseAddr.ref, base.ref)
+			base = baseAddr
+		}
 		index := compileTop(of, c, ast.NAST, nullspot)
 		scale := vt.Size(c)
 		l := c.Label("icheck")
@@ -677,6 +687,17 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// Bounds check + index normalization. Common to both small- and
 		// multi-word element paths.
 		base := addr
+		// Register-scaled access against a global symbol can't use
+		// '[name + reg*scale]' directly — x86-64 RIP-relative addressing
+		// takes a disp32 only. Materialize the global's address into a
+		// temp first, then index off that register-relative base.
+		if c.IsGlobal(base.ref) {
+			addrT := vt
+			addrT.Indirection++
+			baseAddr := newSpot(of, c, c.Temp(), addrT)
+			fmt.Fprintf(of, "\tlea %s %s\n", baseAddr.ref, base.ref)
+			base = baseAddr
+		}
 		index := compileTop(of, c, ast.NAST, nullspot)
 		l := c.Label("icheck")
 		if !index.t.Same(numASTType()) {

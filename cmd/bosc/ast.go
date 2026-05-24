@@ -37,6 +37,14 @@ type Context struct {
 	// call (which would otherwise collide with the pre-binding). Empty
 	// for nested scopes, where ToAST writes to a throwaway Context.
 	prebound map[string]bool
+	// names of file-scope (global) variables — populated only on the
+	// root context, written by *VarDecl's prebound branch when emitting
+	// a global var directive. Codegen consults c.IsGlobal(name) to
+	// decide whether to materialize the global's address into a
+	// register before doing register-scaled indirection — bas cannot
+	// encode '[symbol + reg*scale]' directly on x86-64 (RIP-relative
+	// addressing takes a disp32 only).
+	globals map[string]bool
 	// tracks which bindings are const (true) vs var (false).
 	constBindings map[string]bool
 	// tracks which owned bindings have been consumed (moved or disposed).
@@ -68,6 +76,7 @@ func NewContext() *Context {
 	return &Context{
 		bindings:      make(map[string]ASTType),
 		prebound:      make(map[string]bool),
+		globals:       make(map[string]bool),
 		constBindings: make(map[string]bool),
 		movedBindings: make(map[string]bool),
 		structs:       make(map[string]*StructDecl),
@@ -76,6 +85,29 @@ func NewContext() *Context {
 		typeAliases:   make(map[string]ASTType),
 		strngs:        make(map[string]string),
 	}
+}
+
+// IsGlobal reports whether name refers to a file-scope variable.
+// Walks to the root context, where the globals set is maintained;
+// SubContexts have empty globals maps that we don't consult.
+func (c *Context) IsGlobal(name string) bool {
+	if c == nil {
+		return false
+	}
+	if c.parent != nil {
+		return c.parent.IsGlobal(name)
+	}
+	return c.globals[name]
+}
+
+// MarkGlobal records name as a file-scope variable on the root
+// context. Called by *VarDecl when emitting a top-level var directive.
+func (c *Context) MarkGlobal(name string) {
+	if c.parent != nil {
+		c.parent.MarkGlobal(name)
+		return
+	}
+	c.globals[name] = true
 }
 
 func (c *Context) SubContext() *Context {

@@ -1,0 +1,39 @@
+package main
+
+import "string"
+
+// Runtime-indexed access to an array field of a global struct.
+// Compound case: postfix chain (g.bytes) needs to produce the right
+// base for the subsequent register-scaled index. The base reaching
+// the Index codegen is no longer the bare global symbol — it's an
+// already-leaded address from the *Dot small-struct path.
+struct buffer {
+	bytes byte[10]
+	count i64
+}
+
+var g buffer = buffer{
+	bytes: "0123456789",
+	count: 10,
+}
+
+fn main() {
+	// Pull the field out (postfix dot-then-index on a dot chain isn't
+	// part of this test's concern — global_struct_test covers chained
+	// reads) and walk it with a runtime index.
+	var local_bytes byte[10] = g.bytes
+	var i i64
+	for (i = 0; i < g.count; i = i + 1) {
+		string.putc(local_bytes[i])
+	}
+	string.putc('\n')
+
+	// Mutate the field inline through a runtime-indexed write.
+	for (i = 0; i < g.count; i = i + 1) {
+		local_bytes[i] = local_bytes[i] + 1
+	}
+	for (i = 0; i < g.count; i = i + 1) {
+		string.putc(local_bytes[i])
+	}
+	string.putc('\n')
+}

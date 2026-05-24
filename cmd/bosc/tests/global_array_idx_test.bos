@@ -2,23 +2,50 @@ package main
 
 import "string"
 
-// Indexing into a global fixed-size array with constant offsets — bosc
-// emits these as [buf+N] which previously failed because bas didn't
-// know how to address a global as a memory operand. Now that bas
-// understands RIP-relative-to-symbol indirection, this works.
+// Indexing into a global fixed-size array. Constant indices became
+// addressable when bas learned RIP-relative-to-symbol indirection.
+// Register-scaled access (e.g. buf[i] with i a runtime value) needs
+// a `lea reg buf` materialization first — x86-64 RIP-relative
+// addressing takes a disp32 only, not a base+index*scale SIB.
 //
-// Register-indexed global access (e.g. buf[i] with i a runtime value)
-// still requires bosc to emit a `lea` workaround and is not yet
-// covered.
+// This test covers both: constant offsets and a runtime index loop,
+// for both reads and writes.
+
 var buf byte[8]
+var nums i64[5]
 
 fn main() {
+	// Constant-offset writes (single-byte element → [buf+N] form).
 	buf[0] = 'A'
 	buf[1] = 'B'
 	buf[7] = 'H'
 
+	// Constant-offset reads.
 	string.putc(buf[0])
 	string.putc(buf[1])
 	string.putc(buf[7])
+	string.putc('\n')
+
+	// Runtime-indexed writes through a global byte array.
+	var i i64
+	for (i = 0; i < 8; i = i + 1) {
+		buf[i] = byte(i) + 48
+	}
+
+	// Runtime-indexed reads back through the same global.
+	for (i = 0; i < 8; i = i + 1) {
+		string.putc(buf[i])
+	}
+	string.putc('\n')
+
+	// 8-byte-element global array indexed by a register — exercises
+	// the 'lea' materialization on the i64 scale path.
+	for (i = 0; i < 5; i = i + 1) {
+		nums[i] = i * i
+	}
+	for (i = 0; i < 5; i = i + 1) {
+		string.puti(nums[i])
+		string.putc(' ')
+	}
 	string.putc('\n')
 }
