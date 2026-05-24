@@ -188,6 +188,23 @@ func encodeAddressBytes(c *Context, dstt ASTType, a *Address) ([]byte, []relocSp
 	if a.Lit == nil {
 		return nil, nil, fmt.Errorf("address-of with no target (internal: Address had neither Var nor Lit)")
 	}
+	// Address-of-index into a named global: `&globalArr[N]` for
+	// compile-time-constant N. Encodes as a single relocation against
+	// the array's symbol with Addend = N * elementSize. No anonymous
+	// global needed; we're pointing into existing storage.
+	if idx, ok := a.Lit.(*Index); ok {
+		if sym, ok := idx.Val.(*Symbol); ok && idx.NAST == nil {
+			et := idx.ASTType(c)
+			elemSize := et.Size(c)
+			out := make([]byte, 8)
+			return out, []relocSpec{{
+				Offset: 0,
+				Symbol: sym.Name,
+				Addend: int64(idx.N) * int64(elemSize),
+			}}, nil
+		}
+		return nil, nil, fmt.Errorf("address-of-index in static init requires a named array and a compile-time-constant index")
+	}
 	// Address-of-literal: the inner is the value we want to give
 	// storage to. Recursively encode it, then queue an anonymous
 	// global of that type carrying the encoded bytes + relocs.

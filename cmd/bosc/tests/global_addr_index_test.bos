@@ -1,0 +1,28 @@
+package main
+
+import "string"
+
+// `&globalArr[N]` in static-init resolves to a relocation against
+// globalArr's symbol with Addend = N * elementSize. Nothing new
+// in the linker is needed — DataReloc.Addend has been there since
+// the data-reloc infrastructure landed; this just hooks the bosc
+// encoder up to generate it.
+
+var nums i64[4]
+var p0 *i64 = &nums[0]
+var p2 *i64 = &nums[2]
+
+fn main() {
+	nums[0] = 100
+	nums[1] = 200
+	nums[2] = 300
+	nums[3] = 400
+
+	// p0 should point at nums[0], p2 at nums[2].
+	string.puti(deref(p0))
+	string.putc('\n')
+	string.puti(deref(p2))
+	string.putc('\n')
+}
+
+fn deref(p *i64) i64 { return *p }

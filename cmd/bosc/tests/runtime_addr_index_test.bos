@@ -1,0 +1,50 @@
+package main
+
+import "string"
+
+// `&arr[i]` and `&s.field` at runtime: produce a usable pointer
+// via compileLval delegation in *Address. The pointer's stored
+// address is then dereferenced through *Deref normally.
+//
+// Note: each '*deref' statement here is preceded by a statement-ending
+// '\n}\n' or by something else that can't be a binary operator's left
+// operand, to avoid a pre-existing parser issue where a leading '*'
+// on a new statement can be eaten as binary multiplication by the
+// previous statement.
+
+struct point {
+	x i64
+	y i64
+}
+
+fn deref(p *i64) i64 { return *p }
+
+fn main() {
+	// Local array, constant index.
+	var nums i64[4]
+	nums[0] = 10
+	nums[1] = 20
+	nums[2] = 30
+	nums[3] = 40
+
+	var p *i64 = &nums[2]
+	string.puti(deref(p))
+	string.putc('\n')
+
+	// Local array, runtime index.
+	var i i64 = 1
+	var q *i64 = &nums[i]
+	string.puti(deref(q))
+	string.putc('\n')
+
+	// Local struct, &field.
+	var pt point
+	pt.x = 7
+	pt.y = 11
+	var px *i64 = &pt.x
+	var py *i64 = &pt.y
+	string.puti(deref(px))
+	string.putc('\n')
+	string.puti(deref(py))
+	string.putc('\n')
+}

@@ -658,16 +658,43 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 
 		return dest
 	case *Address:
-		if ast.Lit != nil {
-			CompileErrorF(a, "can only take the address of a variable at runtime; address-of-literal is only valid in static initializers")
+		// Two named-target forms reduce to lea of a symbol: the
+		// Var-shape (legacy AST) and Lit=*Symbol (parser produces this
+		// when '&' is followed by a bare identifier). Other Lit shapes
+		// either delegate to compileLval (which already knows how to
+		// compute element / field addresses) or are rejected (no
+		// stable storage for them at runtime).
+		name := ast.Var
+		if name == "" {
+			switch lv := ast.Lit.(type) {
+			case *Symbol:
+				name = lv.Name
+			case *Index, *Dot:
+				// compileLval produces a register holding the address
+				// of an element/field, with type bumped by one
+				// Indirection — exactly what '&expr' is supposed to
+				// yield. Forward its result directly.
+				lvspot := compileLval(of, c, ast.Lit, nullspot)
+				if dest.empty() {
+					return lvspot
+				}
+				move(of, c, dest, lvspot)
+				return dest
+			default:
+				CompileErrorF(a, "cannot take the address of this expression at runtime; address-of-literal is only valid in static initializers")
+			}
 		}
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), ast.ASTType(c))
 		}
-		// Mark the variable as volatile so bas keeps it in memory from
-		// this point on, ensuring coherence with any pointer aliases.
-		fmt.Fprintf(of, "\tvolatile %s\n", ast.Var)
-		fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, ast.Var)
+		// For register-resident locals, force-spill to memory so the
+		// taken address is stable; for memory-backed names (globals,
+		// bytes-allocated locals) the address is already stable and
+		// the volatile directive would be a no-op or unrecognized.
+		if !c.NameIsAddress(name) {
+			fmt.Fprintf(of, "\tvolatile %s\n", name)
+		}
+		fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, name)
 		return dest
 	case *Index:
 		vt := ast.ASTType(c)
