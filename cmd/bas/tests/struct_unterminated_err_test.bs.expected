@@ -1,0 +1,2 @@
+Assembling tests/struct_unterminated_err_test.bs
+Fatal: struct point: unexpected EOF before '}'

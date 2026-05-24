@@ -73,9 +73,29 @@ type OFile struct {
 	Data      map[string]*Var
 	Vars      map[string]*Var
 	Funcs     map[string]*Function
+	// Structs are Boson-level struct definitions exported by this
+	// package. Each StructShape stores the field names paired with
+	// their rendered type strings (parseable by bosc on import).
+	// bas populates this via the `struct` directive; bosc reads it
+	// during Context.Import to register cross-package struct types.
+	Structs map[string]*StructShape
 
 	// Not written
 	a *Asm
+}
+
+// StructShape is the wire-level description of a Boson struct: an
+// ordered list of named fields, each with a rendered type string.
+// The type string is whatever ASTType.String() emitted on the
+// producer side; the importer reparses it with parseTypeString.
+type StructShape struct {
+	Name   string
+	Fields []FieldShape
+}
+
+type FieldShape struct {
+	Name string
+	Type string
 }
 
 func NewOFile(name string, pkgname string) (*OFile, error) {
@@ -90,8 +110,22 @@ func NewOFile(name string, pkgname string) (*OFile, error) {
 		Data:     make(map[string]*Var),
 		Vars:     make(map[string]*Var),
 		Funcs:    make(map[string]*Function),
+		Structs:  make(map[string]*StructShape),
 		a:        a, // TODO: Hard coded for now. This should be a parameter and written to the ofile.
 	}, nil
+}
+
+// AddStruct registers a Boson struct definition for export. Returns
+// an error if the name is already in use by any kind of declaration.
+func (o *OFile) AddStruct(name string, fields []FieldShape) error {
+	if o.Structs[name] != nil {
+		return fmt.Errorf("Struct %s already declared.", name)
+	}
+	if o.Vars[name] != nil || o.Data[name] != nil || o.Funcs[name] != nil {
+		return fmt.Errorf("Name %s already declared.", name)
+	}
+	o.Structs[name] = &StructShape{Name: name, Fields: fields}
+	return nil
 }
 
 func (o *OFile) Type(name string, properties []string, description []byte) error {

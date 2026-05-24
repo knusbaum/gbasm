@@ -389,6 +389,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return nullspot
 	case *StructDecl:
 		c.DefineStruct(ast.TName, ast)
+		// Emit the struct shape so bas can carry it into the .bo for
+		// cross-package import. Other packages can then declare
+		// 'mypkg.Name'-typed values, construct them via 'mypkg.Name{...}',
+		// and walk their fields.
+		fmt.Fprintf(of, "struct %s {\n", ast.TName)
+		for _, f := range ast.Fields {
+			fmt.Fprintf(of, "\t%s %s\n", f.Name, f.Type)
+		}
+		fmt.Fprintf(of, "}\n")
 		return nullspot
 	case *VarDecl:
 		if c.prebound[ast.Name] {

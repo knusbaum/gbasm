@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"sort"
 )
 
 const MaxUint = ^uint(0)
@@ -469,6 +470,10 @@ func writeOFile(w io.Writer, o *OFile) error {
 	if err != nil {
 		return fmt.Errorf("WriteFunctions: %w", err)
 	}
+	err = writeStructs(w, o.Structs)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -497,6 +502,10 @@ func readOFile(r io.Reader) (*OFile, error) {
 	if err != nil {
 		return nil, err
 	}
+	structs, err := readStructs(r)
+	if err != nil {
+		return nil, err
+	}
 	return &OFile{
 		Pkgname:   pkgname,
 		ExeFormat: exeformat,
@@ -504,5 +513,68 @@ func readOFile(r io.Reader) (*OFile, error) {
 		Data:      data,
 		Vars:      vars,
 		Funcs:     funcs,
+		Structs:   structs,
 	}, nil
+}
+
+func writeStructs(w io.Writer, ss map[string]*StructShape) error {
+	if err := writeSize(w, len(ss)); err != nil {
+		return err
+	}
+	// Sort for deterministic output — map iteration is randomized in Go.
+	names := make([]string, 0, len(ss))
+	for n := range ss {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		s := ss[name]
+		if err := writeString(w, s.Name); err != nil {
+			return err
+		}
+		if err := writeSize(w, len(s.Fields)); err != nil {
+			return err
+		}
+		for _, f := range s.Fields {
+			if err := writeString(w, f.Name); err != nil {
+				return err
+			}
+			if err := writeString(w, f.Type); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func readStructs(r io.Reader) (map[string]*StructShape, error) {
+	n, err := readSize(r)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]*StructShape, n)
+	for i := 0; i < n; i++ {
+		name, err := readString(r)
+		if err != nil {
+			return nil, err
+		}
+		nFields, err := readSize(r)
+		if err != nil {
+			return nil, err
+		}
+		fields := make([]FieldShape, nFields)
+		for j := 0; j < nFields; j++ {
+			fName, err := readString(r)
+			if err != nil {
+				return nil, err
+			}
+			fType, err := readString(r)
+			if err != nil {
+				return nil, err
+			}
+			fields[j] = FieldShape{Name: fName, Type: fType}
+		}
+		m[name] = &StructShape{Name: name, Fields: fields}
+	}
+	return m, nil
 }

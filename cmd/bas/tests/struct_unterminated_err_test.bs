@@ -1,0 +1,7 @@
+package main
+
+// Missing '}' before EOF — assembler should reject cleanly rather
+// than silently consume the rest of the file as struct fields.
+struct point {
+	x i64
+	y i64

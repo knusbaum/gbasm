@@ -351,6 +351,63 @@ func main() {
 				fmt.Printf("Fatal: Need package declaration before anything else.")
 				os.Exit(1)
 			}
+			if strings.HasPrefix(line, "struct") {
+				// Multi-line directive:
+				//   struct Name {
+				//     field1 type1
+				//     field2 type2
+				//     ...
+				//   }
+				// Each field-line: first whitespace-delimited token is
+				// the field name, everything after is the type string
+				// (verbatim, so types containing spaces like '*mut Foo'
+				// or 'byte[100]' survive). Whitespace-only lines and //
+				// comments inside the body are ignored.
+				rest := strings.TrimSpace(strings.TrimPrefix(line, "struct"))
+				openIdx := strings.IndexByte(rest, '{')
+				if openIdx < 0 {
+					fmt.Printf("Fatal: struct directive: missing '{' on the same line, got: %q\n", line)
+					os.Exit(1)
+				}
+				sname := strings.TrimSpace(rest[:openIdx])
+				if sname == "" {
+					fmt.Printf("Fatal: struct directive: missing name before '{'\n")
+					os.Exit(1)
+				}
+				var fields []gbasm.FieldShape
+				for {
+					if !scanner.Scan() {
+						fmt.Printf("Fatal: struct %s: unexpected EOF before '}'\n", sname)
+						os.Exit(1)
+					}
+					ln++
+					body := strings.TrimSpace(scanner.Text())
+					if body == "" || strings.HasPrefix(body, "//") {
+						continue
+					}
+					if body == "}" {
+						break
+					}
+					// Field line: first whitespace token is name, rest is type.
+					sp := strings.IndexAny(body, " \t")
+					if sp < 0 {
+						fmt.Printf("Fatal: struct %s: field line %q lacks a type\n", sname, body)
+						os.Exit(1)
+					}
+					fname := body[:sp]
+					ftype := strings.TrimSpace(body[sp+1:])
+					if ftype == "" {
+						fmt.Printf("Fatal: struct %s: field %s has empty type\n", sname, fname)
+						os.Exit(1)
+					}
+					fields = append(fields, gbasm.FieldShape{Name: fname, Type: ftype})
+				}
+				if err := o.AddStruct(sname, fields); err != nil {
+					fmt.Printf("Fatal: struct %s: %s\n", sname, err)
+					os.Exit(1)
+				}
+				continue
+			}
 			if strings.HasPrefix(line, "function") {
 				fname := strings.TrimSpace(strings.TrimPrefix(line, "function"))
 				if strings.Contains(fname, " ") {

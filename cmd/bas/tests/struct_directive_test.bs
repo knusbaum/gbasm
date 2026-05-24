@@ -1,0 +1,33 @@
+package main
+
+// Exercises the struct directive. It carries Boson struct shape into
+// the .bo for cross-package use; bas itself doesn't generate code
+// from it. We assemble + link + run a trivial main so this exits 0,
+// which is enough to confirm the directive parsed and that nothing
+// downstream is upset by the presence of a Structs map.
+
+struct point {
+	x i64
+	y i64
+}
+
+struct rect {
+	tl point
+	br point
+	flags byte
+	label byte[16]
+}
+
+// Edge cases: blank lines and comments inside the body.
+struct edges {
+
+	// leading comment
+	a *mut i64
+
+	b byte[]
+	// trailing comment
+}
+
+function main
+	xor rax rax
+	ret
