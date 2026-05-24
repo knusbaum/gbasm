@@ -226,6 +226,14 @@ func (p *Parser) parseArgs() []*Node {
 func (p *Parser) parseStructLiteral() []*Node {
 	var ret []*Node
 	for p.current().t != tok_rcurly {
+		// ';' (auto-inserted by the lexer on a newline after a
+		// statement-ending field value) is treated the same as ','
+		// — both separate fields. Trailing ';' or ',' before '}' is
+		// also fine; the next iteration sees '}' and exits.
+		if p.current().t == tok_semicolon {
+			p.advance()
+			continue
+		}
 		v := p.parseValue()
 		if v.t != n_symbol {
 			panic(&interpreterError{fmt.Sprintf("Expected field name, but found: %v\n", v), v.p})
@@ -233,7 +241,7 @@ func (p *Parser) parseStructLiteral() []*Node {
 		p.expect(tok_colon)
 		v2 := p.parseExpression()
 		ret = append(ret, &Node{t: n_stfield, p: v.p, sval: v.sval, args: []*Node{v2}})
-		if p.current().t != tok_comma {
+		if p.current().t != tok_comma && p.current().t != tok_semicolon {
 			break
 		}
 		p.advance()
@@ -629,6 +637,14 @@ func (p *Parser) parseParens() *Node {
 		p.advance()
 		var block []*Node
 		for p.current().t != tok_rcurly {
+			// Statements within a block are separated by ';' tokens
+			// — typically auto-inserted by the lexer on newlines that
+			// follow a statement-ending token. Multiple consecutive
+			// ';' (blank lines, etc.) are just skipped.
+			if p.current().t == tok_semicolon {
+				p.advance()
+				continue
+			}
 			v := p.parseExpression()
 			block = append(block, v)
 		}
@@ -889,6 +905,13 @@ func (p *Parser) parseStruct() *Node {
 
 	var ret []*Node
 	for p.current().t != tok_rcurly {
+		// Skip ';' between fields (auto-inserted by the lexer on
+		// newlines after a statement-ending token — the typename's
+		// closing ']' or trailing identifier, etc.)
+		if p.current().t == tok_semicolon {
+			p.advance()
+			continue
+		}
 		fieldpos := p.current().p
 		v := p.parseTok()
 		if v.t != n_symbol {
@@ -953,5 +976,11 @@ func (p *Parser) Next() (n *Node, e error) {
 			panic(e)
 		}
 	}()
+	// Tolerate semicolons between top-level decls (auto-inserted by
+	// the lexer after a statement-ending token, e.g. the '}' that
+	// closes a previous fn body, or an explicit ';' the user typed).
+	for p.current().t == tok_semicolon {
+		p.advance()
+	}
 	return p.parseTopLevel(), nil
 }

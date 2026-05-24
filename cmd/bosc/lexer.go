@@ -197,6 +197,29 @@ func (p position) String() string {
 type lexer struct {
 	r io.RuneScanner
 	p position
+	// prevTok is the type of the most recently returned token, used
+	// by automatic semicolon insertion to decide whether a newline
+	// should terminate a statement.
+	prevTok toktype
+	// parenDepth counts open '(' and '[' nestings. Auto-insertion is
+	// suppressed when depth > 0 so multi-line argument lists, slice
+	// expressions, etc. don't get rogue statement terminators in the
+	// middle of them.
+	parenDepth int
+}
+
+// isStatementEnder reports whether t can validly end a statement, in
+// the sense used by Go-style automatic semicolon insertion. When a
+// newline follows a token in this set (at paren/bracket depth 0),
+// the lexer synthesizes a tok_semicolon before continuing.
+func isStatementEnder(t toktype) bool {
+	switch t {
+	case tok_ident, tok_number, tok_str, tok_byte,
+		tok_rparen, tok_rsquare, tok_rcurly,
+		tok_break, tok_continue, tok_return:
+		return true
+	}
+	return false
 }
 
 func (l *lexer) readRune() rune {
@@ -271,23 +294,25 @@ func (l *lexer) consumeWhitespace() {
 	l.r.UnreadRune()
 }
 
+// consumeLine eats characters up to (but not including) the next '\n'.
+// The newline itself is left for the whitespace/auto-semicolon path
+// in Next() so that a comment after a statement-ending token still
+// triggers semicolon insertion.
 func (l *lexer) consumeLine() {
 	for {
 		r, _, err := l.r.ReadRune()
 		if err != nil {
 			if err == io.EOF {
 				return
-			} else {
-				panic(&interpreterError{fmt.Sprintf("unexpected read error: %v", err), l.p})
 			}
+			panic(&interpreterError{fmt.Sprintf("unexpected read error: %v", err), l.p})
+		}
+		if r == '\n' {
+			l.r.UnreadRune()
+			return
 		}
 		l.p.charoff += 1
 		l.p.linecharoff += 1
-		if r == '\n' {
-			l.p.lineoff += 1
-			l.p.linecharoff = 1
-			break
-		}
 	}
 }
 
@@ -422,12 +447,42 @@ func (l *lexer) Next() (rt token, re error) {
 			}
 			panic(e)
 		}
+		if re == nil {
+			// Track paren depth so auto-semicolon insertion can be
+			// suppressed inside multi-line argument lists and slice
+			// expressions, where bare newlines don't end statements.
+			switch rt.t {
+			case tok_lparen, tok_lsquare:
+				l.parenDepth++
+			case tok_rparen, tok_rsquare:
+				if l.parenDepth > 0 {
+					l.parenDepth--
+				}
+			}
+			l.prevTok = rt.t
+		}
 		if nopos {
 			rt.p = position{}
 		}
 	}()
 
-	l.consumeWhitespace()
+	// Whitespace + automatic semicolon insertion. We can't use
+	// consumeWhitespace here because we need to notice when we cross
+	// a newline and react before discarding it.
+	crossedNewline := false
+	for {
+		r := l.headRune()
+		if r == 0 || !unicode.IsSpace(r) {
+			break
+		}
+		if r == '\n' {
+			crossedNewline = true
+		}
+		l.nextRune()
+	}
+	if crossedNewline && l.parenDepth == 0 && isStatementEnder(l.prevTok) {
+		return token{t: tok_semicolon, p: l.p}, nil
+	}
 
 	r := l.headRune()
 	switch r {

@@ -21,6 +21,7 @@ func TestLexer(t *testing.T) {
 				token{t: tok_ident, sval: "b"},
 				token{t: tok_eq},
 				token{t: tok_byte, nval: uint64('h')},
+				token{t: tok_semicolon}, // auto-inserted after the byte literal
 				token{t: tok_ident, sval: "putc"},
 				token{t: tok_lparen},
 				token{t: tok_ident, sval: "b"},
