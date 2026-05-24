@@ -526,20 +526,33 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			CompileErrorF(a, "No such structure \"%v\"", l.t.Name)
 		}
 		offset, mtype := def.ByteOffset(c, ast.Member)
+		_, memberIsStruct := c.StructDeclForName(mtype.Name)
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), mtype)
 		}
-		if mtype.Size(c) > 8 {
+		if mtype.Size(c) > 8 || memberIsStruct {
+			// Large value (struct copy, fixed array) or any nested
+			// struct (even small ones): keep a pointer rather than
+			// loading the bytes, so a subsequent Dot/Index can walk
+			// further. Without this, a small inner struct's value
+			// ends up in a register and gets dereferenced as if it
+			// were a pointer on the next step.
 			addrType := mtype
 			addrType.Indirection++
 			addr := newSpot(of, c, c.Temp(), addrType)
 			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", addr.ref, l.ref, offset)
+			if memberIsStruct && mtype.Size(c) <= 8 {
+				// Small struct: callers expect a pointer they can
+				// index/dot through. Return the address directly
+				// instead of memcpy-ing into a scalar dest.
+				addr.t = mtype
+				return addr
+			}
 			spot_memcpy(of, c, dest, addr, mtype.Size(c))
 			addr.free(of)
 		} else {
 			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, l.ref, offset)
 		}
-		//fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, l.ref, offset)
 		//move(of, c, dest,
 		return dest
 	case *Deref:

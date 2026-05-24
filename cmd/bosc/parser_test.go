@@ -433,13 +433,15 @@ func TestParser(t *testing.T) {
 		},
 		{
 			in: "a[10]",
-			out: &Node{t: n_index, sval: "a", args: []*Node{
+			out: &Node{t: n_index, args: []*Node{
+				&Node{t: n_symbol, sval: "a"},
 				&Node{t: n_number, ival: 10},
 			}},
 		},
 		{
 			in: "a[x]",
-			out: &Node{t: n_index, sval: "a", args: []*Node{
+			out: &Node{t: n_index, args: []*Node{
+				&Node{t: n_symbol, sval: "a"},
 				&Node{t: n_symbol, sval: "x"},
 			}},
 		},

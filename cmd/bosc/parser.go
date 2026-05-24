@@ -388,53 +388,104 @@ func (p *Parser) parseTypeName() *Node {
 
 func (p *Parser) parseValue() *Node {
 	v := p.parseTok()
-	if v.t == n_symbol {
-		if p.current().t == tok_lparen {
-			// we have a function call
-			p.advance()
-			args := p.parseArgs()
-			p.expect(tok_rparen)
-			return &Node{t: n_funcall, p: v.p, sval: v.sval, args: args}
-		} else if p.current().t == tok_lsquare {
-			p.advance()
-			if p.current().t == tok_colon {
-				// [:
-				p.advance()
-				if p.current().t == tok_rsquare {
-					// [:]
-					p.advance()
-					return &Node{t: n_slice, p: v.p, sval: v.sval, args: []*Node{nil, nil}}
-				}
-				// [: X]
-				v3 := p.parseExpression()
-				p.expect(tok_rsquare)
-				return &Node{t: n_slice, p: v.p, sval: v.sval, args: []*Node{nil, v3}}
-			}
-			v2 := p.parseExpression()
+	return p.parsePostfix(v)
+}
 
-			if p.current().t == tok_colon {
-				// [ X :
-				p.advance()
-				if p.current().t == tok_rsquare {
-					// [X:]
-					p.advance()
-					return &Node{t: n_slice, p: v.p, sval: v.sval, args: []*Node{v2, nil}}
-				}
-				v3 := p.parseExpression()
-				p.expect(tok_rsquare)
-				return &Node{t: n_slice, p: v.p, sval: v.sval, args: []*Node{v2, v3}}
-			}
-
-			p.expect(tok_rsquare)
-			return &Node{t: n_index, p: v.p, sval: v.sval, args: []*Node{v2}}
-		} else if p.current().t == tok_lcurly {
+// parsePostfix wraps v in zero or more postfix operators:
+//
+//   - `.member`     produces n_dot{args: [v, member-symbol]}
+//   - `[index]`     produces n_index{args: [v, index-expr]}
+//   - `[lo:hi]`     produces n_slice{args: [v, lo|nil, hi|nil]}
+//   - `(args)`      produces n_funcall (only when v is a bare symbol;
+//     calls through expressions aren't supported)
+//   - `{fields}`    produces n_stlit (only when v is a bare symbol; the
+//     type name lives in v.sval)
+//
+// The loop terminates as soon as the current token isn't a postfix
+// operator, so chains like `a.b[i].c[lo:hi]` work naturally.
+func (p *Parser) parsePostfix(v *Node) *Node {
+	for {
+		c := p.current()
+		switch c.t {
+		case tok_dot:
 			p.advance()
-			v2 := p.parseStructLiteral()
+			v2 := p.parseTok()
+			if v2.t != n_symbol {
+				panic(&interpreterError{fmt.Sprintf("Expected a member name after '.', but found %s", v2.t), v2.p})
+			}
+			v = &Node{t: n_dot, p: c.p, args: []*Node{v, v2}}
+		case tok_lsquare:
+			p.advance()
+			v = p.parseIndexOrSlice(v, c.p)
+		case tok_lparen:
+			// Function-call form: direct `name(args)` or qualified
+			// `pkg.name(args)`. The qualified shape stays as
+			// Dot(symbol_pkg, funcall_fn) — that's what n_dot's ToAST
+			// handler already recognizes and lowers to a Funcall with
+			// f.Pkg set.
+			switch {
+			case v.t == n_symbol:
+				p.advance()
+				args := p.parseArgs()
+				p.expect(tok_rparen)
+				v = &Node{t: n_funcall, p: v.p, sval: v.sval, args: args}
+			case v.t == n_dot && len(v.args) == 2 && v.args[1].t == n_symbol:
+				p.advance()
+				args := p.parseArgs()
+				p.expect(tok_rparen)
+				rhs := v.args[1]
+				v.args[1] = &Node{t: n_funcall, p: rhs.p, sval: rhs.sval, args: args}
+			default:
+				return v
+			}
+		case tok_lcurly:
+			// Struct-literal form requires a bare name (the type).
+			if v.t != n_symbol {
+				return v
+			}
+			p.advance()
+			fields := p.parseStructLiteral()
 			p.expect(tok_rcurly)
-			return &Node{t: n_stlit, p: v.p, sval: v.sval, args: v2}
+			v = &Node{t: n_stlit, p: v.p, sval: v.sval, args: fields}
+		default:
+			return v
 		}
 	}
-	return v
+}
+
+// parseIndexOrSlice handles the `[...]` body after the opening bracket
+// has been consumed. The base expression to index/slice into is v, and
+// pos is the bracket position for diagnostics.
+func (p *Parser) parseIndexOrSlice(v *Node, pos position) *Node {
+	if p.current().t == tok_colon {
+		// [: ...
+		p.advance()
+		if p.current().t == tok_rsquare {
+			// [:]
+			p.advance()
+			return &Node{t: n_slice, p: pos, args: []*Node{v, nil, nil}}
+		}
+		// [: hi]
+		hi := p.parseExpression()
+		p.expect(tok_rsquare)
+		return &Node{t: n_slice, p: pos, args: []*Node{v, nil, hi}}
+	}
+	lo := p.parseExpression()
+	if p.current().t == tok_colon {
+		// [lo : ...
+		p.advance()
+		if p.current().t == tok_rsquare {
+			// [lo:]
+			p.advance()
+			return &Node{t: n_slice, p: pos, args: []*Node{v, lo, nil}}
+		}
+		hi := p.parseExpression()
+		p.expect(tok_rsquare)
+		return &Node{t: n_slice, p: pos, args: []*Node{v, lo, hi}}
+	}
+	p.expect(tok_rsquare)
+	// Plain [expr] — lo is the index expression.
+	return &Node{t: n_index, p: pos, args: []*Node{v, lo}}
 }
 
 func (p *Parser) parseIf() *Node {
@@ -630,18 +681,15 @@ func (p *Parser) parseUnary() *Node {
 }
 
 func (p *Parser) parseSubexpr() *Node {
-	//fmt.Printf("PARSING PARENS\n")
 	v := p.parseParens()
-	//fmt.Printf("GOT PARSE PARENS: %#v\n", v)
+	// parseParens returns either a literal/symbol (via parseValue, which
+	// has already chewed through any postfix chain) or a sub-expression
+	// from inside parens (which is fully formed). Either way the dot/
+	// index/slice/call chain has already been applied; here we only
+	// handle mul/div at this precedence level.
 	for {
 		c := p.current()
 		switch c.t {
-		case tok_dot:
-			for p.current().t == tok_dot {
-				p.advance()
-				v2 := p.parseValue()
-				v = &Node{t: n_dot, p: c.p, args: []*Node{v, v2}}
-			}
 		case tok_star:
 			p.advance()
 			v2 := p.parseParens()

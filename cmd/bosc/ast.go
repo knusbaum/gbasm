@@ -1561,32 +1561,25 @@ func (n *Node) toASTTop(c *Context) AST {
 			p:   n.p,
 		}
 	case n_index:
-		if n.args[0].t == n_number {
-			// special optimization
-			return &Index{
-				Val: &Symbol{Name: n.sval, p: n.p},
-				N:   n.args[0].ival,
-			}
-		} else {
-			idx := n.args[0].toASTTop(NewContext())
-			return &Index{
-				Val:  &Symbol{Name: n.sval, p: n.p},
-				NAST: idx,
-			}
+		// args[0] = value to index into (any AST), args[1] = index expression.
+		val := n.args[0].toASTTop(NewContext())
+		idx := n.args[1]
+		if idx.t == n_number {
+			return &Index{Val: val, N: idx.ival}
 		}
+		return &Index{Val: val, NAST: idx.toASTTop(NewContext())}
 	case n_slice:
+		// args[0] = value to slice (any AST), args[1] = lower (nil-ok),
+		// args[2] = upper (nil-ok).
+		val := n.args[0].toASTTop(NewContext())
 		var lower, upper AST
-		if n.args[0] != nil {
-			lower = n.args[0].toASTTop(NewContext())
-		}
 		if n.args[1] != nil {
-			upper = n.args[1].toASTTop(NewContext())
+			lower = n.args[1].toASTTop(NewContext())
 		}
-		return &SliceOp{
-			Val:   &Symbol{Name: n.sval, p: n.p},
-			Lower: lower,
-			Upper: upper,
+		if n.args[2] != nil {
+			upper = n.args[2].toASTTop(NewContext())
 		}
+		return &SliceOp{Val: val, Lower: lower, Upper: upper}
 	case n_if:
 		ifs := IfStmt{
 			Cond: n.args[0].toASTTop(NewContext()),

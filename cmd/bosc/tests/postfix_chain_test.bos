@@ -1,0 +1,49 @@
+package main
+
+import "string"
+
+// Parser used to require any indexing or slicing to be of a bare
+// identifier, so 'mything.first[0]' would error with "Expected a
+// member name, but got n_index". Postfix-chain support lets a `.`,
+// `[…]`, or `[…:…]` follow any prior postfix step.
+//
+// As a side effect this also exposed a codegen bug: when chaining
+// dots through a *small* nested struct (size ≤ 8 bytes), compileTop
+// was loading the struct's bytes into a register and then treating
+// that register's value as a pointer on the next step. Both the
+// parser and codegen sides are exercised here.
+
+struct point { x i64 }       // 8 bytes — triggers the small-struct path
+struct line  { a point }     // 8 bytes — single-field struct of struct
+
+struct phrases {
+	greeting byte[16]
+	farewell byte[16]
+}
+
+var ph phrases = phrases{
+	greeting: "hello",
+	farewell: "goodbye",
+}
+
+fn main() {
+	// Field-then-index on a global struct.
+	string.putc(ph.greeting[0])
+	string.putc(ph.greeting[1])
+	string.putc(ph.greeting[2])
+	string.putc(ph.greeting[3])
+	string.putc(ph.greeting[4])
+	string.putc('\n')
+
+	// Field-then-slice on a global struct.
+	var s byte[] = ph.farewell[0:7]
+	string.puts(s)
+	string.putc('\n')
+
+	// Nested-dot chain through a small struct, on a local — was a
+	// pre-existing codegen segfault before the small-struct lea fix.
+	var l line
+	l.a.x = 99
+	string.puti(l.a.x)
+	string.putc('\n')
+}
