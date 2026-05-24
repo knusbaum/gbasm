@@ -44,6 +44,19 @@ type Context struct {
 	// type-based memory-backing rule (structs and >8-byte values are
 	// allocated as `bytes` on the stack and accessed by address too).
 	addressNames map[string]bool
+
+	// anonGlobals is a queue of file-scope-data blocks synthesized
+	// during static-init encoding (the `&someLiteral` case). Each
+	// entry already has its bytes and relocations computed; the
+	// caller of encodeStaticInit drains the queue and emits a `var`
+	// block for each entry alongside the named global it's nested
+	// inside. Maintained only on the root context.
+	anonGlobals []anonGlobal
+	// anonGlobalCount is a monotonic counter for `__static_N` names.
+	// We can't use len(anonGlobals) because DrainAnonGlobals clears
+	// the queue between top-level decls, which would let names from
+	// later decls collide with earlier ones.
+	anonGlobalCount int
 	// tracks which bindings are const (true) vs var (false).
 	constBindings map[string]bool
 	// tracks which owned bindings have been consumed (moved or disposed).
@@ -87,14 +100,18 @@ func NewContext() *Context {
 }
 
 // typeIsMemoryBacked reports whether a value of type t is allocated as
-// a stack chunk (`bytes`) rather than register-resident (`local`). The
-// rule is the same one newSpot uses to pick its allocator: structs of
-// any size, and anything strictly larger than 8 bytes. Centralized so
-// the allocation choice and the codegen sites that ask "is this name
-// addressing memory" can't drift apart.
+// a stack chunk (`bytes`) rather than register-resident (`local`).
+// Pointers always go in registers regardless of what they point at,
+// so Indirection > 0 short-circuits to false. Otherwise: structs (the
+// value, not a pointer to one) and anything strictly larger than 8
+// bytes is memory-backed. Centralized so the allocation choice and
+// the codegen sites that ask "is this name addressing memory" can't
+// drift apart.
 func typeIsMemoryBacked(c *Context, t ASTType) bool {
-	_, isStruct := c.StructDeclForName(t.Name)
-	if isStruct {
+	if t.Indirection > 0 {
+		return false
+	}
+	if _, isStruct := c.StructDeclForName(t.Name); isStruct {
 		return true
 	}
 	return t.Size(c) > 8
@@ -136,6 +153,48 @@ func (c *Context) MarkAddress(name string) {
 		return
 	}
 	c.addressNames[name] = true
+}
+
+// anonGlobal is one queued anonymous global to emit. Created by
+// AddAnonGlobal during static-init encoding when an `&literal` form
+// needs storage to point at. The caller drains the queue via
+// DrainAnonGlobals and emits each as a `var` block.
+type anonGlobal struct {
+	Name   string
+	Type   string // rendered type string for the bas-level var directive
+	Bytes  []byte
+	Relocs []relocSpec
+}
+
+// AddAnonGlobal queues a fresh anonymous global with a unique
+// `__static_N` name and returns the chosen name. Forwarded to the
+// root context so the counter is unique across the whole compilation
+// (mirrors how String() allocates `__bstrN`).
+func (c *Context) AddAnonGlobal(typeStr string, bytes []byte, relocs []relocSpec) string {
+	if c.parent != nil {
+		return c.parent.AddAnonGlobal(typeStr, bytes, relocs)
+	}
+	name := fmt.Sprintf("__static_%d", c.anonGlobalCount)
+	c.anonGlobalCount++
+	c.anonGlobals = append(c.anonGlobals, anonGlobal{
+		Name:   name,
+		Type:   typeStr,
+		Bytes:  bytes,
+		Relocs: relocs,
+	})
+	return name
+}
+
+// DrainAnonGlobals returns and clears the pending anonymous globals.
+// Called after a named global has been emitted; each pending entry
+// gets emitted as its own `var` block.
+func (c *Context) DrainAnonGlobals() []anonGlobal {
+	if c.parent != nil {
+		return c.parent.DrainAnonGlobals()
+	}
+	out := c.anonGlobals
+	c.anonGlobals = nil
+	return out
 }
 
 func (c *Context) SubContext() *Context {
@@ -1140,17 +1199,31 @@ func (d *Deref) Pos() position {
 	return d.Val.Pos()
 }
 
+// Address represents the `&` operator. Two forms:
+//
+//   - Var-of-name (`&someVar`): Var holds the variable name, Lit is nil.
+//     Supported at runtime and in static-init contexts.
+//
+//   - Address-of-literal (`&someStructLiteral`): Lit holds the inner
+//     expression, Var is "". Only supported in static-init contexts —
+//     bosc allocates an anonymous global to hold the literal and the
+//     pointer slot relocates to that global. Runtime codegen rejects
+//     this form (can't take an address of a temporary in general).
 type Address struct {
-	// for now we can only take the address of a variable.
-	// TODO: extend this to arbitrary expressions.
-	// This is tricky, since not every expression can yield
-	// something that is addressable, so for now we'll do the
-	// easy thing.
-	Var string
+	Var string // when non-empty: address-of-named-variable
+	Lit AST    // when non-nil:   address-of-literal (static-init only)
 	p   position
 }
 
 func (a *Address) ASTType(c *Context) ASTType {
+	if a.Lit != nil {
+		// Address-of-literal: the type is *(literal's type), with no
+		// existing mut/owned bits to shift since the literal is fresh
+		// storage we're synthesizing.
+		t := a.Lit.ASTType(c)
+		t.Indirection += 1
+		return t
+	}
 	t, ok := c.TypeForVar(a.Var)
 	if !ok {
 		panic("Variable is not bound. TODO: Nice error reports.")
@@ -1168,6 +1241,9 @@ func (a *Address) ASTType(c *Context) ASTType {
 }
 
 func (a *Address) Note() string {
+	if a.Lit != nil {
+		return fmt.Sprintf("Address &(%s)", a.Lit.Note())
+	}
 	return fmt.Sprintf("Address &%s", a.Var)
 }
 
@@ -1679,6 +1755,16 @@ func (n *Node) toASTTop(c *Context) AST {
 		}
 		return &s
 	case n_address:
+		// Two forms from the parser: address-of-name (sval set, no args)
+		// and address-of-literal (args[0] set, sval empty). The latter
+		// is only meaningful in static-init contexts; runtime codegen
+		// rejects it with a clear error.
+		if len(n.args) > 0 {
+			return &Address{
+				Lit: n.args[0].toASTTop(NewContext()),
+				p:   n.p,
+			}
+		}
 		return &Address{
 			Var: n.sval,
 			p:   n.p,

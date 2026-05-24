@@ -56,6 +56,15 @@ func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
 		CompileErrorF(a, "internal: static initializer encoded %d bytes, but type %s has size %d", len(data), dstt, size)
 	}
 	emitVarBlock(of, ast.Name, ast.Type.String(), data, relocs)
+	// Any `&literal` forms encountered during the encode queued
+	// anonymous globals to back their pointer targets. Emit them now,
+	// alongside the named global they're nested inside. Mark each as
+	// memory-backed so subsequent codegen treats them like any other
+	// file-scope name.
+	for _, ag := range c.DrainAnonGlobals() {
+		c.MarkAddress(ag.Name)
+		emitVarBlock(of, ag.Name, ag.Type, ag.Bytes, ag.Relocs)
+	}
 }
 
 // emitVarBlock writes either the single-line var directive (when there are
@@ -158,23 +167,38 @@ func encodeLiteralBytes(c *Context, dstt ASTType, l *Literal) ([]byte, []relocSp
 	return nil, nil, fmt.Errorf("unsupported literal type for static initializer: %T", l.Val)
 }
 
-// encodeAddressBytes handles `&someGlobal` in static-init context. The
-// payload is an 8-byte zero slot; the linker fills it with the symbol's
-// resolved virtual address via the accompanying relocation.
+// encodeAddressBytes handles `&...` in static-init context. Two forms:
 //
-// For now restricted to Var=name-of-a-global. Anonymous targets
-// (`&someStruct{...}`) are step 3 and will allocate fresh anonymous
-// globals from this same path.
+//   - `&someGlobal` (a.Var set): the payload is an 8-byte zero slot
+//     with a relocation pointing at the named global.
+//
+//   - `&someLiteral` (a.Lit set): recursively encode the inner literal,
+//     queue an anonymous global with the encoded payload, and emit an
+//     8-byte slot with a relocation pointing at the anonymous global.
+//     Compositional: a literal containing another `&literal` produces
+//     two anonymous globals, and so on, all queued in encoding order.
 func encodeAddressBytes(c *Context, dstt ASTType, a *Address) ([]byte, []relocSpec, error) {
 	if dstt.Indirection == 0 {
 		return nil, nil, fmt.Errorf("address-of initializer assigned to non-pointer type %s", dstt)
 	}
-	if a.Var == "" {
-		// Reserved for step 3 (anonymous-target Address forms).
-		return nil, nil, fmt.Errorf("address-of with a non-symbol target is not yet supported in static initializers")
+	if a.Var != "" {
+		out := make([]byte, 8)
+		return out, []relocSpec{{Offset: 0, Symbol: a.Var, Addend: 0}}, nil
 	}
+	if a.Lit == nil {
+		return nil, nil, fmt.Errorf("address-of with no target (internal: Address had neither Var nor Lit)")
+	}
+	// Address-of-literal: the inner is the value we want to give
+	// storage to. Recursively encode it, then queue an anonymous
+	// global of that type carrying the encoded bytes + relocs.
+	innerType := a.Lit.ASTType(c)
+	innerBytes, innerRelocs, err := encodeStaticInit(c, innerType, a.Lit)
+	if err != nil {
+		return nil, nil, fmt.Errorf("address-of-literal: %v", err)
+	}
+	name := c.AddAnonGlobal(innerType.String(), innerBytes, innerRelocs)
 	out := make([]byte, 8)
-	return out, []relocSpec{{Offset: 0, Symbol: a.Var, Addend: 0}}, nil
+	return out, []relocSpec{{Offset: 0, Symbol: name, Addend: 0}}, nil
 }
 
 // encodeStructLiteralBytes serializes a struct literal to bytes by walking

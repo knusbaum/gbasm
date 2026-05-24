@@ -695,12 +695,19 @@ func (p *Parser) parseUnary() *Node {
 		return &Node{t: n_neg, p: c.p, args: []*Node{operand}}
 	} else if c.t == tok_amp {
 		p.advance()
-		if p.current().t != tok_ident {
-			panic(&interpreterError{fmt.Sprintf("Expected an identifier in address operation, but found: %s\n", p.current().t), p.current().p})
+		// `&` parses two shapes today:
+		//   - `&name`         → address-of-variable (sval = name)
+		//   - `&Type{ ... }`  → address-of-literal (args[0] = the literal)
+		// The literal form is only valid in static-init context; runtime
+		// codegen rejects it. We distinguish the shapes by what parseValue
+		// returns. parseValue calls parsePostfix, which folds `Type{...}`
+		// into an n_stlit, so this works without any special casing on
+		// the `&` side.
+		inner := p.parseValue()
+		if inner.t == n_symbol {
+			return &Node{t: n_address, p: c.p, sval: inner.sval}
 		}
-		name := p.current().sval
-		p.advance()
-		return &Node{t: n_address, p: c.p, sval: name}
+		return &Node{t: n_address, p: c.p, args: []*Node{inner}}
 	}
 	return p.parseSubexpr()
 }

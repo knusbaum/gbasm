@@ -1,0 +1,56 @@
+package main
+
+import "string"
+
+// `&<struct literal>` in static-init produces an anonymous global
+// holding the literal's bytes and a pointer to it in the holder.
+// Composable: nested `&literal` chains add one anonymous per level.
+
+struct inner {
+	v i64
+}
+
+struct middle {
+	tag i64
+	in  *inner
+}
+
+struct outer {
+	name byte[]
+	mid  *middle
+}
+
+// One level of nesting: outer has a pointer to a fresh anonymous
+// middle, which has a pointer to a fresh anonymous inner.
+var nest outer = outer{
+	name: "nested\n",
+	mid: &middle{
+		tag: 7,
+		in: &inner{v: 99},
+	},
+}
+
+// Two siblings, each producing its own anonymous chain — checks that
+// the anonymous-global namer doesn't collide and each var sees its
+// own targets.
+var nest2 outer = outer{
+	name: "second\n",
+	mid: &middle{
+		tag: 13,
+		in: &inner{v: 23},
+	},
+}
+
+fn main() {
+	string.puts(nest.name)
+	string.puti(nest.mid.tag)
+	string.putc('\n')
+	string.puti(nest.mid.in.v)
+	string.putc('\n')
+
+	string.puts(nest2.name)
+	string.puti(nest2.mid.tag)
+	string.putc('\n')
+	string.puti(nest2.mid.in.v)
+	string.putc('\n')
+}

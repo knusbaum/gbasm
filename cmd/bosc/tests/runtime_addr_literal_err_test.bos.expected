@@ -1,0 +1,2 @@
+Compiling tests/runtime_addr_literal_err_test.bos
+Fatal: can only take the address of a variable at runtime; address-of-literal is only valid in static initializers

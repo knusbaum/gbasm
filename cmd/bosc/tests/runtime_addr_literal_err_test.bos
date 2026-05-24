@@ -1,0 +1,12 @@
+package main
+
+// `&someLiteral` is only valid in static-init context — there's no
+// stable storage for an arbitrary expression at runtime. Make sure
+// the runtime codegen rejects it cleanly rather than silently doing
+// something weird.
+
+struct point { x i64 }
+
+fn main() {
+	var p *point = &point{x: 1}
+}

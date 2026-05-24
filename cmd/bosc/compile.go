@@ -658,6 +658,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 
 		return dest
 	case *Address:
+		if ast.Lit != nil {
+			CompileErrorF(a, "can only take the address of a variable at runtime; address-of-literal is only valid in static initializers")
+		}
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), ast.ASTType(c))
 		}
