@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"strings"
 	//"github.com/knusbaum/gbasm/elf"
 )
 
@@ -126,6 +127,20 @@ func qualify(pkg, name string) string {
 	return pkg + "." + name
 }
 
+// qualifyDataRelocs rewrites bare-name targets in v.Relocs to be
+// package-qualified, mirroring the qualification that function.go
+// applies to code-side Relocation Symbols. A target containing a
+// '.' is assumed to already be qualified (cross-package reference)
+// and left untouched.
+func qualifyDataRelocs(v *Var, pkgname string) {
+	for i := range v.Relocs {
+		s := v.Relocs[i].Symbol
+		if !strings.ContainsRune(s, '.') {
+			v.Relocs[i].Symbol = qualify(pkgname, s)
+		}
+	}
+}
+
 func Link(os []*OFile, textoff uint64) LinkedBin {
 	funcs := make(map[string]*Function)
 	data := make(map[string]*Var)
@@ -149,6 +164,7 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 			if _, ok := data[qname]; ok {
 				log.Fatalf("Duplicate definitions of data %s", qname)
 			}
+			qualifyDataRelocs(v, o.Pkgname)
 			data[qname] = v
 		}
 		for vname, v := range o.Vars {
@@ -156,6 +172,7 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 			if _, ok := vars[qname]; ok {
 				log.Fatalf("Duplicate definitions of data %s", qname)
 			}
+			qualifyDataRelocs(v, o.Pkgname)
 			vars[qname] = v
 		}
 	}
@@ -190,6 +207,67 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 	datasyms := make([]SectSym, 0)
 
 	var fnbs, varbs, databs bytes.Buffer
+
+	// addVar / addData place a var/data block into the appropriate
+	// section if not already present, and recursively follow any
+	// data-relocation targets so that everything a placed var points
+	// to is itself placed. Data relocations can target functions
+	// (function-pointer init) too; those go through addNeeded.
+	var addVar, addData func(string)
+	addNeededDataReloc := func(target string) {
+		if _, ok := funcs[target]; ok {
+			if _, placed := funclocs[target]; !placed {
+				addNeeded(funcs[target])
+			}
+			return
+		}
+		if _, ok := vars[target]; ok {
+			addVar(target)
+			return
+		}
+		if _, ok := data[target]; ok {
+			addData(target)
+			return
+		}
+		log.Fatalf("No such symbol %s referenced by data relocation", target)
+	}
+	addVar = func(name string) {
+		if _, placed := varlocs[name]; placed {
+			return
+		}
+		v := vars[name]
+		loc := uint32(varbs.Len())
+		varbs.Write(v.Val)
+		varlocs[name] = loc
+		varsyms = append(varsyms, SectSym{
+			Name:    name,
+			Type:    SYM_OBJECT,
+			Address: uint64(loc),
+			Size:    len(v.Val),
+		})
+		for _, dr := range v.Relocs {
+			addNeededDataReloc(dr.Symbol)
+		}
+	}
+	addData = func(name string) {
+		if _, placed := datalocs[name]; placed {
+			return
+		}
+		v := data[name]
+		loc := uint32(databs.Len())
+		databs.Write(v.Val)
+		datalocs[name] = loc
+		datasyms = append(datasyms, SectSym{
+			Name:    name,
+			Type:    SYM_OBJECT,
+			Address: uint64(loc),
+			Size:    len(v.Val),
+		})
+		for _, dr := range v.Relocs {
+			addNeededDataReloc(dr.Symbol)
+		}
+	}
+
 	for len(needfn) > 0 {
 		current := needfn[0]
 		needfn = needfn[1:]
@@ -209,43 +287,14 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 			Size:    len(fbs),
 		})
 		for _, r := range current.Relocations {
-			//log.Printf("Found relocation for symbol %s\n", r.symbol)
 			if fn, ok := funcs[r.Symbol]; ok {
-				//log.Printf("Symbol %s is listed in the object funcs.\n", r.symbol)
-				// Function relocation
-				//log.Printf("LINKER FOUND RELOCATION AT OFFSET %d to function %s", r.offset, r.symbol)
 				if _, ok := funclocs[r.Symbol]; !ok {
-					//log.Printf("%s is *NOT* in funclocs. Appending function %#v to needfn.\n", r.Symbol, fn)
 					addNeeded(fn)
 				}
-			} else if v, ok := vars[r.Symbol]; ok {
-				// Variable relocation
-				//log.Printf("LINKER FOUND RELOCATION AT OFFSET %d to vars %s", r.offset, r.symbol)
-				if _, ok := varlocs[r.Symbol]; !ok {
-					loc := uint32(varbs.Len())
-					varbs.Write(v.Val)
-					varlocs[r.Symbol] = loc
-					varsyms = append(varsyms, SectSym{
-						Name:    r.Symbol,
-						Type:    SYM_OBJECT,
-						Address: uint64(loc),
-						Size:    len(v.Val),
-					})
-				}
-			} else if v, ok := data[r.Symbol]; ok {
-				// Data relocation
-				//log.Printf("LINKER FOUND RELOCATION AT OFFSET %d to data %s", r.offset, r.symbol)
-				if _, ok := datalocs[r.Symbol]; !ok {
-					loc := uint32(databs.Len())
-					databs.Write(v.Val)
-					datalocs[r.Symbol] = loc
-					datasyms = append(datasyms, SectSym{
-						Name:    r.Symbol,
-						Type:    SYM_OBJECT,
-						Address: uint64(loc),
-						Size:    len(v.Val),
-					})
-				}
+			} else if _, ok := vars[r.Symbol]; ok {
+				addVar(r.Symbol)
+			} else if _, ok := data[r.Symbol]; ok {
+				addData(r.Symbol)
 			} else {
 				log.Fatalf("No such symbol %s", r.Symbol)
 			}
@@ -287,6 +336,35 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 			r.Apply(text, int32(value))
 		} else {
 			log.Fatalf("THIS SHOULD NEVER HAPPEN. WE CHECKED ABOVE.")
+		}
+	}
+
+	// Data-section relocations: for each placed var (and data block),
+	// walk its Relocs and write the 8-byte absolute VA of each target
+	// into the appropriate pointer slot.
+	resolveTargetVA := func(target string) uint64 {
+		if off, ok := funclocs[target]; ok {
+			return textoff + uint64(off)
+		}
+		if off, ok := varlocs[target]; ok {
+			return varoff + uint64(off)
+		}
+		if off, ok := datalocs[target]; ok {
+			return dataoff + uint64(off)
+		}
+		log.Fatalf("Data relocation target %s was not placed (linker bug — addVar should have followed the reloc)", target)
+		return 0
+	}
+	for name, loc := range varlocs {
+		v := vars[name]
+		for _, dr := range v.Relocs {
+			dr.Apply(vardat[loc:], resolveTargetVA(dr.Symbol))
+		}
+	}
+	for name, loc := range datalocs {
+		v := data[name]
+		for _, dr := range v.Relocs {
+			dr.Apply(datadat[loc:], resolveTargetVA(dr.Symbol))
 		}
 	}
 	//return text

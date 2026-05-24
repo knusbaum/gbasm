@@ -1,0 +1,8 @@
+package main
+
+// Reloc offset+8 must fit inside the var's byte payload; an offset
+// past the end would write outside the var's storage at link time.
+var bad byte[8] {
+	bytes "\x00\x00\x00\x00\x00\x00\x00\x00"
+	reloc 4 some_symbol 0
+}

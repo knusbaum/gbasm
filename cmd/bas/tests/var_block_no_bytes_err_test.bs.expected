@@ -1,0 +1,2 @@
+Assembling tests/var_block_no_bytes_err_test.bs
+Fatal: var slice: block form requires a 'bytes' line

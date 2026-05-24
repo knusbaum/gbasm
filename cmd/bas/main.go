@@ -442,11 +442,13 @@ func main() {
 				f = nil // A new var declaration ends any current function
 				parts := SplitNSpace(strings.TrimSpace(strings.TrimPrefix(line, "var")), 3)
 				if len(parts) != 3 {
-					fmt.Printf("Fatal: var declaration requires a name, type, and either a byte-count or a string literal, but got: %v\n", parts)
+					fmt.Printf("Fatal: var declaration requires a name, type, and either a byte-count, a string literal, or a '{' block, but got: %v\n", parts)
 					os.Exit(1)
 				}
 				var data []byte
-				if strings.HasPrefix(parts[2], `"`) {
+				var relocs []gbasm.DataReloc
+				switch {
+				case strings.HasPrefix(parts[2], `"`):
 					// String-literal form: "..." with escapes (\n, \\, \", \0, \xHH).
 					d, err := parseData(parts[2])
 					if err != nil {
@@ -454,11 +456,91 @@ func main() {
 						os.Exit(1)
 					}
 					data = d
-				} else {
+				case parts[2] == "{":
+					// Block form:
+					//   var name type {
+					//     bytes "<escaped>"
+					//     reloc <offset> <symbol> <addend>
+					//     ...
+					//   }
+					// `bytes` and `reloc` lines may appear in any order;
+					// `bytes` is mandatory (use an explicit zero-filled
+					// string literal if the var is otherwise empty),
+					// `reloc` is optional and may appear multiple times.
+					sawBytes := false
+					for {
+						if !scanner.Scan() {
+							fmt.Printf("Fatal: var %s: unexpected EOF before '}'\n", parts[0])
+							os.Exit(1)
+						}
+						ln++
+						body := strings.TrimSpace(scanner.Text())
+						if body == "" || strings.HasPrefix(body, "//") {
+							continue
+						}
+						if body == "}" {
+							break
+						}
+						switch {
+						case strings.HasPrefix(body, "bytes"):
+							if sawBytes {
+								fmt.Printf("Fatal: var %s: duplicate 'bytes' line in block\n", parts[0])
+								os.Exit(1)
+							}
+							payload := strings.TrimSpace(strings.TrimPrefix(body, "bytes"))
+							if !strings.HasPrefix(payload, `"`) {
+								fmt.Printf("Fatal: var %s: 'bytes' payload must be a string literal, got: %s\n", parts[0], payload)
+								os.Exit(1)
+							}
+							d, err := parseData(payload)
+							if err != nil {
+								fmt.Printf("Fatal: var %s: failed to parse bytes payload: %v\n", parts[0], err)
+								os.Exit(1)
+							}
+							data = d
+							sawBytes = true
+						case strings.HasPrefix(body, "reloc"):
+							rp := SplitSpace(strings.TrimSpace(strings.TrimPrefix(body, "reloc")))
+							if len(rp) != 3 {
+								fmt.Printf("Fatal: var %s: 'reloc' requires three args (offset, symbol, addend), got: %v\n", parts[0], rp)
+								os.Exit(1)
+							}
+							off, err := strconv.ParseUint(rp[0], 10, 32)
+							if err != nil {
+								fmt.Printf("Fatal: var %s: reloc offset must be a non-negative integer, got %q: %v\n", parts[0], rp[0], err)
+								os.Exit(1)
+							}
+							addend, err := strconv.ParseInt(rp[2], 10, 64)
+							if err != nil {
+								fmt.Printf("Fatal: var %s: reloc addend must be an integer, got %q: %v\n", parts[0], rp[2], err)
+								os.Exit(1)
+							}
+							relocs = append(relocs, gbasm.DataReloc{
+								Offset: uint32(off),
+								Symbol: rp[1],
+								Addend: addend,
+							})
+						default:
+							fmt.Printf("Fatal: var %s: unknown line in block: %q\n", parts[0], body)
+							os.Exit(1)
+						}
+					}
+					if !sawBytes {
+						fmt.Printf("Fatal: var %s: block form requires a 'bytes' line\n", parts[0])
+						os.Exit(1)
+					}
+					// Validate reloc offsets fit within the payload.
+					for _, r := range relocs {
+						if int(r.Offset)+8 > len(data) {
+							fmt.Printf("Fatal: var %s: reloc at offset %d would write past end of %d-byte payload\n", parts[0], r.Offset, len(data))
+							os.Exit(1)
+						}
+					}
+				default:
 					// Size form: an integer giving the number of zero-filled bytes.
 					n, err := strconv.Atoi(parts[2])
 					if err != nil {
-						fmt.Printf("Fatal: var %s: third argument must be a string literal or an integer byte-count, got: %s\n", parts[0], parts[2])
+						fmt.Printf("Fatal: var %s: third argument must be a string literal, an integer byte-count, or '{', got: %s\n", parts[0], parts[2])
 						os.Exit(1)
 					}
 					if n < 0 {
@@ -467,7 +549,13 @@ func main() {
 					}
 					data = make([]byte, n)
 				}
-				o.AddVar(parts[0], parts[1], data)
+				if err := o.AddVar(parts[0], parts[1], data); err != nil {
+					fmt.Printf("Fatal: var %s: %s\n", parts[0], err)
+					os.Exit(1)
+				}
+				if len(relocs) > 0 {
+					o.Vars[parts[0]].Relocs = relocs
+				}
 				continue
 			}
 

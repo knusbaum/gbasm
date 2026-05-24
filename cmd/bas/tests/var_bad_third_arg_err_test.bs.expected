@@ -1,2 +1,2 @@
 Assembling tests/var_bad_third_arg_err_test.bs
-Fatal: var bad: third argument must be a string literal or an integer byte-count, got: something
+Fatal: var bad: third argument must be a string literal, an integer byte-count, or '{', got: something

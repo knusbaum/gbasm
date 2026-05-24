@@ -23,6 +23,31 @@ type Var struct {
 	// TypeDescr.
 	VType string
 	Val   []byte
+	// Relocs is a list of pointer-slot fixups within Val. Each entry
+	// asks the linker to write the absolute virtual address of Symbol
+	// (plus Addend) into the 8-byte slot at Offset. Used to express
+	// pointers in static data — slice headers, struct fields holding
+	// addresses of other globals, and so on.
+	Relocs []DataReloc
+}
+
+// DataReloc is a per-Var pointer-slot fixup, applied by the linker
+// when the var is placed in the data section. Distinct from
+// Relocation, which encodes a 32-bit PC-relative displacement
+// emitted by code; DataReloc writes an 8-byte absolute virtual
+// address into Val[Offset:Offset+8].
+type DataReloc struct {
+	Offset uint32 // within the owning Var.Val
+	Symbol string // target var/data name
+	Addend int64  // added to the resolved address
+}
+
+// Apply patches the 8-byte pointer slot at Offset with the absolute
+// virtual address. The linker computes targetVA from the symbol's
+// final placement; bs is the byte slice the Var was written into.
+func (r *DataReloc) Apply(bs []byte, targetVA uint64) {
+	v := uint64(int64(targetVA) + r.Addend)
+	binary.LittleEndian.PutUint64(bs[r.Offset:], v)
 }
 
 // func (v *Var) Offset() int32 {
@@ -151,7 +176,7 @@ func (o *OFile) AddVar(name, vtype string, val interface{}) error {
 	}
 	var bs bytes.Buffer
 	binary.Write(&bs, binary.LittleEndian, val)
-	o.Vars[name] = &Var{name, vtype, bs.Bytes()}
+	o.Vars[name] = &Var{Name: name, VType: vtype, Val: bs.Bytes()}
 	return nil
 }
 
@@ -166,7 +191,7 @@ func (o *OFile) AddData(name, vtype string, val interface{}) error {
 	}
 	var bs bytes.Buffer
 	binary.Write(&bs, binary.LittleEndian, val)
-	o.Data[name] = &Var{name, vtype, bs.Bytes()}
+	o.Data[name] = &Var{Name: name, VType: vtype, Val: bs.Bytes()}
 	return nil
 }
 

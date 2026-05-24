@@ -1,0 +1,2 @@
+Assembling tests/var_block_reloc_oob_err_test.bs
+Fatal: var bad: reloc at offset 4 would write past end of 8-byte payload

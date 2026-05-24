@@ -179,19 +179,27 @@ func readVars(r io.Reader) (map[string]*Var, error) {
 }
 
 func writeVar(w io.Writer, v *Var) error {
-	err := writeString(w, v.Name)
-	if err != nil {
+	if err := writeString(w, v.Name); err != nil {
 		return err
 	}
-	err = writeString(w, v.VType)
-	if err != nil {
+	if err := writeString(w, v.VType); err != nil {
 		return err
 	}
-	err = writeSize(w, len(v.Val))
-	if err != nil {
+	if err := writeSize(w, len(v.Val)); err != nil {
 		return err
 	}
-	return binary.Write(w, binary.LittleEndian, v.Val)
+	if err := binary.Write(w, binary.LittleEndian, v.Val); err != nil {
+		return err
+	}
+	if err := writeSize(w, len(v.Relocs)); err != nil {
+		return err
+	}
+	for _, r := range v.Relocs {
+		if err := writeDataReloc(w, &r); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func readVar(r io.Reader) (*Var, error) {
@@ -208,11 +216,48 @@ func readVar(r io.Reader) (*Var, error) {
 		return nil, err
 	}
 	bs := make([]byte, size)
-	err = binary.Read(r, binary.LittleEndian, &bs)
+	if err := binary.Read(r, binary.LittleEndian, &bs); err != nil {
+		return nil, err
+	}
+	nrelocs, err := readSize(r)
 	if err != nil {
 		return nil, err
 	}
-	return &Var{Name: name, VType: vtype, Val: bs}, nil
+	relocs := make([]DataReloc, 0, nrelocs)
+	for i := 0; i < nrelocs; i++ {
+		dr, err := readDataReloc(r)
+		if err != nil {
+			return nil, err
+		}
+		relocs = append(relocs, dr)
+	}
+	return &Var{Name: name, VType: vtype, Val: bs, Relocs: relocs}, nil
+}
+
+func writeDataReloc(w io.Writer, r *DataReloc) error {
+	if err := binary.Write(w, binary.LittleEndian, r.Offset); err != nil {
+		return err
+	}
+	if err := writeString(w, r.Symbol); err != nil {
+		return err
+	}
+	return binary.Write(w, binary.LittleEndian, r.Addend)
+}
+
+func readDataReloc(r io.Reader) (DataReloc, error) {
+	var dr DataReloc
+	if err := binary.Read(r, binary.LittleEndian, &dr.Offset); err != nil {
+		return DataReloc{}, err
+	}
+	sym, err := readString(r)
+	if err != nil {
+		return DataReloc{}, err
+	}
+	dr.Symbol = sym
+	if err := binary.Read(r, binary.LittleEndian, &dr.Addend); err != nil {
+		return DataReloc{}, err
+	}
+	return dr, nil
 }
 
 func writeSymbol(w io.Writer, v *Symbol) error {

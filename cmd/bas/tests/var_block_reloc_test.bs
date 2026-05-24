@@ -1,0 +1,31 @@
+package main
+
+// Exercises the var-block form end-to-end: a slice-header-shaped var
+// (16 bytes) whose first 8 bytes hold a pointer to another var via a
+// data relocation, and whose last 8 bytes hold the length 5. The
+// linker patches the pointer slot with the absolute virtual address
+// of `payload` at link time. Main reads the pointer back and writes
+// payload[0..5] to stdout via the write(2) syscall directly.
+
+// payload: the bytes "hello". 6th byte is a sentinel newline so we
+// can also write it without an extra syscall.
+var payload byte[6] "hello\n"
+
+// slice: 16-byte header { ptr: &payload, len: 6 }. Length encoded
+// little-endian (06 00 00 00 00 00 00 00).
+var slice byte[16] {
+	bytes "\x00\x00\x00\x00\x00\x00\x00\x00\x06\x00\x00\x00\x00\x00\x00\x00"
+	reloc 0 payload 0
+}
+
+function main
+	// rdx = slice.len (at offset 8 of slice)
+	mov rdx qword[slice+8]
+	// rsi = slice.ptr (at offset 0 of slice — the relocated pointer)
+	mov rsi qword[slice+0]
+	mov rax 1
+	mov rdi 1
+	syscall
+
+	xor rax rax
+	ret
