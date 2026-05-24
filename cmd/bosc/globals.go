@@ -24,11 +24,12 @@ type relocSpec struct {
 // from the single-line string-literal form to the block form whenever the
 // payload carries one or more relocations.
 func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
-	// Record the name as a global so codegen sites that build indirect
-	// addressing know to materialize the address into a register before
-	// using a register-scaled index (x86-64 RIP-relative addressing
-	// can't combine with a base+index*scale form).
-	c.MarkGlobal(ast.Name)
+	// Record the name as address-backed so codegen sites that build
+	// indirect addressing know they're operating on a memory-resident
+	// name. Without this mark, NameIsAddress would fall back to
+	// type-based memory-backing — which is true for structs and large
+	// values but not for scalar globals like 'var x i64'.
+	c.MarkAddress(ast.Name)
 	size := ast.Type.Size(c)
 	if ast.Init == nil {
 		// Zero-init form: bas allocates `size` zero bytes.

@@ -41,33 +41,41 @@ func Compile(of io.Writer, c *Context, a AST) (e error) {
 var nullspot = spot{}
 var regtype = ASTType{Name: "*untyped-register*"}
 
+// spot describes a bas-level name produced by codegen. ref is the
+// name as it'll appear in emitted assembly; t is the Boson type; and
+// nameIsAddress records whether bas resolves the name to a memory
+// location (address-style: `bytes`-allocated stack chunks, file-
+// scope globals) or to a register holding the value (value-style:
+// `local`-allocated scalars). Sites that need to follow a pointer
+// — Deref, register-scaled Index/SliceOp — consult nameIsAddress
+// to decide whether they need an extra load to materialize the
+// value into a register first.
 type spot struct {
-	ref string
-	t   ASTType
+	ref           string
+	t             ASTType
+	nameIsAddress bool
 }
 
 func newSpot(of io.Writer, c *Context, ref string, t ASTType) spot {
-	s := spot{ref: ref, t: t}
 	sz := t.Size(c)
-	// Struct values must use stack allocation (bytes) even when small, because
-	// field access uses lea/indirect addressing and requires a stable memory address.
-	// Only scalar and pointer types may live in registers (local).
-	_, isStruct := c.StructDeclForName(t.Name)
-	if sz <= 8 && !isStruct {
-		fmt.Fprintf(of, "\tlocal %s %d\n", ref, sz*8)
-	} else {
+	memBacked := typeIsMemoryBacked(c, t)
+	s := spot{ref: ref, t: t, nameIsAddress: memBacked}
+	if memBacked {
 		fmt.Fprintf(of, "\tbytes %s %d\n", ref, sz)
+	} else {
+		fmt.Fprintf(of, "\tlocal %s %d\n", ref, sz*8)
 	}
 	return s
 }
 
 func newSpotWithReg(of io.Writer, c *Context, ref string, t ASTType, reg string) spot {
-	s := spot{ref: ref, t: t}
 	sz := t.Size(c)
-	if sz <= 8 {
-		fmt.Fprintf(of, "\tlocal %s %d %s\n", ref, sz*8, reg)
-	} else {
+	memBacked := typeIsMemoryBacked(c, t)
+	s := spot{ref: ref, t: t, nameIsAddress: memBacked}
+	if memBacked {
 		fmt.Fprintf(of, "\tbytes %s %d %s\n", ref, sz, reg)
+	} else {
+		fmt.Fprintf(of, "\tlocal %s %d %s\n", ref, sz*8, reg)
 	}
 	return s
 }
@@ -195,7 +203,7 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 	switch ast := a.(type) {
 	case *Symbol:
 		t := ast.ASTType(c)
-		s := spot{ref: ast.Name, t: t}
+		s := spot{ref: ast.Name, t: t, nameIsAddress: c.NameIsAddress(ast.Name)}
 		if dest.same(&nullspot) {
 			return s
 		}
@@ -285,10 +293,13 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 			return dest
 		}
 		base := addr
-		// Same global-vs-local-base concern as the read path: a global
-		// can't be the base of a '[name + reg*scale]' SIB form.
-		// Materialize its address into a register first.
-		if c.IsGlobal(base.ref) {
+		// A name-is-address base (file-scope global, or a bytes-allocated
+		// stack chunk) can't be the base of a '[name + reg*scale]' SIB
+		// form: x86-64 RIP-relative addressing takes a disp32 only, and
+		// stack-relative '[rbp + name.off + reg*scale]' isn't a syntax
+		// bas exposes. Either way, lea the storage's address into a
+		// register first.
+		if base.nameIsAddress {
 			addrT := vt
 			addrT.Indirection++
 			baseAddr := newSpot(of, c, c.Temp(), addrT)
@@ -562,25 +573,29 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			CompileErrorF(a, "No such structure \"%v\"", l.t.Name)
 		}
 		offset, mtype := def.ByteOffset(c, ast.Member)
-		_, memberIsStruct := c.StructDeclForName(mtype.Name)
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), mtype)
 		}
-		if mtype.Size(c) > 8 || memberIsStruct {
-			// Large value (struct copy, fixed array) or any nested
-			// struct (even small ones): keep a pointer rather than
+		if typeIsMemoryBacked(c, mtype) {
+			// The member is memory-backed (a struct, or any value
+			// larger than 8 bytes). Keep a pointer to it rather than
 			// loading the bytes, so a subsequent Dot/Index can walk
 			// further. Without this, a small inner struct's value
-			// ends up in a register and gets dereferenced as if it
-			// were a pointer on the next step.
+			// would end up in a register and get dereferenced as if
+			// it were a pointer on the next step.
 			addrType := mtype
 			addrType.Indirection++
 			addr := newSpot(of, c, c.Temp(), addrType)
 			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", addr.ref, l.ref, offset)
+			_, memberIsStruct := c.StructDeclForName(mtype.Name)
 			if memberIsStruct && mtype.Size(c) <= 8 {
-				// Small struct: callers expect a pointer they can
-				// index/dot through. Return the address directly
-				// instead of memcpy-ing into a scalar dest.
+				// Small struct: callers expect to keep walking through
+				// this address. Return the lea'd address directly with
+				// the struct's type, instead of memcpy-ing the bytes
+				// into a scalar dest. The spot holds an address in a
+				// register, so it stays name-is-value — subsequent
+				// indirect addressing through it uses register-relative
+				// SIB without further materialization.
 				addr.t = mtype
 				return addr
 			}
@@ -589,7 +604,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		} else {
 			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, l.ref, offset)
 		}
-		//move(of, c, dest,
 		return dest
 	case *Deref:
 		v := compileTop(of, c, ast.Val, nullspot)
@@ -603,16 +617,16 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			t.MutMask = 0 // plain value: MutMask is not meaningful
 		}
 
-		// When the pointer lives in a global, [v.ref] would be the
-		// global's *own* address (RIP-relative read of its bytes),
-		// which only loads the pointer's stored value. We need a
-		// second load to actually follow the pointer. Materialize
-		// the pointer into a register first; subsequent [reg] is the
-		// real dereference. Local pointers already live in a register
-		// (or stack slot bas resolves register-relative), so [v.ref]
-		// works in one shot.
+		// When the pointer's name is an address (file-scope global, or
+		// a bytes-allocated stack slot), [v.ref] would only do one
+		// indirection — reading the pointer's stored value from its
+		// storage. We need a second load to actually follow the
+		// pointer. Materialize the pointer's value into a register
+		// first; subsequent [reg] is the real dereference. For
+		// register-resident pointers (the local-allocated case),
+		// [v.ref] already does the one-step deref the caller wants.
 		src := v.ref
-		if c.IsGlobal(v.ref) {
+		if v.nameIsAddress {
 			ptmp := newSpot(of, c, c.Temp(), v.t)
 			fmt.Fprintf(of, "\tmov %s [%s]\n", ptmp.ref, v.ref)
 			src = ptmp.ref
@@ -703,11 +717,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// Bounds check + index normalization. Common to both small- and
 		// multi-word element paths.
 		base := addr
-		// Register-scaled access against a global symbol can't use
-		// '[name + reg*scale]' directly — x86-64 RIP-relative addressing
-		// takes a disp32 only. Materialize the global's address into a
-		// temp first, then index off that register-relative base.
-		if c.IsGlobal(base.ref) {
+		// A name-is-address base (file-scope global, bytes-allocated
+		// chunk) can't be the base of a '[name + reg*scale]' SIB form;
+		// lea its address into a register first.
+		if base.nameIsAddress {
 			addrT := vt
 			addrT.Indirection++
 			baseAddr := newSpot(of, c, c.Temp(), addrT)
@@ -1034,7 +1047,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if c.IsMoved(ast.Name) {
 			CompileErrorF(a, "Use of \"%s\" after it was moved", ast.Name)
 		}
-		s := spot{ref: ast.Name, t: ast.ASTType(c)}
+		s := spot{ref: ast.Name, t: ast.ASTType(c), nameIsAddress: c.NameIsAddress(ast.Name)}
 		if dest.same(&nullspot) {
 			return s
 		}

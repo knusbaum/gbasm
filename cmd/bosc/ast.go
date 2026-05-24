@@ -37,14 +37,13 @@ type Context struct {
 	// call (which would otherwise collide with the pre-binding). Empty
 	// for nested scopes, where ToAST writes to a throwaway Context.
 	prebound map[string]bool
-	// names of file-scope (global) variables — populated only on the
-	// root context, written by *VarDecl's prebound branch when emitting
-	// a global var directive. Codegen consults c.IsGlobal(name) to
-	// decide whether to materialize the global's address into a
-	// register before doing register-scaled indirection — bas cannot
-	// encode '[symbol + reg*scale]' directly on x86-64 (RIP-relative
-	// addressing takes a disp32 only).
-	globals map[string]bool
+	// addressNames lists names whose storage is memory-backed in a way
+	// that's externally visible (file-scope globals — the .data/.bss
+	// section). Populated only on the root context, written by
+	// emitGlobalVarDecl. NameIsAddress consults this set as well as the
+	// type-based memory-backing rule (structs and >8-byte values are
+	// allocated as `bytes` on the stack and accessed by address too).
+	addressNames map[string]bool
 	// tracks which bindings are const (true) vs var (false).
 	constBindings map[string]bool
 	// tracks which owned bindings have been consumed (moved or disposed).
@@ -76,7 +75,7 @@ func NewContext() *Context {
 	return &Context{
 		bindings:      make(map[string]ASTType),
 		prebound:      make(map[string]bool),
-		globals:       make(map[string]bool),
+		addressNames:  make(map[string]bool),
 		constBindings: make(map[string]bool),
 		movedBindings: make(map[string]bool),
 		structs:       make(map[string]*StructDecl),
@@ -87,27 +86,56 @@ func NewContext() *Context {
 	}
 }
 
-// IsGlobal reports whether name refers to a file-scope variable.
-// Walks to the root context, where the globals set is maintained;
-// SubContexts have empty globals maps that we don't consult.
-func (c *Context) IsGlobal(name string) bool {
+// typeIsMemoryBacked reports whether a value of type t is allocated as
+// a stack chunk (`bytes`) rather than register-resident (`local`). The
+// rule is the same one newSpot uses to pick its allocator: structs of
+// any size, and anything strictly larger than 8 bytes. Centralized so
+// the allocation choice and the codegen sites that ask "is this name
+// addressing memory" can't drift apart.
+func typeIsMemoryBacked(c *Context, t ASTType) bool {
+	_, isStruct := c.StructDeclForName(t.Name)
+	if isStruct {
+		return true
+	}
+	return t.Size(c) > 8
+}
+
+// NameIsAddress reports whether the bas-level name `name` refers to a
+// memory location (so the name resolves to an address, and reads need
+// a load) rather than a register-resident value (where the name IS
+// the value). Two flavors of name-is-address:
+//   - File-scope globals, recorded in addressNames at declaration time.
+//   - Locals of memory-backed types (structs and >8-byte values),
+//     derived from the declared type via typeIsMemoryBacked.
+func (c *Context) NameIsAddress(name string) bool {
 	if c == nil {
 		return false
 	}
-	if c.parent != nil {
-		return c.parent.IsGlobal(name)
+	// Globals: the addressNames set is maintained on the root context.
+	root := c
+	for root.parent != nil {
+		root = root.parent
 	}
-	return c.globals[name]
+	if root.addressNames[name] {
+		return true
+	}
+	// Locals: derive from the declared type's memory-backing.
+	if t, ok := c.TypeForVar(name); ok {
+		return typeIsMemoryBacked(c, t)
+	}
+	return false
 }
 
-// MarkGlobal records name as a file-scope variable on the root
-// context. Called by *VarDecl when emitting a top-level var directive.
-func (c *Context) MarkGlobal(name string) {
+// MarkAddress records name as memory-backed on the root context.
+// Used by emitGlobalVarDecl when emitting a top-level var directive
+// so that later codegen sites can recognize the name as address-style
+// regardless of its declared type's size or shape.
+func (c *Context) MarkAddress(name string) {
 	if c.parent != nil {
-		c.parent.MarkGlobal(name)
+		c.parent.MarkAddress(name)
 		return
 	}
-	c.globals[name] = true
+	c.addressNames[name] = true
 }
 
 func (c *Context) SubContext() *Context {
