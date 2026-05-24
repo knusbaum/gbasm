@@ -109,6 +109,56 @@ func (s *spot) empty() bool {
 	return s.ref == ""
 }
 
+// compileArrayLiteralInto lays out an `[e1, e2, …]` initializer directly
+// into the destination spot's storage. The destination must be a fixed
+// array `T[N]` (slice destinations would need lifetime-stable backing
+// storage that bosc can't generally synthesize at runtime — those are
+// supported only in static-init context via the encoder).
+//
+// Each element is compiled to a temporary, then stored into the
+// destination at `[dest.ref + i*elemSize]`. For scalar elements that's
+// a single mov; for memory-backed elements (struct values, multi-byte
+// arrays), we lea the element's address and memcpy into place.
+func compileArrayLiteralInto(of io.Writer, c *Context, a AST, dest spot, lit *ArrayLiteral) {
+	if !dest.t.IsArray() {
+		if dest.t.IsSlice() {
+			CompileErrorF(a, "array literal as slice initializer is only valid at file scope; use a fixed array (T[N]) here")
+		}
+		CompileErrorF(a, "array literal cannot initialize %s; expected a fixed array type", dest.t)
+	}
+	if dest.t.ArraySize != len(lit.Elements) {
+		CompileErrorF(a, "array literal of length %d does not fit %s", len(lit.Elements), dest.t)
+	}
+	elemT := *dest.t.Element
+	elemSize := elemT.Size(c)
+	for i, e := range lit.Elements {
+		off := i * elemSize
+		if typeIsMemoryBacked(c, elemT) {
+			// Multi-word element (struct value, fixed array, etc.):
+			// compile the element to its own bytes-allocated spot,
+			// then memcpy into the destination slot.
+			elemTmp := newSpot(of, c, c.Temp(), elemT)
+			val := compileTop(of, c, e, elemTmp)
+			addrType := elemT
+			addrType.Indirection++
+			slotAddr := newSpot(of, c, c.Temp(), addrType)
+			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", slotAddr.ref, dest.ref, off)
+			spot_memcpy(of, c, slotAddr, val, elemSize)
+			slotAddr.free(of)
+			val.free(of)
+		} else {
+			// Scalar element: compute and store directly. Source comes
+			// back at its own width (often 64-bit for integer literals)
+			// so use the partial-of-alloc syntax `val.ref:bits` to
+			// select the low N bits matching the element type's width.
+			val := compileTop(of, c, e, nullspot)
+			elemBits := elemSize * 8
+			fmt.Fprintf(of, "\tmov [%s+%d] %s:%d\n", dest.ref, off, val.ref, elemBits)
+			val.free(of)
+		}
+	}
+}
+
 func spot_memcpy(of io.Writer, c *Context, dst, src spot, bytes int) {
 	qwords := bytes / 8
 	singles := bytes % 8
@@ -432,6 +482,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		c.BindVar(a, ast.Name, ast.Type, ast.IsConst)
 		s := newSpot(of, c, ast.Name, ast.Type)
 		if ast.Init != nil {
+			// Array literal initializer takes its own path: ASTType
+			// returns a synthetic <intlit>[N]-shaped type that doesn't
+			// match dstt under shapeMatch, and the literal needs to be
+			// laid out into s element-by-element rather than copied as
+			// a single value.
+			if al, ok := ast.Init.(*ArrayLiteral); ok {
+				compileArrayLiteralInto(of, c, a, s, al)
+				return nullspot
+			}
 			srct := ast.Init.ASTType(c)
 			dstt := ast.Type
 			// Ownership promotion check, unless source is an integer literal.

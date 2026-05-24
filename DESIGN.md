@@ -612,6 +612,7 @@ The supported forms compose recursively:
 - String literals into `byte[N]` (inline copy, zero-padded).
 - String literals into `byte[]` (16-byte slice header with a relocation to a string constant in `.data`).
 - Struct literals (each field encoded recursively, byte offsets concatenated, relocations shifted into the outer struct's coordinates).
+- Array literals `[e1, e2, …]` into `T[N]` (element-by-element encoding, length must match) or into `T[]` (anonymous backing array `T[len]` queued via the anonymous-globals path, plus a 16-byte slice header with a relocation to it).
 - `&someGlobal` — 8-byte pointer slot with a relocation to the named global.
 - `&SomeStruct{...}` — recursively encodes the inner struct into a fresh anonymous global (`__static_0`, `__static_1`, …) and emits a pointer slot relocated to it.
 - `&someGlobalArr[N]` for compile-time-constant N — a single relocation to the array's symbol with `Addend = N * elementSize`. Pointer-into-array without any auxiliary storage.
@@ -1086,7 +1087,8 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Slices (`T[]`), fixed arrays (`T[N]`), pointers (`*T`), structs
 - Nested slices/arrays (`byte[][]`, `T[N][M]`, etc.)
 - `const`/`var` bindings with declaration initializers (`const x i64 = 42`)
-- File-scope `var`/`const` with compile-time-constant initializers — integer/byte literals, string-into-`byte[N]`, string-into-`byte[]` (slice with relocated pointer), struct literals composing all of the above, `&someGlobal`, `&SomeStruct{...}` (anonymous globals), `&globalArr[N]` (pointer-into-array via relocation addend)
+- File-scope `var`/`const` with compile-time-constant initializers — integer/byte literals, string-into-`byte[N]`, string-into-`byte[]` (slice with relocated pointer), struct literals composing all of the above, array literals (`[1, 2, 3]`) for fixed-array and slice destinations, `&someGlobal`, `&SomeStruct{...}` (anonymous globals), `&globalArr[N]` (pointer-into-array via relocation addend)
+- Array literals at runtime as initializers for fixed-array locals; slice destinations rejected with a directed error (lifetime issue)
 - Full nested `*mut T` write-through mutability with implicit coercion
 - Full `owned T` ownership type system: move semantics, `dispose()`, `owned()` promotion, if/else branch analysis, loop-body protection, scope-exit checks
 - Path-based imports with qualified calls (`import "stdlib/io"; io.puts(...)`)
@@ -1107,7 +1109,6 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - No heap allocator. Programs use stack and fixed-size storage only.
 - No floats. Lexer accepts decimal-point syntax but truncates.
 - Generics / type polymorphism not implemented.
-- Array literals (`[1, 2, 3]`) not yet implemented.
 - Stacked `owned *owned T` cannot have partial consumption (needs typestate).
 - No witnessed borrows.
 - True read-only `.rodata` segment split not yet done. String constants and other immutable data are tagged at the `o.Data` level but currently land in the writable `.data` LOAD segment. Hardware-enforced const requires splitting the ELF layout.

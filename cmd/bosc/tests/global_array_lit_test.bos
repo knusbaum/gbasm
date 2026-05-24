@@ -1,0 +1,54 @@
+package main
+
+import "string"
+
+// Array literals at file scope. Three destination shapes:
+//   - Fixed array T[N]: encoded element-by-element.
+//   - Slice T[]: anonymous backing array + slice header with reloc.
+//   - Struct field that's a fixed array: recursive via struct encoder.
+
+var nums i64[4] = [10, 20, 30, 40]
+var bs byte[3] = [65, 66, 67]                   // 'A' 'B' 'C'
+var slice i64[] = [100, 200, 300]
+
+struct config {
+	id      i64
+	weights i64[3]
+}
+
+var cfg config = config{
+	id:      42,
+	weights: [7, 11, 13],
+}
+
+fn main() {
+	// Fixed-array global, indexed.
+	string.puti(nums[0])
+	string.putc(' ')
+	string.puti(nums[3])
+	string.putc('\n')
+
+	// Byte array printed character-by-character.
+	string.putc(bs[0])
+	string.putc(bs[1])
+	string.putc(bs[2])
+	string.putc('\n')
+
+	// Slice global: length and content.
+	string.puti(string.lenn(slice))
+	string.putc('\n')
+	string.puti(slice[0])
+	string.putc(' ')
+	string.puti(slice[2])
+	string.putc('\n')
+
+	// Struct with array field.
+	string.puti(cfg.id)
+	string.putc('\n')
+	string.puti(cfg.weights[0])
+	string.putc(' ')
+	string.puti(cfg.weights[1])
+	string.putc(' ')
+	string.puti(cfg.weights[2])
+	string.putc('\n')
+}

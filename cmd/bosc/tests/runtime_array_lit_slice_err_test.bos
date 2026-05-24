@@ -1,0 +1,10 @@
+package main
+
+// Slice destination at runtime needs lifetime-stable backing storage
+// that bosc doesn't synthesize. The right place for a slice-from-
+// array-literal is file scope (where the encoder allocates an
+// anonymous global). Reject the runtime form with a directed error.
+
+fn main() {
+	var s i64[] = [1, 2, 3]
+}

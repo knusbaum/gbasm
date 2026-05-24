@@ -50,6 +50,7 @@ const (
 	n_dispose
 	n_typedecl
 	n_ownedpromo
+	n_arrlit
 )
 
 func (t nodetype) String() string {
@@ -138,6 +139,8 @@ func (t nodetype) String() string {
 		return "n_typedecl"
 	case n_ownedpromo:
 		return "n_ownedpromo"
+	case n_arrlit:
+		return "n_arrlit"
 	}
 	return "UNKNOWN"
 }
@@ -407,8 +410,40 @@ func (p *Parser) parseTypeName() *Node {
 }
 
 func (p *Parser) parseValue() *Node {
+	// An '[' at value-start position is an array literal '[e1, e2, ...]'.
+	// (An '[' after a value is the postfix index/slice form, handled by
+	// parsePostfix.) The two contexts don't overlap because parseValue
+	// is what's called when we need a new value, not when we're chaining
+	// off an existing one.
+	if p.current().t == tok_lsquare {
+		v := p.parseArrayLiteral()
+		return p.parsePostfix(v)
+	}
 	v := p.parseTok()
 	return p.parsePostfix(v)
+}
+
+// parseArrayLiteral consumes '[' through ']', collecting a comma-
+// separated list of expressions. ';' is accepted as an alternative to
+// ',' so multi-line literals work without trailing commas under
+// automatic semicolon insertion.
+func (p *Parser) parseArrayLiteral() *Node {
+	pos := p.current().p
+	p.expect(tok_lsquare)
+	var elements []*Node
+	for p.current().t != tok_rsquare {
+		if p.current().t == tok_semicolon {
+			p.advance()
+			continue
+		}
+		elements = append(elements, p.parseExpression())
+		if p.current().t != tok_comma && p.current().t != tok_semicolon {
+			break
+		}
+		p.advance()
+	}
+	p.expect(tok_rsquare)
+	return &Node{t: n_arrlit, p: pos, args: elements}
 }
 
 // parsePostfix wraps v in zero or more postfix operators:

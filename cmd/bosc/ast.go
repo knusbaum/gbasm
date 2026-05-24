@@ -111,6 +111,14 @@ func typeIsMemoryBacked(c *Context, t ASTType) bool {
 	if t.Indirection > 0 {
 		return false
 	}
+	// Fixed arrays must live in memory regardless of total size — they
+	// need a stable address for `[arr+offset]` indexing to mean
+	// anything. Allocating a small array in a sub-register would
+	// produce nonsense like `[r11d+0]`, which isn't a valid x86-64
+	// addressing form.
+	if t.IsArray() {
+		return true
+	}
 	if _, isStruct := c.StructDeclForName(t.Name); isStruct {
 		return true
 	}
@@ -1298,6 +1306,41 @@ func (s *StructLiteral) Pos() position {
 	return s.p
 }
 
+// ArrayLiteral is `[e1, e2, …, eN]` at value-start position. Element
+// types and length are intrinsic to the literal; element-to-destination
+// coercion happens at the encoding / move site (following the same
+// pattern as <intlit>). ASTType reports the inferred element type from
+// the first element and the literal's length, so type-check sites can
+// reason about it like any other array.
+type ArrayLiteral struct {
+	Elements []AST
+	p        position
+}
+
+func (al *ArrayLiteral) ASTType(c *Context) ASTType {
+	var elemT ASTType
+	if len(al.Elements) > 0 {
+		elemT = al.Elements[0].ASTType(c)
+	} else {
+		// Empty literal: defer the element type entirely to the
+		// destination context. <intlit> acts as the polymorphic
+		// placeholder per existing precedent.
+		elemT = intlitASTType()
+	}
+	return ASTType{
+		Element:   &elemT,
+		ArraySize: len(al.Elements),
+	}
+}
+
+func (al *ArrayLiteral) Note() string {
+	return fmt.Sprintf("array literal [%d]", len(al.Elements))
+}
+
+func (al *ArrayLiteral) Pos() position {
+	return al.p
+}
+
 type IfStmt struct {
 	Cond AST
 	Then AST
@@ -1842,6 +1885,13 @@ func (n *Node) toASTTop(c *Context) AST {
 		return &Dispose{Var: n.sval, p: n.p}
 	case n_ownedpromo:
 		return &OwnedPromotion{Val: n.args[0].toASTTop(c), p: n.p}
+	case n_arrlit:
+		var al ArrayLiteral
+		al.p = n.p
+		for _, e := range n.args {
+			al.Elements = append(al.Elements, e.toASTTop(NewContext()))
+		}
+		return &al
 	case n_typedecl:
 		underlying := mkTypename(n.args[0])
 		// Propagate Signed from base type if it's a built-in.

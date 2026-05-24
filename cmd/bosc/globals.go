@@ -105,6 +105,8 @@ func encodeStaticInit(c *Context, dstt ASTType, init AST) ([]byte, []relocSpec, 
 		return encodeLiteralBytes(c, dstt, v)
 	case *StructLiteral:
 		return encodeStructLiteralBytes(c, dstt, v)
+	case *ArrayLiteral:
+		return encodeArrayLiteralBytes(c, dstt, v)
 	case *Address:
 		return encodeAddressBytes(c, dstt, v)
 	case *Op2:
@@ -216,6 +218,69 @@ func encodeAddressBytes(c *Context, dstt ASTType, a *Address) ([]byte, []relocSp
 	name := c.AddAnonGlobal(innerType.String(), innerBytes, innerRelocs)
 	out := make([]byte, 8)
 	return out, []relocSpec{{Offset: 0, Symbol: name, Addend: 0}}, nil
+}
+
+// encodeArrayLiteralBytes serializes an array literal `[e1, e2, …]` for
+// the destination type. Two destination shapes are supported:
+//
+//   - Fixed array `T[N]`: element count must match exactly; each
+//     element encodes against T and the encoded bytes are concatenated.
+//     Element relocations are shifted into the outer array's coordinates.
+//
+//   - Slice `T[]`: emit a 16-byte slice header. The backing storage is
+//     a fresh anonymous fixed array `T[len(elements)]`, queued via
+//     AddAnonGlobal; the header's ptr slot relocates to it, and the
+//     length is encoded inline.
+func encodeArrayLiteralBytes(c *Context, dstt ASTType, lit *ArrayLiteral) ([]byte, []relocSpec, error) {
+	if dstt.Element == nil {
+		return nil, nil, fmt.Errorf("array literal cannot initialize non-array type %s", dstt)
+	}
+	elemT := *dstt.Element
+	switch {
+	case dstt.IsArray():
+		if dstt.ArraySize != len(lit.Elements) {
+			return nil, nil, fmt.Errorf("array literal of length %d does not fit %s", len(lit.Elements), dstt)
+		}
+		return encodeArrayContent(c, elemT, lit.Elements)
+	case dstt.IsSlice():
+		backingBytes, backingRelocs, err := encodeArrayContent(c, elemT, lit.Elements)
+		if err != nil {
+			return nil, nil, err
+		}
+		backingT := ASTType{Element: &elemT, ArraySize: len(lit.Elements)}
+		name := c.AddAnonGlobal(backingT.String(), backingBytes, backingRelocs)
+		out := make([]byte, 16)
+		binary.LittleEndian.PutUint64(out[8:], uint64(len(lit.Elements)))
+		return out, []relocSpec{{Offset: 0, Symbol: name, Addend: 0}}, nil
+	default:
+		return nil, nil, fmt.Errorf("array literal cannot initialize %s (need a fixed-array or slice type)", dstt)
+	}
+}
+
+// encodeArrayContent encodes a flat sequence of element expressions
+// against a single element type. Shared by the fixed-array and slice
+// branches of encodeArrayLiteralBytes (the slice branch uses it to
+// build the anonymous backing array's bytes).
+func encodeArrayContent(c *Context, elemT ASTType, elements []AST) ([]byte, []relocSpec, error) {
+	elemSize := elemT.Size(c)
+	var out []byte
+	var relocs []relocSpec
+	for i, e := range elements {
+		eb, er, err := encodeStaticInit(c, elemT, e)
+		if err != nil {
+			return nil, nil, fmt.Errorf("element %d: %v", i, err)
+		}
+		if len(eb) != elemSize {
+			return nil, nil, fmt.Errorf("element %d: encoded %d bytes, expected %d", i, len(eb), elemSize)
+		}
+		base := len(out)
+		for _, r := range er {
+			r.Offset += base
+			relocs = append(relocs, r)
+		}
+		out = append(out, eb...)
+	}
+	return out, relocs, nil
 }
 
 // encodeStructLiteralBytes serializes a struct literal to bytes by walking

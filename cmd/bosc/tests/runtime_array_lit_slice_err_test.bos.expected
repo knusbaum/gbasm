@@ -1,0 +1,2 @@
+Compiling tests/runtime_array_lit_slice_err_test.bos
+Fatal: array literal as slice initializer is only valid at file scope; use a fixed array (T[N]) here

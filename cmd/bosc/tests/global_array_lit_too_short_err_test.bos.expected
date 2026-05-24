@@ -1,0 +1,2 @@
+Compiling tests/global_array_lit_too_short_err_test.bos
+Fatal: array literal of length 3 does not fit i64[4]
