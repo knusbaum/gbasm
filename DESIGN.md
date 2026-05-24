@@ -51,7 +51,7 @@ Boson is a statically typed, imperative language. It is intentionally small: no 
 
 Types are divided into **direct** (fit in a single register: scalars, pointers) and **indirect** (too large for a register: structs, arrays, slices — held as pointers in registers, with their data on the stack or in memory).
 
-String literals have type `byte[]` (an immutable slice of bytes). The data is stored in a read-only section and the slice header has the literal's length.
+String literals have type `byte[]` (an immutable slice of bytes). The data is stored in the data section (in `o.Data` rather than `o.Vars`, distinguishing immutable string constants from writable globals at the metadata level) and the slice header has the literal's length. A future hardening pass can split `.data` and `.rodata` into separate LOAD segments so this immutability is hardware-enforced; today the distinction is only at the source level.
 
 ### Type qualifiers
 
@@ -116,6 +116,10 @@ return expr
 dispose(x)                // consume an owned binding (see Ownership)
 ```
 
+**Statement boundaries.** Newlines terminate statements, following the Go convention. The lexer synthesizes a `;` after the last token of a line when that token can validly end a statement (identifiers, literals, `)`, `]`, `}`, `break`, `continue`, `return`). Newlines inside `(...)` or `[...]` are suppressed so multi-line argument lists, slice expressions, and continuation lines (e.g., a binary operator at the end of a line) work without ceremony. The parser sees a token stream with explicit `;` separators; users don't type them outside `for`-loop headers.
+
+One consequence worth knowing: `} else` style is enforced. A bare `else` on a new line after `}` doesn't parse, because `}` is a statement-ender and the auto-inserted `;` separates the two.
+
 ### Functions
 
 ```
@@ -173,6 +177,17 @@ io.puts(...)              // call qualified by pkgname
 
 The compiler emits fully-qualified call symbols (`io.puts`, `string.strlen`) so the linker can distinguish same-name functions in different packages.
 
+**Cross-package struct types.** A `.bo` file carries not only its exported functions but its struct definitions as well. When source declares `import "io"`, the consuming compilation registers `io`'s structs under qualified names (`io.SomeStruct`). The same qualified-name form is used at use sites:
+
+```
+import "pair"
+
+var p pair.pair = pair.pair{a: 3, b: 4}   // type and literal use pkg.Name
+string.puti(pair.sum(p))                  // call takes pair.pair, transparent
+```
+
+The `.bs` carries Boson struct shapes via the `struct Name { … }` directive (see [Directives Reference](#directives-reference)); the assembler stores them in the `.bo` and bosc reads them back during `Context.Import`. Built-in type names and any cross-package references inside imported signatures are left alone; only leaf type names that match the producer's own structs get qualified at import time.
+
 ### Built-in Functions
 
 Built-ins are not part of the language proper — they live in runtime packages that any program imports. The standard library currently provides one package, `string`, that bundles both string utilities and basic IO:
@@ -185,6 +200,7 @@ Built-ins are not part of the language proper — they live in runtime packages 
 | `string.putc` | `(byte) void` | Print a single byte as a character |
 | `string.lenb` | `(byte[]) i64` | Return the length of a byte slice |
 | `string.lenn` | `(i64[]) i64` | Return the length of an i64 slice |
+| `string.lenbb` | `(byte[][]) i64` | Return the length of a byte-slice slice (e.g. argv) |
 | `string.read` | `(i64 fd, byte[] buf) i64` | Read up to len(buf) bytes; returns count or -errno. (Should be `mut byte[]` once the runtime is updated.) |
 | `string.write` | `(i64 fd, byte[] buf) i64` | Write buf to fd; returns count or -errno |
 | `string.open` | `(byte[] path, i64 flags, i64 mode) i64` | Open a file (path must be null-terminated in memory) |
@@ -530,6 +546,15 @@ This prevents laundering a `const` binding into a `*mut` pointer. Write-through 
 
 The same rule applies to struct fields: `&myfoo.x` yields `*mut i16` if `myfoo` is `var`, and `*i16` if `myfoo` is `const`.
 
+`&` accepts more than bare names. At runtime, `&someVar`, `&arr[i]` (with constant or runtime index), and `&s.field` all produce a `*T` to the addressed storage; the compiler delegates index and field forms to the existing lvalue-walk machinery, which already knows how to compute element/field addresses.
+
+In static-init context (see [Static Initializers](#static-initializers)) two more forms become legal:
+
+- `&someGlobal` — pointer slot relocated to the named global.
+- `&SomeStruct{...}` — allocates an anonymous file-scope global to hold the struct literal's bytes, then relocates the pointer slot to it. Composes recursively: `foo{bar: &bar{inner: &inner{...}}}` produces one anonymous global per nested `&`.
+
+`&literal` at runtime is rejected with "cannot take the address of this expression at runtime; address-of-literal is only valid in static initializers" — there's no stable storage to point at outside file scope.
+
 ### Implicit coercion
 
 `*mut T` is implicitly coercible to `*T`, and `mut T[]` is implicitly coercible to `T[]`. A more-capable reference can always be used where a less-capable one is expected:
@@ -551,13 +576,74 @@ Strings are immutable slices of bytes: `byte[]`. The `str` type (a bare pointer 
 const greeting byte[] = "hello\n"   // typical string constant
 ```
 
-A mutable byte buffer has type `mut byte[]`. String literals cannot have type `mut byte[]` since they live in read-only data.
+A mutable byte buffer has type `mut byte[]`. String literals cannot be coerced to `mut byte[]` — they're emitted by the compiler as `data` rather than `var` (the metadata distinction noted under [Types](#types)) and are intended to be treated as read-only even though the current loader maps the whole data section writable.
 
 String literals are emitted by the compiler with both the slice data and a trailing null byte, so they can be passed to APIs that require null-terminated strings (like the `open` syscall) even though the null is outside the slice's stated length.
 
 ### Future: unused-mutability warning
 
 The compiler could warn when a `var` binding is never directly reassigned and no mutable reference to it (`&x`) is ever taken: "var x i16 never mutated — use const instead." Taking `&x` (which yields `*mut T` for a `var` binding) counts as a potential mutation even if the callee only reads through the pointer, to avoid false positives. The check fires at the end of each scope and at function exit for `var` parameters. Not yet implemented.
+
+---
+
+## File-Scope Declarations
+
+`var` and `const` work at file scope as well as inside functions:
+
+```
+var counter i64                  // zero-initialized
+var answer  i64 = 42             // primitive literal
+var label   byte = 'Z'
+var buf     byte[100]            // zero-filled fixed array
+
+const greeting byte[] = "hi\n"   // slice over a string constant
+```
+
+File-scope declarations are visible to every function in the package, regardless of source order. They are forward-bindable: a function defined earlier in the file can call into a global declared later. This is consistent with how cross-function calls work and is implemented by an early pass that registers all top-level names before any body codegen happens.
+
+### Static Initializers
+
+Initializers on file-scope `var` (and `const`) declarations must be **compile-time constants** in the bosc-internal sense: the encoder must be able to produce the value's bytes and any pointer relocations at compile time, with no runtime code.
+
+The supported forms compose recursively:
+
+- Integer literals (any width, any signedness; negative via the `0 - N` parser shape).
+- Byte literals.
+- String literals into `byte[N]` (inline copy, zero-padded).
+- String literals into `byte[]` (16-byte slice header with a relocation to a string constant in `.data`).
+- Struct literals (each field encoded recursively, byte offsets concatenated, relocations shifted into the outer struct's coordinates).
+- `&someGlobal` — 8-byte pointer slot with a relocation to the named global.
+- `&SomeStruct{...}` — recursively encodes the inner struct into a fresh anonymous global (`__static_0`, `__static_1`, …) and emits a pointer slot relocated to it.
+- `&someGlobalArr[N]` for compile-time-constant N — a single relocation to the array's symbol with `Addend = N * elementSize`. Pointer-into-array without any auxiliary storage.
+
+Anything else (function calls, runtime expressions, type mismatches, length mismatches) produces a specific diagnostic at compile time.
+
+**Pointer fields in static structures** work naturally because the encoder is recursive and `Var.Relocs` is per-var:
+
+```
+struct config {
+    threshold i64
+    current   *i64       // pointer field
+    greeting  byte[]     // slice field
+}
+
+var counter i64 = 0
+var cfg config = config{
+    threshold: 100,
+    current:   &counter,
+    greeting:  "configured\n",
+}
+```
+
+`cfg` is a 32-byte global with two relocations: one for `current` (pointing at `counter`) and one for `greeting.ptr` (pointing at the auto-generated string constant). The `greeting.len` field is encoded inline.
+
+**Anonymous globals** carry their own bytes and relocations; the linker treats them like any other named global. Each call to `&literal` allocates a fresh anonymous, with no deduplication. Two `&SomeStruct{a:1}` literals produce two distinct globals; structural-equality dedup is a possible future optimization but is intentionally absent to keep semantics simple (identity matches occurrence, not value).
+
+### Implementation: anonymous globals and relocations
+
+At the `.bo` level, every `Var` may carry a list of `DataReloc` entries. Each `DataReloc` is `{Offset uint32, Symbol string, Addend int64}` and instructs the linker to write the absolute virtual address of `Symbol + Addend` into the 8-byte slot at `Offset` within the var's bytes. This is distinct from `Relocation`, which encodes 32-bit PC-relative displacements for code references.
+
+At link time, the linker walks each placed var's `Relocs` and applies them. Reachability extends through `Relocs` too: when a var is placed in the data section because some piece of code references it, all its `Relocs` targets are recursively placed.
 
 ---
 
@@ -573,17 +659,25 @@ Integer literals are parsed as `uint64` for full-precision representation; downs
 
 Positions (file, line, column) are recorded on every token for error messages.
 
+The lexer also performs **Go-style automatic semicolon insertion**: on a newline whose preceding token can end a statement (identifiers, literals, `)`, `]`, `}`, `break`/`continue`/`return`) and where paren/bracket nesting depth is zero, it synthesizes a `tok_semicolon` before continuing. This makes the parser's statement-boundary logic uniform and fixes a family of bugs where a unary `*` or `-` at the start of a statement would be greedily consumed as a binary operator on the previous statement. See [Statement boundaries](#statements).
+
 ### Parser (`parser.go`)
 
 Recursive descent. Builds an AST from the token stream. Operator precedence is handled by structured recursive calls (`parseAddSub`, `parseUnary`, `parseSubexpr`, etc.). Produces positioned AST nodes so errors downstream can report source locations.
+
+Statement-separating `;` tokens (typically auto-inserted by the lexer; see [Lexer](#lexer-lexergo)) are skipped uniformly at the top level, inside block bodies, between struct field decls, and inside struct literals. `for`-loop headers expect them explicitly (the existing `(init; cond; step)` form).
+
+Postfix chains compose: `a.b[i].c[lo:hi]` is parsed by a single `parsePostfix` loop that handles `.member`, `[index]`, `[lo:hi]`, `(args)`, and `{fields}` uniformly on any prior value. The `pkg.fn(args)` and `pkg.Type{fields}` forms are recognized by the same loop (Dot-of-symbol followed by `(` or `{`).
 
 ### AST (`ast.go`)
 
 Defines all node types: declarations (package, import, struct, function, type alias, dispose, owned-promotion), statements (var/const, assign, if, for, return, break, continue, expression), and expressions (binary op, unary op, call, qualified call, cast, index, slice, field access, literal, identifier, address-of, deref).
 
-Defines `ASTType` with `Indirection`, `ArraySize`, `Slice`, `Signed`, `MutMask`, `OwnedMask` fields. Provides equality (`Same`), compatibility (`MutCompatible`, `OwnedCompatible`), and stringification.
+Defines `ASTType` with `Name`, `Indirection`, `ArraySize`, `Element`, `Signed`, `MutMask`, `OwnedMask` fields. A slice/array type is identified by `Element != nil` (with `ArraySize > 0` distinguishing array from slice); pointer/scalar types use `Name` and `Indirection`. Provides equality (`Same`), compatibility (`MutCompatible`, `OwnedCompatible`), and stringification. `Same` is structural — `ASTType` carries a pointer (`Element`) so `==` comparison is unsafe.
 
-The `Context` type carries name resolution state: variable bindings (with `const`/`var` flags and moved/owned state), struct declarations, function declarations, imports (per-package namespace), type aliases, and the current package name.
+`Address` has two forms: `{Var string}` for address-of-named-variable, and `{Lit AST}` for address-of-literal (used in static-init context).
+
+The `Context` type carries name resolution state: variable bindings (with `const`/`var` flags and moved/owned state), struct declarations, function declarations, imports (per-package namespace), type aliases, file-scope address-backed names (`addressNames`), pending anonymous-global emissions (`anonGlobals`), and the current package name. Helpers like `NameIsAddress(name)` consult both the explicit globals set and the type-based `typeIsMemoryBacked(t)` predicate to decide whether codegen should treat a name as an address (load through it) or as a value.
 
 ### Importcfg loading (`main.go`)
 
@@ -595,16 +689,20 @@ A `-listimports` mode prints just the import keys declared by the input files an
 
 Walks the AST and emits `.bs` assembly text. Key responsibilities:
 
-- **Locals**: Each `var`/`const` declaration emits a `local` (for scalars and pointers) or `bytes` (for structs and arrays) directive in the assembly. The assembler's register allocator handles actual placement.
+- **Locals**: Each `var`/`const` declaration emits a `local` (for scalars and pointers) or `bytes` (for structs and arrays) directive in the assembly. The choice is driven by `typeIsMemoryBacked(t)` — true for structs and values larger than 8 bytes, false for everything else (including pointers regardless of pointee size). The assembler's register allocator handles actual placement.
+- **File-scope vars**: Top-level `var`/`const` declarations go through `emitGlobalVarDecl` rather than the local path. Initializers are encoded at compile time (see [Static Initializers](#static-initializers)). The bas-level emission is the `var name type N` size form (zero-init), `var name type "..."` string-literal form (no relocations), or the block form `var name type { bytes "..." reloc <off> <sym> <addend> ... }` when any pointer fields require fixups.
+- **Spots and addressing**: The compiler's intermediate `spot{ref, t, nameIsAddress}` records both the bas-level name and whether that name resolves to a value (`local`-allocated scalar) or to a memory address (`bytes`-allocated chunk, or file-scope global). Indirection sites (`*p`, `arr[i]`, `slice[lo:hi]`) consult `spot.nameIsAddress` to decide whether they need to materialize the address into a register before further indirection. This abstracts away the distinction between register-resident and memory-resident sources — the same codegen path handles both.
 - **Control flow**: `if`/`else` and `for` lower to compare-and-jump sequences with generated labels (`_LABEL_for_N`, `_LABEL_break_N`, `_LABEL_cont_N`, `_LABEL_return_N`).
-- **Function calls**: Arguments are evaluated into temporaries, then moved into the ABI argument registers before `call`. The emitted `call` is always fully qualified (`pkg.fname`); for in-package calls the current package's name is prepended.
-- **Address-of**: When `&x` is compiled, the assembler `volatile x` directive is emitted to mark x as memory-resident, ensuring coherence with the new pointer alias.
-- **Struct access**: Field offsets are computed at compile time. Pointer-to-struct access auto-dereferences.
+- **Function calls**: Arguments are evaluated into temporaries, then moved into the ABI argument registers before `call`. The emitted `call` is always fully qualified (`pkg.fname`); for in-package calls the current package's name is prepended. Function-defined-in-source signatures are emitted as `type fn(arg-types) ret` directives so cross-package import works for Boson-defined packages, not just hand-written bas runtime packages.
+- **Address-of**: For `&x` where `x` is a named variable, the assembler `volatile x` directive is emitted (suppressed for memory-backed names where it's already true) to mark `x` as memory-resident, then `lea`. For `&arr[i]` and `&s.field` at runtime, the compiler delegates to the lvalue-walk machinery which already produces an address-bearing spot. For `&literal` at runtime, an error fires; the literal form is only valid in static-init.
+- **Struct access**: Field offsets are computed at compile time. Pointer-to-struct access auto-dereferences. For a small inner struct accessed via dot (e.g. `outer.middle.field`), the inner Dot returns a pointer to the struct rather than copying its bytes, so subsequent Dot/Index walks land on the right address.
 - **Slices**: A slice is two words (pointer and length). Indexing bounds-checks against the length word and computes `base + index * element_size`. Slice operations adjust both pointer and length.
 - **Bounds checking**: Array and slice accesses emit a compare and a conditional call to `_init.index_oob` if the index is out of range.
 - **Casts**: Type casts (`FD(x)`, `i64(fd)`) generate sign-extend, zero-extend, or truncating moves as appropriate. Widening 32→64 unsigned uses the synthetic `MOVZX r64, r/m32` form (translated by bas); widening 32→64 signed uses `MOVSXD`; narrowing uses partial-of-alloc syntax (`mov dest src:N`).
 - **Multiplication / division**: 64-bit signed multiplication uses the two-operand `IMUL r64, r/m64` form, avoiding any `inreg` on user variables. Sub-64-bit signed multiplication and all unsigned multiplication/division route through fresh rax-pinned temps so the `inreg` constraints fall on temporaries, not on user-declared variables (which may be `volatile`).
 - **Temporaries**: The compiler allocates temporaries as locals with names like `Temp_1`, `Temp_2`. The assembler's register allocator places these in registers or spills them to memory.
+- **Register-scaled indirection through globals**: x86-64 RIP-relative addressing has no `[symbol + reg*scale]` form. When `arr[i]` indexes a name-is-address base with a runtime index, the compiler emits `lea tmp symbol` first to materialize the address into a register, then uses a normal `[reg + idx*scale]` SIB form off the temp.
+- **Diagnostics**: Positioned errors include a source-context snippet — five lines centered on the offending position, with an arrow pointing at the column. The arrow is rendered in red ANSI when stderr is a TTY (plain otherwise so captured output stays clean).
 
 ### Ownership tracking
 
@@ -634,7 +732,7 @@ data <name> string "text\0"
 var <name> string "text\0"
 ```
 
-Every file begins with a `package` declaration. Code is grouped into `function` blocks. `data` and `var` declarations define global read-only and mutable data respectively. The package name is the source of truth for symbol qualification: defined symbols are emitted as `<pkgname>.<name>`, and bare-name relocations in this file are qualified with the package name automatically by the assembler.
+Every file begins with a `package` declaration. Code is grouped into `function` blocks. `data` and `var` declarations both define global blocks; the distinction is metadata-level (intended-immutable vs writable). Both currently land in the same `.data` LOAD segment in the linked ELF — `data` blocks are not yet placed in a read-only segment, though that's a planned hardening pass. The package name is the source of truth for symbol qualification: defined symbols are emitted as `<pkgname>.<name>`, and bare-name relocations in this file are qualified with the package name automatically by the assembler.
 
 Comments use `//`.
 
@@ -666,8 +764,11 @@ function add
 | `package` | `package name` | Sets file/package identity. Used to qualify defined symbols and bare-name relocations. |
 | `function` | `function name` | Begins a function definition |
 | `type` | `type fn(...) ret` | Annotates function signature (informational; consumed by importers) |
-| `data` | `data name string "..."` | Global read-only data |
-| `var` | `var name string "..."` | Global mutable data |
+| `data` | `data name type "..."` | Global immutable data (e.g., string constants emitted by bosc). Stored in `o.Data`. |
+| `var` | `var name type "..."` | Global writable data (string-literal payload form). Stored in `o.Vars`. |
+| `var` (size) | `var name type N` | Global writable data, N zero-filled bytes (uninitialized). |
+| `var` (block) | `var name type { bytes "..." reloc <off> <sym> <addend> ... }` | Multi-line form: explicit bytes payload plus zero or more per-var data relocations. Used by bosc to emit globals containing pointers (slice headers, struct fields holding addresses, anonymous-globals-as-pointers). |
+| `struct` | `struct Name { fname ftype \n ... }` | Multi-line declaration carrying a Boson struct shape into the `.bo`. Field types are stored verbatim; bosc reparses them on import. Used for cross-package struct types. |
 | `local` | `local name bits [reg]` | Stack/register local variable (scalars and pointers) |
 | `bytes` | `bytes name size [reg]` | Stack byte array (non-register; required for structs and arrays) |
 | `arg` | `arg name reg` | Pin argument to register |
@@ -714,8 +815,17 @@ Register names are case-insensitive.
 | Base + index×scale | `[base+index*scale]` | `mov rax [rsp+rcx*8]` |
 | Named variable | `name` | `mov rax myvar` |
 | Indirect named | `[name]` | `mov rax [ptr]` |
+| Indirect named + offset | `[name+N]` | `mov rax [buf+8]` |
 | Sized indirect | `qword[...]`, `dword[...]`, `word[...]`, `byte[...]` | `mov qword[rsp+16] 1` |
 | Partial of alloc | `name:N` (N ∈ {8,16,32,64}) | `mov dest src:32` |
+
+`name` resolves differently depending on whether the name is a `local`-allocated (register-resident) local, a `bytes`-allocated stack chunk, or a file-scope `var`/`data` global:
+
+- **`local`-allocated**: `name` is the value in the register; `[name]` is a register-relative dereference (`[reg]`). The name *is* the value.
+- **`bytes`-allocated**: `name` is the base of the stack chunk; `[name+N]` is stack-relative (`[rbp+slotoff+N]`).
+- **File-scope global**: `name` resolves to the symbol; `[name+N]` is RIP-relative (`[rip+disp32]`) with `N` baked into the relocation's `Addend`.
+
+The combined effect: `mov reg [name]` reads the storage at `name` for memory-backed forms (`bytes`, `var`, `data`), and dereferences the register for `local`. Symmetrically, `mov [name] reg` stores into the storage / the register. Compiler-side codegen consults `spot.nameIsAddress` (see [Code Generator](#code-generator-compilego)) to decide whether further indirection requires materializing the address into a register first.
 
 Sized indirects force a specific store/load width regardless of the source operand. Used to ensure full-width stores when the immediate value is small (the default encoder picks the narrowest opcode, which can corrupt slice length fields when small numbers are stored to 64-bit slots).
 
@@ -751,7 +861,19 @@ The assembler automatically selects the correct encoding variant based on operan
 
 ### String Escape Sequences
 
-Inside `data`/`var` string literals: `\n` (newline), `\0` (null), `\\` (backslash), `\"` (quote).
+Inside `data`/`var` string literals:
+
+| Escape | Byte |
+|--------|------|
+| `\n` | LF (0x0a) |
+| `\r` | CR (0x0d) |
+| `\t` | TAB (0x09) |
+| `\0` | NUL (0x00) |
+| `\\` | Backslash |
+| `\"` | Quote |
+| `\xHH` | Arbitrary byte, exactly two hex digits |
+
+The `\xHH` escape exists so compiler-emitted global vars can carry binary payloads (encoded integers, struct field bytes, slice headers) through the existing string-literal syntax without needing a separate byte-literal directive.
 
 ### Register Allocator
 
@@ -797,6 +919,8 @@ The assembler outputs a `.bo` object file containing:
 - A symbol table (function names with package prefix, global data names)
 - A relocation table (unresolved `call` and `lea` targets, all fully qualified)
 - Type descriptor records for function signatures (for importers)
+- Per-`Var` data relocations (`DataReloc{Offset, Symbol, Addend}`) so static globals can hold pointers to other globals or to anonymous data
+- Boson struct shapes (`Structs map[string]*StructShape`) — each carries the struct's field names paired with rendered type strings, allowing cross-package struct types to flow from producer to consumer .bo
 
 ---
 
@@ -804,9 +928,13 @@ The assembler outputs a `.bo` object file containing:
 
 `cmd/bld/main.go` is a thin wrapper over `linker.go`. It accepts a list of `.bo` object files and an output path, invokes the linker, and writes the ELF64 binary. The output file is set executable.
 
-The linker requires each input `.bo` to declare a non-empty `Pkgname` and rejects duplicates. It registers all defined functions, vars, and data under their qualified names (`pkg.name`). Since the compiler and assembler emit all relocations qualified, the linker has a simple symbol table — no bare-name fallback.
+The linker requires each input `.bo` to declare a non-empty `Pkgname` and rejects duplicates. It registers all defined functions, vars, and data under their qualified names (`pkg.name`). Since the compiler and assembler emit all relocations qualified, the linker has a simple symbol table — no bare-name fallback. Bare-name targets inside `DataReloc` entries (from hand-written `.bs`) are auto-qualified at link time against the owning .bo's package, the same way function-body `Relocation` symbols are.
 
-The ELF entry point is fixed: the linker looks for `_init.start`. The `_init` package (provided by the runtime's `init_linux.bs`) must define a `start` function that calls `main.main` and exits.
+**Reachability** is computed transitively. Starting from the entry point, function relocations pull in their targets; placing a var (or data block) in the data section then walks that var's `Relocs` and recursively places every targeted symbol. This means a var referenced only by another var's pointer field still gets emitted into the final ELF; no need for the code section to mention it directly.
+
+After all sections are positioned and section base addresses are known, the linker walks each placed var's `Relocs` and writes the absolute virtual address `targetVA + Addend` into the 8-byte pointer slot at `Offset`. Code-section relocations remain PC-relative 32-bit (`Relocation.Apply`) — distinct math from `DataReloc.Apply`'s 64-bit absolute writes.
+
+The ELF entry point is fixed: the linker looks for `_init.start`. The `_init` package (provided by the runtime's `init_linux.bs`) must define a `start` function that calls `main.main` (passing argv as `byte[][]` in rdi) and exits with main's return value.
 
 ---
 
@@ -845,7 +973,7 @@ ELF64 file format implementation. Builds the ELF header, section headers (`.text
 
 ### `ofile.go` / `bwrite.go`
 
-Custom binary object file format (`.bo`). Stores encoded instructions, symbol names and offsets, relocation entries, type descriptors, and the package name. `bwrite.go` provides serialization/deserialization. `ReadOFile` populates `Function.Pkgname` from the .bo's package field so the linker can use it.
+Custom binary object file format (`.bo`). Stores encoded instructions, symbol names and offsets, relocation entries, type descriptors, the package name, per-var data relocations (`DataReloc{Offset, Symbol, Addend}`), and Boson struct shapes (`StructShape{Name, Fields}` where each field carries a name and a rendered type string). `bwrite.go` provides serialization/deserialization. `ReadOFile` populates `Function.Pkgname` from the .bo's package field so the linker can use it.
 
 ### `linker.go`
 
@@ -861,10 +989,13 @@ The custom `.bo` format stores:
 |---------|----------|
 | Header | Magic bytes, version, section count |
 | Pkgname | Package identity (a single string) |
-| Text | Raw x86-64 encoded bytes |
+| Text | Raw x86-64 encoded bytes per function |
 | Symbols | Name → offset mappings for defined functions/globals |
-| Relocations | (offset, symbol, type) triples for unresolved references; all symbols are fully qualified |
+| Code relocations | (offset, symbol, addend) triples for unresolved code references; all symbols are fully qualified; 32-bit PC-relative |
 | Type info | Function signatures for type checking by importers |
+| Data (`Data`) | Immutable global blocks (e.g. string constants). Each carries its bytes and an optional list of per-block `DataReloc` entries. |
+| Vars (`Vars`) | Writable global blocks. Same shape as Data — bytes plus per-block relocations. |
+| Structs | Boson struct shapes (name + ordered list of {field name, rendered type string}) for cross-package struct types. |
 
 The format is simpler than ELF to make assembler output straightforward. The linker translates `.bo` → ELF64 as its final step.
 
@@ -953,21 +1084,35 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Type aliases (`type Name Underlying`) with distinct-type semantics
 - Type casts (`T(expr)`) including widening/narrowing/reinterpretation
 - Slices (`T[]`), fixed arrays (`T[N]`), pointers (`*T`), structs
+- Nested slices/arrays (`byte[][]`, `T[N][M]`, etc.)
 - `const`/`var` bindings with declaration initializers (`const x i64 = 42`)
+- File-scope `var`/`const` with compile-time-constant initializers — integer/byte literals, string-into-`byte[N]`, string-into-`byte[]` (slice with relocated pointer), struct literals composing all of the above, `&someGlobal`, `&SomeStruct{...}` (anonymous globals), `&globalArr[N]` (pointer-into-array via relocation addend)
 - Full nested `*mut T` write-through mutability with implicit coercion
 - Full `owned T` ownership type system: move semantics, `dispose()`, `owned()` promotion, if/else branch analysis, loop-body protection, scope-exit checks
 - Path-based imports with qualified calls (`import "stdlib/io"; io.puts(...)`)
-- mmk-driven build with auto-discovery via `bosc -listimports`
+- Cross-package struct types (`pair.pair`, `pair.pair{...}` literals) with auto-qualification of leaf type names at import time
+- Bosc-emitted function signatures (`type fn(...) ret`) so cross-package function calls work with Boson-source packages as well as hand-written bas runtime packages
+- `argv` passed to `main(args byte[][])` by the `_init.start` entry stub
+- `&arr[i]`, `&s.field` at runtime; `&literal` rejected at runtime with a directed error
+- Register-scaled indexing into globals via `lea` materialization (no `[symbol + reg*scale]` SIB form exists on x86-64; bosc emits an `lea` to materialize the base, then `[reg + idx*scale]`)
+- Postfix chains compose: `a.b[i].c[lo:hi]` parses and codegens uniformly
+- Go-style automatic semicolon insertion (newline after a statement-ending token; suppressed inside `(...)` and `[...]`)
+- Positioned compiler diagnostics with source-context snippets (5 lines + colored caret on TTY)
+- mmk-driven build with auto-discovery via `bosc -listimports`; build failures halt the chain cleanly (set -e in defbody scripts, proper exit-code propagation through `pkg_import_targets`)
 - bas synthetic instructions: `volatile`, `name:N` partials, size-qualified indirects, `movzx r64, r/m32`
+- bas struct directive (carries Boson struct shape into .bo); bas var block form with embedded `reloc` lines for data-section relocations; bas string escapes include `\xHH`, `\r`, `\t`
 
 **Known limitations / future direction:**
 
 - No heap allocator. Programs use stack and fixed-size storage only.
 - No floats. Lexer accepts decimal-point syntax but truncates.
 - Generics / type polymorphism not implemented.
+- Array literals (`[1, 2, 3]`) not yet implemented.
 - Stacked `owned *owned T` cannot have partial consumption (needs typestate).
 - No witnessed borrows.
-- argv not yet exposed to `main`.
+- True read-only `.rodata` segment split not yet done. String constants and other immutable data are tagged at the `o.Data` level but currently land in the writable `.data` LOAD segment. Hardware-enforced const requires splitting the ELF layout.
+- No deduplication of structurally-identical anonymous globals. Each `&literal` produces a fresh `__static_N`.
+- Function pointers in static data not yet implemented (the infrastructure supports it — `DataReloc` can target functions just as well as data — but bosc doesn't emit `&someFunc` for static init).
 - macOS support stubbed but not implemented.
 - Unused-mutability warning not implemented.
 
@@ -980,3 +1125,5 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - **Minimal runtime.** No heap, no GC, no dynamic loading. Programs are fully static ELF64 binaries that make raw Linux syscalls.
 - **Single-pass compiler.** The compiler does not perform optimization. It lowers each AST node directly to assembly, relying on the register allocator to minimize unnecessary spills.
 - **Conservative-by-default ownership and mutability.** Defaults favor strictness (const, read-only, no implicit promotion) with explicit opt-in for looser forms (var, mut, owned()). The type system encodes obligations the compiler can check; programmer-asserted unsafe operations are explicit (`owned(...)`, `dispose(...)`).
+- **Name-is-address as a single distinction.** `local` allocations are register-resident — the name *is* the value. `bytes`/`var`/`data` allocations are memory-resident — the name *is* the address. Bosc tracks this with a single bool per `spot` (`nameIsAddress`), populated at allocation/declaration time. Every site that needs to follow a pointer through such storage consults the same flag and emits the same lea-then-deref or load-first pattern. The distinction isn't between local and global scope (a `bytes`-allocated local and a `var` global behave the same way); it's about register vs memory residency.
+- **Data relocations as a uniform mechanism.** A `.bo` file's globals can carry per-block relocations the linker resolves at link time, producing absolute pointer slots. Any compile-time-constant expression — primitive literal, struct literal, `&someGlobal`, `&literal` — collapses to a `(bytes, relocations)` pair. Slice headers, struct fields holding pointers, and anonymous globals all fall out of that one mechanism without per-feature code paths.
