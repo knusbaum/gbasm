@@ -25,18 +25,15 @@ func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
 		return
 	}
 
-	// Type-check the initializer against the declared type, mirroring the
-	// function-local *VarDecl handler so the same diagnostics fire for
-	// the same mistakes regardless of scope.
-	srct := ast.Init.ASTType(c)
 	dstt := ast.Type
-	if !srct.Same(intlitASTType()) && !srct.Same(dstt) && !dstt.MutCompatible(srct) {
-		CompileErrorF(a, "Cannot initialize %s with value of type %s", dstt, srct)
-	}
 	if ast.Type.HasOwned() {
 		CompileErrorF(a, "Top-level vars cannot carry owned types")
 	}
 
+	// Type-fit is decided by encodeStaticInit, which knows when a
+	// literal can be coerced into a wider/narrower destination
+	// (intlit into any integer, string literal into byte[N], etc.)
+	// and produces specific diagnostics for mismatches.
 	data, err := encodeStaticInit(c, dstt, ast.Init)
 	if err != nil {
 		CompileErrorF(a, "%s", err.Error())
@@ -97,10 +94,24 @@ func encodeLiteralBytes(c *Context, dstt ASTType, l *Literal) ([]byte, error) {
 		}
 		return []byte{v}, nil
 	case string:
-		// String literals at top level would need a slice-header layout
-		// with a pointer relocation into the string-constants area.
-		// That's a Phase-2-with-relocations feature, not Phase 1.
-		return nil, fmt.Errorf("string-literal initializers for top-level vars need pointer relocations (not yet implemented)")
+		// byte[N] destination: copy the literal bytes inline and
+		// zero-pad to the array size. No relocation needed because
+		// the bytes live directly in the global, not behind a pointer.
+		if dstt.IsArray() && dstt.Element != nil && dstt.Element.Name == "byte" {
+			if len(v) > dstt.ArraySize {
+				return nil, fmt.Errorf("string literal of length %d does not fit in %s", len(v), dstt)
+			}
+			out := make([]byte, dstt.ArraySize)
+			copy(out, v)
+			return out, nil
+		}
+		// byte[] (slice) destination would need a 16-byte slice
+		// header {data_ptr, length} where data_ptr is a relocation
+		// against a string constant. Not yet implemented.
+		if dstt.IsSlice() && dstt.Element != nil && dstt.Element.Name == "byte" {
+			return nil, fmt.Errorf("string-literal initializers for byte[] need pointer relocations (not yet implemented)")
+		}
+		return nil, fmt.Errorf("cannot initialize %s with a string literal", dstt)
 	}
 	return nil, fmt.Errorf("unsupported literal type for static initializer: %T", l.Val)
 }

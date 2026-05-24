@@ -1,0 +1,33 @@
+package main
+
+import "string"
+
+// Global struct of fixed-size byte arrays initialized from string
+// literals. byte[N] = "..." copies the literal bytes inline and
+// zero-pads the rest of the array — no relocation needed since
+// nothing points anywhere.
+
+struct phrases {
+	greeting byte[16]
+	farewell byte[16]
+}
+
+var ph phrases = phrases{
+	greeting: "hello",
+	farewell: "goodbye",
+}
+
+fn main() {
+	// Pull each field into a local so we can slice it for puts.
+	// (The parser doesn't currently chain index/slice onto a dot
+	// expression directly — `ph.greeting[0:5]` doesn't parse yet.)
+	var g byte[16] = ph.greeting
+	var gs byte[] = g[0:5]
+	string.puts(gs)
+	string.putc('\n')
+
+	var f byte[16] = ph.farewell
+	var fs byte[] = f[0:7]
+	string.puts(fs)
+	string.putc('\n')
+}

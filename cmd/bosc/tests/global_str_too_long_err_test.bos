@@ -1,0 +1,7 @@
+package main
+
+// String literal longer than the destination byte array is rejected
+// at compile time rather than silently truncated.
+var buf byte[3] = "hello"
+
+fn main() {}

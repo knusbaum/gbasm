@@ -1083,7 +1083,10 @@ type StructLiteral struct {
 func (s *StructLiteral) ASTType(c *Context) ASTType {
 	_, ok := c.StructDeclForName(s.Type.Name)
 	if !ok {
-		panic("(2) No such struct. TODO: Nice error reports.")
+		panic(&interpreterError{
+			msg: fmt.Sprintf("No such struct type %q", s.Type.Name),
+			p:   s.p,
+		})
 	}
 	return s.Type
 }

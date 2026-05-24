@@ -1,2 +1,2 @@
 Compiling tests/global_var_string_err_test.bos
-Fatal: string-literal initializers for top-level vars need pointer relocations (not yet implemented)
+Fatal: string-literal initializers for byte[] need pointer relocations (not yet implemented)

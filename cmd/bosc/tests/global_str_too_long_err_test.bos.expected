@@ -1,0 +1,2 @@
+Compiling tests/global_str_too_long_err_test.bos
+Fatal: string literal of length 5 does not fit in byte[3]
