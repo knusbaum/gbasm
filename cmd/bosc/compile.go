@@ -446,7 +446,24 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		retlab := c.PushRetlabel()
 		defer c.PopRetlabel()
 		fmt.Fprintf(of, "function %s\n", ast.Name)
-		// TODO: Add function type signature
+		// Emit a 'type fn(...) ret' directive so cross-package importers
+		// (Context.Import → parseFuncType) can read this function's
+		// signature back out of the .bo. Render args and return via
+		// ASTType.String(); the parser eats the same forms.
+		var sig strings.Builder
+		sig.WriteString("fn(")
+		for i, a := range ast.Args {
+			if i > 0 {
+				sig.WriteString(", ")
+			}
+			sig.WriteString(a.Type.String())
+		}
+		sig.WriteString(")")
+		if !ast.Return.Same(voidASTType()) {
+			sig.WriteString(" ")
+			sig.WriteString(ast.Return.String())
+		}
+		fmt.Fprintf(of, "\ttype %s\n", sig.String())
 		for i, a := range ast.Args {
 			fmt.Fprintf(of, "\targi %s %d %d\n", a.Name, i, a.Type.Size(c)*8)
 			c.BindVar(ast, a.Name, a.Type, a.IsConst)

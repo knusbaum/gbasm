@@ -326,6 +326,18 @@ func (p *Parser) parseTypeName() *Node {
 	typename := c.sval
 	p.advance()
 
+	// Optional package-qualified form: `pkg.Type` becomes a single
+	// type name "pkg.Type" — the consumer-side StructDeclForName
+	// registry stores imported structs under that qualified key.
+	if p.current().t == tok_dot {
+		p.advance()
+		if p.current().t != tok_ident {
+			panic(&interpreterError{fmt.Sprintf("Expected a type name after '.', but found: %s", p.current().t), p.current().p})
+		}
+		typename = typename + "." + p.current().sval
+		p.advance()
+	}
+
 	// Collect a chain of [...] / [N] wrappers. The first wrapper (innermost) is
 	// the one that hugs the base type; successive ones wrap. The compiler
 	// applies them in args-order to build a nested Element chain.
@@ -439,14 +451,27 @@ func (p *Parser) parsePostfix(v *Node) *Node {
 				return v
 			}
 		case tok_lcurly:
-			// Struct-literal form requires a bare name (the type).
-			if v.t != n_symbol {
+			// Struct-literal form: either bare 'Name{...}' or qualified
+			// 'pkg.Name{...}'. The latter shows up as Dot(symbol_pkg,
+			// symbol_type); flatten to an n_stlit whose sval is the
+			// qualified key the importer registered the struct under.
+			var typeName string
+			var typePos position
+			switch {
+			case v.t == n_symbol:
+				typeName = v.sval
+				typePos = v.p
+			case v.t == n_dot && len(v.args) == 2 &&
+				v.args[0].t == n_symbol && v.args[1].t == n_symbol:
+				typeName = v.args[0].sval + "." + v.args[1].sval
+				typePos = v.p
+			default:
 				return v
 			}
 			p.advance()
 			fields := p.parseStructLiteral()
 			p.expect(tok_rcurly)
-			v = &Node{t: n_stlit, p: v.p, sval: v.sval, args: fields}
+			v = &Node{t: n_stlit, p: typePos, sval: typeName, args: fields}
 		default:
 			return v
 		}

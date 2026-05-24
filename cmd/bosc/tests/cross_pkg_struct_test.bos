@@ -1,0 +1,36 @@
+package main
+
+import "pair"
+import "string"
+
+// Cross-package struct usage end-to-end. The `pair` package (under
+// runtime/pair) defines `struct pair { a, b i64 }` plus two functions:
+//   - sum(p pair) i64
+//   - make_pair(x, y i64) pair
+// This test imports it and exercises:
+//   - declaring a local of type pair.pair
+//   - constructing one with a pair.pair{a:, b:} literal
+//   - reading fields through pair.pair → i64 field access
+//   - calling a pair.pkg function that takes a pair.pair value
+//   - calling a pair.pkg function that returns a pair.pair value
+fn main() {
+	// Construct via qualified-name struct literal, read a field.
+	var p pair.pair = pair.pair{a: 3, b: 4}
+	string.puti(p.a)
+	string.putc(' ')
+	string.puti(p.b)
+	string.putc('\n')
+
+	// Pass it to a cross-package function returning i64.
+	string.puti(pair.sum(p))
+	string.putc('\n')
+
+	// Receive a struct back from a cross-package function and read it.
+	var q pair.pair = pair.make_pair(10, 20)
+	string.puti(q.a)
+	string.putc(' ')
+	string.puti(q.b)
+	string.putc('\n')
+	string.puti(pair.sum(q))
+	string.putc('\n')
+}

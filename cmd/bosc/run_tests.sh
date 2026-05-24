@@ -7,13 +7,20 @@ if [[ $? != 0 ]]; then
 fi
 
 RUNTIME=../../runtime
-rm -f string.bo init.bo
+rm -f string.bo init.bo pair.bo pair.bs
 ./bas -o string.bo $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs >/dev/null 2>&1
 ./bas -o init.bo $RUNTIME/_init/init_linux.bs >/dev/null 2>&1
+
+# Compile the Boson-source `pair` test runtime package so cross-package
+# struct tests have something to import. importcfg is empty for it
+# because pair imports nothing.
+./bosc -importcfg=/dev/null -o pair.bs $RUNTIME/pair/pair.bos >/dev/null 2>&1
+./bas -o pair.bo pair.bs >/dev/null 2>&1
 
 # Generate a project-wide importcfg.
 cat > test.importcfg <<EOF
 string=string.bo
+pair=pair.bo
 EOF
 
 #set -e
@@ -72,7 +79,13 @@ for t in `ls tests/*_test.bos`; do
 		continue
     fi
     # cat ${t}.bas.out
-    ./bld -o ${t}.o ${t}.bo string.bo init.bo >${t}.bld.out 2>&1
+    # Link in pair.bo only when the test actually imports the pair package.
+    # Stale references would otherwise pull in unused symbols.
+    extra_bo=""
+    if grep -q '^import "pair"' "$t"; then
+        extra_bo="pair.bo"
+    fi
+    ./bld -o ${t}.o ${t}.bo string.bo init.bo $extra_bo >${t}.bld.out 2>&1
     if [[ $? != 0 ]]; then
 		echo linker failed for ${t}:
 		cat ${t}.bld.out

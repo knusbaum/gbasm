@@ -483,6 +483,26 @@ func parseFuncType(ftype string) (FuncDecl, error) {
 	return p.ParseFunctype()
 }
 
+// parseTypeString parses a rendered type string (the output of
+// ASTType.String() — e.g., "byte[100]", "*mut Foo", "i64") back into
+// an ASTType. Used when reloading struct field types from .bo files.
+// Recovers from interpreterError panics raised by the recursive
+// descent and returns them as errors.
+func parseTypeString(s string) (t ASTType, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if ie, ok := r.(*interpreterError); ok {
+				err = fmt.Errorf("parse %q: %s", s, ie.msg)
+				return
+			}
+			panic(r)
+		}
+	}()
+	p := NewParser("", strings.NewReader(s))
+	n := p.parseTypeName()
+	return mkTypename(n), nil
+}
+
 // Import loads a precompiled .bo file at path and registers its exported
 // functions under the given package name. Cross-package calls are resolved
 // against c.imports[pkgName].
@@ -499,17 +519,55 @@ func (c *Context) Import(importKey, path string) error {
 	if o.Pkgname == "" {
 		return fmt.Errorf("import %q: .bo at %s has no package name", importKey, path)
 	}
+	// Type names inside an imported package's signatures and struct
+	// field types reference structs by their local (bare) name. From
+	// the consumer's perspective those need to become qualified
+	// "pkg.Type" references, since that's how this package's structs
+	// are registered in the consuming context.
 	for _, fn := range o.Funcs {
 		if fn.Type != "" {
 			t, err := parseFuncType(fn.Type)
 			if err != nil {
 				return err
 			}
+			for i := range t.Args {
+				qualifyImportedType(&t.Args[i].Type, o.Pkgname, o.Structs)
+			}
+			qualifyImportedType(&t.Return, o.Pkgname, o.Structs)
 			t.Name = fn.Name
 			c.DefineImportedFunc(o.Pkgname, fn.Name, &t)
 		}
 	}
+	for _, sh := range o.Structs {
+		var fields []Binding
+		for _, fs := range sh.Fields {
+			ft, err := parseTypeString(fs.Type)
+			if err != nil {
+				return fmt.Errorf("import %q: struct %s field %s: %v", importKey, sh.Name, fs.Name, err)
+			}
+			qualifyImportedType(&ft, o.Pkgname, o.Structs)
+			fields = append(fields, Binding{Name: fs.Name, Type: ft})
+		}
+		qname := o.Pkgname + "." + sh.Name
+		c.DefineStruct(qname, &StructDecl{TName: qname, Fields: fields})
+	}
 	return nil
+}
+
+// qualifyImportedType walks t's element chain and, when the leaf
+// name matches a struct defined in `structs` (the producer .bo's
+// own struct map), rewrites it as "pkgname.LeafName". Built-in
+// names (i64, byte, bool, …) and already-qualified names (those
+// containing a dot, presumably from a transitive import) are left
+// alone.
+func qualifyImportedType(t *ASTType, pkgname string, structs map[string]*gbasm.StructShape) {
+	if t.Element != nil {
+		qualifyImportedType(t.Element, pkgname, structs)
+		return
+	}
+	if _, ok := structs[t.Name]; ok {
+		t.Name = pkgname + "." + t.Name
+	}
 }
 
 func (c *Context) String(s string) string {
