@@ -45,16 +45,17 @@ const (
 
 type Relocation struct {
 	Offset uint32
-	//rel_type reltype
 	Symbol string
-	//addend int32
+	// Addend is added to the computed PC-relative displacement before
+	// it's written into the 4-byte slot. Used for forms like
+	// `[symbol+N]` where the encoder records the relocation against
+	// the bare symbol and stashes N in the addend so the linker can
+	// produce sym + N − pc.
+	Addend int32
 }
 
 func (r *Relocation) Apply(bs []byte, value int32) {
-	target := value - int32(r.Offset) - 4
-	//if r.rel_type == RA_386_PC32 {
-	//	target += r.addend
-	//}
+	target := value - int32(r.Offset) - 4 + r.Addend
 	bs = bs[r.Offset:]
 	bss := bytes.NewBuffer(bs)
 	bss.Truncate(0)

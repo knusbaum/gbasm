@@ -1,0 +1,60 @@
+package main
+
+import "string"
+
+struct point {
+	x i64
+	y i64
+}
+
+struct rect {
+	tl    point
+	br    point
+	color i32
+	flags byte
+}
+
+// Top-level struct globals: flat literal, nested literal, mutation.
+var origin point = point{x: 0, y: 0}
+var p1 point = point{x: 11, y: 22}
+var r rect = rect{
+	tl:    point{x: 1, y: 2},
+	br:    point{x: 30, y: 40},
+	color: 7,
+	flags: 'B',
+}
+
+fn main() {
+	// Flat struct init reads back.
+	string.puti(p1.x)
+	string.putc('\n')
+	string.puti(p1.y)
+	string.putc('\n')
+
+	// Default-zero from uninitialized field-by-field set still works
+	// even with sibling global structs (no cross-contamination).
+	string.puti(origin.x)
+	string.putc('\n')
+	string.puti(origin.y)
+	string.putc('\n')
+
+	// Nested struct literal fields.
+	string.puti(r.tl.x)
+	string.putc('\n')
+	string.puti(r.tl.y)
+	string.putc('\n')
+	string.puti(r.br.x)
+	string.putc('\n')
+	string.puti(r.br.y)
+	string.putc('\n')
+	string.puti(i64(r.color))
+	string.putc('\n')
+	string.putc(r.flags)
+	string.putc('\n')
+
+	// Mutate fields of a global struct from main; readback confirms
+	// the global lives in writable memory.
+	p1.x = p1.x + 100
+	string.puti(p1.x)
+	string.putc('\n')
+}

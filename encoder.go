@@ -29,10 +29,18 @@ type WriteLener interface {
 	Len() int
 }
 
+// Indirect describes a memory operand. Two flavors:
+//
+//   - Register-relative: Symbol == "", addressing is [Reg + Off].
+//   - Symbol-relative:   Symbol != "", addressing is RIP-relative to
+//     the named global symbol with Off added as a relocation addend.
+//     Reg is ignored. The encoder produces a relocation against Symbol
+//     so the linker can patch in the final displacement.
 type Indirect struct {
-	Reg  Register
-	Off  int32
-	Size int // Size in bytes of the data at the offset Off from Reg
+	Reg    Register
+	Off    int32
+	Size   int    // Size in bytes of the data at the addressed location
+	Symbol string // when set, addressing is RIP-relative to this global
 }
 
 func (i Indirect) String() string {
@@ -49,6 +57,15 @@ func (i Indirect) String() string {
 		size = "QWORD"
 	default:
 		size = fmt.Sprintf("(SIZE %d)", i.Size)
+	}
+	if i.Symbol != "" {
+		if i.Off > 0 {
+			return fmt.Sprintf("%s [%s + %d]", size, i.Symbol, i.Off)
+		}
+		if i.Off < 0 {
+			return fmt.Sprintf("%s [%s - %d]", size, i.Symbol, -i.Off)
+		}
+		return fmt.Sprintf("%s [%s]", size, i.Symbol)
 	}
 	if i.Off > 0 {
 		return fmt.Sprintf("%s [%s + %d]", size, i.Reg, i.Off)
@@ -495,15 +512,29 @@ func (x *modrm) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 		case byte:
 			xmod = ot
 		case Indirect:
-			if ot.Off != 0 {
-				xmod = 0b10
+			if ot.Symbol != "" {
+				// RIP-relative addressing to a global symbol. ModR/M
+				// will be {mod=00, rm=101} → "RIP + disp32"; the linker
+				// resolves Symbol and adds Off as the relocation addend.
+				indirect = &ot
+				indirect.Reg = R_RIP
+				relocations = append(relocations, Relocation{
+					Offset: uint32(w.Len() + 1),
+					Symbol: ot.Symbol,
+					Addend: ot.Off,
+				})
+				xmod = 0
 			} else {
-				xmod = 0b00
+				if ot.Off != 0 {
+					xmod = 0b10
+				} else {
+					xmod = 0b00
+				}
+				if ot.Reg == R_RSP || ot.Reg == R12 {
+					doSib = true
+				}
+				indirect = &ot
 			}
-			if ot.Reg == R_RSP || ot.Reg == R12 {
-				doSib = true
-			}
-			indirect = &ot
 		case IndirectBaseIndexScale:
 			doSib = true
 			xmod = 0b00
@@ -847,6 +878,9 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 			return true, 64
 		}
 		if mo, ok := op.(Indirect); ok {
+			if mo.Symbol != "" {
+				return true, 64
+			}
 			return mo.Reg.Width() == 64, 64
 		}
 		if mo, ok := op.(IndirectBaseIndexScale); ok {
@@ -866,6 +900,9 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 			if mo.Size > 0 && mo.Size != 8 {
 				return false, 8
 			}
+			if mo.Symbol != "" {
+				return true, 8
+			}
 			return mo.Reg.Width() == 64, 8
 		}
 		if mo, ok := op.(IndirectBaseIndexScale); ok {
@@ -884,6 +921,9 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 		if mo, ok := op.(Indirect); ok {
 			if mo.Size > 0 && mo.Size != 16 {
 				return false, 16
+			}
+			if mo.Symbol != "" {
+				return true, 16
 			}
 			return mo.Reg.Width() == 64, 16
 		}
@@ -905,6 +945,9 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 			if mo.Size > 0 && mo.Size != 32 {
 				return false, 32
 			}
+			if mo.Symbol != "" {
+				return true, 32
+			}
 			return mo.Reg.Width() == 64, 32
 		}
 		if mo, ok := op.(IndirectBaseIndexScale); ok {
@@ -925,6 +968,9 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 		if mo, ok := op.(Indirect); ok {
 			if mo.Size > 0 && mo.Size != 64 {
 				return false, 64
+			}
+			if mo.Symbol != "" {
+				return true, 64
 			}
 			return mo.Reg.Width() == 64, 64
 		}

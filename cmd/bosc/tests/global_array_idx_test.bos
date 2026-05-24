@@ -1,0 +1,24 @@
+package main
+
+import "string"
+
+// Indexing into a global fixed-size array with constant offsets — bosc
+// emits these as [buf+N] which previously failed because bas didn't
+// know how to address a global as a memory operand. Now that bas
+// understands RIP-relative-to-symbol indirection, this works.
+//
+// Register-indexed global access (e.g. buf[i] with i a runtime value)
+// still requires bosc to emit a `lea` workaround and is not yet
+// covered.
+var buf byte[8]
+
+fn main() {
+	buf[0] = 'A'
+	buf[1] = 'B'
+	buf[7] = 'H'
+
+	string.putc(buf[0])
+	string.putc(buf[1])
+	string.putc(buf[7])
+	string.putc('\n')
+}

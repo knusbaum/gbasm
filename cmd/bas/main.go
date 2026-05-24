@@ -180,7 +180,7 @@ func parseSizePrefix(s string) (bits int, rest string, ok bool) {
 	return 0, "", false
 }
 
-func ParseIndirect(f *gbasm.Function, s string) (indirect any, err error) {
+func ParseIndirect(o *gbasm.OFile, f *gbasm.Function, s string) (indirect any, err error) {
 	//(base, index string, scale int, err error) {
 	r := regexp.MustCompile(`\[([_a-zA-Z0-9]+)\s*(([+-])\s*([_x0-9a-zA-Z]+))?\s*(\*\s*([x0-9]+))?\]`)
 	parts := r.FindStringSubmatch(s)
@@ -189,12 +189,27 @@ func ParseIndirect(f *gbasm.Function, s string) (indirect any, err error) {
 	scale := parts[6]
 
 	var baser gbasm.Register
+	var baseSym string // when set, base is a global symbol; baser is ignored
 	if reg, err := gbasm.ParseReg(base); err == nil {
 		baser = reg
 	} else if a := f.AllocFor(base); a != nil {
 		baser = a.Register()
+	} else if o != nil && (o.Vars[base] != nil || o.Data[base] != nil) {
+		// Global symbol: addressing becomes RIP-relative to this name,
+		// with any index expression below baked into the relocation.
+		baseSym = base
 	} else {
-		return nil, fmt.Errorf("Base was neither an integer, nor a register, nor a variable.")
+		return nil, fmt.Errorf("Base %q was neither a register, a local variable, nor a known global symbol.", base)
+	}
+
+	// indirectFor builds the right Indirect flavor (register-relative
+	// or RIP-relative-to-symbol) given the parsed offset. Used by the
+	// three integer-index and no-index branches below.
+	indirectFor := func(off int32) gbasm.Indirect {
+		if baseSym != "" {
+			return gbasm.Indirect{Symbol: baseSym, Off: off}
+		}
+		return gbasm.Indirect{Reg: baser, Off: off}
 	}
 
 	// figure out if index is an int or register
@@ -209,10 +224,7 @@ func ParseIndirect(f *gbasm.Function, s string) (indirect any, err error) {
 		if parts[3] != "+" {
 			return nil, fmt.Errorf("Cannot subtract hex literal in scale")
 		}
-		return gbasm.Indirect{
-			Reg: baser,
-			Off: int32(i),
-		}, nil
+		return indirectFor(int32(i)), nil
 	}
 	i, err := strconv.ParseInt(index, 10, 32)
 	if err == nil {
@@ -222,22 +234,22 @@ func ParseIndirect(f *gbasm.Function, s string) (indirect any, err error) {
 		if parts[3] == "-" {
 			i = -i
 		}
-		return gbasm.Indirect{
-			Reg: baser,
-			Off: int32(i),
-		}, nil
+		return indirectFor(int32(i)), nil
 	}
 
 	if index == "" {
 		if scale != "" {
 			return nil, fmt.Errorf("Cannot have scale without index.")
 		}
-		return gbasm.Indirect{
-			Reg: baser,
-		}, nil
+		return indirectFor(0), nil
 	}
 
-	// Not an integer index
+	// Not an integer index — a register-scaled index. Can't combine with
+	// a RIP-relative base: x86-64 RIP addressing is "RIP + disp32" only,
+	// with no base or index register.
+	if baseSym != "" {
+		return nil, fmt.Errorf("global symbol %q cannot be combined with a register index — x86-64 RIP-relative addressing takes a disp32 only.", baseSym)
+	}
 	var indexr gbasm.Register
 	if reg, err := gbasm.ParseReg(index); err == nil {
 		indexr = reg
@@ -702,7 +714,7 @@ func main() {
 				}
 
 				if bits, rest, ok := parseSizePrefix(parts[i]); ok {
-					ind, err := ParseIndirect(f, rest)
+					ind, err := ParseIndirect(o, f, rest)
 					if err != nil {
 						fmt.Printf("Fatal: Failed to parse indirection: %v\n", err)
 						os.Exit(1)
@@ -717,7 +729,7 @@ func main() {
 				}
 
 				if strings.HasPrefix(parts[i], "[") {
-					ind, err := ParseIndirect(f, parts[i])
+					ind, err := ParseIndirect(o, f, parts[i])
 					if err != nil {
 						fmt.Printf("Fatal: Failed to parse indirection: %v\n", err)
 						os.Exit(1)

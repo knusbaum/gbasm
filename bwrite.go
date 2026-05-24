@@ -240,47 +240,31 @@ func readSymbol(r io.Reader) (Symbol, error) {
 }
 
 func writeRelocation(w io.Writer, v *Relocation) error {
-	err := binary.Write(w, binary.LittleEndian, v.Offset)
-	if err != nil {
+	if err := binary.Write(w, binary.LittleEndian, v.Offset); err != nil {
 		return err
 	}
-	// 	rel_type := uint32(v.rel_type)
-	// 	err = binary.Write(w, binary.LittleEndian, rel_type)
-	// 	if err != nil {
-	// 		return err
-	// 	}
-	err = writeString(w, v.Symbol)
-	if err != nil {
+	if err := writeString(w, v.Symbol); err != nil {
 		return err
 	}
-	// 	err = binary.Write(w, binary.LittleEndian, v.addend)
-	// 	if err != nil {
-	// 		return err
-	// 	}
+	if err := binary.Write(w, binary.LittleEndian, v.Addend); err != nil {
+		return err
+	}
 	return nil
 }
 
 func readRelocation(r io.Reader) (Relocation, error) {
 	var rel Relocation
-	err := binary.Read(r, binary.LittleEndian, &rel.Offset)
-	if err != nil {
+	if err := binary.Read(r, binary.LittleEndian, &rel.Offset); err != nil {
 		return Relocation{}, err
 	}
-	// 	var rel_type uint32
-	// 	err = binary.Read(r, binary.LittleEndian, &rel_type)
-	// 	if err != nil {
-	// 		return Relocation{}, err
-	// 	}
-	// 	rel.rel_type = reltype(rel_type)
 	sym, err := readString(r)
 	if err != nil {
 		return Relocation{}, err
 	}
 	rel.Symbol = sym
-	// 	err = binary.Read(r, binary.LittleEndian, &rel.addend)
-	// 	if err != nil {
-	// 		return Relocation{}, err
-	// 	}
+	if err := binary.Read(r, binary.LittleEndian, &rel.Addend); err != nil {
+		return Relocation{}, err
+	}
 	return rel, nil
 }
 
