@@ -1,0 +1,42 @@
+package main
+
+import "string"
+
+// File-scope `&someGlobal` initializers — produce an 8-byte pointer
+// slot the linker fills with the symbol's resolved virtual address.
+
+var counter i64 = 42
+var pcounter *i64 = &counter
+
+struct config {
+	threshold i64
+	current   *i64    // pointer field, hand-wired to point at counter
+	greeting  byte[]  // slice field, init from string literal
+}
+
+var cfg config = config{
+	threshold: 100,
+	current:   &counter,
+	greeting:  "configured\n",
+}
+
+fn main() {
+	// Direct pointer global.
+	string.puti(*pcounter)
+	string.putc('\n')
+
+	// Mutate counter and re-read through pcounter — pcounter points
+	// at the live storage.
+	counter = 7
+	string.puti(*pcounter)
+	string.putc('\n')
+
+	// Read through the pointer field of a globally-initialized struct.
+	string.puti(cfg.threshold)
+	string.putc('\n')
+	string.puti(*cfg.current)
+	string.putc('\n')
+
+	// And the slice field, sharing the same pipeline.
+	string.puts(cfg.greeting)
+}

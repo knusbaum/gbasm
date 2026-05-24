@@ -7,16 +7,22 @@ import (
 	"strings"
 )
 
+// relocSpec is the bosc-internal description of a single data relocation
+// returned by encodeStaticInit. emitGlobalVarDecl translates these into
+// bas `reloc <off> <sym> <addend>` lines inside a block-form var
+// directive.
+type relocSpec struct {
+	Offset int    // byte offset within the encoded payload
+	Symbol string // target symbol name (unqualified — linker auto-qualifies)
+	Addend int64
+}
+
 // emitGlobalVarDecl writes a top-level VarDecl as a bas-level global var
 // directive. With no initializer, the global is zero-filled at its type's
-// natural size. With an initializer, the value is encoded to raw bytes at
-// compile time and emitted as a string-literal payload using \xHH escapes
-// for non-printable bytes.
-//
-// Phase 1 accepts only pointer-free compile-time literals (integers, bytes,
-// and the 0-N negation pattern). Anything that would need a relocation
-// (slice headers, pointer initializers) is rejected; relocation support is
-// scheduled for a follow-up phase.
+// natural size. With an initializer, the value is encoded to raw bytes and
+// any pointer slots are recorded as data relocations; emission switches
+// from the single-line string-literal form to the block form whenever the
+// payload carries one or more relocations.
 func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
 	// Record the name as a global so codegen sites that build indirect
 	// addressing know to materialize the address into a register before
@@ -39,7 +45,7 @@ func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
 	// literal can be coerced into a wider/narrower destination
 	// (intlit into any integer, string literal into byte[N], etc.)
 	// and produces specific diagnostics for mismatches.
-	data, err := encodeStaticInit(c, dstt, ast.Init)
+	data, relocs, err := encodeStaticInit(c, dstt, ast.Init)
 	if err != nil {
 		CompileErrorF(a, "%s", err.Error())
 	}
@@ -48,25 +54,49 @@ func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
 		// rather than emit a globally-misaligned variable.
 		CompileErrorF(a, "internal: static initializer encoded %d bytes, but type %s has size %d", len(data), dstt, size)
 	}
-	fmt.Fprintf(of, "var %s %s \"%s\"\n", ast.Name, ast.Type, bytesToBasStringLiteral(data))
+	emitVarBlock(of, ast.Name, ast.Type.String(), data, relocs)
 }
 
-// encodeStaticInit serializes a compile-time constant AST node into the raw
-// byte payload that a global variable of type dstt should hold. Returns an
+// emitVarBlock writes either the single-line var directive (when there are
+// no relocs) or the multi-line block form. Centralized so we don't repeat
+// the choice and the formatting in callers that might emit anonymous
+// globals later.
+func emitVarBlock(of io.Writer, name, vtype string, data []byte, relocs []relocSpec) {
+	if len(relocs) == 0 {
+		fmt.Fprintf(of, "var %s %s \"%s\"\n", name, vtype, bytesToBasStringLiteral(data))
+		return
+	}
+	fmt.Fprintf(of, "var %s %s {\n", name, vtype)
+	fmt.Fprintf(of, "\tbytes \"%s\"\n", bytesToBasStringLiteral(data))
+	for _, r := range relocs {
+		fmt.Fprintf(of, "\treloc %d %s %d\n", r.Offset, r.Symbol, r.Addend)
+	}
+	fmt.Fprintf(of, "}\n")
+}
+
+// encodeStaticInit serializes a compile-time constant AST node into a raw
+// byte payload paired with a list of pointer-slot relocations. Returns an
 // error if init is not a recognized compile-time constant form.
 //
 // Supported forms:
 //   - *Literal with uint64 Val for integer types (any width, any signedness)
 //   - *Literal with byte Val for byte / 8-bit integer types
+//   - *Literal with string Val for byte[N] (inline copy) and byte[]
+//     (16-byte slice header with a relocation to a string constant)
 //   - *Op2{n_sub, *Literal{0}, *Literal{uint64}} for negative integers
 //   - *StructLiteral for struct types, recursively, when every field's
-//     initializer is itself a supported form
-func encodeStaticInit(c *Context, dstt ASTType, init AST) ([]byte, error) {
+//     initializer is itself a supported form; relocations from nested
+//     fields are offset-adjusted into the outer payload's coordinates
+//   - *Address with Val=Symbol — produces an 8-byte pointer slot with a
+//     relocation pointing at the symbol
+func encodeStaticInit(c *Context, dstt ASTType, init AST) ([]byte, []relocSpec, error) {
 	switch v := init.(type) {
 	case *Literal:
 		return encodeLiteralBytes(c, dstt, v)
 	case *StructLiteral:
 		return encodeStructLiteralBytes(c, dstt, v)
+	case *Address:
+		return encodeAddressBytes(c, dstt, v)
 	case *Op2:
 		// -N is parsed as Op2{Sub, Literal{0}, Literal{N}}. Recognize and
 		// fold; reject any other Op2 form (we don't do general constant
@@ -77,53 +107,80 @@ func encodeStaticInit(c *Context, dstt ASTType, init AST) ([]byte, error) {
 			if zok && nok {
 				if zv, ok := z.Val.(uint64); ok && zv == 0 {
 					if nv, ok := n.Val.(uint64); ok {
-						return encodeIntBytes(dstt, -int64(nv))
+						b, err := encodeIntBytes(dstt, -int64(nv))
+						return b, nil, err
 					}
 				}
 			}
 		}
-		return nil, fmt.Errorf("initializer is not a compile-time constant")
+		return nil, nil, fmt.Errorf("initializer is not a compile-time constant")
 	default:
-		return nil, fmt.Errorf("initializer is not a compile-time constant")
+		return nil, nil, fmt.Errorf("initializer is not a compile-time constant")
 	}
 }
 
-func encodeLiteralBytes(c *Context, dstt ASTType, l *Literal) ([]byte, error) {
+func encodeLiteralBytes(c *Context, dstt ASTType, l *Literal) ([]byte, []relocSpec, error) {
 	switch v := l.Val.(type) {
 	case uint64:
-		return encodeIntBytes(dstt, int64(v))
+		b, err := encodeIntBytes(dstt, int64(v))
+		return b, nil, err
 	case byte:
 		size := dstt.Size(c)
 		if size != 1 {
-			return nil, fmt.Errorf("byte literal cannot initialize %s (size %d)", dstt, size)
+			return nil, nil, fmt.Errorf("byte literal cannot initialize %s (size %d)", dstt, size)
 		}
-		return []byte{v}, nil
+		return []byte{v}, nil, nil
 	case string:
 		// byte[N] destination: copy the literal bytes inline and
 		// zero-pad to the array size. No relocation needed because
 		// the bytes live directly in the global, not behind a pointer.
 		if dstt.IsArray() && dstt.Element != nil && dstt.Element.Name == "byte" {
 			if len(v) > dstt.ArraySize {
-				return nil, fmt.Errorf("string literal of length %d does not fit in %s", len(v), dstt)
+				return nil, nil, fmt.Errorf("string literal of length %d does not fit in %s", len(v), dstt)
 			}
 			out := make([]byte, dstt.ArraySize)
 			copy(out, v)
-			return out, nil
+			return out, nil, nil
 		}
-		// byte[] (slice) destination would need a 16-byte slice
-		// header {data_ptr, length} where data_ptr is a relocation
-		// against a string constant. Not yet implemented.
+		// byte[] (slice) destination: emit a 16-byte slice header.
+		// First 8 bytes hold a pointer to a string constant (filled in
+		// by the linker via the returned relocation). Last 8 bytes
+		// hold the length, encoded little-endian here at compile time.
 		if dstt.IsSlice() && dstt.Element != nil && dstt.Element.Name == "byte" {
-			return nil, fmt.Errorf("string-literal initializers for byte[] need pointer relocations (not yet implemented)")
+			sym := c.String(v) // existing string-constants machinery
+			out := make([]byte, 16)
+			binary.LittleEndian.PutUint64(out[8:], uint64(len(v)))
+			return out, []relocSpec{{Offset: 0, Symbol: sym, Addend: 0}}, nil
 		}
-		return nil, fmt.Errorf("cannot initialize %s with a string literal", dstt)
+		return nil, nil, fmt.Errorf("cannot initialize %s with a string literal", dstt)
 	}
-	return nil, fmt.Errorf("unsupported literal type for static initializer: %T", l.Val)
+	return nil, nil, fmt.Errorf("unsupported literal type for static initializer: %T", l.Val)
+}
+
+// encodeAddressBytes handles `&someGlobal` in static-init context. The
+// payload is an 8-byte zero slot; the linker fills it with the symbol's
+// resolved virtual address via the accompanying relocation.
+//
+// For now restricted to Var=name-of-a-global. Anonymous targets
+// (`&someStruct{...}`) are step 3 and will allocate fresh anonymous
+// globals from this same path.
+func encodeAddressBytes(c *Context, dstt ASTType, a *Address) ([]byte, []relocSpec, error) {
+	if dstt.Indirection == 0 {
+		return nil, nil, fmt.Errorf("address-of initializer assigned to non-pointer type %s", dstt)
+	}
+	if a.Var == "" {
+		// Reserved for step 3 (anonymous-target Address forms).
+		return nil, nil, fmt.Errorf("address-of with a non-symbol target is not yet supported in static initializers")
+	}
+	out := make([]byte, 8)
+	return out, []relocSpec{{Offset: 0, Symbol: a.Var, Addend: 0}}, nil
 }
 
 // encodeStructLiteralBytes serializes a struct literal to bytes by walking
 // the struct decl's field layout in declaration order, recursively encoding
-// each field's initializer.
+// each field's initializer. Relocations from each field are offset-shifted
+// by the field's position within the struct and concatenated into the
+// returned reloc list.
 //
 // Requirements (clear errors on each):
 //   - dstt names a struct visible in c.
@@ -133,13 +190,13 @@ func encodeLiteralBytes(c *Context, dstt ASTType, l *Literal) ([]byte, error) {
 //   - No extra fields appear in the literal that aren't in the decl.
 //   - Every field's value is itself a compile-time constant supported
 //     by encodeStaticInit.
-func encodeStructLiteralBytes(c *Context, dstt ASTType, lit *StructLiteral) ([]byte, error) {
+func encodeStructLiteralBytes(c *Context, dstt ASTType, lit *StructLiteral) ([]byte, []relocSpec, error) {
 	if dstt.Name != lit.Type.Name {
-		return nil, fmt.Errorf("struct literal type %s does not match destination type %s", lit.Type, dstt)
+		return nil, nil, fmt.Errorf("struct literal type %s does not match destination type %s", lit.Type, dstt)
 	}
 	decl, ok := c.StructDeclForName(dstt.Name)
 	if !ok {
-		return nil, fmt.Errorf("no such struct type %s", dstt.Name)
+		return nil, nil, fmt.Errorf("no such struct type %s", dstt.Name)
 	}
 
 	// Index literal fields by name so we can pull them in declaration order
@@ -147,33 +204,40 @@ func encodeStructLiteralBytes(c *Context, dstt ASTType, lit *StructLiteral) ([]b
 	provided := make(map[string]AST, len(lit.Fields))
 	for _, f := range lit.Fields {
 		if _, dup := provided[f.Name]; dup {
-			return nil, fmt.Errorf("struct literal sets field %q more than once", f.Name)
+			return nil, nil, fmt.Errorf("struct literal sets field %q more than once", f.Name)
 		}
 		provided[f.Name] = f.Val
 	}
 
 	var out []byte
+	var relocs []relocSpec
 	for _, fld := range decl.Fields {
 		val, ok := provided[fld.Name]
 		if !ok {
-			return nil, fmt.Errorf("struct literal is missing field %q of %s", fld.Name, dstt.Name)
+			return nil, nil, fmt.Errorf("struct literal is missing field %q of %s", fld.Name, dstt.Name)
 		}
-		fbytes, err := encodeStaticInit(c, fld.Type, val)
+		fbytes, frelocs, err := encodeStaticInit(c, fld.Type, val)
 		if err != nil {
-			return nil, fmt.Errorf("field %q: %v", fld.Name, err)
+			return nil, nil, fmt.Errorf("field %q: %v", fld.Name, err)
 		}
 		expected := fld.Type.Size(c)
 		if len(fbytes) != expected {
-			return nil, fmt.Errorf("field %q: encoded %d bytes, expected %d", fld.Name, len(fbytes), expected)
+			return nil, nil, fmt.Errorf("field %q: encoded %d bytes, expected %d", fld.Name, len(fbytes), expected)
+		}
+		// Shift each field's relocations into the outer payload's
+		// coordinate system by adding the field's offset.
+		base := len(out)
+		for _, r := range frelocs {
+			r.Offset += base
+			relocs = append(relocs, r)
 		}
 		out = append(out, fbytes...)
 		delete(provided, fld.Name)
 	}
-	// Anything remaining in `provided` is an unrecognized field name.
 	for name := range provided {
-		return nil, fmt.Errorf("struct literal references unknown field %q of %s", name, dstt.Name)
+		return nil, nil, fmt.Errorf("struct literal references unknown field %q of %s", name, dstt.Name)
 	}
-	return out, nil
+	return out, relocs, nil
 }
 
 // encodeIntBytes lays out n as little-endian bytes sized for dstt. The

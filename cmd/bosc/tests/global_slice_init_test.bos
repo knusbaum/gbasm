@@ -1,0 +1,21 @@
+package main
+
+import "string"
+
+// File-scope byte[] initialized from a string literal. Bosc emits a
+// 16-byte slice header { ptr, len } with the ptr slot relocated to a
+// string-constant the linker resolves at link time.
+var greeting byte[] = "Hello, world!\n"
+var empty byte[] = ""
+var with_escapes byte[] = "line one\nline two\n"
+
+fn main() {
+	string.puts(greeting)
+
+	// Empty slice: lenb should report 0, puts should write nothing.
+	if (string.lenb(empty) == 0) {
+		string.puts("empty ok\n")
+	}
+
+	string.puts(with_escapes)
+}

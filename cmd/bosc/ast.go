@@ -617,7 +617,12 @@ func (c *Context) String(s string) string {
 
 func (c *Context) WriteStrings(of io.Writer) {
 	for k, s := range c.strngs {
-		fmt.Fprintf(of, "var %s string \"%s\\0\"\n", s, unparseString(k))
+		// Strings are immutable from the source-level point of view;
+		// emit them as `data` so they land in o.Data, distinguishing
+		// them from writable o.Vars. The linker currently places both
+		// in the same .data segment, but the metadata distinction
+		// readies us for a future read-only segment split.
+		fmt.Fprintf(of, "data %s string \"%s\\0\"\n", s, unparseString(k))
 	}
 }
 

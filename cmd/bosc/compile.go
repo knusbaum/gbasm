@@ -603,13 +603,29 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			t.MutMask = 0 // plain value: MutMask is not meaningful
 		}
 
+		// When the pointer lives in a global, [v.ref] would be the
+		// global's *own* address (RIP-relative read of its bytes),
+		// which only loads the pointer's stored value. We need a
+		// second load to actually follow the pointer. Materialize
+		// the pointer into a register first; subsequent [reg] is the
+		// real dereference. Local pointers already live in a register
+		// (or stack slot bas resolves register-relative), so [v.ref]
+		// works in one shot.
+		src := v.ref
+		if c.IsGlobal(v.ref) {
+			ptmp := newSpot(of, c, c.Temp(), v.t)
+			fmt.Fprintf(of, "\tmov %s [%s]\n", ptmp.ref, v.ref)
+			src = ptmp.ref
+			defer ptmp.free(of)
+		}
+
 		if t.Indirection > 0 {
 			if dest.empty() {
 				fmt.Fprintf(of, "\t// New temp for deref, type: %#v\n", t)
 				dest = newSpot(of, c, c.Temp(), t)
 			}
 			// it's a pointer. Just copy.
-			fmt.Fprintf(of, "\tmov %s [%s]\n", dest.ref, v.ref)
+			fmt.Fprintf(of, "\tmov %s [%s]\n", dest.ref, src)
 		} else if t.ArraySize > 0 {
 			// it's an array.
 			panic("Array copying not implemented yet\n")
@@ -623,7 +639,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				dest = newSpot(of, c, c.Temp(), t)
 			}
 			// It's a small object. Just copy it.
-			fmt.Fprintf(of, "\tmov %s [%s]\n", dest.ref, v.ref)
+			fmt.Fprintf(of, "\tmov %s [%s]\n", dest.ref, src)
 		}
 
 		return dest
