@@ -1,0 +1,2 @@
+Compiling tests/owned_var_init_move_err_test.bos
+Fatal: Use of "x" after it was moved

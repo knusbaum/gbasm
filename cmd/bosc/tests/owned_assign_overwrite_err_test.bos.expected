@@ -1,0 +1,2 @@
+Compiling tests/owned_assign_overwrite_err_test.bos
+Fatal: Cannot assign to owned binding "first" before consuming its current value

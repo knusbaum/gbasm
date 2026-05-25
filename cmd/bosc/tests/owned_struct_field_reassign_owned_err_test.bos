@@ -1,0 +1,16 @@
+package main
+
+struct box {
+	x owned i64
+}
+
+fn main() {
+	var x owned i64 = 1
+	var b owned box = box{
+		x: x
+	}
+	var y owned i64 = 2
+	b.x = y
+	dispose(b)
+	dispose(y)
+}

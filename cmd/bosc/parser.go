@@ -642,21 +642,21 @@ func (p *Parser) parseFor() *Node {
 		init := p.parseExpression()
 		args = append(args, init)
 	} else {
-		args = append(args, &Node{p: p.current().p})
+		args = append(args, &Node{t: n_none, p: p.current().p})
 	}
 	p.expect(tok_semicolon)
 	if p.current().t != tok_semicolon {
 		condition := p.parseExpression()
 		args = append(args, condition)
 	} else {
-		args = append(args, &Node{p: p.current().p})
+		args = append(args, &Node{t: n_none, p: p.current().p})
 	}
 	p.expect(tok_semicolon)
 	if p.current().t != tok_rparen {
 		iter := p.parseExpression()
 		args = append(args, iter)
 	} else {
-		args = append(args, &Node{p: p.current().p})
+		args = append(args, &Node{t: n_none, p: p.current().p})
 	}
 	p.expect(tok_rparen)
 	body := p.parseExpression()

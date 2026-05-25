@@ -1,0 +1,2 @@
+Compiling tests/owned_struct_no_init_err_test.bos
+Fatal: Owned struct binding "b" must have an initializer

@@ -180,6 +180,139 @@ func spot_memcpy(of io.Writer, c *Context, dst, src spot, bytes int) {
 	}
 }
 
+func sameIgnoringOwned(a, b ASTType) bool {
+	return a.StripOwned().Same(b.StripOwned())
+}
+
+func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST) {
+	if !expected.HasOwned() {
+		return
+	}
+	switch v := val.(type) {
+	case *Symbol:
+		if c.IsMoved(v.Name) {
+			CompileErrorF(val, "Cannot move \"%s\": it was already moved", v.Name)
+		}
+		c.Move(v.Name)
+	case *Dot:
+		baseType := v.Val.ASTType(c)
+		fieldType := v.ASTType(c)
+		if parentOwnsFields(baseType) && fieldType.HasOwned() {
+			if fieldType.Indirection == 0 || fieldType.OwnedMask&1 == 0 {
+				CompileErrorF(val, "Cannot move owned field %s out of an owned aggregate", v.Member)
+			}
+			lv := compileLval(of, c, val, nullspot)
+			fmt.Fprintf(of, "\tmov [%s] 0\n", lv.ref)
+			lv.free(of)
+		}
+	}
+}
+
+func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLiteral, dest spot, ctxType ASTType) spot {
+	if dest.empty() {
+		dest = newSpot(of, c, c.Temp(), ctxType)
+	} else {
+		dest.t = ctxType
+	}
+	def, ok := c.StructDeclForName(lit.Type.Name)
+	if !ok {
+		CompileErrorF(a, "No such structure \"%v\"", lit.Type.Name)
+	}
+
+	seen := make(map[string]bool)
+	for _, f := range lit.Fields {
+		if seen[f.Name] {
+			CompileErrorF(a, "Duplicate field %q in struct literal %s", f.Name, lit.Type.Name)
+		}
+		seen[f.Name] = true
+
+		off, declaredType := def.ByteOffset(c, f.Name)
+		if declaredType.Name == "" && declaredType.Element == nil && declaredType.FuncSig == nil {
+			CompileErrorF(a, "No such struct member %q in struct %q", f.Name, lit.Type.Name)
+		}
+		fieldType := fieldTypeForBase(ctxType, declaredType)
+		srcType := f.Val.ASTType(c)
+		if srcType.Same(intlitASTType()) {
+			srcType = fieldType
+		} else if !fieldType.Accepts(srcType) {
+			CompileErrorF(f.Val, "For field %s.%s, expected type %v but got %v",
+				lit.Type.Name, f.Name, fieldType, srcType)
+		}
+
+		v := compileTop(of, c, f.Val, nullspot)
+		markMovedIfOwnedSource(of, c, fieldType, f.Val)
+		if v.t.Indirection == 0 && v.t.Size(c) > 8 {
+			panic("struct literal with nested structs not implemented yet.")
+		}
+		fmt.Fprintf(of, "\tmov [%s+%d] %s\n", dest.ref, off, v.ref)
+		v.free(of)
+	}
+
+	if parentOwnsFields(ctxType) {
+		for _, field := range def.Fields {
+			ft := fieldTypeForBase(ctxType, field.Type)
+			if ft.HasOwned() && !seen[field.Name] {
+				CompileErrorF(a, "Missing owned field %s.%s in owned struct literal", lit.Type.Name, field.Name)
+			}
+		}
+	}
+
+	return dest
+}
+
+func compileAllocBuiltin(of io.Writer, c *Context, a AST, ast *Funcall, dest spot) spot {
+	if len(ast.Args) != 1 {
+		CompileErrorF(a, "alloc(T) requires exactly one type argument")
+	}
+	t, ok := typeExprFromAST(c, ast.Args[0])
+	if !ok {
+		CompileErrorF(ast.Args[0], "alloc argument must be a type")
+	}
+	retType := ast.ASTType(c)
+	if dest.empty() {
+		dest = newSpot(of, c, c.Temp(), retType)
+	}
+	rdi := regSpot(of, "rdi")
+	fmt.Fprintf(of, "\tmov rdi %d\n", t.Size(c))
+	fmt.Fprintf(of, "\tcall _heap.alloc\n")
+	rdi.free(of)
+	rax := regSpot(of, "rax")
+	rax.t = retType
+	move(of, c, dest, rax)
+	rax.t = regtype
+	rax.free(of)
+	return dest
+}
+
+func compileFreeBuiltin(of io.Writer, c *Context, a AST, ast *Funcall) spot {
+	if len(ast.Args) != 1 {
+		CompileErrorF(a, "free(p) requires exactly one argument")
+	}
+	sym, ok := ast.Args[0].(*Symbol)
+	if !ok {
+		CompileErrorF(ast.Args[0], "free requires a named owned pointer")
+	}
+	argt := sym.ASTType(c)
+	if argt.Indirection == 0 || argt.OwnedMask&1 == 0 {
+		CompileErrorF(ast.Args[0], "free requires an owned pointer, got %s", argt)
+	}
+	if c.IsMoved(sym.Name) {
+		CompileErrorF(ast.Args[0], "Cannot move \"%s\": it was already moved", sym.Name)
+	}
+	rdi := newSpotWithReg(of, c, c.Temp(), argt, "rdi")
+	v := compileTop(of, c, ast.Args[0], rdi)
+	if !v.same(&rdi) {
+		rdi.free(of)
+		rdi = v
+		fmt.Fprintf(of, "\tinreg %s rdi\n", rdi.ref)
+	}
+	fmt.Fprintf(of, "\tcall _heap.free\n")
+	fmt.Fprintf(of, "\trelease rdi\n")
+	rdi.free(of)
+	c.Move(sym.Name)
+	return nullspot
+}
+
 // func spot_memset(of io.Writer, dst spot, val byte, bytes int) {
 // 	qwords := bytes / 8
 // 	singles := bytes % 8
@@ -195,24 +328,6 @@ func spot_memcpy(of io.Writer, c *Context, dst, src spot, bytes int) {
 // 	fmt.Fprintf(of, "\trelease rax\n")
 // }
 
-// shapeMatch reports whether two types have the same physical representation:
-// same name, indirection depth, array size, and slice flag. MutMask and
-// OwnedMask are type-system annotations with no runtime effect and are ignored.
-func shapeMatch(a, b ASTType) bool {
-	if a.Name != b.Name ||
-		a.Indirection != b.Indirection ||
-		a.ArraySize != b.ArraySize {
-		return false
-	}
-	if (a.Element == nil) != (b.Element == nil) {
-		return false
-	}
-	if a.Element != nil && !shapeMatch(*a.Element, *b.Element) {
-		return false
-	}
-	return true
-}
-
 // can move T to T or T into *T
 func move(of io.Writer, c *Context, dest spot, src spot) {
 	if dest.t == regtype || src.t == regtype {
@@ -224,7 +339,7 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 		spot_memcpy(of, c, dest, src, src.t.Size(c))
 		return
 	}
-	if shapeMatch(dest.t, src.t) {
+	if dest.t.SameRepr(src.t) {
 		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, src.ref)
 		return
 	}
@@ -232,7 +347,7 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 	depoint.Indirection--
 	depoint.MutMask >>= 1
 	depoint.OwnedMask >>= 1
-	if shapeMatch(depoint, src.t) {
+	if depoint.SameRepr(src.t) {
 		// dest was *T and src is T
 		fmt.Fprintf(of, "\tmov [%s] %s\n", dest.ref, src.ref)
 		if src.t.Size(c) > 8 {
@@ -287,7 +402,8 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		if !ok {
 			CompileErrorF(a, "No such structure \"%v\"", l.t.Name)
 		}
-		offset, mtype := def.ByteOffset(c, ast.Member)
+		offset, declaredType := def.ByteOffset(c, ast.Member)
+		mtype := fieldTypeForBase(l.t, declaredType)
 		mtype.Indirection += 1
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), mtype)
@@ -412,6 +528,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				// integer type the context demands.
 				return
 			}
+			if !dest.empty() && actual.Accepts(expect) {
+				return
+			}
+			if !dest.empty() && actual.SameRepr(expect) {
+				return
+			}
 			//panic(fmt.Sprintf("Expected type %s but compiler produced %s", expect, actual))
 			CompileErrorF(a, "Expected type %s but compiler produced %s", expect, actual)
 		}
@@ -482,9 +604,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		c.BindVar(a, ast.Name, ast.Type, ast.IsConst)
 		s := newSpot(of, c, ast.Name, ast.Type)
 		if ast.Init != nil {
+			if sl, ok := ast.Init.(*StructLiteral); ok && sameIgnoringOwned(ast.Type, sl.Type) {
+				compileStructLiteralInto(of, c, a, sl, s, ast.Type)
+				return nullspot
+			}
 			// Array literal initializer takes its own path: ASTType
 			// returns a synthetic <intlit>[N]-shaped type that doesn't
-			// match dstt under shapeMatch, and the literal needs to be
+			// satisfy normal assignment compatibility, and the literal needs to be
 			// laid out into s element-by-element rather than copied as
 			// a single value.
 			if al, ok := ast.Init.(*ArrayLiteral); ok {
@@ -503,7 +629,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				}
 			}
 			// Type compatibility check.
-			if !srct.Same(intlitASTType()) && !srct.Same(dstt) && !dstt.MutCompatible(srct) {
+			if !dstt.Accepts(srct) {
 				CompileErrorF(a, "Cannot initialize %s with value of type %s", dstt, srct)
 			}
 			// Compile the initializer. Same-type / intlit go directly into s;
@@ -519,11 +645,17 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				move(of, c, s, val)
 				val.free(of)
 			}
+			markMovedIfOwnedSource(of, c, dstt, ast.Init)
+		} else if ast.Type.HasOwned() {
+			if _, ok := c.StructDeclForName(ast.Type.Name); ok && ast.Type.Indirection == 0 && parentOwnsFields(ast.Type) {
+				CompileErrorF(a, "Owned struct binding \"%s\" must have an initializer", ast.Name)
+			}
+			c.Move(ast.Name)
 		}
 		return nullspot
 	case *FuncDecl:
 		c := c.SubContext()
-		retlab := c.PushRetlabel()
+		retlab := c.PushRetlabel(ast.Return)
 		defer c.PopRetlabel()
 		fmt.Fprintf(of, "function %s\n", ast.Name)
 		// Emit a 'type fn(...) ret' directive so cross-package importers
@@ -572,6 +704,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		sc.FreeLocalVars(of)
 		return nullspot
 	case *Funcall:
+		if ast.Pkg == "" && ast.FName == "alloc" {
+			return compileAllocBuiltin(of, c, a, ast, dest)
+		}
+		if ast.Pkg == "" && ast.FName == "free" {
+			return compileFreeBuiltin(of, c, a, ast)
+		}
 		// Cast expression: type name used as a single-argument function.
 		// Only valid for unqualified calls.
 		if ast.Pkg == "" {
@@ -663,7 +801,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			//panic("No struct (TODO)")
 			CompileErrorF(a, "No such structure \"%v\"", l.t.Name)
 		}
-		offset, mtype := def.ByteOffset(c, ast.Member)
+		offset, declaredType := def.ByteOffset(c, ast.Member)
+		mtype := fieldTypeForBase(l.t, declaredType)
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), mtype)
 		}
@@ -948,13 +1087,22 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return newslice
 
 	case *Assignment:
+		dstt := ast.Target.ASTType(c)
+		targetSym, targetIsSymbol := ast.Target.(*Symbol)
 		// Reject assignment to const-bound variables.
-		if sym, ok := ast.Target.(*Symbol); ok {
-			if c.IsConst(sym.Name) {
-				CompileErrorF(a, "Cannot assign to const binding \"%s\"", sym.Name)
+		if targetIsSymbol {
+			if c.IsConst(targetSym.Name) {
+				CompileErrorF(a, "Cannot assign to const binding \"%s\"", targetSym.Name)
 			}
-			// Re-establishment: assigning to a var binding clears the moved flag.
-			c.Unmove(sym.Name)
+			if dstt.HasOwned() && !c.IsMoved(targetSym.Name) {
+				CompileErrorF(a, "Cannot assign to owned binding \"%s\" before consuming its current value", targetSym.Name)
+			}
+		}
+		if dot, ok := ast.Target.(*Dot); ok {
+			baseType := dot.Val.ASTType(c)
+			if parentOwnsFields(baseType) && dstt.HasOwned() {
+				CompileErrorF(a, "Cannot assign to owned field %s of an owned aggregate after initialization", dot.Member)
+			}
 		}
 		// Reject implicit ownership promotion: if the destination has owned bits
 		// that the source doesn't, the source must be wrapped in owned().
@@ -980,13 +1128,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		lv := compileLval(of, c, ast.Target, nullspot)
 		srct := ast.Val.ASTType(c)
-		dstt := ast.Target.ASTType(c)
 		if !srct.Same(dstt) {
-			if !srct.Same(intlitASTType()) {
-				// Allow *mut T → *T coercion (dropping mut is always safe).
-				if !dstt.MutCompatible(srct) {
-					CompileErrorF(a, "Cannot assign different types %s = %s", dstt, srct)
-				}
+			if !dstt.Accepts(srct) {
+				CompileErrorF(a, "Cannot assign different types %s = %s", dstt, srct)
 			}
 			// intlit: compileTop shortcut handles range checking and code gen
 			dest := newSpot(of, c, c.Temp(), dstt)
@@ -996,6 +1140,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			move(of, c, lv, ret)
 			ret.free(of)
+			markMovedIfOwnedSource(of, c, dstt, ast.Val)
+			if targetIsSymbol && dstt.HasOwned() {
+				c.Unmove(targetSym.Name)
+			}
 			return nullspot
 		}
 		// if !lv.t.Same(dstt) {
@@ -1020,6 +1168,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				move(of, c, lv, val)
 				val.free(of)
 			}
+			markMovedIfOwnedSource(of, c, dstt, ast.Val)
+			if targetIsSymbol && dstt.HasOwned() {
+				c.Unmove(targetSym.Name)
+			}
 			return nullspot
 		}
 
@@ -1034,6 +1186,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		//fmt.Fprintf(of, "\tmov [%s] %s\n", lv.ref, val.ref)
 		lv.free(of)
 		val.free(of)
+		markMovedIfOwnedSource(of, c, dstt, ast.Val)
+		if targetIsSymbol && dstt.HasOwned() {
+			c.Unmove(targetSym.Name)
+		}
 		return nullspot
 	case *IfStmt:
 		v := compileTop(of, c, ast.Cond, nullspot)
@@ -1082,9 +1238,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		fmt.Fprintf(of, "\tlabel %s\n", labend)
 		return nullspot
 	case *For:
-		v := compileTop(of, c, ast.Init, nullspot)
-		if !v.empty() {
-			v.free(of)
+		if ast.Init != nil {
+			v := compileTop(of, c, ast.Init, nullspot)
+			if !v.empty() {
+				v.free(of)
+			}
 		}
 		// Snapshot owned state before the loop body executes.
 		// Owned vars in outer scopes must not be consumed inside the loop.
@@ -1094,29 +1252,35 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		end := c.PushBreakLabel()
 		cont := c.PushContLabel()
 		fmt.Fprintf(of, "\tlabel %s\n", start)
-		v = compileTop(of, c, ast.Cond, nullspot)
-		fmt.Fprintf(of, "\ttest %s %s\n", v.ref, v.ref)
-		fmt.Fprintf(of, "\tjz %s\n", end)
-		v.free(of)
-		v = compileTop(of, c, ast.Body, nullspot)
+		if ast.Cond != nil {
+			v := compileTop(of, c, ast.Cond, nullspot)
+			fmt.Fprintf(of, "\ttest %s %s\n", v.ref, v.ref)
+			fmt.Fprintf(of, "\tjz %s\n", end)
+			v.free(of)
+		}
+		v := compileTop(of, c, ast.Body, nullspot)
 		if !v.empty() {
 			v.free(of)
 		}
+		snapAfterBody := c.OwnedBindingsSnapshot()
 		fmt.Fprintf(of, "\tlabel %s\n", cont)
-		v = compileTop(of, c, ast.Step, nullspot)
-		if !v.empty() {
-			v.free(of)
+		if ast.Step != nil {
+			v = compileTop(of, c, ast.Step, nullspot)
+			if !v.empty() {
+				v.free(of)
+			}
 		}
 		fmt.Fprintf(of, "\tjmp %s\n", start)
 		fmt.Fprintf(of, "\tlabel %s\n", end)
 		c.PopBreakLabel()
 		c.PopContLabel()
 
-		// Check that no pre-loop owned var was consumed inside the loop body.
-		// If it was, the second iteration would enter with an invalid variable.
+		// Check that no pre-loop owned var enters the next body invalid. Values
+		// consumed by the step are allowed: the body can re-establish them before
+		// the next step, as in linked-list destruction's curr/next handoff.
 		snapAfterLoop := c.OwnedBindingsSnapshot()
 		for name, wasMoved := range snapBeforeLoop {
-			if !wasMoved && snapAfterLoop[name] {
+			if !wasMoved && snapAfterBody[name] && snapAfterLoop[name] {
 				CompileErrorF(a, "Owned binding \"%s\" is consumed inside a loop body; this would be invalid on the second iteration", name)
 			}
 		}
@@ -1125,6 +1289,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return doOp2(of, c, ast, dest)
 	case *Return:
 		valType := ast.Val.ASTType(c)
+		retType := c.ReturnType()
+		if sl, ok := ast.Val.(*StructLiteral); ok && sameIgnoringOwned(retType, sl.Type) {
+			valType = retType
+		}
 		if valType.Same(intlitASTType()) {
 			valType = numASTType()
 		}
@@ -1149,6 +1317,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		// sz == 4: writing eax already zeros the upper 32 bits of rax automatically.
 		dest.free(of)
+		if retType.HasOwned() {
+			if sym, ok := ast.Val.(*Symbol); ok {
+				if c.IsMoved(sym.Name) {
+					CompileErrorF(a, "Cannot move \"%s\": it was already moved", sym.Name)
+				}
+				c.Move(sym.Name)
+			}
+		}
 		c.Return(of)
 
 		return nullspot
@@ -1187,27 +1363,26 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		move(of, c, dest, s)
 		return dest
 	case *StructLiteral:
-		if dest.empty() {
-			dest = newSpot(of, c, c.Temp(), ast.Type)
+		ctxType := ast.Type
+		if !dest.empty() && sameIgnoringOwned(dest.t, ast.Type) {
+			ctxType = dest.t
 		}
-		def, ok := c.StructDeclForName(ast.Type.Name)
-		if !ok {
-			CompileErrorF(a, "No such structure \"%v\"", ast.Type.Name)
-		}
-		for _, f := range ast.Fields {
-			v := compileTop(of, c, f.Val, nullspot)
-			off, _ := def.ByteOffset(c, f.Name)
-			if v.t.Indirection == 0 && v.t.Size(c) > 8 {
-				panic("struct literal with nested structs not implemented yet.")
-			}
-			fmt.Fprintf(of, "\tmov [%s+%d] %s\n", dest.ref, off, v.ref)
-		}
-		return dest
+		return compileStructLiteralInto(of, c, a, ast, dest, ctxType)
 	case *Literal:
 		t := ast.ASTType(c)
 		// literals can have no indirection and cannot be arrays (yet)
 		if t.Indirection > 0 || t.ArraySize > 0 {
 			panic("NOT IMPLEMENTED (TODO)")
+		}
+		if ast.Val == nil {
+			if dest.empty() {
+				CompileErrorF(a, "nil requires pointer context")
+			}
+			if dest.t.Indirection == 0 && dest.t.FuncSig == nil {
+				CompileErrorF(a, "nil cannot initialize non-pointer type %s", dest.t)
+			}
+			fmt.Fprintf(of, "\tmov %s 0\n", dest.ref)
+			return dest
 		}
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), t)
@@ -1381,7 +1556,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		param := d.Args[i].Type
 		if argt.Same(intlitASTType()) {
 			argt = param
-		} else if !param.OwnedCompatible(argt) {
+		} else if !param.Accepts(argt) {
 			CompileErrorF(arg, "For argument %d, expected type %v but got %v",
 				i, param, argt)
 		}

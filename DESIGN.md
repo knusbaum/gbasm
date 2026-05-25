@@ -210,6 +210,15 @@ Built-ins are not part of the language proper — they live in runtime packages 
 
 The `_init` package provides `_init.start` (the ELF entry point) and `_init.index_oob` (called by bounds checks).
 
+The compiler also provides allocator built-ins:
+
+| Built-in | Type | Description |
+|----------|------|-------------|
+| `alloc(T)` | `owned *mut T` | Allocate writable storage for one `T`; consumes a type expression, not a runtime value |
+| `free(p)` | `void` | Free an `owned *T` / `owned *mut T` pointer and consume that pointer obligation |
+
+`alloc` and `free` lower to `_heap.alloc(size i64)` and `_heap.free(p *mut byte)` in the runtime. The bootstrap allocator is mmap-backed: each allocation is one mapping with a small size header, and `free` calls `munmap`. `free` consumes only allocation ownership (`owned *T`); it does not recursively dispose a pointee obligation such as `*owned T`.
+
 ### Struct Literals
 
 ```
@@ -393,6 +402,45 @@ inspect(tr)   // tr fully borrowed, both obligations stay with caller
 ```
 
 Passing `owned *owned T` to a function taking `*owned T` or `owned *T` — consuming one obligation while retaining the other — is not supported. That would require the variable's type to change at the call site, which is typestate. It is a known limitation; see the future direction section below.
+
+### Owned struct fields
+
+`owned` on a struct field is conditional on the ownership of the containing value:
+
+```
+struct box {
+    x owned i64
+    y i64
+}
+```
+
+For a plain `box`, `x` behaves as `i64`. For an `owned box`, `x` behaves as `owned i64`. This keeps ordinary non-owning code lightweight while still letting an owned aggregate carry obligations through its fields.
+
+Struct literals are context-typed. When a literal initializes or returns an owned struct, every owned field must be present and must be initialized from an owned value:
+
+```
+fn make_box() owned box {
+    var x owned i64 = 42
+    return box{ x: x, y: 10 }
+}
+```
+
+Borrowing an owned struct as a plain parameter strips field ownership inside the callee, just like borrowing any other owned value:
+
+```
+fn inspect(b box) {
+    use(b.x)       // b.x is i64 here, not owned i64
+}
+```
+
+`owned(expr)` remains an explicit assertion escape hatch: it promotes the expression to an owned type without proving that every owned field came from an owned source. This is useful for construction patterns that the compiler does not yet track precisely.
+
+Direct reassignment of an owned field through an owned aggregate is rejected. Replacing such a field safely requires partial-disposal / typestate support, which is intentionally deferred:
+
+```
+var b owned box = make_box()
+b.x = 1           // COMPILE ERROR
+```
 
 ### Bring-your-own-memory (BYOM)
 
@@ -1099,8 +1147,8 @@ The Go side (encoder, decoder, parser unit tests) and the integration test suite
 ```
 make test       # Run all test suites
 make go_test    # Go unit tests
-make bas_test   # Assembler integration tests (29 tests)
-make bosc_test  # Compiler integration tests (69 tests)
+make bas_test   # Assembler integration tests (38 tests)
+make bosc_test  # Compiler integration tests (113 tests)
 ```
 
 Each compiler integration test:
@@ -1130,7 +1178,8 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - File-scope `var`/`const` with compile-time-constant initializers — integer/byte literals, string-into-`byte[N]`, string-into-`byte[]` (slice with relocated pointer), struct literals composing all of the above, array literals (`[1, 2, 3]`) for fixed-array and slice destinations, `&someGlobal`, `&SomeStruct{...}` (anonymous globals), `&globalArr[N]` (pointer-into-array via relocation addend)
 - Array literals at runtime as initializers for fixed-array locals; slice destinations rejected with a directed error (lifetime issue)
 - Full nested `*mut T` write-through mutability with implicit coercion
-- Full `owned T` ownership type system: move semantics, `dispose()`, `owned()` promotion, if/else branch analysis, loop-body protection, scope-exit checks
+- Full `owned T` ownership type system: move semantics, `dispose()`, `owned()` promotion, owned struct fields, if/else branch analysis, loop-body protection, scope-exit checks
+- Compiler built-ins `alloc(T)` and `free(p)` backed by the `_heap` runtime package; `alloc(T)` returns `owned *mut T`
 - Path-based imports with qualified calls (`import "stdlib/io"; io.puts(...)`)
 - Cross-package struct types (`pair.pair`, `pair.pair{...}` literals) with auto-qualification of leaf type names at import time
 - Bosc-emitted function signatures (`type fn(...) ret`) so cross-package function calls work with Boson-source packages as well as hand-written bas runtime packages

@@ -73,6 +73,7 @@ type Context struct {
 	// return, continue, break label stack. Return returns from the current Context
 	// by jumping to the label. Continue and break do the usual within loops.
 	retlabs   []string
+	rettypes  []ASTType
 	contlabs  []string
 	breaklabs []string
 	labeli    int
@@ -233,7 +234,6 @@ func (c *Context) Pkgname() string {
 func (c *Context) SetPkgname(name string) {
 	c.pkgname = name
 }
-
 
 func (c *Context) DefineStruct(name string, s *StructDecl) {
 	if es, ok := c.structs[name]; ok {
@@ -572,12 +572,13 @@ func (c *Context) Break(of io.Writer) {
 }
 
 // Push a new return label onto the return stack
-func (c *Context) PushRetlabel() string {
+func (c *Context) PushRetlabel(t ASTType) string {
 	if c.parent != nil {
-		return c.parent.PushRetlabel()
+		return c.parent.PushRetlabel(t)
 	}
 	l := c.Label("return")
 	c.retlabs = append(c.retlabs, l)
+	c.rettypes = append(c.rettypes, t)
 	return l
 }
 
@@ -588,6 +589,17 @@ func (c *Context) PopRetlabel() {
 		return
 	}
 	c.retlabs = c.retlabs[:len(c.retlabs)-1]
+	c.rettypes = c.rettypes[:len(c.rettypes)-1]
+}
+
+func (c *Context) ReturnType() ASTType {
+	if c.parent != nil {
+		return c.parent.ReturnType()
+	}
+	if len(c.rettypes) == 0 {
+		return voidASTType()
+	}
+	return c.rettypes[len(c.rettypes)-1]
 }
 
 func (c *Context) Return(of io.Writer) {
@@ -730,10 +742,10 @@ func (c *Context) WriteStrings(of io.Writer) {
 //
 // A type is one of four shapes (read off in this order):
 //
-//   1. Slice:   Element != nil and ArraySize == 0
-//   2. Array:   Element != nil and ArraySize >  0
-//   3. Pointer: Element == nil and Indirection > 0; Name/Signed describe the leaf pointee
-//   4. Scalar:  Element == nil and Indirection == 0; Name/Signed describe the value
+//  1. Slice:   Element != nil and ArraySize == 0
+//  2. Array:   Element != nil and ArraySize >  0
+//  3. Pointer: Element == nil and Indirection > 0; Name/Signed describe the leaf pointee
+//  4. Scalar:  Element == nil and Indirection == 0; Name/Signed describe the value
 //
 // For slice/array types, Element is the canonical description of what each
 // element is — including its own qualifiers and possible further nesting.
@@ -746,14 +758,14 @@ func (c *Context) WriteStrings(of io.Writer) {
 // ASTType is not suitable as a Go map key; if you need that, hash the
 // String() form or intern types.
 type ASTType struct {
-	Name        string    // scalar/pointee-leaf name (for shapes 3 and 4)
-	Indirection int       // pointer depth (for shapes 3 and 4)
-	ArraySize   int       // element count (for shape 2); 0 otherwise
-	Element     *ASTType  // element type (for shapes 1 and 2); nil otherwise
-	Signed      bool      // signed integer marker for scalar/pointee leaf
-	MutMask     uint64    // write-through bit per level
-	OwnedMask   uint64    // ownership bit per level
-	FuncSig     *FuncSig  // when set: function-pointer type, pointer-sized
+	Name        string   // scalar/pointee-leaf name (for shapes 3 and 4)
+	Indirection int      // pointer depth (for shapes 3 and 4)
+	ArraySize   int      // element count (for shape 2); 0 otherwise
+	Element     *ASTType // element type (for shapes 1 and 2); nil otherwise
+	Signed      bool     // signed integer marker for scalar/pointee leaf
+	MutMask     uint64   // write-through bit per level
+	OwnedMask   uint64   // ownership bit per level
+	FuncSig     *FuncSig // when set: function-pointer type, pointer-sized
 }
 
 // FuncSig is the signature of a function-pointer type — the argument
@@ -845,7 +857,7 @@ func (t *ASTType) Size(c *Context) int {
 	return d.Size(c)
 }
 
-func (t ASTType) Same(t2 ASTType) bool {
+func (t ASTType) SameExact(t2 ASTType) bool {
 	// Signed is not included: types with different signedness already have
 	// different names (i64 vs u64, i8 vs u8, etc.), so Name alone distinguishes
 	// them. Excluding Signed avoids false mismatches when aliases are created
@@ -884,23 +896,106 @@ func (t ASTType) Same(t2 ASTType) bool {
 	return true
 }
 
+func (t ASTType) Same(t2 ASTType) bool {
+	return t.SameExact(t2)
+}
+
+// SameRepr reports whether two types have the same runtime representation.
+// It ignores ownership and mutability, which are compile-time qualifiers.
+func (t ASTType) SameRepr(t2 ASTType) bool {
+	if t.Name != t2.Name ||
+		t.Indirection != t2.Indirection ||
+		t.ArraySize != t2.ArraySize {
+		return false
+	}
+	if (t.Element == nil) != (t2.Element == nil) {
+		return false
+	}
+	if t.Element != nil && !t.Element.SameRepr(*t2.Element) {
+		return false
+	}
+	if (t.FuncSig == nil) != (t2.FuncSig == nil) {
+		return false
+	}
+	return true
+}
+
 // HasOwned reports whether the type carries any ownership obligation.
-func (t ASTType) HasOwned() bool { return t.OwnedMask != 0 }
+func (t ASTType) HasOwned() bool {
+	if t.OwnedMask != 0 {
+		return true
+	}
+	if t.Element != nil && t.Element.HasOwned() {
+		return true
+	}
+	if t.FuncSig != nil {
+		for _, a := range t.FuncSig.Args {
+			if a.HasOwned() {
+				return true
+			}
+		}
+		return t.FuncSig.Return.HasOwned()
+	}
+	return false
+}
+
+// SameOwned reports whether two types carry the same ownership shape.
+func (t ASTType) SameOwned(t2 ASTType) bool {
+	if t.Name != t2.Name ||
+		t.Indirection != t2.Indirection ||
+		t.ArraySize != t2.ArraySize ||
+		t.OwnedMask != t2.OwnedMask {
+		return false
+	}
+	if (t.Element == nil) != (t2.Element == nil) {
+		return false
+	}
+	if t.Element != nil && !t.Element.SameOwned(*t2.Element) {
+		return false
+	}
+	if (t.FuncSig == nil) != (t2.FuncSig == nil) {
+		return false
+	}
+	if t.FuncSig != nil {
+		if len(t.FuncSig.Args) != len(t2.FuncSig.Args) {
+			return false
+		}
+		for i := range t.FuncSig.Args {
+			if !t.FuncSig.Args[i].SameOwned(t2.FuncSig.Args[i]) {
+				return false
+			}
+		}
+		if !t.FuncSig.Return.SameOwned(t2.FuncSig.Return) {
+			return false
+		}
+	}
+	return true
+}
 
 // StripOwned returns a copy of the type with all owned bits cleared.
 // Used when passing an owned value to a non-owned parameter (plain borrow).
 func (t ASTType) StripOwned() ASTType {
 	t.OwnedMask = 0
+	if t.Element != nil {
+		elem := t.Element.StripOwned()
+		t.Element = &elem
+	}
+	if t.FuncSig != nil {
+		sig := *t.FuncSig
+		sig.Args = append([]ASTType(nil), t.FuncSig.Args...)
+		for i := range sig.Args {
+			sig.Args[i] = sig.Args[i].StripOwned()
+		}
+		sig.Return = sig.Return.StripOwned()
+		t.FuncSig = &sig
+	}
 	return t
 }
 
-// MutCompatible reports whether a value of type src can be used where dst is
-// expected, accounting for write-through coercion. A more-permissive reference
-// (*mut T) is always acceptable where a less-permissive one (*T) is expected;
-// the reverse is not allowed. All other fields must match exactly.
 // MutCompatible reports whether src can be used where dst is expected,
-// considering only write-through (mut) coercion. Owned bits are ignored here;
-// ownership compatibility is checked separately by OwnedCompatible.
+// considering only write-through coercion. A more-permissive reference
+// (*mut T) is acceptable where a less-permissive one (*T) is expected; the
+// reverse is not allowed. Owned bits are ignored by the callers that strip them.
 func (dst ASTType) MutCompatible(src ASTType) bool {
 	if dst.Name != src.Name ||
 		dst.Indirection != src.Indirection ||
@@ -916,15 +1011,27 @@ func (dst ASTType) MutCompatible(src ASTType) bool {
 	return dst.MutMask&src.MutMask == dst.MutMask
 }
 
-// OwnedCompatible reports whether an argument of type src can be passed to a
-// parameter of type dst, accounting for ownership:
-//   - If dst has no owned bits: borrow — src's owned bits are stripped and ignored.
-//   - If dst has owned bits: src must carry exactly the same owned bits (move).
+// OwnedCompatible is the old name for assignment-style compatibility.
 func (dst ASTType) OwnedCompatible(src ASTType) bool {
+	return dst.Accepts(src)
+}
+
+// Accepts reports whether a value of type src can be used where dst is
+// expected. It includes the language's implicit coercions: integer literals
+// into concrete integer destinations, nil into pointer/function-pointer
+// destinations, borrowing owned values into unowned destinations, and dropping
+// write-through mutability.
+func (dst ASTType) Accepts(src ASTType) bool {
+	if src.Same(intlitASTType()) {
+		return true
+	}
+	if src.Name == "<nil>" {
+		return dst.Indirection > 0 || dst.FuncSig != nil
+	}
 	if !dst.HasOwned() {
 		return dst.MutCompatible(src.StripOwned())
 	}
-	return dst.Same(src)
+	return dst.SameOwned(src) && dst.MutCompatible(src)
 }
 
 func (t ASTType) String() string {
@@ -1125,6 +1232,17 @@ func (s *StructDecl) ByteOffset(c *Context, field string) (int, ASTType) {
 	return offset, mtype
 }
 
+func parentOwnsFields(t ASTType) bool {
+	return t.OwnedMask&(1<<uint(t.Indirection)) != 0
+}
+
+func fieldTypeForBase(base ASTType, field ASTType) ASTType {
+	if parentOwnsFields(base) {
+		return field
+	}
+	return field.StripOwned()
+}
+
 type VarDecl struct {
 	Name    string
 	Type    ASTType
@@ -1200,7 +1318,48 @@ func (f *Funcall) QualifiedName() string {
 	return f.FName
 }
 
+func typeExprFromAST(c *Context, a AST) (ASTType, bool) {
+	switch v := a.(type) {
+	case *Symbol:
+		if t, ok := c.TypeByName(v.Name); ok {
+			return t, true
+		}
+		if _, ok := c.StructDeclForName(v.Name); ok {
+			return ASTType{Name: v.Name}, true
+		}
+	case *Dot:
+		if pkg, ok := v.Val.(*Symbol); ok {
+			name := pkg.Name + "." + v.Member
+			if t, ok := c.TypeByName(name); ok {
+				return t, true
+			}
+			if _, ok := c.StructDeclForName(name); ok {
+				return ASTType{Name: name}, true
+			}
+		}
+	}
+	return ASTType{}, false
+}
+
 func (f *Funcall) ASTType(c *Context) ASTType {
+	if f.Pkg == "" && f.FName == "alloc" {
+		if len(f.Args) != 1 {
+			CompileErrorF(f, "alloc(T) requires exactly one type argument")
+		}
+		t, ok := typeExprFromAST(c, f.Args[0])
+		if !ok {
+			CompileErrorF(f.Args[0], "alloc argument must be a type")
+		}
+		t.Indirection++
+		t.MutMask <<= 1
+		t.OwnedMask <<= 1
+		t.OwnedMask |= 1
+		t.MutMask |= 1 << 1
+		return t
+	}
+	if f.Pkg == "" && f.FName == "free" {
+		return voidASTType()
+	}
 	// Cast expression: type name used as a function. Only valid for unqualified calls.
 	if f.Pkg == "" {
 		if t, ok := c.TypeByName(f.FName); ok {
@@ -1259,7 +1418,7 @@ func (d *Dot) ASTType(c *Context) ASTType {
 	}
 	for _, f := range decl.Fields {
 		if f.Name == d.Member {
-			return f.Type
+			return fieldTypeForBase(t, f.Type)
 		}
 	}
 	CompileErrorF(d, "No such struct member \"%s\" in struct \"%s\"", d.Member, t.Name)
@@ -1470,6 +1629,7 @@ type For struct {
 	Cond AST
 	Step AST
 	Body AST
+	p    position
 }
 
 func (*For) ASTType(c *Context) ASTType {
@@ -1484,6 +1644,9 @@ func (f *For) Note() string {
 }
 
 func (f *For) Pos() position {
+	if f.Init == nil {
+		return f.p
+	}
 	return f.Init.Pos()
 }
 
@@ -1697,11 +1860,16 @@ func (l *Literal) ASTType(*Context) ASTType {
 		return intlitASTType()
 	case byte:
 		return byteASTType()
+	case nil:
+		return ASTType{Name: "<nil>"}
 	}
 	panic("Bad Literal. TODO: Nice error reports.")
 }
 
 func (l *Literal) Note() string {
+	if l.Val == nil {
+		return "nil"
+	}
 	return fmt.Sprintf("literal %v %v", l.Val, reflect.TypeOf(l.Val).String())
 }
 
@@ -1878,6 +2046,9 @@ func (n *Node) toASTTop(c *Context) AST {
 	case n_deref:
 		return &Deref{Val: n.args[0].toASTTop(NewContext())}
 	case n_symbol:
+		if n.sval == "nil" {
+			return &Literal{Val: nil, p: n.p}
+		}
 		return &Symbol{Name: n.sval, p: n.p}
 	case n_eq:
 		return &Assignment{
@@ -1947,19 +2118,31 @@ func (n *Node) toASTTop(c *Context) AST {
 		}
 		return &ifs
 	case n_for:
-		init := n.args[0].toASTTop(NewContext())
-		cond := n.args[1].toASTTop(NewContext())
-		step := n.args[2].toASTTop(NewContext())
+		var init AST
+		if n.args[0].t != n_none {
+			init = n.args[0].toASTTop(NewContext())
+		}
+		var cond AST
+		if n.args[1].t != n_none {
+			cond = n.args[1].toASTTop(NewContext())
+		}
+		var step AST
+		if n.args[2].t != n_none {
+			step = n.args[2].toASTTop(NewContext())
+		}
 		body := n.args[3].toASTTop(NewContext())
-		ct := cond.ASTType(c)
-		if !ct.Same(boolASTType()) {
-			ParseErrorF(n.args[1], "Cannot compile for loop with non-boolean condition: %v\n", ct)
+		if cond != nil {
+			ct := cond.ASTType(c)
+			if !ct.Same(boolASTType()) {
+				ParseErrorF(n.args[1], "Cannot compile for loop with non-boolean condition: %v\n", ct)
+			}
 		}
 		return &For{
 			Init: init,
 			Cond: cond,
 			Step: step,
 			Body: body,
+			p:    n.p,
 		}
 	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_add, n_sub, n_mul, n_div, n_booland, n_boolor:
 		return &Op2{

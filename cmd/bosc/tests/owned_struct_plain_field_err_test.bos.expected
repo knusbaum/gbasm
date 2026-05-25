@@ -1,0 +1,2 @@
+Compiling tests/owned_struct_plain_field_err_test.bos
+Fatal: For field box.x, expected type owned i64 but got i64

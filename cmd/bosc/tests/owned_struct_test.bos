@@ -1,0 +1,29 @@
+package main
+
+import "string"
+
+struct box {
+	x owned i64
+	y i64
+}
+
+fn make_box() owned box {
+	var x owned i64 = 11
+	return box{
+		x: x,
+		y: 22
+	}
+}
+
+fn borrow_box(b box) {
+	string.puti(b.x)
+	string.puts("\n")
+	string.puti(b.y)
+	string.puts("\n")
+}
+
+fn main() {
+	var b owned box = make_box()
+	borrow_box(b)
+	dispose(b)
+}

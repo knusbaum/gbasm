@@ -84,6 +84,7 @@ bos_exe_deps() {
     local d=$1
     pkg_sources "$d"
     pkg_import_targets "$d"
+    echo "target/_heap.bo"
     echo "target/_init.bo"
 }
 

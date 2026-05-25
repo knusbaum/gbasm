@@ -1,0 +1,2 @@
+Compiling tests/alloc_arg_err_test.bos
+Fatal: alloc argument must be a type

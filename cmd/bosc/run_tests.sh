@@ -7,9 +7,10 @@ if [[ $? != 0 ]]; then
 fi
 
 RUNTIME=../../runtime
-rm -f string.bo init.bo pair.bo pair.bs
+rm -f string.bo init.bo heap.bo pair.bo pair.bs
 ./bas -o string.bo $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs >/dev/null 2>&1
 ./bas -o init.bo $RUNTIME/_init/init_linux.bs >/dev/null 2>&1
+./bas -o heap.bo $RUNTIME/_heap/heap_linux.bs >/dev/null 2>&1
 
 # Compile the Boson-source `pair` test runtime package so cross-package
 # struct tests have something to import. importcfg is empty for it
@@ -85,7 +86,7 @@ for t in `ls tests/*_test.bos`; do
     if grep -q '^import "pair"' "$t"; then
         extra_bo="pair.bo"
     fi
-    ./bld -o ${t}.o ${t}.bo string.bo init.bo $extra_bo >${t}.bld.out 2>&1
+    ./bld -o ${t}.o ${t}.bo string.bo init.bo heap.bo $extra_bo >${t}.bld.out 2>&1
     if [[ $? != 0 ]]; then
 		echo linker failed for ${t}:
 		cat ${t}.bld.out
@@ -130,6 +131,6 @@ if [[ $fail != '' ]]; then
 fi
 
 rm tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout
-rm bosc bas bld string.bo init.bo test.importcfg
+rm bosc bas bld string.bo init.bo heap.bo test.importcfg
 echo "SUITE PASSED"
 exit 0

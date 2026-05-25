@@ -1,0 +1,2 @@
+Compiling tests/free_plain_pointer_err_test.bos
+Fatal: free requires an owned pointer, got *mut i64

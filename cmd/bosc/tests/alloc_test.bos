@@ -1,0 +1,25 @@
+package main
+
+import "string"
+
+struct pair {
+	x i64
+	y i64
+}
+
+fn main() {
+	var n owned *mut i64 = alloc(i64)
+	*n = 123
+	string.puti(*n)
+	string.puts("\n")
+	free(n)
+
+	var p owned *mut pair = alloc(pair)
+	p.x = 7
+	p.y = 8
+	string.puti(p.x)
+	string.puts("\n")
+	string.puti(p.y)
+	string.puts("\n")
+	free(p)
+}

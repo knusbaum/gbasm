@@ -1,0 +1,2 @@
+Compiling tests/owned_struct_missing_field_err_test.bos
+Fatal: Missing owned field box.x in owned struct literal

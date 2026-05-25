@@ -1,0 +1,2 @@
+Compiling tests/owned_field_move_err_test.bos
+Fatal: Cannot move owned field val out of an owned aggregate

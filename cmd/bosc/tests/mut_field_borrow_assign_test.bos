@@ -1,0 +1,15 @@
+package main
+
+struct node {
+	next *mut node
+}
+
+fn walk(l *node) {
+	var curr *node = l
+	for(; curr.next != nil; curr = curr.next) {}
+}
+
+fn main() {
+	var n node
+	walk(&n)
+}

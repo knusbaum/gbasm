@@ -1,0 +1,2 @@
+Compiling tests/owned_struct_field_assign_plain_err_test.bos
+Fatal: Cannot assign to owned field x of an owned aggregate after initialization

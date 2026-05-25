@@ -1,0 +1,12 @@
+package main
+
+struct holder {
+	next owned *mut i64
+}
+
+fn main() {
+	var p owned *mut i64 = alloc(i64)
+	var h holder
+	h.next = p
+	free(p)
+}
