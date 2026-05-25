@@ -272,6 +272,18 @@ func (p *Parser) parseTok() *Node {
 	//panic(fmt.Sprintf("Expected number, string, identifier or semicolon, but found: %s (%v)\n", c.t, c.p))
 }
 
+// isTypeStart reports whether a token type can validly begin a type
+// expression. Used by parseTypeName when reading a function-type
+// return clause to decide between "explicit return type follows" and
+// "no return type, infer void."
+func isTypeStart(t toktype) bool {
+	switch t {
+	case tok_ident, tok_fn, tok_star, tok_owned, tok_mut:
+		return true
+	}
+	return false
+}
+
 func (p *Parser) parseTypeName() *Node {
 	var indirection uint64
 	var mutmask uint64
@@ -331,6 +343,53 @@ func (p *Parser) parseTypeName() *Node {
 	}
 
 	c := p.current()
+
+	// Function-pointer type: `fn(t1, t2, ...) [ret]`. The leading `fn`
+	// disambiguates it from a regular identifier-typed form. Parses
+	// the parameter type list and an optional return type, packs them
+	// into a synthetic n_typename whose args carry the signature for
+	// mkTypename to assemble.
+	if c.t == tok_fn {
+		fnpos := c.p
+		p.advance()
+		p.expect(tok_lparen)
+		var argTypes []*Node
+		for p.current().t != tok_rparen {
+			if p.current().t == tok_semicolon {
+				p.advance()
+				continue
+			}
+			at := p.parseTypeName()
+			argTypes = append(argTypes, at)
+			if p.current().t != tok_comma && p.current().t != tok_semicolon {
+				break
+			}
+			p.advance()
+		}
+		p.expect(tok_rparen)
+		// Optional return type; absent means void.
+		var retType *Node
+		if isTypeStart(p.current().t) {
+			retType = p.parseTypeName()
+		} else {
+			retType = &Node{t: n_typename, p: fnpos, sval: "void"}
+		}
+		// Pack into an n_typename with sval="fn" as a sentinel
+		// recognized by mkTypename. ival carries argument count;
+		// args holds the arg types followed by the return type at
+		// the end (the apply-wrappers loop in mkTypename skips this
+		// shape because sval == "fn").
+		args := append([]*Node{}, argTypes...)
+		args = append(args, retType)
+		return &Node{
+			t:    n_typename,
+			p:    fnpos,
+			sval: "fn",
+			ival: uint64(len(argTypes)),
+			args: args,
+		}
+	}
+
 	if c.t != tok_ident {
 		panic(&interpreterError{fmt.Sprintf("Expected a type name, but found: %s\n", c.t), c.p})
 	}

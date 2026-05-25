@@ -585,6 +585,38 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 
 		decl, resolvedPkg, ok := c.FuncDeclForCall(ast.Pkg, ast.FName)
 		if !ok {
+			// Fall back to an indirect call through a function-pointer
+			// value. Two shapes:
+			//
+			//   foo(args)    — ast.Pkg == "", call through a fn-typed
+			//                  local/global named `foo`
+			//   d.f(args)    — ast.Pkg == "d" (parser packs Dot-of-call
+			//                  this way regardless of whether `d` is a
+			//                  package or a struct-valued variable);
+			//                  call through field `f` of struct `d`
+			if ast.Pkg == "" {
+				if vt, vok := c.TypeForVar(ast.FName); vok && vt.FuncSig != nil {
+					return compileIndirectCall(of, c, a, ast, ast.FName, vt.FuncSig, dest)
+				}
+			} else {
+				if vt, vok := c.TypeForVar(ast.Pkg); vok {
+					if sdecl, sok := c.StructDeclForName(vt.Name); sok {
+						off, mtype := sdecl.ByteOffset(c, ast.FName)
+						if mtype.FuncSig != nil {
+							// Compute the address of the field. For a
+							// memory-backed struct local, the variable
+							// name is itself the address; otherwise we
+							// need the address from a Symbol lvalue
+							// walk. compileLval handles that.
+							baseAddr := compileTop(of, c, &Symbol{Name: ast.Pkg}, nullspot)
+							srcRef := fmt.Sprintf("[%s+%d]", baseAddr.ref, off)
+							ret := compileIndirectCall(of, c, a, ast, srcRef, mtype.FuncSig, dest)
+							baseAddr.free(of)
+							return ret
+						}
+					}
+				}
+			}
 			CompileErrorF(a, "No such function \"%v\"", ast.QualifiedName())
 		}
 		if len(ast.Args) != len(decl.Args) {
@@ -745,6 +777,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), ast.ASTType(c))
+		}
+		// Function symbols: emit a fully-qualified lea — the linker
+		// resolves them like any other relocation target. No volatile
+		// needed (functions live at fixed addresses).
+		if _, isFn := c.FuncDeclForName(name); isFn {
+			pkg := c.Pkgname()
+			fmt.Fprintf(of, "\tlea %s %s.%s\n", dest.ref, pkg, name)
+			return dest
 		}
 		// For register-resident locals, force-spill to memory so the
 		// taken address is stable; for memory-backed names (globals,
@@ -1213,6 +1253,63 @@ func containsFuncall(a AST) bool {
 		return false
 	}
 	panic("ContainsFuncall Fallthrough\n")
+}
+
+// compileIndirectCall emits a call through a function-pointer value.
+// The signature supplies the parameter types for argument setup; the
+// pointer's value is materialized into a temp register and used as the
+// call target via `call reg`. `srcRef` is the bas-level source operand
+// for the load — typically a variable name like "fp" or "global_op", or
+// an indirect form like "[addr+off]" for struct-field calls.
+func compileIndirectCall(of io.Writer, c *Context, a AST, ast *Funcall, srcRef string, sig *FuncSig, dest spot) spot {
+	if len(ast.Args) != len(sig.Args) {
+		CompileErrorF(a, "function pointer %s expected %d arguments, but was called with %d",
+			srcRef, len(sig.Args), len(ast.Args))
+	}
+	// Load the function-pointer value into a fresh temp BEFORE setting
+	// up call arguments. setupArgs evicts whatever currently sits in
+	// the arg registers (rdi, rsi, …). If srcRef is itself a
+	// register-resident parameter (a fn(...)-typed param lives in rdi
+	// when it's argument 0), the eviction would spill it to memory
+	// after our read. Reading first into a temp avoids the round-trip.
+	tgt := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	fmt.Fprintf(of, "\tmov %s %s\n", tgt.ref, srcRef)
+
+	// Reuse setupArgs by building a synthetic FuncDecl mirroring the
+	// signature. setupArgs only reads d.Args[i].Type, so the Names and
+	// IsConst flags don't matter.
+	synth := &FuncDecl{Return: sig.Return}
+	for _, at := range sig.Args {
+		synth.Args = append(synth.Args, Binding{Type: at})
+	}
+	argorder := setupArgs(of, c, ast, synth)
+
+	retType := sig.Return
+	raxName := raxForType(retType)
+	note(of, "\t// acquire %s for indirect call return\n", raxName)
+	rax := regSpot(of, raxName)
+	rax.t = retType
+
+	fmt.Fprintf(of, "\tcall %s\n", tgt.ref)
+	tgt.free(of)
+
+	for i := 0; i < len(ast.Args); i++ {
+		note(of, "\t// release call registers\n")
+		fmt.Fprintf(of, "\trelease %s\n", argorder[i])
+	}
+	ret := nullspot
+	if !sig.Return.Same(voidASTType()) {
+		if !dest.empty() {
+			ret = dest
+		} else {
+			ret = newSpot(of, c, c.Temp(), sig.Return)
+		}
+		move(of, c, ret, rax)
+	}
+	note(of, "\t// free %s for indirect call return\n", raxName)
+	rax.t = regtype
+	rax.free(of)
+	return ret
 }
 
 func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {

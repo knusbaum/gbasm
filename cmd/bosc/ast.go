@@ -111,6 +111,11 @@ func typeIsMemoryBacked(c *Context, t ASTType) bool {
 	if t.Indirection > 0 {
 		return false
 	}
+	// Function pointers are pointer-sized values — register-resident
+	// like any other pointer, regardless of signature.
+	if t.FuncSig != nil {
+		return false
+	}
 	// Fixed arrays must live in memory regardless of total size — they
 	// need a stable address for `[arr+offset]` indexing to mean
 	// anything. Allocating a small array in a sub-register would
@@ -748,6 +753,18 @@ type ASTType struct {
 	Signed      bool      // signed integer marker for scalar/pointee leaf
 	MutMask     uint64    // write-through bit per level
 	OwnedMask   uint64    // ownership bit per level
+	FuncSig     *FuncSig  // when set: function-pointer type, pointer-sized
+}
+
+// FuncSig is the signature of a function-pointer type — the argument
+// types in declaration order and the return type. Used by ASTType when
+// FuncSig != nil to encode `fn(t1, t2, ...) ret` types that show up at
+// any value position (variable type, parameter, return, struct field).
+// The function-pointer value itself is always pointer-sized (8 bytes);
+// the signature is metadata for codegen at call sites.
+type FuncSig struct {
+	Args   []ASTType
+	Return ASTType
 }
 
 // IsSlice reports whether the type is a slice (T[]).
@@ -786,6 +803,10 @@ const PTR_SIZE = 8
 // For instance, arrays and structs are held in registers
 // as pointers.
 func (t *ASTType) Size(c *Context) int {
+	// Function-pointer types are pointer-sized regardless of signature.
+	if t.FuncSig != nil {
+		return PTR_SIZE
+	}
 	// Indirection is the outermost wrapper at every level: a pointer to
 	// anything (scalar, slice, array, struct) is pointer-sized.
 	if t.Indirection > 0 {
@@ -842,6 +863,23 @@ func (t ASTType) Same(t2 ASTType) bool {
 	}
 	if t.Element != nil && !t.Element.Same(*t2.Element) {
 		return false
+	}
+	// Compare function signatures structurally when present.
+	if (t.FuncSig == nil) != (t2.FuncSig == nil) {
+		return false
+	}
+	if t.FuncSig != nil {
+		if len(t.FuncSig.Args) != len(t2.FuncSig.Args) {
+			return false
+		}
+		for i := range t.FuncSig.Args {
+			if !t.FuncSig.Args[i].Same(t2.FuncSig.Args[i]) {
+				return false
+			}
+		}
+		if !t.FuncSig.Return.Same(t2.FuncSig.Return) {
+			return false
+		}
 	}
 	return true
 }
@@ -922,6 +960,24 @@ func (t ASTType) String() string {
 		} else {
 			sb.WriteString(inner)
 		}
+	} else if t.FuncSig != nil {
+		// Render compactly (no spaces between tokens) so the rendered
+		// form survives bas's whitespace-tokenized `var name type ...`
+		// directive. Arguments whose own type strings contain spaces
+		// (e.g. `*mut Foo`) aren't yet supported in function-pointer
+		// positions for that reason — would need a quoted-type form
+		// in bas to lift the restriction.
+		sb.WriteString("fn(")
+		for i, a := range t.FuncSig.Args {
+			if i > 0 {
+				sb.WriteString(",")
+			}
+			sb.WriteString(a.String())
+		}
+		sb.WriteString(")")
+		if !t.FuncSig.Return.Same(voidASTType()) {
+			sb.WriteString(t.FuncSig.Return.String())
+		}
 	} else {
 		sb.WriteString(t.Name)
 	}
@@ -931,6 +987,26 @@ func (t ASTType) String() string {
 func mkTypename(n *Node) ASTType {
 	if n.t != n_typename {
 		ParseErrorF(n, "Expected type name but found %v", n.t)
+	}
+	// Function-pointer type sentinel: parseTypeName packs `fn(...) ret`
+	// into an n_typename with sval="fn", ival=arg-count, and args=
+	// [argType1, ..., argTypeN, returnType]. Recognize and assemble a
+	// FuncSig-bearing ASTType. No slice/array wrappers may follow (we
+	// don't currently support `fn(...)[]`); the caller's grammar makes
+	// that unreachable since parseTypeName returns immediately after
+	// reading the fn form.
+	if n.sval == "fn" {
+		nargs := int(n.ival)
+		var sig FuncSig
+		for i := 0; i < nargs; i++ {
+			sig.Args = append(sig.Args, mkTypename(n.args[i]))
+		}
+		sig.Return = mkTypename(n.args[nargs])
+		return ASTType{
+			FuncSig:   &sig,
+			MutMask:   n.mutmask,
+			OwnedMask: n.ownedmask,
+		}
 	}
 	// Start with the bare base type (scalar or pointer). n.args lists
 	// slice/array wrappers in innermost-first order; each wrapper produces
@@ -1131,14 +1207,32 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 			return t
 		}
 	}
-	decl, _, ok := c.FuncDeclForCall(f.Pkg, f.FName)
-	if !ok {
-		panic(&interpreterError{
-			msg: fmt.Sprintf("No such function \"%s\"", f.QualifiedName()),
-			p:   f.p,
-		})
+	if decl, _, ok := c.FuncDeclForCall(f.Pkg, f.FName); ok {
+		return decl.Return
 	}
-	return decl.Return
+	// Fall back to an indirect call through a function-pointer
+	// value:
+	//   foo(...)   — bare name resolves to a fn-typed local/global
+	//   d.f(...)   — when no package 'd' exists, treat 'd' as a
+	//                struct-valued variable and look up field 'f'
+	if f.Pkg == "" {
+		if vt, ok := c.TypeForVar(f.FName); ok && vt.FuncSig != nil {
+			return vt.FuncSig.Return
+		}
+	} else {
+		if vt, ok := c.TypeForVar(f.Pkg); ok {
+			if sdecl, sok := c.StructDeclForName(vt.Name); sok {
+				_, mtype := sdecl.ByteOffset(c, f.FName)
+				if mtype.FuncSig != nil {
+					return mtype.FuncSig.Return
+				}
+			}
+		}
+	}
+	panic(&interpreterError{
+		msg: fmt.Sprintf("No such function \"%s\"", f.QualifiedName()),
+		p:   f.p,
+	})
 }
 
 func (f *Funcall) Note() string {
@@ -1231,6 +1325,17 @@ func (a *Address) ASTType(c *Context) ASTType {
 		t := a.Lit.ASTType(c)
 		t.Indirection += 1
 		return t
+	}
+	// Function address: &someFn yields a function-pointer type
+	// (fn(args) ret) — pointer-sized value carrying the signature
+	// so call sites can set up the ABI correctly.
+	if decl, ok := c.FuncDeclForName(a.Var); ok {
+		var sig FuncSig
+		for _, arg := range decl.Args {
+			sig.Args = append(sig.Args, arg.Type)
+		}
+		sig.Return = decl.Return
+		return ASTType{FuncSig: &sig}
 	}
 	t, ok := c.TypeForVar(a.Var)
 	if !ok {

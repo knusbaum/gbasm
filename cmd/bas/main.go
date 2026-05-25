@@ -816,6 +816,29 @@ func main() {
 						fmt.Printf("Fatal: Jumps take exactly 1 argument, but got: %v\n", line)
 						os.Exit(1)
 					}
+					// Indirect CALL: when the operand is a local (Ralloc)
+					// or a register, emit the r/m64 form rather than the
+					// rel32 relocation form. Function-pointer call sites
+					// rely on this; everything else still goes through
+					// the Jump (symbol-relocation) path.
+					if instrUp == "CALL" {
+						if alloc := f.AllocFor(parts[1]); alloc != nil {
+							f.EvictForCall()
+							if err := f.Instr("CALL", alloc); err != nil {
+								fmt.Printf("Fatal: Instruction %v: %s\n", parts, err)
+								os.Exit(1)
+							}
+							continue lines
+						}
+						if reg, err := gbasm.ParseReg(parts[1]); err == nil {
+							f.EvictForCall()
+							if err := f.Instr("CALL", reg); err != nil {
+								fmt.Printf("Fatal: Instruction %v: %s\n", parts, err)
+								os.Exit(1)
+							}
+							continue lines
+						}
+					}
 					err = f.Jump(instrUp, parts[1])
 					if err != nil {
 						fmt.Printf("Fatal: Instruction %v: %s\n", parts, err)
@@ -902,6 +925,17 @@ func main() {
 					args[i-1] = smallestUi(num)
 					continue
 				}
+				// Unresolved identifier: treat as an external symbol
+				// reference (e.g. a function name like "pkg.fn"). The
+				// encoder turns *Var operands into RIP-relative
+				// references with a relocation against ot.Name, which
+				// the linker resolves to whichever symbol matches —
+				// data or code. Only fields used by that path need to
+				// be set; VType/Val stay empty.
+				if isIdentifier(parts[i]) {
+					args[i-1] = &gbasm.Var{Name: parts[i]}
+					continue
+				}
 				args[i-1] = parts[i]
 			}
 			//fmt.Printf("INSTRUP: %#v\n args: %#v\n", instrUp, args)
@@ -946,6 +980,34 @@ func main() {
 	// 	if err != nil {
 	// 		log.Fatalf("Failed to write exe: %s", err)
 	// 	}
+}
+
+// isIdentifier reports whether s is a syntactically plausible symbol
+// name — leading letter or underscore, then letters/digits/underscores
+// with optional dot-separated qualifier (e.g. "pkg.func"). Used to
+// distinguish unresolved-symbol arguments from accidental fallthrough.
+func isIdentifier(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for i, r := range s {
+		if r == '.' {
+			if i == 0 || i == len(s)-1 {
+				return false
+			}
+			continue
+		}
+		isAlpha := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_'
+		isDigit := r >= '0' && r <= '9'
+		if i == 0 {
+			if !isAlpha {
+				return false
+			}
+		} else if !isAlpha && !isDigit {
+			return false
+		}
+	}
+	return true
 }
 
 func parseData(s string) ([]byte, error) {

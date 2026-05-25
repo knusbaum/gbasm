@@ -180,10 +180,24 @@ func encodeLiteralBytes(c *Context, dstt ASTType, l *Literal) ([]byte, []relocSp
 //     Compositional: a literal containing another `&literal` produces
 //     two anonymous globals, and so on, all queued in encoding order.
 func encodeAddressBytes(c *Context, dstt ASTType, a *Address) ([]byte, []relocSpec, error) {
-	if dstt.Indirection == 0 {
+	// The destination must be pointer-sized to hold a relocated
+	// address. Two valid shapes: a *T (Indirection > 0) or a
+	// function-pointer (FuncSig != nil).
+	if dstt.Indirection == 0 && dstt.FuncSig == nil {
 		return nil, nil, fmt.Errorf("address-of initializer assigned to non-pointer type %s", dstt)
 	}
 	if a.Var != "" {
+		// Function name: qualify with the current package so the
+		// linker resolves it the same way it does for call sites.
+		// Bare-name DataReloc symbols also get auto-qualified by the
+		// linker, but emitting the qualified form here keeps the .bs
+		// readable and avoids relying on that fallback.
+		if decl, ok := c.FuncDeclForName(a.Var); ok {
+			_ = decl
+			pkg := c.Pkgname()
+			out := make([]byte, 8)
+			return out, []relocSpec{{Offset: 0, Symbol: pkg + "." + a.Var, Addend: 0}}, nil
+		}
 		out := make([]byte, 8)
 		return out, []relocSpec{{Offset: 0, Symbol: a.Var, Addend: 0}}, nil
 	}

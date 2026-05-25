@@ -48,6 +48,7 @@ Boson is a statically typed, imperative language. It is intentionally small: no 
 | `T[]` | Slice (fat pointer: data pointer + length, 16 bytes) |
 | `T[N]` | Fixed-size array |
 | `struct { ... }` | Named record type |
+| `fn(args) ret` | Function-pointer type (pointer-sized) |
 
 Types are divided into **direct** (fit in a single register: scalars, pointers) and **indirect** (too large for a register: structs, arrays, slices — held as pointers in registers, with their data on the stack or in memory).
 
@@ -554,6 +555,45 @@ In static-init context (see [Static Initializers](#static-initializers)) two mor
 - `&SomeStruct{...}` — allocates an anonymous file-scope global to hold the struct literal's bytes, then relocates the pointer slot to it. Composes recursively: `foo{bar: &bar{inner: &inner{...}}}` produces one anonymous global per nested `&`.
 
 `&literal` at runtime is rejected with "cannot take the address of this expression at runtime; address-of-literal is only valid in static initializers" — there's no stable storage to point at outside file scope.
+
+### Function pointers
+
+A function-pointer type `fn(args) ret` is a pointer-sized slot holding the address of a function with the given signature. `&someFunc` produces a value of that type:
+
+```
+fn add(x i64, y i64) i64 { return x + y }
+
+var op fn(i64, i64) i64 = &add       // file scope: static reloc to add's symbol
+fn use() {
+    var fp fn(i64, i64) i64 = &add   // function scope: lea of add's symbol
+    fp = &sub                         // reassignment
+    string.puti(fp(3, 4))             // indirect call
+}
+```
+
+Function-pointer-typed parameters, return types, and struct fields compose the same way:
+
+```
+fn apply(f fn(i64, i64) i64, a i64, b i64) i64 {
+    return f(a, b)
+}
+apply(&add, 100, 25)
+
+fn pick(which i64) fn(i64, i64) i64 {
+    if (which == 0) { return &add }
+    return &sub
+}
+var chosen fn(i64, i64) i64 = pick(0)
+
+struct dispatch { op fn(i64, i64) i64 }
+var d dispatch = dispatch{op: &add}
+d.op(7, 8)                            // struct-field indirect call
+d.op = &sub                            // field reassignment
+```
+
+Implementation: a function-pointer type is an `ASTType` with `FuncSig != nil` (no `Name`, no `Element`). It's pointer-sized (8 bytes), and its type string renders as `fn(...)ret` without spaces so the rendered form survives bas's whitespace-tokenized `var name type` directive. At a static initializer, `&someFunc` encodes as an 8-byte zero slot with a `DataReloc` against `pkg.fname`; at runtime it lowers to `lea reg, pkg.fname` (the linker resolves data and code symbols uniformly). Indirect calls use `call r/m64` rather than the rel32 form: bas's CALL handler dispatches to the indirect encoding whenever the operand is a Ralloc or register, and the bosc compiler loads the target into a temp before evicting caller-saved registers so a register-resident function-pointer argument isn't lost during arg setup. Struct-field calls (`d.op(...)`) reach the indirect-call path through the same Funcall dispatch — the parser packs `d.op(args)` as `Funcall{Pkg: "d", FName: "op"}` regardless of whether `d` is a package or a variable, and the compiler distinguishes the cases by looking `d` up in the package table first, then the local/global variable table.
+
+Parser limitation: `(args)` postfix is only legal after a bare symbol or `pkg.fn` shape, so `pick(0)(args)` (calling the result of a call directly) requires binding the returned pointer to a name first. Lifting this would require generalizing `parsePostfix` to allow `(args)` after any expression whose type resolves to a `FuncSig`.
 
 ### Implicit coercion
 
@@ -1113,7 +1153,6 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - No witnessed borrows.
 - True read-only `.rodata` segment split not yet done. String constants and other immutable data are tagged at the `o.Data` level but currently land in the writable `.data` LOAD segment. Hardware-enforced const requires splitting the ELF layout.
 - No deduplication of structurally-identical anonymous globals. Each `&literal` produces a fresh `__static_N`.
-- Function pointers in static data not yet implemented (the infrastructure supports it — `DataReloc` can target functions just as well as data — but bosc doesn't emit `&someFunc` for static init).
 - macOS support stubbed but not implemented.
 - Unused-mutability warning not implemented.
 

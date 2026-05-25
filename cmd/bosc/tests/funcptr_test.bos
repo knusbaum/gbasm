@@ -1,0 +1,73 @@
+package main
+
+import "string"
+
+// Function pointers: declared at file scope and function scope,
+// assigned via `&someFn`, called through with `fp(args)`. Same
+// signature surface as regular function declarations.
+
+fn add(x i64, y i64) i64 { return x + y }
+fn sub(x i64, y i64) i64 { return x - y }
+
+// File-scope function-pointer global, initialized at link time.
+var op fn(i64, i64) i64 = &add
+
+// Function-pointer-typed parameter, called through inside the body.
+fn apply(f fn(i64, i64) i64, a i64, b i64) i64 {
+	return f(a, b)
+}
+
+// Returning a function pointer from a function. The return type is
+// itself a fn-typed value; the caller can either bind it to a local
+// or call through it directly.
+fn pick(which i64) fn(i64, i64) i64 {
+	if (which == 0) {
+		return &add
+	}
+	return &sub
+}
+
+// Struct field holding a function pointer. Exercises field-offset
+// encoding for FuncSig types and `obj.field(args)` indirect calls.
+struct dispatch {
+	op fn(i64, i64) i64
+}
+
+fn main() {
+	// Call through the file-scope global.
+	string.puti(op(3, 4))
+	string.putc('\n')
+
+	// Function-scope local, initialized at runtime via lea.
+	var fp fn(i64, i64) i64 = &sub
+	string.puti(fp(10, 4))
+	string.putc('\n')
+
+	// Reassignment to a different function with the same signature.
+	fp = &add
+	string.puti(fp(10, 4))
+	string.putc('\n')
+
+	// Pass through as a parameter; the callee dispatches.
+	string.puti(apply(&add, 100, 25))
+	string.putc('\n')
+	string.puti(apply(&sub, 100, 25))
+	string.putc('\n')
+
+	// Return a function pointer; bind it then call through.
+	var chosen fn(i64, i64) i64 = pick(0)
+	string.puti(chosen(50, 8))
+	string.putc('\n')
+	chosen = pick(1)
+	string.puti(chosen(50, 8))
+	string.putc('\n')
+
+	// Struct field holding a function pointer.
+	var d dispatch = dispatch{op: &add}
+	string.puti(d.op(7, 8))
+	string.putc('\n')
+
+	d.op = &sub
+	string.puti(d.op(7, 8))
+	string.putc('\n')
+}
