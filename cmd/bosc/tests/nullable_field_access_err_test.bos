@@ -1,11 +1,11 @@
 package main
 
 struct node {
-	next *mut node
+	next *?mut node
 }
 
-fn walk(l *node) {
-	var curr *node = l
+fn walk(l *?node) {
+	var curr *?node = l
 	for(; curr.next != nil; curr = curr.next) {}
 }
 

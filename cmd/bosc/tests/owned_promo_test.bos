@@ -21,8 +21,7 @@ fn main() {
 
 	initialize(&r, 42)
 
-	var res *owned Res
-	res = owned(&r)
+	var res *owned Res = owned(&r)
 
 	cleanup(res)
 }

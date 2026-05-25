@@ -29,6 +29,7 @@ const (
 	n_add
 	n_sub
 	n_neg // negate (-1)
+	n_not // logical not (!x)
 	n_eq  // Assignment (=)
 	n_deq // Comparison equal (==)
 	n_neq // Not equal (!=)
@@ -51,6 +52,7 @@ const (
 	n_typedecl
 	n_ownedpromo
 	n_arrlit
+	n_nonnull
 )
 
 func (t nodetype) String() string {
@@ -97,6 +99,8 @@ func (t nodetype) String() string {
 		return "n_sub"
 	case n_neg:
 		return "n_neg"
+	case n_not:
+		return "n_not"
 	case n_eq:
 		return "n_eq"
 	case n_deq:
@@ -141,6 +145,8 @@ func (t nodetype) String() string {
 		return "n_ownedpromo"
 	case n_arrlit:
 		return "n_arrlit"
+	case n_nonnull:
+		return "n_nonnull"
 	}
 	return "UNKNOWN"
 }
@@ -156,6 +162,7 @@ type Node struct {
 	ival      uint64
 	mutmask   uint64 // for n_typename: bit N = mut at pointer/slice level N
 	ownedmask uint64 // for n_typename: bit N = owned at pointer/slice level N
+	nilmask   uint64 // for n_typename: bit N = nullable pointer at pointer level N
 	//fval float64 // we'll add floats later.
 	sval string
 	args []*Node
@@ -278,7 +285,7 @@ func (p *Parser) parseTok() *Node {
 // "no return type, infer void."
 func isTypeStart(t toktype) bool {
 	switch t {
-	case tok_ident, tok_fn, tok_star, tok_owned, tok_mut:
+	case tok_ident, tok_fn, tok_star, tok_maybe_ptr, tok_owned, tok_mut:
 		return true
 	}
 	return false
@@ -288,6 +295,7 @@ func (p *Parser) parseTypeName() *Node {
 	var indirection uint64
 	var mutmask uint64
 	var ownedmask uint64
+	var nilmask uint64
 
 	// Bit numbering convention (bit 0 = outermost, bit N = after N dereferences):
 	//   owned/mut before '*' at level N  → applies to the pointer itself  → bit N
@@ -325,11 +333,15 @@ func (p *Parser) parseTypeName() *Node {
 				}
 			}
 		}
-		if p.current().t != tok_star {
+		if p.current().t != tok_star && p.current().t != tok_maybe_ptr {
 			break
 		}
-		p.advance() // consume '*'
+		nullable := p.current().t == tok_maybe_ptr
+		p.advance() // consume '*' or '*?'
 		indirection++
+		if nullable {
+			nilmask |= 1 << (indirection - 1)
+		}
 		// Qualifiers after the '*' apply to what it points to (bit = indirection, i.e. N+1).
 		// Both 'mut' and 'owned' are symmetric here.
 		for p.current().t == tok_owned || p.current().t == tok_mut {
@@ -455,6 +467,7 @@ func (p *Parser) parseTypeName() *Node {
 			ival:      indirection,
 			mutmask:   mutmask,
 			ownedmask: ownedmask,
+			nilmask:   nilmask,
 			args:      wrappers,
 		}
 	}
@@ -465,7 +478,7 @@ func (p *Parser) parseTypeName() *Node {
 	if indirection == 0 && mutmask != 0 {
 		panic(&interpreterError{fmt.Sprintf("'mut' on non-reference type '%s' has no effect; 'mut' is only valid on pointer or slice types", typename), c.p})
 	}
-	return &Node{t: n_typename, p: c.p, sval: typename, ival: indirection, mutmask: mutmask, ownedmask: ownedmask}
+	return &Node{t: n_typename, p: c.p, sval: typename, ival: indirection, mutmask: mutmask, ownedmask: ownedmask, nilmask: nilmask}
 }
 
 func (p *Parser) parseValue() *Node {
@@ -514,6 +527,7 @@ func (p *Parser) parseArrayLiteral() *Node {
 //     calls through expressions aren't supported)
 //   - `{fields}`    produces n_stlit (only when v is a bare symbol; the
 //     type name lives in v.sval)
+//   - `?`           produces n_nonnull{args: [v]}
 //
 // The loop terminates as soon as the current token isn't a postfix
 // operator, so chains like `a.b[i].c[lo:hi]` work naturally.
@@ -574,6 +588,9 @@ func (p *Parser) parsePostfix(v *Node) *Node {
 			fields := p.parseStructLiteral()
 			p.expect(tok_rcurly)
 			v = &Node{t: n_stlit, p: typePos, sval: typeName, args: fields}
+		case tok_question:
+			p.advance()
+			v = &Node{t: n_nonnull, p: c.p, args: []*Node{v}}
 		default:
 			return v
 		}
@@ -803,6 +820,10 @@ func (p *Parser) parseUnary() *Node {
 		p.advance()
 		operand := p.parseUnary()
 		return &Node{t: n_neg, p: c.p, args: []*Node{operand}}
+	} else if c.t == tok_not {
+		p.advance()
+		operand := p.parseUnary()
+		return &Node{t: n_not, p: c.p, args: []*Node{operand}}
 	} else if c.t == tok_amp {
 		p.advance()
 		// `&` parses two shapes today:

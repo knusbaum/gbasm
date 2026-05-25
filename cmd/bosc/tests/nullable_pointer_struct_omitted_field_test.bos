@@ -1,0 +1,10 @@
+package main
+
+struct node {
+	value i64
+	next *?mut node
+}
+
+fn main() {
+	var n node = node{value: 10}
+}

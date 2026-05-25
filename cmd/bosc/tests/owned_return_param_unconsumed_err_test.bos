@@ -1,0 +1,11 @@
+package main
+
+fn forget(v owned i64) i64 {
+	return 0
+}
+
+fn main() {
+	var x owned i64
+	x = 1
+	forget(x)
+}

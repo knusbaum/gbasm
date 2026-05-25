@@ -1,0 +1,2 @@
+Compiling tests/nullable_field_access_err_test.bos
+Fatal: Cannot access field next through nullable pointer type *?node

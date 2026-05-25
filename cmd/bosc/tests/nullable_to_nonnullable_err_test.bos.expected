@@ -1,0 +1,2 @@
+Compiling tests/nullable_to_nonnullable_err_test.bos
+Fatal: Cannot initialize *mut i64 with value of type *?mut i64

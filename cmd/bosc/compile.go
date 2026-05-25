@@ -202,8 +202,35 @@ func fallsThrough(a AST) bool {
 	}
 }
 
+func nullablePointerSymbolForIf(c *Context, cond AST) (string, ASTType, bool, bool) {
+	nonNullOnThen := true
+	var sym *Symbol
+	switch ast := cond.(type) {
+	case *Symbol:
+		sym = ast
+	case *Not:
+		var ok bool
+		sym, ok = ast.Val.(*Symbol)
+		if !ok {
+			return "", ASTType{}, false, false
+		}
+		nonNullOnThen = false
+	default:
+		return "", ASTType{}, false, false
+	}
+	t := sym.ASTType(c)
+	if t.Indirection == 0 || t.NilMask&1 == 0 {
+		return "", ASTType{}, false, false
+	}
+	return sym.Name, t, nonNullOnThen, true
+}
+
 func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST) {
 	if !expected.HasOwned() {
+		return
+	}
+	if nn, ok := val.(*NonNullAssert); ok {
+		markMovedIfOwnedSource(of, c, expected, nn.Val)
 		return
 	}
 	switch v := val.(type) {
@@ -218,6 +245,9 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 		if parentOwnsFields(baseType) && fieldType.HasOwned() {
 			if fieldType.Indirection == 0 || fieldType.OwnedMask&1 == 0 {
 				CompileErrorF(val, "Cannot move owned field %s out of an owned aggregate", v.Member)
+			}
+			if fieldType.NilMask&1 == 0 {
+				CompileErrorF(val, "Cannot move non-null pointer field %s; use *?T if the field may be emptied", v.Member)
 			}
 			lv := compileLval(of, c, val, nullspot)
 			fmt.Fprintf(of, "\tmov [%s] 0\n", lv.ref)
@@ -257,7 +287,13 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 				lit.Type.Name, f.Name, fieldType, srcType)
 		}
 
-		v := compileTop(of, c, f.Val, nullspot)
+		var v spot
+		if srcType.Same(fieldType) {
+			v = compileTop(of, c, f.Val, nullspot)
+		} else {
+			tmp := newSpot(of, c, c.Temp(), fieldType)
+			v = compileTop(of, c, f.Val, tmp)
+		}
 		markMovedIfOwnedSource(of, c, fieldType, f.Val)
 		if v.t.Indirection == 0 && v.t.Size(c) > 8 {
 			panic("struct literal with nested structs not implemented yet.")
@@ -266,11 +302,14 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 		v.free(of)
 	}
 
-	if parentOwnsFields(ctxType) {
-		for _, field := range def.Fields {
-			ft := fieldTypeForBase(ctxType, field.Type)
-			if ft.HasOwned() && !seen[field.Name] {
+	for _, field := range def.Fields {
+		ft := fieldTypeForBase(ctxType, field.Type)
+		if !seen[field.Name] {
+			if parentOwnsFields(ctxType) && ft.HasOwned() {
 				CompileErrorF(a, "Missing owned field %s.%s in owned struct literal", lit.Type.Name, field.Name)
+			}
+			if !ft.ZeroInitializable(c) {
+				CompileErrorF(a, "Missing non-zero-initializable field %s.%s in struct literal", lit.Type.Name, field.Name)
 			}
 		}
 	}
@@ -286,6 +325,9 @@ func compileAllocBuiltin(of io.Writer, c *Context, a AST, ast *Funcall, dest spo
 	if !ok {
 		CompileErrorF(ast.Args[0], "alloc argument must be a type")
 	}
+	if !t.ZeroInitializable(c) {
+		CompileErrorF(ast.Args[0], "alloc(%s) requires a zero-initializable type; use new(expr) to allocate initialized storage", t)
+	}
 	retType := ast.ASTType(c)
 	if dest.empty() {
 		dest = newSpot(of, c, c.Temp(), retType)
@@ -299,6 +341,92 @@ func compileAllocBuiltin(of io.Writer, c *Context, a AST, ast *Funcall, dest spo
 	move(of, c, dest, rax)
 	rax.t = regtype
 	rax.free(of)
+	return dest
+}
+
+func newBuiltinTypeForDest(c *Context, ast *Funcall, dst ASTType) (ASTType, bool) {
+	if ast.Pkg != "" || ast.FName != "new" || len(ast.Args) != 1 || dst.Indirection == 0 {
+		return ASTType{}, false
+	}
+	exprType := ast.Args[0].ASTType(c)
+	pointee := dst
+	pointee.Indirection--
+	pointee.MutMask >>= 1
+	pointee.OwnedMask >>= 1
+	pointee.NilMask >>= 1
+	if pointee.Indirection == 0 && !pointee.IsSliceOrArray() {
+		pointee.MutMask = 0
+	}
+	if !sameIgnoringOwned(pointee, exprType) {
+		return ASTType{}, false
+	}
+	return dst, true
+}
+
+func compileValueIntoAddress(of io.Writer, c *Context, a AST, val AST, addr spot, pointee ASTType) {
+	if sl, ok := val.(*StructLiteral); ok && sameIgnoringOwned(pointee, sl.Type) {
+		compileStructLiteralInto(of, c, a, sl, spot{ref: addr.ref, t: pointee, nameIsAddress: true}, pointee)
+		return
+	}
+	if al, ok := val.(*ArrayLiteral); ok {
+		compileArrayLiteralInto(of, c, a, spot{ref: addr.ref, t: pointee, nameIsAddress: true}, al)
+		return
+	}
+	srcType := val.ASTType(c)
+	if srcType.Same(intlitASTType()) || srcType.Name == "<nil>" {
+		srcType = pointee
+	}
+	if !pointee.Accepts(srcType) {
+		CompileErrorF(val, "Cannot initialize allocated %s with value of type %s", pointee, val.ASTType(c))
+	}
+	tmp := newSpot(of, c, c.Temp(), pointee)
+	v := compileTop(of, c, val, tmp)
+	dst := spot{ref: addr.ref, t: pointee, nameIsAddress: true}
+	if typeIsMemoryBacked(c, pointee) {
+		spot_memcpy(of, c, dst, v, pointee.Size(c))
+	} else {
+		fmt.Fprintf(of, "\tmov [%s] %s\n", addr.ref, v.ref)
+	}
+	v.free(of)
+	markMovedIfOwnedSource(of, c, pointee, val)
+}
+
+func compileNewBuiltin(of io.Writer, c *Context, a AST, ast *Funcall, dest spot) spot {
+	if len(ast.Args) != 1 {
+		CompileErrorF(a, "new(expr) requires exactly one argument")
+	}
+	if _, ok := typeExprFromAST(c, ast.Args[0]); ok {
+		CompileErrorF(ast.Args[0], "new(T) is not implemented yet; use alloc(T) for zero-initializable types or new(expr)")
+	}
+	retType := ast.ASTType(c)
+	if !dest.empty() {
+		if inferred, ok := newBuiltinTypeForDest(c, ast, dest.t); ok {
+			retType = inferred
+		}
+	}
+	pointee := retType
+	pointee.Indirection--
+	pointee.MutMask >>= 1
+	pointee.OwnedMask >>= 1
+	pointee.NilMask >>= 1
+	if pointee.Indirection == 0 && !pointee.IsSliceOrArray() {
+		pointee.MutMask = 0
+	}
+	if dest.empty() {
+		dest = newSpot(of, c, c.Temp(), retType)
+	} else {
+		dest.t = retType
+	}
+	rdi := regSpot(of, "rdi")
+	fmt.Fprintf(of, "\tmov rdi %d\n", pointee.Size(c))
+	fmt.Fprintf(of, "\tcall _heap.alloc\n")
+	rdi.free(of)
+	rax := regSpot(of, "rax")
+	rax.t = retType
+	move(of, c, dest, rax)
+	rax.t = regtype
+	rax.free(of)
+	compileValueIntoAddress(of, c, a, ast.Args[0], dest, pointee)
 	return dest
 }
 
@@ -365,6 +493,7 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 	depoint.Indirection--
 	depoint.MutMask >>= 1
 	depoint.OwnedMask >>= 1
+	depoint.NilMask >>= 1
 	if depoint.SameRepr(src.t) {
 		// dest was *T and src is T
 		fmt.Fprintf(of, "\tmov [%s] %s\n", dest.ref, src.ref)
@@ -416,6 +545,9 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		// return dest
 	case *Dot:
 		l := compileLval(of, c, ast.Val, nullspot)
+		if l.t.Indirection != 0 && l.t.NilMask&1 != 0 {
+			CompileErrorF(ast.Val, "Cannot access field %s through nullable pointer type %s", ast.Member, l.t)
+		}
 		def, ok := c.StructDeclForName(l.t.Name)
 		if !ok {
 			CompileErrorF(a, "No such structure \"%v\"", l.t.Name)
@@ -435,7 +567,13 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		if t.Indirection == 0 {
 			CompileErrorF(a, "Cannot dereference non-pointer type %s", t)
 		}
+		if t.NilMask&1 != 0 {
+			CompileErrorF(ast.Val, "Cannot dereference nullable pointer type %s", t)
+		}
 		// We're just going to return the pointer.
+		return v
+	case *NonNullAssert:
+		v := compileTop(of, c, ast, dest)
 		return v
 	case *Index:
 		w := compileTop(of, c, ast.Val, nullspot)
@@ -546,6 +684,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				// integer type the context demands.
 				return
 			}
+			if expect.Name == "<nil>" {
+				// nil expressions are compiled into whatever nullable pointer
+				// type the context demands.
+				return
+			}
 			if !dest.empty() && actual.Accepts(expect) {
 				return
 			}
@@ -637,8 +780,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			srct := ast.Init.ASTType(c)
 			dstt := ast.Type
+			if fc, ok := ast.Init.(*Funcall); ok {
+				if inferred, ok := newBuiltinTypeForDest(c, fc, dstt); ok {
+					srct = inferred
+				}
+			}
 			// Ownership promotion check, unless source is an integer literal.
-			if !srct.Same(intlitASTType()) {
+			if !srct.Same(intlitASTType()) && srct.Name != "<nil>" {
 				gained := dstt.OwnedMask &^ srct.OwnedMask
 				if gained != 0 {
 					if _, ok := ast.Init.(*OwnedPromotion); !ok {
@@ -652,7 +800,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			// Compile the initializer. Same-type / intlit go directly into s;
 			// coerced cases go via a temp.
-			if srct.Same(dstt) || srct.Same(intlitASTType()) {
+			if srct.Same(dstt) || srct.Same(intlitASTType()) || srct.Name == "<nil>" {
 				val := compileTop(of, c, ast.Init, s)
 				if !val.same(&s) {
 					move(of, c, s, val)
@@ -664,6 +812,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				val.free(of)
 			}
 			markMovedIfOwnedSource(of, c, dstt, ast.Init)
+		} else if !ast.Type.ZeroInitializable(c) {
+			CompileErrorF(a, "Variable \"%s\" of type %s requires an initializer", ast.Name, ast.Type)
 		} else if ast.Type.HasOwned() {
 			if _, ok := c.StructDeclForName(ast.Type.Name); ok && ast.Type.Indirection == 0 && parentOwnsFields(ast.Type) {
 				CompileErrorF(a, "Owned struct binding \"%s\" must have an initializer", ast.Name)
@@ -700,6 +850,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		fmt.Fprintf(of, "\n\tprologue\n\n")
 		compileTop(of, c, ast.Body, nullspot)
+		for _, name := range c.UnconsumedOwned() {
+			CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
+		}
 		if ast.Name == "main" {
 			note(of, "\n\t// default return 0 from main\n")
 			fmt.Fprintf(of, "\tmov rax 0\n")
@@ -718,15 +871,20 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				break
 			}
 		}
-		// Scope-exit: every owned binding declared in this block must be consumed.
-		for _, name := range sc.UnconsumedOwned() {
-			CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
+		if fallsThrough(ast) {
+			// Scope-exit: every owned binding declared in this block must be consumed.
+			for _, name := range sc.UnconsumedOwned() {
+				CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
+			}
 		}
 		sc.FreeLocalVars(of)
 		return nullspot
 	case *Funcall:
 		if ast.Pkg == "" && ast.FName == "alloc" {
 			return compileAllocBuiltin(of, c, a, ast, dest)
+		}
+		if ast.Pkg == "" && ast.FName == "new" {
+			return compileNewBuiltin(of, c, a, ast, dest)
 		}
 		if ast.Pkg == "" && ast.FName == "free" {
 			return compileFreeBuiltin(of, c, a, ast)
@@ -864,6 +1022,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		t.Indirection -= 1
 		t.MutMask >>= 1 // consume the outermost pointer level's mut bit
+		t.NilMask >>= 1
 		if t.Indirection == 0 && !t.IsSliceOrArray() {
 			t.MutMask = 0 // plain value: MutMask is not meaningful
 		}
@@ -1131,7 +1290,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		{
 			dsttmp := ast.Target.ASTType(c)
 			srctmp := ast.Val.ASTType(c)
-			if !srctmp.Same(intlitASTType()) {
+			if !srctmp.Same(intlitASTType()) && srctmp.Name != "<nil>" {
 				gained := dsttmp.OwnedMask &^ srctmp.OwnedMask
 				if gained != 0 {
 					if _, ok := ast.Val.(*OwnedPromotion); !ok {
@@ -1222,18 +1381,41 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 
 		// Snapshot owned-binding move state before branches.
 		snapBefore := c.OwnedBindingsSnapshot()
+		thenFallsThrough := fallsThrough(ast.Then)
+		elseFallsThrough := ast.Else == nil || fallsThrough(ast.Else)
+		condName, condType, condNonNullOnThen, condIsNullablePtr := nullablePointerSymbolForIf(c, ast.Cond)
 
+		restoreRefinement := func() {}
+		if condIsNullablePtr && condNonNullOnThen {
+			thenType := condType
+			thenType.NilMask &^= 1
+			restoreRefinement = c.RefineVarType(condName, thenType)
+		} else if condIsNullablePtr && condType.HasOwned() {
+			c.Move(condName)
+		}
 		v = compileTop(of, c, ast.Then, nullspot)
 		if !v.empty() {
 			v.free(of)
 		}
 		snapAfterThen := c.OwnedBindingsSnapshot()
+		restoreRefinement()
 
-		fmt.Fprintf(of, "\tjmp %s\n", labend)
+		if thenFallsThrough {
+			fmt.Fprintf(of, "\tjmp %s\n", labend)
+		}
 		fmt.Fprintf(of, "\tlabel %s\n", labelse)
 
 		// Restore to pre-branch state for the else branch.
 		c.RestoreOwnedBindings(snapBefore)
+		if condIsNullablePtr && condNonNullOnThen && condType.HasOwned() {
+			c.Move(condName)
+		}
+		restoreRefinement = func() {}
+		if condIsNullablePtr && !condNonNullOnThen {
+			elseType := condType
+			elseType.NilMask &^= 1
+			restoreRefinement = c.RefineVarType(condName, elseType)
+		}
 
 		if ast.Else != nil {
 			v = compileTop(of, c, ast.Else, nullspot)
@@ -1242,19 +1424,28 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 		}
 		snapAfterElse := c.OwnedBindingsSnapshot()
+		restoreRefinement()
 
-		// Both branches must agree on which pre-existing owned vars are consumed.
-		for name, movedInThen := range snapAfterThen {
-			if _, existed := snapBefore[name]; !existed {
-				continue // declared inside a branch, not our concern here
+		switch {
+		case thenFallsThrough && elseFallsThrough:
+			// Both fallthrough branches must agree on which pre-existing owned vars are consumed.
+			for name, movedInThen := range snapAfterThen {
+				if _, existed := snapBefore[name]; !existed {
+					continue // declared inside a branch, not our concern here
+				}
+				movedInElse := snapAfterElse[name]
+				if movedInThen != movedInElse {
+					CompileErrorF(a, "Owned binding \"%s\" is consumed on one branch but not the other", name)
+				}
 			}
-			movedInElse := snapAfterElse[name]
-			if movedInThen != movedInElse {
-				CompileErrorF(a, "Owned binding \"%s\" is consumed on one branch but not the other", name)
-			}
+			c.RestoreOwnedBindings(snapAfterThen)
+		case thenFallsThrough:
+			c.RestoreOwnedBindings(snapAfterThen)
+		case elseFallsThrough:
+			c.RestoreOwnedBindings(snapAfterElse)
+		default:
+			c.RestoreOwnedBindings(snapBefore)
 		}
-		// Apply the agreed post-branch state.
-		c.RestoreOwnedBindings(snapAfterThen)
 
 		fmt.Fprintf(of, "\tlabel %s\n", labend)
 		return nullspot
@@ -1360,6 +1551,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return nullspot
 	case *Op2:
 		return doOp2(of, c, ast, dest)
+	case *Not:
+		v := compileTop(of, c, ast.Val, nullspot)
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), boolASTType())
+		}
+		fmt.Fprintf(of, "\ttest %s %s\n", v.ref, v.ref)
+		fmt.Fprintf(of, "\tsete %s\n", dest.ref)
+		v.free(of)
+		return dest
 	case *Return:
 		valType := ast.Val.ASTType(c)
 		retType := c.ReturnType()
@@ -1391,12 +1591,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// sz == 4: writing eax already zeros the upper 32 bits of rax automatically.
 		dest.free(of)
 		if retType.HasOwned() {
-			if sym, ok := ast.Val.(*Symbol); ok {
-				if c.IsMoved(sym.Name) {
-					CompileErrorF(a, "Cannot move \"%s\": it was already moved", sym.Name)
-				}
-				c.Move(sym.Name)
-			}
+			markMovedIfOwnedSource(of, c, retType, ast.Val)
+		}
+		for _, name := range c.UnconsumedOwnedVisible() {
+			CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
 		}
 		c.Return(of)
 
@@ -1435,6 +1633,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		move(of, c, dest, s)
 		return dest
+	case *NonNullAssert:
+		s := compileTop(of, c, ast.Val, dest)
+		l := c.Label("nonnull")
+		fmt.Fprintf(of, "\tcmp %s 0\n", s.ref)
+		fmt.Fprintf(of, "\tjne %s\n", l)
+		fmt.Fprintf(of, "\tcall _init.nil_assert\n")
+		fmt.Fprintf(of, "\tlabel %s\n", l)
+		s.t = ast.ASTType(c)
+		return s
 	case *StructLiteral:
 		ctxType := ast.Type
 		if !dest.empty() && sameIgnoringOwned(dest.t, ast.Type) {
@@ -1491,10 +1698,14 @@ func containsFuncall(a AST) bool {
 		return containsFuncall(ast.Val)
 	case *Deref:
 		return containsFuncall(ast.Val)
+	case *NonNullAssert:
+		return containsFuncall(ast.Val)
 	case *Address:
 		return false
 	case *Op2:
 		return containsFuncall(ast.First) || containsFuncall(ast.Second)
+	case *Not:
+		return containsFuncall(ast.Val)
 	case *Literal:
 		return false
 	case *Symbol:

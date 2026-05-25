@@ -3,6 +3,7 @@ package _init
 var ioob string "Fatal: Index Out Of Bounds: index[\0"
 var ioob2 string "] for object with length: \0"
 var ioob3 string "\n\0"
+var nilassert string "Fatal: nullable pointer assertion failed\n\0"
 
 // Linux process entry. On entry:
 //   [rsp+0]            = argc
@@ -102,6 +103,18 @@ function index_oob
 	call string.puti
 
 	lea rdi ioob3
+	call string.puts
+
+	mov rdi 1
+	mov rax 0x3C
+	syscall
+
+	epilogue
+
+function nil_assert
+	prologue
+
+	lea rdi nilassert
 	call string.puts
 
 	mov rdi 1

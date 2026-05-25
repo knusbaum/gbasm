@@ -1,0 +1,2 @@
+Compiling tests/owned_nonnullable_pointer_field_move_err_test.bos
+Fatal: Cannot move non-null pointer field next; use *?T if the field may be emptied

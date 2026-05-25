@@ -1,0 +1,2 @@
+Compiling tests/nonnullable_pointer_var_no_init_err_test.bos
+Fatal: Variable "p" of type *mut i64 requires an initializer

@@ -1,0 +1,2 @@
+Compiling tests/new_type_arg_err_test.bos
+Fatal: new(T) is not implemented yet; use alloc(T) for zero-initializable types or new(expr)

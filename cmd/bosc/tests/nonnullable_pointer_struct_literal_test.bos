@@ -1,0 +1,10 @@
+package main
+
+struct cursor {
+	current *mut i64
+}
+
+fn main() {
+	var x i64
+	var c cursor = cursor{current: &x}
+}

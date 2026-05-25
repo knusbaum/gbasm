@@ -30,6 +30,9 @@ type Context struct {
 
 	// maps variable names to their types.
 	bindings map[string]ASTType
+	// temporarily refined expression types, such as *?T narrowed to *T
+	// inside an if (p) branch.
+	typeRefinements map[string]ASTType
 	// names that ToAST registered into bindings at the top level so that
 	// function bodies declared earlier in source can resolve forward
 	// references. The *VarDecl handler in Compile consumes the marker
@@ -89,16 +92,17 @@ type Context struct {
 
 func NewContext() *Context {
 	return &Context{
-		bindings:      make(map[string]ASTType),
-		prebound:      make(map[string]bool),
-		addressNames:  make(map[string]bool),
-		constBindings: make(map[string]bool),
-		movedBindings: make(map[string]bool),
-		structs:       make(map[string]*StructDecl),
-		funcs:         make(map[string]*FuncDecl),
-		imports:       make(map[string]map[string]*FuncDecl),
-		typeAliases:   make(map[string]ASTType),
-		strngs:        make(map[string]string),
+		bindings:        make(map[string]ASTType),
+		typeRefinements: make(map[string]ASTType),
+		prebound:        make(map[string]bool),
+		addressNames:    make(map[string]bool),
+		constBindings:   make(map[string]bool),
+		movedBindings:   make(map[string]bool),
+		structs:         make(map[string]*StructDecl),
+		funcs:           make(map[string]*FuncDecl),
+		imports:         make(map[string]map[string]*FuncDecl),
+		typeAliases:     make(map[string]ASTType),
+		strngs:          make(map[string]string),
 	}
 }
 
@@ -266,6 +270,18 @@ func (c *Context) BindVar(a AST, name string, t ASTType, isConst bool) {
 	c.constBindings[name] = isConst
 }
 
+func (c *Context) RefineVarType(name string, t ASTType) func() {
+	old, hadOld := c.typeRefinements[name]
+	c.typeRefinements[name] = t
+	return func() {
+		if hadOld {
+			c.typeRefinements[name] = old
+		} else {
+			delete(c.typeRefinements, name)
+		}
+	}
+}
+
 // Move marks an owned binding as consumed. Walks the parent chain to find the
 // context that owns the binding so the state is stored in the right place.
 func (c *Context) Move(name string) {
@@ -393,6 +409,7 @@ func (c *Context) ResolveUnderlying(t ASTType) ASTType {
 		result := underlying
 		result.MutMask = t.MutMask
 		result.OwnedMask = t.OwnedMask
+		result.NilMask = t.NilMask
 		return result
 	}
 	return t
@@ -438,9 +455,22 @@ func (c *Context) UnconsumedOwned() []string {
 	return out
 }
 
+// UnconsumedOwnedVisible returns unconsumed owned bindings in this context and
+// its parents. Used when a non-local exit such as return leaves all scopes.
+func (c *Context) UnconsumedOwnedVisible() []string {
+	var out []string
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		out = append(out, ctx.UnconsumedOwned()...)
+	}
+	return out
+}
+
 func (c *Context) TypeForVar(name string) (ASTType, bool) {
 	if c == nil {
 		return ASTType{}, false
+	}
+	if t, ok := c.typeRefinements[name]; ok {
+		return t, true
 	}
 	if t, ok := c.bindings[name]; ok {
 		return t, true
@@ -835,6 +865,7 @@ type ASTType struct {
 	Signed      bool     // signed integer marker for scalar/pointee leaf
 	MutMask     uint64   // write-through bit per level
 	OwnedMask   uint64   // ownership bit per level
+	NilMask     uint64   // nullable pointer bit per pointer level
 	FuncSig     *FuncSig // when set: function-pointer type, pointer-sized
 }
 
@@ -936,7 +967,8 @@ func (t ASTType) SameExact(t2 ASTType) bool {
 		t.Indirection != t2.Indirection ||
 		t.ArraySize != t2.ArraySize ||
 		t.MutMask != t2.MutMask ||
-		t.OwnedMask != t2.OwnedMask {
+		t.OwnedMask != t2.OwnedMask ||
+		t.NilMask != t2.NilMask {
 		return false
 	}
 	// Compare Element recursively when present.
@@ -1009,6 +1041,36 @@ func (t ASTType) HasOwned() bool {
 	return false
 }
 
+func (t ASTType) ZeroInitializable(c *Context) bool {
+	if t.Indirection > 0 {
+		return t.NilMask&1 != 0
+	}
+	if t.FuncSig != nil {
+		return false
+	}
+	if t.IsSlice() {
+		return true
+	}
+	if t.IsArray() {
+		return t.Element.ZeroInitializable(c)
+	}
+	if underlying := c.ResolveUnderlying(t); underlying.Name != t.Name ||
+		underlying.Indirection != t.Indirection ||
+		underlying.ArraySize != t.ArraySize ||
+		(underlying.Element == nil) != (t.Element == nil) ||
+		(underlying.FuncSig == nil) != (t.FuncSig == nil) {
+		return underlying.ZeroInitializable(c)
+	}
+	if def, ok := c.StructDeclForName(t.Name); ok {
+		for _, field := range def.Fields {
+			if !fieldTypeForBase(t, field.Type).ZeroInitializable(c) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // SameOwned reports whether two types carry the same ownership shape.
 func (t ASTType) SameOwned(t2 ASTType) bool {
 	if t.Name != t2.Name ||
@@ -1062,6 +1124,24 @@ func (t ASTType) StripOwned() ASTType {
 	return t
 }
 
+func (dst ASTType) NilCompatible(src ASTType) bool {
+	if dst.Name != src.Name ||
+		dst.Indirection != src.Indirection ||
+		dst.ArraySize != src.ArraySize {
+		return false
+	}
+	if (dst.Element == nil) != (src.Element == nil) {
+		return false
+	}
+	if dst.Element != nil && !dst.Element.NilCompatible(*src.Element) {
+		return false
+	}
+	if src.NilMask&^dst.NilMask != 0 {
+		return false
+	}
+	return true
+}
+
 // MutCompatible reports whether src can be used where dst is expected,
 // considering only write-through coercion. A more-permissive reference
 // (*mut T) is acceptable where a less-permissive one (*T) is expected; the
@@ -1096,12 +1176,13 @@ func (dst ASTType) Accepts(src ASTType) bool {
 		return true
 	}
 	if src.Name == "<nil>" {
-		return dst.Indirection > 0 || dst.FuncSig != nil
+		return dst.Indirection > 0 && dst.NilMask != 0
 	}
 	if !dst.HasOwned() {
-		return dst.MutCompatible(src.StripOwned())
+		src = src.StripOwned()
+		return dst.MutCompatible(src) && dst.NilCompatible(src)
 	}
-	return dst.SameOwned(src) && dst.MutCompatible(src)
+	return dst.SameOwned(src) && dst.MutCompatible(src) && dst.NilCompatible(src)
 }
 
 func (t ASTType) String() string {
@@ -1112,6 +1193,9 @@ func (t ASTType) String() string {
 	}
 	for i := 0; i < t.Indirection; i++ {
 		sb.WriteRune('*')
+		if t.NilMask&(1<<uint(i)) != 0 {
+			sb.WriteRune('?')
+		}
 		if t.MutMask&(1<<uint(i+1)) != 0 {
 			sb.WriteString("mut ")
 		}
@@ -1183,6 +1267,7 @@ func mkTypename(n *Node) ASTType {
 			FuncSig:   &sig,
 			MutMask:   n.mutmask,
 			OwnedMask: n.ownedmask,
+			NilMask:   n.nilmask,
 		}
 	}
 	// Start with the bare base type (scalar or pointer). n.args lists
@@ -1193,6 +1278,7 @@ func mkTypename(n *Node) ASTType {
 		Indirection: int(n.ival),
 		MutMask:     n.mutmask,
 		OwnedMask:   n.ownedmask,
+		NilMask:     n.nilmask,
 	}
 	switch base.Name {
 	case "i8", "i16", "i32", "i64":
@@ -1423,6 +1509,23 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 		t.Indirection++
 		t.MutMask <<= 1
 		t.OwnedMask <<= 1
+		t.NilMask <<= 1
+		t.OwnedMask |= 1
+		t.MutMask |= 1 << 1
+		return t
+	}
+	if f.Pkg == "" && f.FName == "new" {
+		if len(f.Args) != 1 {
+			CompileErrorF(f, "new(expr) requires exactly one argument")
+		}
+		if _, ok := typeExprFromAST(c, f.Args[0]); ok {
+			CompileErrorF(f.Args[0], "new(T) is not implemented yet; use alloc(T) for zero-initializable types or new(expr)")
+		}
+		t := f.Args[0].ASTType(c)
+		t.Indirection++
+		t.MutMask <<= 1
+		t.OwnedMask <<= 1
+		t.NilMask <<= 1
 		t.OwnedMask |= 1
 		t.MutMask |= 1 << 1
 		return t
@@ -1480,7 +1583,9 @@ type Dot struct {
 func (d *Dot) ASTType(c *Context) ASTType {
 	t := d.Val.ASTType(c)
 	if t.Indirection != 0 {
-
+		if t.NilMask&1 != 0 {
+			CompileErrorF(d.Val, "Cannot access field %s through nullable pointer type %s", d.Member, t)
+		}
 	}
 	decl, ok := c.StructDeclForName(t.Name)
 	if !ok {
@@ -1512,8 +1617,12 @@ func (d *Deref) ASTType(c *Context) ASTType {
 	if t.Indirection == 0 {
 		panic("Cannot dereference non-pointer. TODO: Nice error reports.")
 	}
+	if t.NilMask&1 != 0 {
+		CompileErrorF(d.Val, "Cannot dereference nullable pointer type %s", t)
+	}
 	t.Indirection -= 1
 	t.MutMask >>= 1 // consume the outermost pointer level's mut bit
+	t.NilMask >>= 1
 	// If the result is a plain non-pointer, non-slice/array value, MutMask is
 	// meaningless (binding mutability is tracked in constBindings, not here).
 	if t.Indirection == 0 && !t.IsSliceOrArray() {
@@ -1528,6 +1637,28 @@ func (d *Deref) Note() string {
 
 func (d *Deref) Pos() position {
 	return d.Val.Pos()
+}
+
+type NonNullAssert struct {
+	Val AST
+	p   position
+}
+
+func (n *NonNullAssert) ASTType(c *Context) ASTType {
+	t := n.Val.ASTType(c)
+	if t.Indirection == 0 || t.NilMask&1 == 0 {
+		CompileErrorF(n, "Postfix ? requires a nullable pointer, got %s", t)
+	}
+	t.NilMask &^= 1
+	return t
+}
+
+func (n *NonNullAssert) Note() string {
+	return fmt.Sprintf("nonnull (%s)?", n.Val.Note())
+}
+
+func (n *NonNullAssert) Pos() position {
+	return n.p
 }
 
 // Address represents the `&` operator. Two forms:
@@ -1573,6 +1704,7 @@ func (a *Address) ASTType(c *Context) ASTType {
 	// Adding one pointer level: shift existing mut/owned bits up by one position.
 	t.MutMask <<= 1
 	t.OwnedMask <<= 1
+	t.NilMask <<= 1
 	// &x places x at position 1 in the new type (one deref through the new pointer
 	// reaches x's binding). If x is var, bit 1 = write-through to x's value.
 	if !c.IsConst(a.Var) {
@@ -1776,6 +1908,23 @@ func (o *Op2) Note() string {
 
 func (o *Op2) Pos() position {
 	return o.First.Pos()
+}
+
+type Not struct {
+	Val AST
+	p   position
+}
+
+func (n *Not) ASTType(*Context) ASTType {
+	return boolASTType()
+}
+
+func (n *Not) Note() string {
+	return fmt.Sprintf("not (%s)", n.Val.Note())
+}
+
+func (n *Not) Pos() position {
+	return n.p
 }
 
 type Return struct {
@@ -2115,6 +2264,8 @@ func (n *Node) toASTTop(c *Context) AST {
 		return &d
 	case n_deref:
 		return &Deref{Val: n.args[0].toASTTop(NewContext())}
+	case n_nonnull:
+		return &NonNullAssert{Val: n.args[0].toASTTop(NewContext()), p: n.p}
 	case n_symbol:
 		if n.sval == "nil" {
 			return &Literal{Val: nil, p: n.p}
@@ -2226,6 +2377,8 @@ func (n *Node) toASTTop(c *Context) AST {
 			First:  &Literal{Val: uint64(0)},
 			Second: n.args[0].toASTTop(NewContext()),
 		}
+	case n_not:
+		return &Not{Val: n.args[0].toASTTop(NewContext()), p: n.p}
 	case n_return:
 		return &Return{
 			Val: n.args[0].toASTTop(NewContext()),

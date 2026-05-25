@@ -1,0 +1,2 @@
+Compiling tests/nullable_deref_err_test.bos
+Fatal: Cannot dereference nullable pointer type *?mut i64

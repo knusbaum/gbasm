@@ -1,0 +1,20 @@
+package main
+
+import "string"
+
+fn main() {
+	var x i64
+	if(!x) {
+		string.puts("zero\n")
+	}
+	x = 1
+	if(!x) {
+		string.puts("wrong\n")
+	} else {
+		string.puts("nonzero\n")
+	}
+	var p *?mut i64 = nil
+	if(!p) {
+		string.puts("nil\n")
+	}
+}

@@ -1,0 +1,14 @@
+package main
+
+fn main() {
+	var x owned i64
+	x = 1
+	for(;;) {
+		if (x == 1) {
+			dispose(x)
+			return 0
+		}
+		break
+	}
+	dispose(x)
+}

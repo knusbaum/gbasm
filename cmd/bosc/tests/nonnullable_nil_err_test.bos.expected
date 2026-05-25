@@ -1,0 +1,2 @@
+Compiling tests/nonnullable_nil_err_test.bos
+Fatal: Cannot initialize *mut i64 with value of type <nil>

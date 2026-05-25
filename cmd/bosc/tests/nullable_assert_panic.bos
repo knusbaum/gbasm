@@ -1,0 +1,6 @@
+package main
+
+fn main() {
+	var p *?mut i64 = nil
+	var x i64 = *p?
+}

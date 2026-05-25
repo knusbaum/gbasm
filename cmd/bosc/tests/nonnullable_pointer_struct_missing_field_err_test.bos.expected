@@ -1,0 +1,2 @@
+Compiling tests/nonnullable_pointer_struct_missing_field_err_test.bos
+Fatal: Missing non-zero-initializable field cursor.current in struct literal

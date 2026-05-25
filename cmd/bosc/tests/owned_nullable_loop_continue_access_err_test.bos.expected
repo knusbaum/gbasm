@@ -1,0 +1,2 @@
+Compiling tests/owned_nullable_loop_continue_access_err_test.bos
+Fatal: Cannot access field next through nullable pointer type owned *?mut owned node

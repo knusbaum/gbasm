@@ -1,0 +1,2 @@
+Compiling tests/alloc_nonzeroinit_err_test.bos
+Fatal: alloc(cursor) requires a zero-initializable type; use new(expr) to allocate initialized storage

@@ -1,0 +1,8 @@
+package main
+
+fn main() {
+	var p owned *?mut i64 = nil
+	if (p) {
+		free(p)
+	}
+}

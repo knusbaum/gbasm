@@ -1,0 +1,10 @@
+package main
+
+struct node {
+	value i64
+}
+
+fn main() {
+	var n owned *mut node = new(node)
+	free(n)
+}

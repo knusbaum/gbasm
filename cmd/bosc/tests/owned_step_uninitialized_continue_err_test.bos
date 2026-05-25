@@ -1,12 +1,12 @@
 package main
 
 struct node {
-	next owned *owned mut node
+	next owned *?owned mut node
 }
 
-fn destroy(l owned *owned mut node) {
-	var curr owned *owned mut node = l
-	var next owned *owned mut node
+fn destroy(l owned *?owned mut node) {
+	var curr owned *?owned mut node = l
+	var next owned *?owned mut node
 	for(; curr != nil; curr = next) {
 		free(curr)
 		continue
@@ -16,8 +16,8 @@ fn destroy(l owned *owned mut node) {
 }
 
 fn main() {
-	var head owned *owned mut node = owned(alloc(node))
-	var raw_head *mut node = head
+	var head owned *?owned mut node = owned(alloc(node))
+	var raw_head *?mut node = head
 	raw_head.next = nil
 	destroy(head)
 }

@@ -32,6 +32,9 @@ func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
 	c.MarkAddress(ast.Name)
 	size := ast.Type.Size(c)
 	if ast.Init == nil {
+		if !ast.Type.ZeroInitializable(c) {
+			CompileErrorF(a, "Variable \"%s\" of type %s requires an initializer", ast.Name, ast.Type)
+		}
 		// Zero-init form: bas allocates `size` zero bytes.
 		fmt.Fprintf(of, "var %s %s %d\n", ast.Name, ast.Type, size)
 		return
@@ -335,7 +338,11 @@ func encodeStructLiteralBytes(c *Context, dstt ASTType, lit *StructLiteral) ([]b
 	for _, fld := range decl.Fields {
 		val, ok := provided[fld.Name]
 		if !ok {
-			return nil, nil, fmt.Errorf("struct literal is missing field %q of %s", fld.Name, dstt.Name)
+			if !fld.Type.ZeroInitializable(c) {
+				return nil, nil, fmt.Errorf("struct literal is missing field %q of %s", fld.Name, dstt.Name)
+			}
+			out = append(out, make([]byte, fld.Type.Size(c))...)
+			continue
 		}
 		fbytes, frelocs, err := encodeStaticInit(c, fld.Type, val)
 		if err != nil {

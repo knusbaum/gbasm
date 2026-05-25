@@ -1,3 +1,16 @@
+all: bld bas bosc
+
+.PHONY: bld bas bosc
+
+bld:
+	go build ./cmd/bld
+
+bas:
+	go build ./cmd/bas
+
+bosc:
+	go build ./cmd/bosc
+
 test: go_test bas_test bosc_test
 
 go_test:

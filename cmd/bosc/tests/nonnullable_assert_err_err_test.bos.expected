@@ -1,0 +1,2 @@
+Compiling tests/nonnullable_assert_err_err_test.bos
+Fatal: Postfix ? requires a nullable pointer, got *mut i64

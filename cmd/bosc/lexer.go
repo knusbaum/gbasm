@@ -30,11 +30,14 @@ const (
 	tok_plus
 	tok_minus
 	tok_star
+	tok_maybe_ptr
+	tok_question
 	tok_amp
 	tok_fslash
 	tok_eq
 	tok_deq // Double-equals
 	tok_neq
+	tok_not
 	tok_lt
 	tok_gt
 	tok_le
@@ -70,12 +73,12 @@ var keywords map[string]toktype = map[string]toktype{
 	"continue": tok_continue,
 	"struct":   tok_struct,
 	"import":   tok_import,
-	"var":     tok_var,
-	"const":   tok_const,
-	"mut":     tok_mut,
-	"owned":   tok_owned,
-	"dispose": tok_dispose,
-	"type":    tok_type,
+	"var":      tok_var,
+	"const":    tok_const,
+	"mut":      tok_mut,
+	"owned":    tok_owned,
+	"dispose":  tok_dispose,
+	"type":     tok_type,
 }
 
 const (
@@ -128,6 +131,10 @@ func (t toktype) String() string {
 		return "tok_minus"
 	case tok_star:
 		return "tok_star"
+	case tok_maybe_ptr:
+		return "tok_maybe_ptr"
+	case tok_question:
+		return "tok_question"
 	case tok_amp:
 		return "tok_amp"
 	case tok_fslash:
@@ -138,6 +145,8 @@ func (t toktype) String() string {
 		return "tok_deq"
 	case tok_neq:
 		return "tok_neq"
+	case tok_not:
+		return "tok_not"
 	case tok_lt:
 		return "tok_lt"
 	case tok_gt:
@@ -531,7 +540,14 @@ func (l *lexer) Next() (rt token, re error) {
 		return token{t: tok_plus, p: l.p}, nil
 	case '*':
 		l.nextRune()
+		if l.headRune() == '?' {
+			l.nextRune()
+			return token{t: tok_maybe_ptr, p: l.p}, nil
+		}
 		return token{t: tok_star, p: l.p}, nil
+	case '?':
+		l.nextRune()
+		return token{t: tok_question, p: l.p}, nil
 	case '&':
 		l.nextRune()
 		if l.headRune() == '&' {
@@ -561,7 +577,7 @@ func (l *lexer) Next() (rt token, re error) {
 			l.nextRune()
 			return token{t: tok_neq, p: l.p}, nil
 		}
-		panic("NOT not implemented")
+		return token{t: tok_not, p: l.p}, nil
 	case '=':
 		l.nextRune()
 		if l.headRune() == '=' {

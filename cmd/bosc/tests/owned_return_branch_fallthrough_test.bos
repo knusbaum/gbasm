@@ -1,0 +1,17 @@
+package main
+
+fn consume(v owned i64) {
+	dispose(v)
+}
+
+fn main() {
+	var x owned i64
+	x = 1
+	var b bool
+	b = (1 == 1)
+	if (b) {
+		consume(x)
+		return 0
+	}
+	dispose(x)
+}

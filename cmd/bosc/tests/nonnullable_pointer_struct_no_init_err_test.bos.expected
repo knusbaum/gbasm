@@ -1,0 +1,2 @@
+Compiling tests/nonnullable_pointer_struct_no_init_err_test.bos
+Fatal: Variable "c" of type cursor requires an initializer

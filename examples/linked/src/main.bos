@@ -1,0 +1,76 @@
+package main
+
+import "string"
+
+struct node {
+	val i64
+	next owned *?owned mut node
+}
+
+fn list_new(val i64) owned *owned mut node {
+	const n owned *owned mut node = new(node{val: val, next: nil})
+	return n
+}
+
+fn list_append(l *mut node, val i64) {
+	const n owned *owned mut node = owned(alloc(node))
+	n.val = val
+
+	var curr *mut node = l
+	for(; curr.next != nil; curr = curr.next?) {}
+	curr.next = n
+	dispose(n)
+}
+
+fn list_print(l *node) {
+	var curr *?node = l
+	string.puts("[")
+	for(; curr != nil; curr = curr?.next) {
+		var cur *node = curr?
+		string.puti(cur.val)
+		if(cur.next != nil) {
+			string.puts(", ")
+		}
+	}
+	string.puts("]\n")
+}
+
+fn list_destroy(l owned *owned mut node) {
+	var curr owned *owned mut node = l
+	var next owned *?owned mut node
+	for(;;) {
+		next = curr.next
+		free(curr)
+		if (!next) {
+			break
+		} else {
+			curr = next
+		}
+	}
+}
+
+fn main(args byte[][]) {
+	const lst owned *owned mut node = list_new(10)
+	list_append(lst, 20)
+	list_append(lst, 30)
+	list_print(lst)
+	list_destroy(lst)
+	
+	// const n owned *owned mut node = owned(alloc(node))
+	// n.val = 10
+
+	// const un2 owned *mut node = owned(alloc(node))
+	// un2.val = 20
+	// un2.next = n
+	// //dispose(un2)
+	// const n2 owned *owned mut node = owned(un2)
+	// dispose(un2)
+	
+	// string.puts("Hello, World!\n")
+	// string.puti(n.val)
+	// string.puts("\n")
+	// string.puti(n2.val)
+	// string.puts("\n")
+	// free(n)
+	// free(n2)
+}

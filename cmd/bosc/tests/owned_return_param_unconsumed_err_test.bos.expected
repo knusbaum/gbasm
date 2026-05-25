@@ -1,0 +1,2 @@
+Compiling tests/owned_return_param_unconsumed_err_test.bos
+Fatal: Owned binding "v" goes out of scope without being consumed; call dispose() or pass it to a consuming function

@@ -1,0 +1,11 @@
+package main
+
+fn main() {
+	var x i64
+	var p *?mut i64 = &x
+	var q *mut i64 = &x
+	if (p) {
+		q = p
+		*q = 7
+	}
+}

@@ -1,0 +1,5 @@
+package main
+
+fn main() {
+	var p *mut i64
+}

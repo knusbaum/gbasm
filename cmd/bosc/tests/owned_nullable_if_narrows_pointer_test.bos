@@ -1,0 +1,10 @@
+package main
+
+fn main() {
+	var p owned *?mut i64 = alloc(i64)
+	if (p) {
+		var q owned *mut i64 = p
+		free(q)
+		return 0
+	}
+}

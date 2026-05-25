@@ -1,0 +1,11 @@
+package main
+
+fn unwrap(p owned *?mut i64) owned *mut i64 {
+	return p?
+}
+
+fn main() {
+	var p owned *?mut i64 = alloc(i64)
+	var q owned *mut i64 = unwrap(p)
+	free(q)
+}

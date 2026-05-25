@@ -44,7 +44,8 @@ Boson is a statically typed, imperative language. It is intentionally small: no 
 
 | Type | Description |
 |------|-------------|
-| `*T` | Pointer to T |
+| `*T` | Non-null pointer to T |
+| `*?T` | Nullable pointer to T |
 | `T[]` | Slice (fat pointer: data pointer + length, 16 bytes) |
 | `T[N]` | Fixed-size array |
 | `struct { ... }` | Named record type |
@@ -59,6 +60,7 @@ String literals have type `byte[]` (an immutable slice of bytes). The data is st
 Three orthogonal qualifiers can apply to types:
 
 - **`mut`** — write-through mutability for pointers and slices. `*mut T` lets you write to T through the pointer; `*T` does not. Nests independently at each pointer level (`*mut *T`, `**mut T`).
+- **`?` on pointers** — nullability marker. `*T` is non-null; `*?T` may be `nil`. Non-null pointers can be used where nullable pointers are expected, but nullable pointers cannot be used where non-null pointers are expected without a future refinement/checking mechanism.
 - **`owned`** — compile-time ownership obligation that must be discharged before the variable goes out of scope. See [Ownership](#ownership).
 - **`const` / `var`** — binding mutability: whether the named binding itself can be rebound. Distinct from `mut`. Defaults: `const` for function parameters (use `var` to opt out), explicit on local declarations.
 
@@ -1148,7 +1150,7 @@ The Go side (encoder, decoder, parser unit tests) and the integration test suite
 make test       # Run all test suites
 make go_test    # Go unit tests
 make bas_test   # Assembler integration tests (38 tests)
-make bosc_test  # Compiler integration tests (118 tests)
+make bosc_test  # Compiler integration tests (121 tests)
 ```
 
 Each compiler integration test:

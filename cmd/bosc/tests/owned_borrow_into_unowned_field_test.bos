@@ -6,7 +6,6 @@ struct holder {
 
 fn main() {
 	var p owned *mut i64 = alloc(i64)
-	var h holder
-	h.next = p
+	var h holder = holder{next: p}
 	free(p)
 }

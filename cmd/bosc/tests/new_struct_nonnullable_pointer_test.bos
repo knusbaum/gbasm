@@ -1,0 +1,11 @@
+package main
+
+struct cursor {
+	current *mut i64
+}
+
+fn main() {
+	var x i64
+	var c owned *mut cursor = new(cursor{current: &x})
+	free(c)
+}

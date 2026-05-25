@@ -1,0 +1,13 @@
+package main
+
+struct box {
+	next owned *mut i64
+}
+
+fn main() {
+	var p owned *mut i64 = alloc(i64)
+	var b owned box = box{next: p}
+	var next owned *mut i64 = b.next
+	free(next)
+	dispose(b)
+}

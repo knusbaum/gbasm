@@ -1,0 +1,7 @@
+package main
+
+fn main() {
+	var x i64
+	var p *mut i64 = &x
+	var y i64 = *p?
+}
