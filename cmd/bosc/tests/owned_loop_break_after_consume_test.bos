@@ -1,0 +1,9 @@
+package main
+
+fn main() {
+	var p owned *mut i64 = alloc(i64)
+	for(;;) {
+		free(p)
+		break
+	}
+}

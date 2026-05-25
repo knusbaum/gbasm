@@ -72,11 +72,13 @@ type Context struct {
 
 	// return, continue, break label stack. Return returns from the current Context
 	// by jumping to the label. Continue and break do the usual within loops.
-	retlabs   []string
-	rettypes  []ASTType
-	contlabs  []string
-	breaklabs []string
-	labeli    int
+	retlabs     []string
+	rettypes    []ASTType
+	contlabs    []string
+	breaklabs   []string
+	contStates  [][]map[string]bool
+	breakStates [][]map[string]bool
+	labeli      int
 
 	// Counter for temporaries
 	tempi int
@@ -524,6 +526,7 @@ func (c *Context) PushContLabel() string {
 	}
 	l := c.Label("cont")
 	c.contlabs = append(c.contlabs, l)
+	c.contStates = append(c.contStates, nil)
 	return l
 }
 
@@ -533,11 +536,22 @@ func (c *Context) PopContLabel() {
 		return
 	}
 	c.contlabs = c.contlabs[:len(c.contlabs)-1]
+	c.contStates = c.contStates[:len(c.contStates)-1]
 }
 
 func (c *Context) Continue(a AST, of io.Writer) {
 	if c.parent != nil {
-		c.parent.Continue(a, of)
+		c.RecordContinue(c.OwnedBindingsSnapshot())
+		c.parent.emitContinue(a, of)
+		return
+	}
+	c.RecordContinue(c.OwnedBindingsSnapshot())
+	c.emitContinue(a, of)
+}
+
+func (c *Context) emitContinue(a AST, of io.Writer) {
+	if c.parent != nil {
+		c.parent.emitContinue(a, of)
 		return
 	}
 	if len(c.contlabs) == 0 {
@@ -546,12 +560,35 @@ func (c *Context) Continue(a AST, of io.Writer) {
 	fmt.Fprintf(of, "\tjmp %s\n", c.contlabs[len(c.contlabs)-1])
 }
 
+func (c *Context) RecordContinue(snap map[string]bool) {
+	if c.parent != nil {
+		c.parent.RecordContinue(snap)
+		return
+	}
+	if len(c.contStates) == 0 {
+		return
+	}
+	i := len(c.contStates) - 1
+	c.contStates[i] = append(c.contStates[i], snap)
+}
+
+func (c *Context) ContinueStates() []map[string]bool {
+	if c.parent != nil {
+		return c.parent.ContinueStates()
+	}
+	if len(c.contStates) == 0 {
+		return nil
+	}
+	return append([]map[string]bool(nil), c.contStates[len(c.contStates)-1]...)
+}
+
 func (c *Context) PushBreakLabel() string {
 	if c.parent != nil {
 		return c.parent.PushBreakLabel()
 	}
 	l := c.Label("break")
 	c.breaklabs = append(c.breaklabs, l)
+	c.breakStates = append(c.breakStates, nil)
 	return l
 }
 
@@ -561,14 +598,47 @@ func (c *Context) PopBreakLabel() {
 		return
 	}
 	c.breaklabs = c.breaklabs[:len(c.breaklabs)-1]
+	c.breakStates = c.breakStates[:len(c.breakStates)-1]
 }
 
 func (c *Context) Break(of io.Writer) {
 	if c.parent != nil {
-		c.parent.Break(of)
+		c.RecordBreak(c.OwnedBindingsSnapshot())
+		c.parent.emitBreak(of)
+		return
+	}
+	c.RecordBreak(c.OwnedBindingsSnapshot())
+	c.emitBreak(of)
+}
+
+func (c *Context) emitBreak(of io.Writer) {
+	if c.parent != nil {
+		c.parent.emitBreak(of)
 		return
 	}
 	fmt.Fprintf(of, "\tjmp %s\n", c.breaklabs[len(c.breaklabs)-1])
+}
+
+func (c *Context) RecordBreak(snap map[string]bool) {
+	if c.parent != nil {
+		c.parent.RecordBreak(snap)
+		return
+	}
+	if len(c.breakStates) == 0 {
+		return
+	}
+	i := len(c.breakStates) - 1
+	c.breakStates[i] = append(c.breakStates[i], snap)
+}
+
+func (c *Context) BreakStates() []map[string]bool {
+	if c.parent != nil {
+		return c.parent.BreakStates()
+	}
+	if len(c.breakStates) == 0 {
+		return nil
+	}
+	return append([]map[string]bool(nil), c.breakStates[len(c.breakStates)-1]...)
 }
 
 // Push a new return label onto the return stack

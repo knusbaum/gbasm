@@ -184,6 +184,24 @@ func sameIgnoringOwned(a, b ASTType) bool {
 	return a.StripOwned().Same(b.StripOwned())
 }
 
+func fallsThrough(a AST) bool {
+	switch ast := a.(type) {
+	case *Break, *Continue, *Return:
+		return false
+	case *Block:
+		for _, st := range ast.Body {
+			if !fallsThrough(st) {
+				return false
+			}
+		}
+		return true
+	case *IfStmt:
+		return ast.Else == nil || fallsThrough(ast.Then) || fallsThrough(ast.Else)
+	default:
+		return true
+	}
+}
+
 func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST) {
 	if !expected.HasOwned() {
 		return
@@ -696,6 +714,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			note(of, "\n")
 			s := compileTop(of, sc, st, nullspot)
 			s.free(of)
+			if !fallsThrough(st) {
+				break
+			}
 		}
 		// Scope-exit: every owned binding declared in this block must be consumed.
 		for _, name := range sc.UnconsumedOwned() {
@@ -1258,29 +1279,81 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, "\tjz %s\n", end)
 			v.free(of)
 		}
+		bodyFallsThrough := fallsThrough(ast.Body)
 		v := compileTop(of, c, ast.Body, nullspot)
 		if !v.empty() {
 			v.free(of)
 		}
 		snapAfterBody := c.OwnedBindingsSnapshot()
+		continueStates := c.ContinueStates()
+		breakStates := c.BreakStates()
+
 		fmt.Fprintf(of, "\tlabel %s\n", cont)
-		if ast.Step != nil {
+		var backedgeStates []map[string]bool
+		if bodyFallsThrough {
+			backedgeStates = append(backedgeStates, snapAfterBody)
+		}
+		backedgeStates = append(backedgeStates, continueStates...)
+		if len(backedgeStates) > 0 {
+			c.RestoreOwnedBindings(backedgeStates[0])
+		}
+		if ast.Step != nil && len(backedgeStates) > 0 {
 			v = compileTop(of, c, ast.Step, nullspot)
 			if !v.empty() {
 				v.free(of)
 			}
 		}
+		snapAfterLoop := c.OwnedBindingsSnapshot()
+		if len(backedgeStates) > 1 {
+			for _, state := range backedgeStates[1:] {
+				c.RestoreOwnedBindings(state)
+				if ast.Step != nil {
+					v := compileTop(io.Discard, c, ast.Step, nullspot)
+					if !v.empty() {
+						v.free(io.Discard)
+					}
+				}
+			}
+		}
+		c.RestoreOwnedBindings(snapAfterLoop)
+		if ast.Cond != nil && len(backedgeStates) > 0 {
+			v := compileTop(io.Discard, c, ast.Cond, nullspot)
+			if !v.empty() {
+				v.free(io.Discard)
+			}
+			c.RestoreOwnedBindings(snapAfterLoop)
+		}
 		fmt.Fprintf(of, "\tjmp %s\n", start)
 		fmt.Fprintf(of, "\tlabel %s\n", end)
+
+		var exitStates []map[string]bool
+		if ast.Cond != nil {
+			normalExit := snapBeforeLoop
+			if len(backedgeStates) > 0 {
+				normalExit = snapAfterLoop
+			}
+			exitStates = append(exitStates, normalExit)
+		}
+		exitStates = append(exitStates, breakStates...)
+		if len(exitStates) > 0 {
+			baseExit := exitStates[0]
+			for _, exit := range exitStates[1:] {
+				for name := range snapBeforeLoop {
+					if baseExit[name] != exit[name] {
+						CompileErrorF(a, "Owned binding \"%s\" has inconsistent state across loop exits", name)
+					}
+				}
+			}
+			c.RestoreOwnedBindings(baseExit)
+		}
 		c.PopBreakLabel()
 		c.PopContLabel()
 
-		// Check that no pre-loop owned var enters the next body invalid. Values
-		// consumed by the step are allowed: the body can re-establish them before
-		// the next step, as in linked-list destruction's curr/next handoff.
-		snapAfterLoop := c.OwnedBindingsSnapshot()
+		// Check that no pre-loop owned var reaches a loop backedge invalid.
+		// Values consumed in the body are allowed only if the step re-establishes
+		// them before the next condition/body.
 		for name, wasMoved := range snapBeforeLoop {
-			if !wasMoved && snapAfterBody[name] && snapAfterLoop[name] {
+			if !wasMoved && len(backedgeStates) > 0 && snapAfterLoop[name] {
 				CompileErrorF(a, "Owned binding \"%s\" is consumed inside a loop body; this would be invalid on the second iteration", name)
 			}
 		}

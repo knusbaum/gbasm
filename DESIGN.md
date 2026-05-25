@@ -1148,7 +1148,7 @@ The Go side (encoder, decoder, parser unit tests) and the integration test suite
 make test       # Run all test suites
 make go_test    # Go unit tests
 make bas_test   # Assembler integration tests (38 tests)
-make bosc_test  # Compiler integration tests (113 tests)
+make bosc_test  # Compiler integration tests (118 tests)
 ```
 
 Each compiler integration test:

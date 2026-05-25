@@ -1,0 +1,2 @@
+Compiling tests/owned_step_uninitialized_continue_err_test.bos
+Fatal: Use of "next" after it was moved
