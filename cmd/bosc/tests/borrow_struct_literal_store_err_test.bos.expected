@@ -1,0 +1,2 @@
+Compiling tests/borrow_struct_literal_store_err_test.bos
+Fatal: Borrowed pointer escapes via field holder.n

@@ -1,0 +1,2 @@
+Compiling tests/borrow_branch_merge_return_err_test.bos
+Fatal: Borrowed pointer escapes via return

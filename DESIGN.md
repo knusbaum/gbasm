@@ -24,7 +24,7 @@ Each pipeline stage produces an inspectable intermediate artifact, which makes t
 
 ## The Boson Language
 
-Boson is a statically typed, imperative language. It is intentionally small: no dynamic memory allocation (yet), no generics (yet), no closures. Its feature set is roughly comparable to a restricted dialect of C with first-class ownership and write-through mutability tracking.
+Boson is a statically typed, imperative language. It is intentionally small: no generics (yet), no closures, and only a small compiler-supported allocator interface. Its feature set is roughly comparable to a restricted dialect of C with first-class ownership, nullable-pointer flow tracking, non-escaping borrows, and write-through mutability tracking.
 
 ### Types
 
@@ -60,7 +60,7 @@ String literals have type `byte[]` (an immutable slice of bytes). The data is st
 Three orthogonal qualifiers can apply to types:
 
 - **`mut`** — write-through mutability for pointers and slices. `*mut T` lets you write to T through the pointer; `*T` does not. Nests independently at each pointer level (`*mut *T`, `**mut T`).
-- **`?` on pointers** — nullability marker. `*T` is non-null; `*?T` may be `nil`. Non-null pointers can be used where nullable pointers are expected, but nullable pointers cannot be used where non-null pointers are expected without a future refinement/checking mechanism.
+- **`?` on pointers** — nullability marker. `*T` is non-null; `*?T` may be `nil`. Non-null pointers can be used where nullable pointers are expected. Nullable pointers require a proof or assertion before non-null use: `if (p) { ... }` narrows `p` to non-null inside the true branch, `if (!p) { ... } else { ... }` narrows it in the else branch, and postfix `p?` inserts a runtime nil check and produces a non-null pointer.
 - **`owned`** — compile-time ownership obligation that must be discharged before the variable goes out of scope. See [Ownership](#ownership).
 - **`const` / `var`** — binding mutability: whether the named binding itself can be rebound. Distinct from `mut`. Defaults: `const` for function parameters (use `var` to opt out), explicit on local declarations.
 
@@ -95,6 +95,18 @@ Unary: `-` (negation), `*` (dereference), `&` (address-of). Precedence: unary pr
 
 Struct field access uses `.` for both direct structs and pointer-to-struct (`p.x` auto-dereferences when needed).
 
+Postfix `?` asserts that a nullable pointer is non-null:
+
+```
+var p *?node = ...
+if (p) {
+    use(p)       // p is treated as *node in this branch
+}
+use(p?)          // runtime nil check, then *node
+```
+
+If flow analysis already knows the pointer is non-null, `p?` emits no runtime check. If flow analysis knows the pointer is nil, `p?` is a compile error.
+
 Array indexing: `arr[i]`. Slice/array bounds checking is inserted by the compiler; out-of-range indices call `_init.index_oob` which prints a diagnostic and exits.
 
 Slice operations: `s[lo:hi]`, `s[lo:]`, `s[:hi]` produce new slice headers without copying data.
@@ -118,6 +130,8 @@ continue
 return expr
 dispose(x)                // consume an owned binding (see Ownership)
 ```
+
+`for` loops are source-level sugar. The compiler lowers them to a block containing the initializer and an unconditional loop with an explicit conditional `break`, body, and step. `continue` inside a lowered `for` carries the step expression so loop ownership and nullability checks use the same control-flow machinery as other blocks and branches.
 
 **Statement boundaries.** Newlines terminate statements, following the Go convention. The lexer synthesizes a `;` after the last token of a line when that token can validly end a statement (identifiers, literals, `)`, `]`, `}`, `break`, `continue`, `return`). Newlines inside `(...)` or `[...]` are suppressed so multi-line argument lists, slice expressions, and continuation lines (e.g., a binary operator at the end of a line) work without ceremony. The parser sees a token stream with explicit `;` separators; users don't type them outside `for`-loop headers.
 
@@ -143,6 +157,8 @@ fn close(fd owned i64) {          // owned parameter — moves the obligation
     dispose(fd)
 }
 ```
+
+Pointer parameters without `owned` are non-escaping borrows by default. The callee may read or write through the pointer according to the pointer's `mut` bits, and may forward it to other non-owning calls, but may not return it or store it somewhere that outlives the call. See [Borrowing](#borrowing).
 
 Arguments follow the System V AMD64 ABI: the first six integer/pointer arguments go in RDI, RSI, RDX, RCX, R8, R9; additional arguments go on the stack. The return value goes in RAX.
 
@@ -217,9 +233,14 @@ The compiler also provides allocator built-ins:
 | Built-in | Type | Description |
 |----------|------|-------------|
 | `alloc(T)` | `owned *mut T` | Allocate writable storage for one `T`; consumes a type expression, not a runtime value |
+| `new(expr)` | `owned *mut T` | Allocate writable storage for the expression's type, initialize it with `expr`, and return an owned pointer |
 | `free(p)` | `void` | Free an `owned *T` / `owned *mut T` pointer and consume that pointer obligation |
 
-`alloc` and `free` lower to `_heap.alloc(size i64)` and `_heap.free(p *mut byte)` in the runtime. The bootstrap allocator is mmap-backed: each allocation is one mapping with a small size header, and `free` calls `munmap`. `free` consumes only allocation ownership (`owned *T`); it does not recursively dispose a pointee obligation such as `*owned T`.
+`alloc`, `new`, and `free` lower to `_heap.alloc(size i64)` and `_heap.free(p *mut byte)` in the runtime. The bootstrap allocator is mmap-backed: each allocation is one mapping with a small size header, and `free` calls `munmap`.
+
+`alloc(T)` is only valid for zero-initializable types. Types containing non-null pointers are not zero-initializable, so they must be constructed with `new(expr)` or some other initialized storage path.
+
+`free` consumes only allocation ownership (`owned *T`); it does not recursively dispose a pointee obligation such as `*owned T`. If the pointee is a struct with owned fields, those fields must already have been consumed before `free` is allowed.
 
 ### Struct Literals
 
@@ -228,6 +249,8 @@ struct point { x i64, y i64, z i64 }
 
 var p point = point{ x: 10, y: 20, z: 30 }
 ```
+
+Struct literals are context-typed. Omitted fields are zero-initialized only if the field's type is zero-initializable. Non-null pointer fields are not zero-initializable and must be provided explicitly.
 
 ### Built-in operations
 
@@ -321,7 +344,7 @@ close(fd)
 
 `const` bindings cannot be re-established — once moved, they remain invalid for the rest of the scope.
 
-The compiler tracks invalidity across all control flow paths. A variable that is moved on one branch but not another is invalid after the branch join:
+The compiler tracks invalidity across all control flow paths. A variable that is moved on one branch but not another is rejected at the branch join:
 
 ```
 fn maybe_close(fd owned i64, should_close bool) void {
@@ -332,7 +355,7 @@ fn maybe_close(fd owned i64, should_close bool) void {
 }
 ```
 
-Every path through a function must either consume every owned obligation or pass it to a function that will. The compiler also rejects consuming an outer-scope `owned` variable inside a `for` loop body: the second iteration would re-enter with an invalid variable.
+Every path through a function must either consume every owned obligation or pass it to a function that will. Loop backedges and loop exits are checked separately: all paths that continue to the next iteration must agree on owned state, and all paths that leave the loop must agree on owned state. A loop body that consumes an outer-scope `owned` variable without re-establishing it before the next iteration is rejected.
 
 ### `dispose`
 
@@ -444,6 +467,39 @@ var b owned box = make_box()
 b.x = 1           // COMPILE ERROR
 ```
 
+Owned nullable pointer fields may be moved out of an owned aggregate. Moving such a field copies the pointer to the destination, writes `nil` back into the original field, and records that the field's ownership obligation has been consumed:
+
+```
+struct node {
+    val i64
+    next owned *?owned mut node
+}
+
+fn destroy_one(n owned *owned mut node) owned *?owned mut node {
+    var next owned *?owned mut node = n.next  // consumes n.next, sets n.next = nil
+    free(n)                                  // allowed: n.next is known consumed
+    return next
+}
+```
+
+Non-null pointer fields cannot be moved out this way because there is no valid nil value to leave behind. If a field is intended to be moveable, it must be nullable (`*?T`).
+
+The compiler tracks consumed owned fields through flow paths such as `curr.next`. These facts participate in branch merging: if one branch consumes an owned field and another does not, the join is rejected. Assigning to a path invalidates facts for that path and its descendants, so a fact like `curr.next consumed` does not survive `curr = next`.
+
+Raw deallocation via `free` checks owned fields before freeing storage:
+
+```
+fn bad(l owned *owned mut node) {
+    free(l)        // COMPILE ERROR: l.next still owned
+}
+
+fn also_bad(l owned *owned mut node) {
+    free(l.next)   // COMPILE ERROR: l.next.next still owned
+}
+```
+
+Passing an owned field to any consuming function uses the same ownership-consumption path as `free`. `free` is special only because it is the raw allocator primitive; ordinary consuming functions take responsibility for the obligation they receive.
+
 ### Bring-your-own-memory (BYOM)
 
 Some patterns require separating memory ownership from value ownership. The caller allocates memory and passes a pointer to a library that initializes it; later, a separate call deinitializes it before the caller frees the memory. Because the two obligations live in separate variables, there is no stacking problem:
@@ -479,6 +535,32 @@ Implicit ownership promotion is rejected: `var x owned T = some_non_owned_T` is 
 
 For the common cases — stack-owned values and heap-owned values with bundled obligations — none of this complexity arises.
 
+### Nullable pointers and ownership
+
+Nullable owned pointers are useful for data structures because they provide a clear "empty" value when moving ownership out of fields:
+
+```
+var next owned *?owned mut node = curr.next
+```
+
+The source field becomes `nil`, so there is never a second owned pointer to the same allocation. Flow analysis also understands boolean checks on nullable pointers:
+
+```
+if (next) {
+    curr = next        // next is known non-null in this branch
+} else {
+    dispose(next)      // checking false consumes the nullable owned nil obligation
+}
+```
+
+Postfix `?` can be used when the programmer knows a nullable pointer is non-null but flow analysis cannot prove it:
+
+```
+curr = next?
+```
+
+If the compiler already knows the pointer is non-null, no runtime check is emitted. If it knows the pointer is nil, the assertion is rejected.
+
 ### Controlled copying
 
 Non-copyability is the default for owned types. API authors can produce new owned values explicitly, including copies. A copy is simply a new independent obligation:
@@ -509,6 +591,84 @@ Both limitations can be resolved with **typestate**: allowing a variable's type 
 The current system is designed to be forward-compatible with typestate. The concepts of `owned`, move semantics, `dispose`, and stacking all carry forward unchanged. Typestate adds expressiveness without requiring the foundation to be redesigned.
 
 ---
+
+## Borrowing
+
+Borrowing is the non-owning side of ownership. Passing an owned value to a parameter whose type contains no `owned` borrows the value; ownership stays with the caller.
+
+```
+fn print_node(n *node) void {
+    string.puti(n.val)
+}
+
+fn destroy_node(n owned *owned mut node) void {
+    ...
+}
+
+fn main() {
+    const n owned *owned mut node = new(node{...})
+    print_node(n)       // borrow; n remains owned by caller
+    destroy_node(n)     // move; n is invalid after this call
+}
+```
+
+### Non-escaping by default
+
+Pointer parameters without `owned` are non-escaping borrows by default. A borrowed pointer may be used during the call and forwarded to other functions that also take non-owning pointer parameters:
+
+```
+fn read_node(n *node) i64 {
+    return n.val
+}
+
+fn forward(n *node) i64 {
+    return read_node(n)     // allowed: forwarded borrow
+}
+```
+
+But a borrowed pointer may not be stored or returned:
+
+```
+var saved *?node
+
+fn bad_return(n *node) *node {
+    return n                // COMPILE ERROR: borrowed pointer escapes
+}
+
+fn bad_global(n *node) {
+    saved = n               // COMPILE ERROR: borrowed pointer escapes
+}
+
+struct holder {
+    n *?node
+}
+
+fn bad_field(n *node) {
+    var h holder
+    h.n = n                 // COMPILE ERROR: borrowed pointer escapes
+}
+
+fn bad_literal(n *node) {
+    var h holder = holder{n: n}  // COMPILE ERROR
+}
+```
+
+Local pointer aliases preserve borrowed provenance:
+
+```
+fn bad_alias(n *node) *node {
+    var alias *node = n
+    return alias            // COMPILE ERROR: alias is also borrowed
+}
+```
+
+This is intentionally not a full Rust-style borrow checker. The first rule is simpler: borrowed pointer parameters are call-local capabilities. They can be used and forwarded, but not persisted.
+
+### Borrowing and ownership cleanup
+
+The current system verifies ownership cleanup along compiler-visible ownership paths. Non-escaping borrows are what make that meaningful: a function taking `*T` is not allowed to stash the pointer and observe freed storage later.
+
+The remaining hard area is alias analysis for mutable borrows of owned aggregates. The compiler currently tracks facts by path (`curr.next`, `box.child`). If the same object is reachable through multiple paths, a mutation through one path may need to invalidate facts on another path. The non-escaping borrow rule prevents long-lived dangling references, but it does not by itself solve every intra-call aliasing case. Future borrowing work should address how mutable borrows interact with owned-field flow facts.
 
 ## Mutability and the Type System
 
@@ -1136,6 +1296,7 @@ The runtime lives at `runtime/<pkg>/*.bs` under `BOSON_HOME` and is shared by ev
 | Package | Files | Purpose |
 |---------|-------|---------|
 | `_init`  | `init_linux.bs` | Process entry (`start`) calling `main.main`. Bounds-check trap (`index_oob`). |
+| `_heap`  | `heap_linux.bs` | mmap-backed allocation and deallocation for `alloc`, `new`, and `free`. |
 | `string` | `string.bs`, `puts_linux.bs` | IO and string utilities: `puts`, `puti`, `putb`, `putc`, `lenb`, `lenn`, `read`, `write`, `open`, `close`, `exit`, plus internal `strlen`, `itoa`, `uitoa`. |
 
 These files encode Linux-specific behavior directly. There is a `macho/` directory in the core library suggesting macOS support was planned but not yet implemented.
@@ -1150,7 +1311,7 @@ The Go side (encoder, decoder, parser unit tests) and the integration test suite
 make test       # Run all test suites
 make go_test    # Go unit tests
 make bas_test   # Assembler integration tests (38 tests)
-make bosc_test  # Compiler integration tests (121 tests)
+make bosc_test  # Compiler integration tests
 ```
 
 Each compiler integration test:
@@ -1175,13 +1336,16 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Type aliases (`type Name Underlying`) with distinct-type semantics
 - Type casts (`T(expr)`) including widening/narrowing/reinterpretation
 - Slices (`T[]`), fixed arrays (`T[N]`), pointers (`*T`), structs
+- Nullable pointers (`*?T`), non-null pointers (`*T`), boolean narrowing for nullable pointers, and postfix `?` non-null assertions
 - Nested slices/arrays (`byte[][]`, `T[N][M]`, etc.)
 - `const`/`var` bindings with declaration initializers (`const x i64 = 42`)
 - File-scope `var`/`const` with compile-time-constant initializers — integer/byte literals, string-into-`byte[N]`, string-into-`byte[]` (slice with relocated pointer), struct literals composing all of the above, array literals (`[1, 2, 3]`) for fixed-array and slice destinations, `&someGlobal`, `&SomeStruct{...}` (anonymous globals), `&globalArr[N]` (pointer-into-array via relocation addend)
 - Array literals at runtime as initializers for fixed-array locals; slice destinations rejected with a directed error (lifetime issue)
 - Full nested `*mut T` write-through mutability with implicit coercion
-- Full `owned T` ownership type system: move semantics, `dispose()`, `owned()` promotion, owned struct fields, if/else branch analysis, loop-body protection, scope-exit checks
-- Compiler built-ins `alloc(T)` and `free(p)` backed by the `_heap` runtime package; `alloc(T)` returns `owned *mut T`
+- Full `owned T` ownership type system: move semantics, `dispose()`, `owned()` promotion, owned struct fields, owned-field move tracking, if/else branch analysis, loop backedge/exit checks, and scope-exit checks
+- Non-escaping borrowed pointer parameters by default, including local alias provenance and escape rejection for returns, globals, fields, and struct literals
+- Compiler built-ins `alloc(T)`, `new(expr)`, and `free(p)` backed by the `_heap` runtime package; `alloc(T)` and `new(expr)` return owned mutable pointers
+- `for` lowering to block + loop control flow; `continue` runs the lowered step expression
 - Path-based imports with qualified calls (`import "stdlib/io"; io.puts(...)`)
 - Cross-package struct types (`pair.pair`, `pair.pair{...}` literals) with auto-qualification of leaf type names at import time
 - Bosc-emitted function signatures (`type fn(...) ret`) so cross-package function calls work with Boson-source packages as well as hand-written bas runtime packages
@@ -1197,11 +1361,11 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 
 **Known limitations / future direction:**
 
-- No heap allocator. Programs use stack and fixed-size storage only.
+- Heap allocator is intentionally minimal: one mmap mapping per allocation, with no reuse or pooling.
 - No floats. Lexer accepts decimal-point syntax but truncates.
 - Generics / type polymorphism not implemented.
 - Stacked `owned *owned T` cannot have partial consumption (needs typestate).
-- No witnessed borrows.
+- No witnessed borrows or explicit escaping-reference mechanism.
 - True read-only `.rodata` segment split not yet done. String constants and other immutable data are tagged at the `o.Data` level but currently land in the writable `.data` LOAD segment. Hardware-enforced const requires splitting the ELF layout.
 - No deduplication of structurally-identical anonymous globals. Each `&literal` produces a fresh `__static_N`.
 - macOS support stubbed but not implemented.
@@ -1213,7 +1377,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 
 - **Layered debuggability.** Each pipeline stage produces an inspectable artifact. A compiler bug can be isolated to the `.bs` output; an assembler bug to the `.bo` binary; a linker bug to the final ELF.
 - **Assembler as IR.** The `.bs` language occupies an unusual middle ground: it has named variables and a register allocator, making it usable as a compiler IR, while still being human-readable assembly.
-- **Minimal runtime.** No heap, no GC, no dynamic loading. Programs are fully static ELF64 binaries that make raw Linux syscalls.
+- **Minimal runtime.** No GC and no dynamic loading. Programs are fully static ELF64 binaries that make raw Linux syscalls; the heap runtime is a small mmap/munmap allocator.
 - **Single-pass compiler.** The compiler does not perform optimization. It lowers each AST node directly to assembly, relying on the register allocator to minimize unnecessary spills.
 - **Conservative-by-default ownership and mutability.** Defaults favor strictness (const, read-only, no implicit promotion) with explicit opt-in for looser forms (var, mut, owned()). The type system encodes obligations the compiler can check; programmer-asserted unsafe operations are explicit (`owned(...)`, `dispose(...)`).
 - **Name-is-address as a single distinction.** `local` allocations are register-resident — the name *is* the value. `bytes`/`var`/`data` allocations are memory-resident — the name *is* the address. Bosc tracks this with a single bool per `spot` (`nameIsAddress`), populated at allocation/declaration time. Every site that needs to follow a pointer through such storage consults the same flag and emits the same lea-then-deref or load-first pattern. The distinction isn't between local and global scope (a `bytes`-allocated local and a `var` global behave the same way); it's about register vs memory residency.

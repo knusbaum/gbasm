@@ -1,0 +1,11 @@
+package main
+
+struct node {
+	val i64
+}
+
+fn bad(n *node) *node {
+	return n
+}
+
+fn main() {}

@@ -1,0 +1,2 @@
+Compiling tests/borrow_global_store_err_test.bos
+Fatal: Borrowed pointer escapes via assignment

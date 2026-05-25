@@ -1,0 +1,13 @@
+package main
+
+struct node {
+	val i64
+}
+
+var saved *?node
+
+fn bad(n *node) {
+	saved = n
+}
+
+fn main() {}

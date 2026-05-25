@@ -1,0 +1,16 @@
+package main
+
+struct node {
+	val i64
+}
+
+struct holder {
+	n *?node
+}
+
+fn bad(n *node) {
+	var h holder
+	h.n = n
+}
+
+fn main() {}

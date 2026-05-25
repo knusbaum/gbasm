@@ -1,0 +1,19 @@
+package main
+
+struct node {
+	val i64
+}
+
+fn read_node(n *node) i64 {
+	return n.val
+}
+
+fn forward_node(n *node) i64 {
+	return read_node(n)
+}
+
+fn main() {
+	const n owned *owned mut node = new(node{val: 42})
+	forward_node(n)
+	free(n)
+}

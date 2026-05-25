@@ -31,6 +31,7 @@ type FlowSnapshot struct {
 	Owned       map[string]bool
 	Null        map[FlowPath]NullState
 	OwnedFields map[FlowPath]bool
+	Borrowed    map[string]bool
 }
 
 type FlowPath struct {
@@ -100,6 +101,8 @@ type Context struct {
 	nullFacts map[string]NullState
 	// flow-sensitive facts for owned fields that have been moved out.
 	ownedFieldFacts map[string]bool
+	// names whose pointer value is a non-escaping borrow.
+	borrowedBindings map[string]bool
 	// names that ToAST registered into bindings at the top level so that
 	// function bodies declared earlier in source can resolve forward
 	// references. The *VarDecl handler in Compile consumes the marker
@@ -159,18 +162,19 @@ type Context struct {
 
 func NewContext() *Context {
 	return &Context{
-		bindings:        make(map[string]ASTType),
-		nullFacts:       make(map[string]NullState),
-		ownedFieldFacts: make(map[string]bool),
-		prebound:        make(map[string]bool),
-		addressNames:    make(map[string]bool),
-		constBindings:   make(map[string]bool),
-		movedBindings:   make(map[string]bool),
-		structs:         make(map[string]*StructDecl),
-		funcs:           make(map[string]*FuncDecl),
-		imports:         make(map[string]map[string]*FuncDecl),
-		typeAliases:     make(map[string]ASTType),
-		strngs:          make(map[string]string),
+		bindings:         make(map[string]ASTType),
+		nullFacts:        make(map[string]NullState),
+		ownedFieldFacts:  make(map[string]bool),
+		borrowedBindings: make(map[string]bool),
+		prebound:         make(map[string]bool),
+		addressNames:     make(map[string]bool),
+		constBindings:    make(map[string]bool),
+		movedBindings:    make(map[string]bool),
+		structs:          make(map[string]*StructDecl),
+		funcs:            make(map[string]*FuncDecl),
+		imports:          make(map[string]map[string]*FuncDecl),
+		typeAliases:      make(map[string]ASTType),
+		strngs:           make(map[string]string),
 	}
 }
 
@@ -338,6 +342,37 @@ func (c *Context) BindVar(a AST, name string, t ASTType, isConst bool) {
 	c.constBindings[name] = isConst
 }
 
+func (c *Context) BindingContext(name string) *Context {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		if _, ok := ctx.bindings[name]; ok {
+			return ctx
+		}
+	}
+	return nil
+}
+
+func (c *Context) SetBorrowedBinding(name string, borrowed bool) {
+	if ctx := c.BindingContext(name); ctx != nil {
+		if borrowed {
+			ctx.borrowedBindings[name] = true
+		} else {
+			delete(ctx.borrowedBindings, name)
+		}
+	}
+}
+
+func (c *Context) IsBorrowedBinding(name string) bool {
+	if ctx := c.BindingContext(name); ctx != nil {
+		return ctx.borrowedBindings[name]
+	}
+	return false
+}
+
+func (c *Context) IsGlobalBinding(name string) bool {
+	ctx := c.BindingContext(name)
+	return ctx != nil && ctx.parent == nil
+}
+
 // Move marks an owned binding as consumed. Walks the parent chain to find the
 // context that owns the binding so the state is stored in the right place.
 func (c *Context) Move(name string) {
@@ -429,6 +464,29 @@ func (c *Context) OwnedFieldFactsSnapshot() map[FlowPath]bool {
 	return snap
 }
 
+func (c *Context) BorrowedBindingsSnapshot() map[string]bool {
+	snap := make(map[string]bool)
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for name, borrowed := range ctx.borrowedBindings {
+			if _, exists := snap[name]; !exists {
+				snap[name] = borrowed
+			}
+		}
+	}
+	return snap
+}
+
+func (c *Context) RestoreBorrowedBindings(snap map[string]bool) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for name := range ctx.borrowedBindings {
+			delete(ctx.borrowedBindings, name)
+		}
+	}
+	for name, borrowed := range snap {
+		c.SetBorrowedBinding(name, borrowed)
+	}
+}
+
 func (c *Context) RestoreOwnedFieldFacts(snap map[FlowPath]bool) {
 	for ctx := c; ctx != nil; ctx = ctx.parent {
 		for name := range ctx.ownedFieldFacts {
@@ -456,6 +514,7 @@ func (c *Context) FlowSnapshot() FlowSnapshot {
 		Owned:       c.OwnedBindingsSnapshot(),
 		Null:        c.NullFactsSnapshot(),
 		OwnedFields: c.OwnedFieldFactsSnapshot(),
+		Borrowed:    c.BorrowedBindingsSnapshot(),
 	}
 }
 
@@ -463,6 +522,7 @@ func (c *Context) RestoreFlowSnapshot(snap FlowSnapshot) {
 	c.RestoreOwnedBindings(snap.Owned)
 	c.RestoreNullFacts(snap.Null)
 	c.RestoreOwnedFieldFacts(snap.OwnedFields)
+	c.RestoreBorrowedBindings(snap.Borrowed)
 }
 
 func mergeNullState(a NullState, aok bool, b NullState, bok bool) (NullState, bool) {
@@ -491,6 +551,21 @@ func MergeNullFacts(a, b map[FlowPath]NullState) map[FlowPath]NullState {
 		state, ok := mergeNullState(a[path], a[path] != 0, b[path], b[path] != 0)
 		if ok {
 			out[path] = state
+		}
+	}
+	return out
+}
+
+func MergeBorrowedBindings(a, b map[string]bool) map[string]bool {
+	out := make(map[string]bool)
+	for name, borrowed := range a {
+		if borrowed {
+			out[name] = true
+		}
+	}
+	for name, borrowed := range b {
+		if borrowed {
+			out[name] = true
 		}
 	}
 	return out

@@ -1,0 +1,12 @@
+package main
+
+struct node {
+	val i64
+}
+
+fn bad(n *node) *node {
+	var alias *node = n
+	return alias
+}
+
+fn main() {}

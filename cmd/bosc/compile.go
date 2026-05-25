@@ -332,6 +332,53 @@ func checkOwnedSourceAvailable(c *Context, val AST) {
 	}
 }
 
+func borrowedPointerExpr(c *Context, a AST) bool {
+	if a.ASTType(c).Indirection == 0 {
+		return false
+	}
+	switch ast := a.(type) {
+	case *Symbol:
+		return c.IsBorrowedBinding(ast.Name)
+	case *Dot:
+		return borrowedPointerExpr(c, ast.Val)
+	case *Deref:
+		return borrowedPointerExpr(c, ast.Val)
+	case *Index:
+		return borrowedPointerExpr(c, ast.Val)
+	case *NonNullAssert:
+		return borrowedPointerExpr(c, ast.Val)
+	default:
+		return false
+	}
+}
+
+func checkBorrowedPointerDoesNotEscape(c *Context, a AST, what string) {
+	if borrowedPointerExpr(c, a) {
+		CompileErrorF(a, "Borrowed pointer escapes via %s", what)
+	}
+}
+
+func checkBorrowedPointerAssignment(c *Context, a *Assignment, dst ASTType) {
+	if !borrowedPointerExpr(c, a.Val) {
+		return
+	}
+	if dst.Indirection == 0 {
+		return
+	}
+	if sym, ok := a.Target.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) {
+		return
+	}
+	checkBorrowedPointerDoesNotEscape(c, a.Val, "assignment")
+}
+
+func updateBorrowedBindingForAssignment(c *Context, target AST, dst ASTType, val AST) {
+	sym, ok := target.(*Symbol)
+	if !ok || dst.Indirection == 0 || c.IsGlobalBinding(sym.Name) {
+		return
+	}
+	c.SetBorrowedBinding(sym.Name, borrowedPointerExpr(c, val))
+}
+
 func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST) {
 	if !expected.HasOwned() {
 		return
@@ -383,6 +430,7 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 		}
 		fieldType := fieldTypeForBase(ctxType, declaredType)
 		srcType := f.Val.ASTType(c)
+		checkBorrowedPointerDoesNotEscape(c, f.Val, fmt.Sprintf("field %s.%s", lit.Type.Name, f.Name))
 		if srcType.Same(intlitASTType()) {
 			srcType = fieldType
 		} else if !fieldType.Accepts(srcType) {
@@ -860,6 +908,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		c.BindVar(a, ast.Name, ast.Type, ast.IsConst)
 		s := newSpot(of, c, ast.Name, ast.Type)
 		if ast.Init != nil {
+			initIsBorrowed := borrowedPointerExpr(c, ast.Init)
 			if sl, ok := ast.Init.(*StructLiteral); ok && sameIgnoringOwned(ast.Type, sl.Type) {
 				compileStructLiteralInto(of, c, a, sl, s, ast.Type)
 				return nullspot
@@ -908,6 +957,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			markMovedIfOwnedSource(of, c, dstt, ast.Init)
 			updateNullFactForAssignment(c, VarFlowPath(ast.Name), dstt, ast.Init, srct)
+			if dstt.Indirection > 0 {
+				c.SetBorrowedBinding(ast.Name, initIsBorrowed)
+			}
 		} else if !ast.Type.ZeroInitializable(c) {
 			CompileErrorF(a, "Variable \"%s\" of type %s requires an initializer", ast.Name, ast.Type)
 		} else if ast.Type.HasOwned() {
@@ -948,6 +1000,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		for i, a := range ast.Args {
 			fmt.Fprintf(of, "\targi %s %d %d\n", a.Name, i, a.Type.Size(c)*8)
 			c.BindVar(ast, a.Name, a.Type, a.IsConst)
+			if a.Type.Indirection > 0 && !a.Type.HasOwned() {
+				c.SetBorrowedBinding(a.Name, true)
+			}
 		}
 		fmt.Fprintf(of, "\n\tprologue\n\n")
 		compileTop(of, c, ast.Body, nullspot)
@@ -1419,6 +1474,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			lv.t = dstt
 		}
 		srct := ast.Val.ASTType(c)
+		checkBorrowedPointerAssignment(c, ast, dstt)
 		if !srct.Same(dstt) {
 			if !dstt.Accepts(srct) {
 				CompileErrorF(a, "Cannot assign different types %s = %s", dstt, srct)
@@ -1439,6 +1495,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				c.InvalidateFlowFacts(path)
 				updateNullFactForAssignment(c, path, dstt, ast.Val, srct)
 			}
+			updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
 			return nullspot
 		}
 		// if !lv.t.Same(dstt) {
@@ -1471,6 +1528,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				c.InvalidateFlowFacts(path)
 				updateNullFactForAssignment(c, path, dstt, ast.Val, srct)
 			}
+			updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
 			return nullspot
 		}
 
@@ -1493,6 +1551,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			c.InvalidateFlowFacts(path)
 			updateNullFactForAssignment(c, path, dstt, ast.Val, srct)
 		}
+		updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
 		return nullspot
 	case *IfStmt:
 		v := compileTop(of, c, ast.Cond, nullspot)
@@ -1563,6 +1622,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				Owned:       snapAfterThen.Owned,
 				Null:        MergeNullFacts(snapAfterThen.Null, snapAfterElse.Null),
 				OwnedFields: mergeOwnedFieldFactsExact(c, a, snapAfterThen.OwnedFields, snapAfterElse.OwnedFields),
+				Borrowed:    MergeBorrowedBindings(snapAfterThen.Borrowed, snapAfterElse.Borrowed),
 			})
 		case thenFallsThrough:
 			c.RestoreFlowSnapshot(snapAfterThen)
@@ -1650,6 +1710,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	case *Return:
 		valType := ast.Val.ASTType(c)
 		retType := c.ReturnType()
+		if retType.Indirection > 0 {
+			checkBorrowedPointerDoesNotEscape(c, ast.Val, "return")
+		}
 		if sl, ok := ast.Val.(*StructLiteral); ok && sameIgnoringOwned(retType, sl.Type) {
 			valType = retType
 		}
