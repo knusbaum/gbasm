@@ -19,6 +19,72 @@ func (e *interpreterError) Error() string {
 	return fmt.Sprintf("at %s: %s", e.p, e.msg)
 }
 
+type NullState int
+
+const (
+	NullMaybe NullState = iota
+	NullKnownNull
+	NullKnownNonNull
+)
+
+type FlowSnapshot struct {
+	Owned       map[string]bool
+	Null        map[FlowPath]NullState
+	OwnedFields map[FlowPath]bool
+}
+
+type FlowPath struct {
+	Root   string
+	Fields string
+}
+
+func VarFlowPath(name string) FlowPath {
+	return FlowPath{Root: name}
+}
+
+func (p FlowPath) Key() string {
+	if p.Fields == "" {
+		return p.Root
+	}
+	return p.Root + "." + p.Fields
+}
+
+func (p FlowPath) ParentRoot() FlowPath {
+	return FlowPath{Root: p.Root}
+}
+
+func (p FlowPath) Append(field string) FlowPath {
+	if p.Fields == "" {
+		return FlowPath{Root: p.Root, Fields: field}
+	}
+	return FlowPath{Root: p.Root, Fields: p.Fields + "." + field}
+}
+
+func FlowPathFromKey(key string) FlowPath {
+	parts := strings.Split(key, ".")
+	if len(parts) == 0 {
+		return FlowPath{}
+	}
+	return FlowPath{Root: parts[0], Fields: strings.Join(parts[1:], ".")}
+}
+
+func FlowPathForExpr(a AST) (FlowPath, bool) {
+	switch ast := a.(type) {
+	case *Symbol:
+		return VarFlowPath(ast.Name), true
+	case *Dot:
+		base, ok := FlowPathForExpr(ast.Val)
+		if !ok {
+			return FlowPath{}, false
+		}
+		return base.Append(ast.Member), true
+	case *NonNullAssert:
+		return FlowPathForExpr(ast.Val)
+	default:
+		return FlowPath{}, false
+	}
+}
+
 // Context holds types and bindings for the current lexical environment.
 type Context struct {
 	parent *Context
@@ -30,9 +96,10 @@ type Context struct {
 
 	// maps variable names to their types.
 	bindings map[string]ASTType
-	// temporarily refined expression types, such as *?T narrowed to *T
-	// inside an if (p) branch.
-	typeRefinements map[string]ASTType
+	// flow-sensitive nullability facts for visible bindings.
+	nullFacts map[string]NullState
+	// flow-sensitive facts for owned fields that have been moved out.
+	ownedFieldFacts map[string]bool
 	// names that ToAST registered into bindings at the top level so that
 	// function bodies declared earlier in source can resolve forward
 	// references. The *VarDecl handler in Compile consumes the marker
@@ -93,7 +160,8 @@ type Context struct {
 func NewContext() *Context {
 	return &Context{
 		bindings:        make(map[string]ASTType),
-		typeRefinements: make(map[string]ASTType),
+		nullFacts:       make(map[string]NullState),
+		ownedFieldFacts: make(map[string]bool),
 		prebound:        make(map[string]bool),
 		addressNames:    make(map[string]bool),
 		constBindings:   make(map[string]bool),
@@ -270,18 +338,6 @@ func (c *Context) BindVar(a AST, name string, t ASTType, isConst bool) {
 	c.constBindings[name] = isConst
 }
 
-func (c *Context) RefineVarType(name string, t ASTType) func() {
-	old, hadOld := c.typeRefinements[name]
-	c.typeRefinements[name] = t
-	return func() {
-		if hadOld {
-			c.typeRefinements[name] = old
-		} else {
-			delete(c.typeRefinements, name)
-		}
-	}
-}
-
 // Move marks an owned binding as consumed. Walks the parent chain to find the
 // context that owns the binding so the state is stored in the right place.
 func (c *Context) Move(name string) {
@@ -345,6 +401,180 @@ func (c *Context) RestoreOwnedBindings(snap map[string]bool) {
 			}
 		}
 	}
+}
+
+func (c *Context) NullFactsSnapshot() map[FlowPath]NullState {
+	snap := make(map[FlowPath]NullState)
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for key, state := range ctx.nullFacts {
+			path := FlowPathFromKey(key)
+			if _, exists := snap[path]; !exists {
+				snap[path] = state
+			}
+		}
+	}
+	return snap
+}
+
+func (c *Context) OwnedFieldFactsSnapshot() map[FlowPath]bool {
+	snap := make(map[FlowPath]bool)
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for key, consumed := range ctx.ownedFieldFacts {
+			path := FlowPathFromKey(key)
+			if _, exists := snap[path]; !exists {
+				snap[path] = consumed
+			}
+		}
+	}
+	return snap
+}
+
+func (c *Context) RestoreOwnedFieldFacts(snap map[FlowPath]bool) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for name := range ctx.ownedFieldFacts {
+			delete(ctx.ownedFieldFacts, name)
+		}
+	}
+	for path, consumed := range snap {
+		c.SetOwnedFieldConsumed(path, consumed)
+	}
+}
+
+func (c *Context) RestoreNullFacts(snap map[FlowPath]NullState) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for name := range ctx.nullFacts {
+			delete(ctx.nullFacts, name)
+		}
+	}
+	for path, state := range snap {
+		c.SetNullFact(path, state)
+	}
+}
+
+func (c *Context) FlowSnapshot() FlowSnapshot {
+	return FlowSnapshot{
+		Owned:       c.OwnedBindingsSnapshot(),
+		Null:        c.NullFactsSnapshot(),
+		OwnedFields: c.OwnedFieldFactsSnapshot(),
+	}
+}
+
+func (c *Context) RestoreFlowSnapshot(snap FlowSnapshot) {
+	c.RestoreOwnedBindings(snap.Owned)
+	c.RestoreNullFacts(snap.Null)
+	c.RestoreOwnedFieldFacts(snap.OwnedFields)
+}
+
+func mergeNullState(a NullState, aok bool, b NullState, bok bool) (NullState, bool) {
+	if !aok {
+		a = NullMaybe
+	}
+	if !bok {
+		b = NullMaybe
+	}
+	if a == b && a != NullMaybe {
+		return a, true
+	}
+	return NullMaybe, false
+}
+
+func MergeNullFacts(a, b map[FlowPath]NullState) map[FlowPath]NullState {
+	out := make(map[FlowPath]NullState)
+	seen := make(map[FlowPath]bool)
+	for path := range a {
+		seen[path] = true
+	}
+	for path := range b {
+		seen[path] = true
+	}
+	for path := range seen {
+		state, ok := mergeNullState(a[path], a[path] != 0, b[path], b[path] != 0)
+		if ok {
+			out[path] = state
+		}
+	}
+	return out
+}
+
+func (c *Context) SetNullFact(path FlowPath, state NullState) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		if _, ok := ctx.bindings[path.Root]; ok {
+			key := path.Key()
+			if state == NullMaybe {
+				delete(ctx.nullFacts, key)
+			} else {
+				ctx.nullFacts[key] = state
+			}
+			return
+		}
+	}
+}
+
+func (c *Context) SetOwnedFieldConsumed(path FlowPath, consumed bool) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		if _, ok := ctx.bindings[path.Root]; ok {
+			key := path.Key()
+			if consumed {
+				ctx.ownedFieldFacts[key] = true
+			} else {
+				delete(ctx.ownedFieldFacts, key)
+			}
+			return
+		}
+	}
+}
+
+func (c *Context) OwnedFieldConsumed(path FlowPath) bool {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		if consumed, ok := ctx.ownedFieldFacts[path.Key()]; ok {
+			return consumed
+		}
+		if _, ok := ctx.bindings[path.Root]; ok {
+			return false
+		}
+	}
+	return false
+}
+
+func flowPathIsOrDescendsFrom(path, base FlowPath) bool {
+	if path.Root != base.Root {
+		return false
+	}
+	if base.Fields == "" {
+		return true
+	}
+	return path.Fields == base.Fields || strings.HasPrefix(path.Fields, base.Fields+".")
+}
+
+func (c *Context) InvalidateFlowFacts(path FlowPath) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		if _, ok := ctx.bindings[path.Root]; !ok {
+			continue
+		}
+		for key := range ctx.nullFacts {
+			if flowPathIsOrDescendsFrom(FlowPathFromKey(key), path) {
+				delete(ctx.nullFacts, key)
+			}
+		}
+		for key := range ctx.ownedFieldFacts {
+			if flowPathIsOrDescendsFrom(FlowPathFromKey(key), path) {
+				delete(ctx.ownedFieldFacts, key)
+			}
+		}
+		return
+	}
+}
+
+func (c *Context) NullFact(path FlowPath) NullState {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		if state, ok := ctx.nullFacts[path.Key()]; ok {
+			return state
+		}
+		if _, ok := ctx.bindings[path.Root]; ok {
+			return NullMaybe
+		}
+	}
+	return NullMaybe
 }
 
 // DefineTypeAlias records a user-defined type alias.
@@ -469,13 +699,23 @@ func (c *Context) TypeForVar(name string) (ASTType, bool) {
 	if c == nil {
 		return ASTType{}, false
 	}
-	if t, ok := c.typeRefinements[name]; ok {
+	if t, ok := c.bindings[name]; ok {
+		if t.Indirection > 0 && t.NilMask&1 != 0 && c.NullFact(VarFlowPath(name)) == NullKnownNonNull {
+			t.NilMask &^= 1
+		}
 		return t, true
+	}
+	return c.parent.TypeForVar(name)
+}
+
+func (c *Context) DeclaredTypeForVar(name string) (ASTType, bool) {
+	if c == nil {
+		return ASTType{}, false
 	}
 	if t, ok := c.bindings[name]; ok {
 		return t, true
 	}
-	return c.parent.TypeForVar(name)
+	return c.parent.DeclaredTypeForVar(name)
 }
 
 func (c *Context) StructDeclForName(name string) (*StructDecl, bool) {
@@ -1593,7 +1833,13 @@ func (d *Dot) ASTType(c *Context) ASTType {
 	}
 	for _, f := range decl.Fields {
 		if f.Name == d.Member {
-			return fieldTypeForBase(t, f.Type)
+			ft := fieldTypeForBase(t, f.Type)
+			if ft.Indirection > 0 && ft.NilMask&1 != 0 {
+				if path, ok := FlowPathForExpr(d); ok && c.NullFact(path) == NullKnownNonNull {
+					ft.NilMask &^= 1
+				}
+			}
+			return ft
 		}
 	}
 	CompileErrorF(d, "No such struct member \"%s\" in struct \"%s\"", d.Member, t.Name)
@@ -1646,7 +1892,15 @@ type NonNullAssert struct {
 
 func (n *NonNullAssert) ASTType(c *Context) ASTType {
 	t := n.Val.ASTType(c)
+	if path, ok := FlowPathForExpr(n.Val); ok && c.NullFact(path) == NullKnownNull {
+		CompileErrorF(n, "Postfix ? asserts \"%s\" is non-null, but it is known to be nil", path.Key())
+	}
 	if t.Indirection == 0 || t.NilMask&1 == 0 {
+		if sym, ok := n.Val.(*Symbol); ok {
+			if declared, ok := c.DeclaredTypeForVar(sym.Name); ok && declared.Indirection > 0 && declared.NilMask&1 != 0 {
+				return t
+			}
+		}
 		CompileErrorF(n, "Postfix ? requires a nullable pointer, got %s", t)
 	}
 	t.NilMask &^= 1
@@ -1852,6 +2106,23 @@ func (f *For) Pos() position {
 	return f.Init.Pos()
 }
 
+type Loop struct {
+	Body AST
+	p    position
+}
+
+func (*Loop) ASTType(c *Context) ASTType {
+	return voidASTType()
+}
+
+func (*Loop) Note() string {
+	return "loop { ... }"
+}
+
+func (l *Loop) Pos() position {
+	return l.p
+}
+
 // Operation on 2 expressions (i.e. +, -, *, <, <=, == etc.)
 type Op2 struct {
 	Type   nodetype
@@ -1945,7 +2216,8 @@ func (r *Return) Pos() position {
 }
 
 type Continue struct {
-	p position
+	Step AST
+	p    position
 }
 
 func (*Continue) ASTType(*Context) ASTType {
@@ -1958,6 +2230,61 @@ func (*Continue) Note() string {
 
 func (c *Continue) Pos() position {
 	return c.p
+}
+
+func rewriteContinuesForStep(a AST, step AST) AST {
+	if step == nil {
+		return a
+	}
+	switch ast := a.(type) {
+	case *Continue:
+		return &Continue{Step: step, p: ast.p}
+	case *Block:
+		body := make([]AST, len(ast.Body))
+		for i, st := range ast.Body {
+			body[i] = rewriteContinuesForStep(st, step)
+		}
+		return &Block{Body: body}
+	case *IfStmt:
+		out := *ast
+		out.Then = rewriteContinuesForStep(ast.Then, step)
+		if ast.Else != nil {
+			out.Else = rewriteContinuesForStep(ast.Else, step)
+		}
+		return &out
+	case *Loop:
+		return a
+	default:
+		return a
+	}
+}
+
+func lowerForToLoop(f *For) AST {
+	body := rewriteContinuesForStep(f.Body, f.Step)
+	var loopBody AST
+	if f.Cond != nil {
+		then := &Block{Body: []AST{&Break{p: f.Cond.Pos()}}}
+		elseBody := []AST{body}
+		if f.Step != nil {
+			elseBody = append(elseBody, f.Step)
+		}
+		loopBody = &IfStmt{
+			Cond: &Not{Val: f.Cond, p: f.Cond.Pos()},
+			Then: then,
+			Else: &Block{Body: elseBody},
+		}
+	} else {
+		stmts := []AST{body}
+		if f.Step != nil {
+			stmts = append(stmts, f.Step)
+		}
+		loopBody = &Block{Body: stmts}
+	}
+	loop := &Loop{Body: loopBody, p: f.p}
+	if f.Init == nil {
+		return loop
+	}
+	return &Block{Body: []AST{f.Init, loop}}
 }
 
 // OwnedPromotion wraps an expression to assert ownership: owned(x).
@@ -2352,19 +2679,13 @@ func (n *Node) toASTTop(c *Context) AST {
 			step = n.args[2].toASTTop(NewContext())
 		}
 		body := n.args[3].toASTTop(NewContext())
-		if cond != nil {
-			ct := cond.ASTType(c)
-			if !ct.Same(boolASTType()) {
-				ParseErrorF(n.args[1], "Cannot compile for loop with non-boolean condition: %v\n", ct)
-			}
-		}
-		return &For{
+		return lowerForToLoop(&For{
 			Init: init,
 			Cond: cond,
 			Step: step,
 			Body: body,
 			p:    n.p,
-		}
+		})
 	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_add, n_sub, n_mul, n_div, n_booland, n_boolor:
 		return &Op2{
 			Type:   n.t,

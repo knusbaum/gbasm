@@ -1,0 +1,2 @@
+Compiling tests/owned_free_live_field_err_test.bos
+Fatal: free(b) would leak owned field b.child

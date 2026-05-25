@@ -1,2 +1,2 @@
 Compiling tests/free_use_after_move_err_test.bos
-Fatal: Cannot move "p": it was already moved
+Fatal: Use of "p" after it was moved

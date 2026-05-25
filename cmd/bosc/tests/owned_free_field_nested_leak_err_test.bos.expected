@@ -1,0 +1,2 @@
+Compiling tests/owned_free_field_nested_leak_err_test.bos
+Fatal: free(n.next) would leak owned field n.next.next

@@ -1,0 +1,2 @@
+Compiling tests/nullable_assert_known_nil_err_test.bos
+Fatal: Postfix ? asserts "p" is non-null, but it is known to be nil

@@ -1,0 +1,25 @@
+package main
+
+struct leaf {
+	val i64
+}
+
+struct box {
+	child owned *?owned mut leaf
+}
+
+fn consume_leaf(l owned *?owned mut leaf) {
+	if(l) {
+		free(l)
+	}
+}
+
+fn destroy(b owned *owned mut box) {
+	consume_leaf(b.child)
+	free(b)
+}
+
+fn main() {
+	const b owned *owned mut box = new(box{child: nil})
+	destroy(b)
+}

@@ -1,0 +1,15 @@
+package main
+
+struct leaf {
+	val i64
+}
+
+struct box {
+	child owned *?owned mut leaf
+}
+
+fn destroy(b owned *owned mut box) {
+	free(b)
+}
+
+fn main() {}

@@ -1,2 +1,2 @@
 Compiling tests/owned_continue_unreachable_reinit_err_test.bos
-Fatal: Use of "p" after it was moved
+Fatal: Owned binding "p" is consumed inside a loop body; this would be invalid on the second iteration

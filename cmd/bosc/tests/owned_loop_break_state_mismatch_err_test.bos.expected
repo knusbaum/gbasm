@@ -1,2 +1,2 @@
 Compiling tests/owned_loop_break_state_mismatch_err_test.bos
-Fatal: Owned binding "p" has inconsistent state across loop exits
+Fatal: Owned binding "p" is consumed inside a loop body; this would be invalid on the second iteration

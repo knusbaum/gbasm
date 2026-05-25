@@ -1,0 +1,11 @@
+package main
+
+struct node {
+	next owned *?owned mut node
+}
+
+fn destroy(n owned *owned mut node) {
+	free(n.next)
+}
+
+fn main() {}
