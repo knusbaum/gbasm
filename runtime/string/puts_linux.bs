@@ -44,7 +44,7 @@ function lenbb
 // call number: 0
 function read
     // fd, data, count
-	type fn(i64, byte[]) i64
+	type fn(i64, mut byte[]) i64
 	prologue
 
 	mov rdx [rsi+8]

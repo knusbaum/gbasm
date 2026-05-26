@@ -1128,7 +1128,11 @@ func (t ASTType) String() string {
 		if t.IsArray() {
 			inner = fmt.Sprintf("%s[%d]", s, t.ArraySize)
 		} else {
-			inner = s + "[]"
+			if t.MutMask&(1<<1) != 0 {
+				inner = "mut " + s + "[]"
+			} else {
+				inner = s + "[]"
+			}
 		}
 		// Parenthesize when there is outer pointer indirection so "*byte[]"
 		// (slice of *byte) is distinguishable from "*(byte[])" (pointer to
@@ -1192,10 +1196,15 @@ func mkTypename(n *Node) ASTType {
 	// Start with the bare base type (scalar or pointer). n.args lists
 	// slice/array wrappers in innermost-first order; each wrapper produces
 	// a new outer ASTType whose Element is the previous level.
+	//
+	// MutMask belongs on the outermost wrapper (the slice/array type itself),
+	// not on the scalar element — e.g. "mut byte[]" means the slice is
+	// writable through, not that "byte" is mutable.
+	baseMutMask := n.mutmask
 	base := ASTType{
 		Name:        n.sval,
 		Indirection: int(n.ival),
-		MutMask:     n.mutmask,
+		MutMask:     0,
 		OwnedMask:   n.ownedmask,
 		NilMask:     n.nilmask,
 	}
@@ -1205,6 +1214,8 @@ func mkTypename(n *Node) ASTType {
 	}
 
 	if len(n.args) == 0 {
+		// No wrappers: this is a pointer or scalar type. MutMask lives here.
+		base.MutMask = baseMutMask
 		return base
 	}
 
@@ -1224,6 +1235,8 @@ func mkTypename(n *Node) ASTType {
 		}
 		cur = outer
 	}
+	// MutMask on the outermost slice/array wrapper.
+	cur.MutMask = baseMutMask
 	return cur
 }
 
@@ -2082,14 +2095,53 @@ type SliceOp struct {
 	Upper AST
 }
 
+// isLvalueMutable reports whether the lvalue expression a refers to writable
+// storage: a non-const binding, a *mut pointee, or an element of a mut slice.
+// This mirrors the logic in lvalueIsWritable (compile.go) but returns bool
+// rather than an error reason. Used by SliceOp.ASTType to propagate mut.
+func isLvalueMutable(c *Context, a AST) bool {
+	switch v := a.(type) {
+	case *Symbol:
+		return !c.IsConst(v.Name)
+	case *Deref:
+		t := v.Val.ASTType(c)
+		return t.Indirection > 0 && t.MutMask&(1<<1) != 0
+	case *Dot:
+		baseType := v.Val.ASTType(c)
+		if baseType.Indirection > 0 {
+			return baseType.MutMask&(1<<1) != 0
+		}
+		return isLvalueMutable(c, v.Val)
+	case *Index:
+		baseType := v.Val.ASTType(c)
+		if baseType.Indirection > 0 {
+			return baseType.MutMask&(1<<1) != 0
+		}
+		if baseType.IsSlice() {
+			return baseType.MutMask&(1<<1) != 0
+		}
+		return isLvalueMutable(c, v.Val)
+	case *NonNullAssert:
+		return isLvalueMutable(c, v.Val)
+	}
+	return false
+}
+
 func (s *SliceOp) ASTType(c *Context) ASTType {
 	t := s.Val.ASTType(c)
 	if t.IsSlice() {
+		// Slice-of-slice: mut is already encoded in the slice type.
 		return t
 	}
 	if t.IsArray() {
-		// Slicing an array yields a slice over the same element type.
+		// Convert array to slice. Propagate element writability from the
+		// source lvalue: a var array produces mut T[], a const array produces T[].
 		t.ArraySize = 0
+		if isLvalueMutable(c, s.Val) {
+			t.MutMask |= 1 << 1
+		} else {
+			t.MutMask &^= 1 << 1
+		}
 		return t
 	}
 	panic("Cannot perform slice operation on non-array or non-slice")

@@ -22,7 +22,7 @@ fn main() {
 	}
 	dumpbs(a[:10])
 
-	var bs byte[]
+	var bs mut byte[]
 	bs = a[10:]
 	for(i = 0; i < ten; i = i + 1) {
 		bs[i] = i+10

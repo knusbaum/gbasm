@@ -1,0 +1,2 @@
+Compiling tests/slice_nonmut_param_write_err_test.bos
+Fatal: Cannot write element through non-mut slice of type byte[]; declare the slice as mut byte[]

@@ -496,15 +496,9 @@ func lvalueIsWritable(c *Context, a AST) (bool, string) {
 			return true, ""
 		}
 		if baseType.IsSlice() {
-			// TODO: enforce `mut byte[]` for element writes once slice
-			// expressions propagate mut from their source. Today
-			// `arr[:]` always yields a non-mut slice header, so
-			// requiring mut here would lock out the only way to
-			// produce a writable slice. For now, accept the write —
-			// this matches the implicit pre-existing behavior, and
-			// the slice binding's const-ness alone is not enough to
-			// reject (a const slice binding is still a window into
-			// writable underlying storage, just like *T).
+			if baseType.MutMask&(1<<1) == 0 {
+				return false, fmt.Sprintf("Cannot write element through non-mut slice of type %s; declare the slice as mut %s", baseType, baseType)
+			}
 			return true, ""
 		}
 		// Fixed array: writes go to the array's own storage. The base
@@ -1694,6 +1688,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		baset := *v.t.Element
 		elem := baset
 		newt := ASTType{Element: &elem}
+		if v.t.IsSlice() {
+			newt.MutMask = v.t.MutMask
+		} else if isLvalueMutable(c, ast.Val) {
+			newt.MutMask = 1 << 1
+		}
 		var addr spot
 		if v.t.IsSlice() {
 			addrt := baset

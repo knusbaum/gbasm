@@ -1,0 +1,7 @@
+package main
+
+fn main() {
+	const a byte[4] = [1, 2, 3, 4]
+	var bs byte[] = a[:]
+	bs[0] = 99
+}

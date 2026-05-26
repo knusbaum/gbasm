@@ -5,11 +5,11 @@ import "string"
 struct state {
 	one i64
 	two i64
-	remaining byte[]
+	remaining mut byte[]
 	complete i64
 }
 
-fn skip(var bs byte[]) byte[] {
+fn skip(var bs mut byte[]) mut byte[] {
 	var i i64
 	for (i = 0; i < string.lenb(bs); i = i+1) {
 		if ((bs[i] >= '0') && (bs[i] <= '9')) {
@@ -20,13 +20,13 @@ fn skip(var bs byte[]) byte[] {
 	return bs
 }
 
-fn readRow(var bs byte[]) state {
+fn readRow(var bs mut byte[]) state {
 	var onea byte[10]
 	var twoa byte[10]
 
-	var onebs byte[]
+	var onebs mut byte[]
 	onebs = onea[:]
-	var twobs byte[]
+	var twobs mut byte[]
 	twobs = twoa[:]
 
 	// scan forward to the next number
@@ -118,7 +118,7 @@ fn dumpns(ns i64[]) {
 	string.puts("\n")
 }
 
-fn qsort(ns i64[]) {
+fn qsort(ns mut i64[]) {
 	if (string.lenn(ns) <= 0) {
 		return 0
 	}
@@ -136,7 +136,7 @@ fn qsort(ns i64[]) {
 	}
 }
 
-fn partition(ns i64[]) i64 {
+fn partition(ns mut i64[]) i64 {
 	var pivot i64
 	var i i64
 	pivot = ns[string.lenn(ns) - 1]	
@@ -175,7 +175,7 @@ fn main() i64 {
 	row = 0
 	
 	var buf byte[28]
-	var bs byte[]
+	var bs mut byte[]
 	bs = buf[:]
 	var remaining i64
 	remaining = 0
