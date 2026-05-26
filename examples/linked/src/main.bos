@@ -55,22 +55,4 @@ fn main(args byte[][]) {
 	list_append(lst, 30)
 	list_print(lst)
 	list_destroy(lst)
-	
-	// const n owned *owned mut node = owned(alloc(node))
-	// n.val = 10
-
-	// const un2 owned *mut node = owned(alloc(node))
-	// un2.val = 20
-	// un2.next = n
-	// //dispose(un2)
-	// const n2 owned *owned mut node = owned(un2)
-	// dispose(un2)
-	
-	// string.puts("Hello, World!\n")
-	// string.puti(n.val)
-	// string.puts("\n")
-	// string.puti(n2.val)
-	// string.puts("\n")
-	// free(n)
-	// free(n2)
 }

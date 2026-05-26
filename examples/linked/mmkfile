@@ -13,12 +13,14 @@ BDOC=${BDOC:-$BOSON_HOME/bdoc}
 
 include $BOSON_HOME/boson.mmk
 
-all : linked
+all : build
 
-bos_exe linked source=src : rebuild_compiler
+bos_exe linked source=src :
 
-rebuild_compiler {
-    cd ../../ && make
+build {
+    set -e
+    (cd ../../ && make)
+    mmk linked
 }
 
-[run all] : linked { ./linked }
+[run all] : build { ./linked }
