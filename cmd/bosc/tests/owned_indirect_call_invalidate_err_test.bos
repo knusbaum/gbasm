@@ -1,0 +1,26 @@
+package main
+
+struct leaf {
+	val i64
+}
+
+struct box {
+	child owned *?owned mut leaf
+}
+
+fn opaque(slot *?mut *leaf) {
+}
+
+fn main() {
+	var fp fn(*?mut *leaf) = &opaque
+	var b owned box = box{child: nil}
+	var child owned *?owned mut leaf = b.child
+	var cond bool
+	if (cond) {
+		fp(&b.child)
+	}
+	if (child) {
+		free(child)
+	}
+	dispose(b)
+}

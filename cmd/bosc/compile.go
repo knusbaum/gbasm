@@ -1315,11 +1315,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 
 		argorder := setupArgs(of, c, ast, decl)
-		for i, arg := range ast.Args {
-			if invalidatesOwnedFieldFactsParam(decl.Args[i].Type) {
-				c.InvalidateOwnedFieldFactsByPointerInvalidation(c.PointerFlow().MutBorrowCall(pointerExprForAST(c, arg, "")))
-			}
-		}
 
 		retType := ast.ASTType(c)
 		raxName := raxForType(retType)
@@ -2306,6 +2301,15 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 	for i := 0; i < len(f.Args); i++ {
 		if d.Args[i].Type.HasOwned() {
 			markMovedIfOwnedSource(of, c, d.Args[i].Type, f.Args[i])
+		}
+	}
+	// Apply pointer-flow invalidation for any non-owning mutable pointer
+	// parameters. This runs for direct and indirect calls alike: both go
+	// through setupArgs, and an indirect call carries the same alias risk
+	// as a direct one.
+	for i, arg := range f.Args {
+		if invalidatesOwnedFieldFactsParam(d.Args[i].Type) {
+			c.InvalidateOwnedFieldFactsByPointerInvalidation(c.PointerFlow().MutBorrowCall(pointerExprForAST(c, arg, "")))
 		}
 	}
 	for i := 0; i < len(f.Args); i++ {
