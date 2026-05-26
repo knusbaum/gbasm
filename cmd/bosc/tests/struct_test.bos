@@ -8,7 +8,7 @@ struct point {
 	z i64
 }
 
-fn structfn(p point) {
+fn structfn(var p point) {
 	string.puti(p.x)
 	string.puts("\n")
 
@@ -23,7 +23,7 @@ fn structfn(p point) {
 	p.z = p.z + 100
 }
 
-fn structPtrFn(p *point) {
+fn structPtrFn(p *mut point) {
  	string.puti(p.x)
  	string.puts("\n")
 

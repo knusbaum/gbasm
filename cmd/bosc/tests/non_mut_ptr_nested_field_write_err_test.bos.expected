@@ -1,0 +1,2 @@
+Compiling tests/non_mut_ptr_nested_field_write_err_test.bos
+Fatal: Cannot write field "in" through read-only pointer of type *outer; pointer must be *mut

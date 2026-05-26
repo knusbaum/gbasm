@@ -1,0 +1,2 @@
+Compiling tests/non_mut_ptr_field_write_err_test.bos
+Fatal: Cannot write field "x" through read-only pointer of type *point; pointer must be *mut

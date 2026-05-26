@@ -1,0 +1,9 @@
+package main
+
+struct inner { z i64 }
+struct outer { x i64; in inner }
+
+fn main() {
+	const o outer = outer{x: 1, in: inner{z: 2}}
+	o.in.z = 99
+}

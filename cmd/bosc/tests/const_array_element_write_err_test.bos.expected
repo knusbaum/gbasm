@@ -1,0 +1,2 @@
+Compiling tests/const_array_element_write_err_test.bos
+Fatal: Cannot assign to const binding "a"

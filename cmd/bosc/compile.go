@@ -450,6 +450,75 @@ func canWriteImmediatePointee(t ASTType) bool {
 	return t.Indirection > 0 && t.MutMask&(1<<1) != 0
 }
 
+// lvalueIsWritable answers the type-system question "may this lvalue be
+// written to?". It walks the lval AST and checks each link:
+//
+//   - Symbol root: writable iff the binding is var (not const).
+//   - Deref: writable iff the pointer is *mut at the immediate pointee.
+//   - Dot through a pointer expression (auto-deref): writable iff the
+//     pointer is *mut at the immediate pointee.
+//   - Dot through a value expression: writable iff the underlying base
+//     is writable (recurse).
+//   - Index/NonNullAssert: same pattern as Dot.
+//
+// The second return is a human-readable reason for the rejection. The
+// Assignment handler is the only caller and uses the reason as the
+// diagnostic. Codegen (compileLval) stays focused on producing an
+// address — it does not consult or carry this property.
+func lvalueIsWritable(c *Context, a AST) (bool, string) {
+	switch v := a.(type) {
+	case *Symbol:
+		if c.IsConst(v.Name) {
+			return false, fmt.Sprintf("Cannot assign to const binding %q", v.Name)
+		}
+		return true, ""
+	case *Deref:
+		t := v.Val.ASTType(c)
+		if !canWriteImmediatePointee(t) {
+			return false, fmt.Sprintf("Cannot write through read-only pointer of type %s; pointer must be *mut", t)
+		}
+		return true, ""
+	case *Dot:
+		baseType := v.Val.ASTType(c)
+		if baseType.Indirection > 0 {
+			if !canWriteImmediatePointee(baseType) {
+				return false, fmt.Sprintf("Cannot write field %q through read-only pointer of type %s; pointer must be *mut", v.Member, baseType)
+			}
+			return true, ""
+		}
+		return lvalueIsWritable(c, v.Val)
+	case *Index:
+		baseType := v.Val.ASTType(c)
+		if baseType.Indirection > 0 {
+			if !canWriteImmediatePointee(baseType) {
+				return false, fmt.Sprintf("Cannot write element through read-only pointer of type %s; pointer must be *mut", baseType)
+			}
+			return true, ""
+		}
+		if baseType.IsSlice() {
+			// TODO: enforce `mut byte[]` for element writes once slice
+			// expressions propagate mut from their source. Today
+			// `arr[:]` always yields a non-mut slice header, so
+			// requiring mut here would lock out the only way to
+			// produce a writable slice. For now, accept the write —
+			// this matches the implicit pre-existing behavior, and
+			// the slice binding's const-ness alone is not enough to
+			// reject (a const slice binding is still a window into
+			// writable underlying storage, just like *T).
+			return true, ""
+		}
+		// Fixed array: writes go to the array's own storage. The base
+		// binding's writability governs.
+		return lvalueIsWritable(c, v.Val)
+	case *NonNullAssert:
+		return lvalueIsWritable(c, v.Val)
+	}
+	// Unknown lval form. Be conservative — refuse rather than silently
+	// accept. The caller's targeting machinery will already have rejected
+	// most non-lvalue shapes long before this point.
+	return false, fmt.Sprintf("Cannot assign to expression of this form")
+}
+
 func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr {
 	if a.ASTType(c).Indirection == 0 {
 		return c.PointerFlow().UnknownPointer()
@@ -1675,11 +1744,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				CompileErrorF(ast.Target, "Variable \"%s\" undeclared.", targetSym.Name)
 			}
 		}
-		// Reject assignment to const-bound variables.
+		// Mutability gate: walk the lval path and reject any link that
+		// blocks the write. Covers const-bound roots, non-mut pointer
+		// auto-deref through Dot/Index, and explicit *p through a *T.
+		if ok, reason := lvalueIsWritable(c, ast.Target); !ok {
+			CompileErrorF(a, "%s", reason)
+		}
 		if targetIsSymbol {
-			if c.IsConst(targetSym.Name) {
-				CompileErrorF(a, "Cannot assign to const binding \"%s\"", targetSym.Name)
-			}
 			if c.OwnedObligationLive(targetSym.Name, dstt) {
 				CompileErrorF(a, "Cannot assign to owned binding \"%s\" before consuming its current value", targetSym.Name)
 			}
@@ -1703,13 +1774,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 						CompileErrorF(a, "Ownership promotion requires explicit owned(): assigning %s to %s", srctmp, dsttmp)
 					}
 				}
-			}
-		}
-		// Reject write-through on a non-mut pointer: *p = x requires p: *mut T.
-		if deref, ok := ast.Target.(*Deref); ok {
-			ptype := deref.Val.ASTType(c)
-			if !canWriteImmediatePointee(ptype) {
-				CompileErrorF(a, "Cannot write through read-only pointer of type %s; pointer must be *mut", ptype)
 			}
 		}
 		lv := compileLval(of, c, ast.Target, nullspot)

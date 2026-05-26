@@ -1,0 +1,9 @@
+package main
+
+struct point { x i64 }
+
+fn main() {
+	var p point = point{x: 1}
+	var q *point = &p
+	q.x = 99
+}

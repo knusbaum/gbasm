@@ -1,0 +1,14 @@
+package main
+
+import "string"
+
+struct point { x i64; y i64 }
+
+fn main() {
+	var p point = point{x: 1, y: 2}
+	var q *mut point = &p
+	q.x = 99
+	q.y = 88
+	string.puti(p.x); string.putc('\n')
+	string.puti(p.y); string.putc('\n')
+}

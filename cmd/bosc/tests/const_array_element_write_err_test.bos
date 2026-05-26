@@ -1,0 +1,6 @@
+package main
+
+fn main() {
+	const a i64[3] = [1, 2, 3]
+	a[0] = 99
+}
