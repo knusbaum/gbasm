@@ -1,0 +1,19 @@
+package main
+
+import "string"
+
+struct inner { z i64 }
+struct mid { z i64; w i64 }
+struct outer1 { x i64; in inner }
+struct outer2 { x i64; in mid }
+
+fn main() {
+	var a outer1 = outer1{x: 1, in: inner{z: 2}}
+	string.puti(a.x); string.putc('\n')
+	string.puti(a.in.z); string.putc('\n')
+
+	var b outer2 = outer2{x: 10, in: mid{z: 20, w: 30}}
+	string.puti(b.x); string.putc('\n')
+	string.puti(b.in.z); string.putc('\n')
+	string.puti(b.in.w); string.putc('\n')
+}

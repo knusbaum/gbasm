@@ -621,6 +621,29 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 				lit.Type.Name, f.Name, fieldType, srcType)
 		}
 
+		// Memory-backed field (nested struct, array, anything > 8 bytes
+		// with no indirection): place the value directly into the
+		// containing storage to avoid the address-vs-bytes confusion
+		// that a single `mov [dest+off] tmp` would cause for a
+		// memory-backed source spot.
+		if fieldType.Indirection == 0 && typeIsMemoryBacked(c, fieldType) {
+			fieldAddr := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", fieldAddr.ref, dest.ref, off)
+			fieldDest := spot{ref: fieldAddr.ref, t: fieldType, nameIsAddress: true}
+			if sl, ok := f.Val.(*StructLiteral); ok && sameIgnoringOwned(fieldType, sl.Type) {
+				compileStructLiteralInto(of, c, a, sl, fieldDest, fieldType)
+			} else if al, ok := f.Val.(*ArrayLiteral); ok {
+				compileArrayLiteralInto(of, c, a, fieldDest, al)
+			} else {
+				v := compileTop(of, c, f.Val, nullspot)
+				spot_memcpy(of, c, fieldDest, v, fieldType.Size(c))
+				v.free(of)
+			}
+			markMovedIfOwnedSource(of, c, fieldType, f.Val)
+			fieldAddr.free(of)
+			continue
+		}
+
 		var v spot
 		if srcType.Same(fieldType) {
 			v = compileTop(of, c, f.Val, nullspot)
@@ -629,9 +652,6 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 			v = compileTop(of, c, f.Val, tmp)
 		}
 		markMovedIfOwnedSource(of, c, fieldType, f.Val)
-		if v.t.Indirection == 0 && v.t.Size(c) > 8 {
-			panic("struct literal with nested structs not implemented yet.")
-		}
 		fmt.Fprintf(of, "\tmov [%s+%d] %s\n", dest.ref, off, v.ref)
 		v.free(of)
 	}

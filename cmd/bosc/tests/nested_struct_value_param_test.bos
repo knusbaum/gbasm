@@ -1,0 +1,18 @@
+package main
+
+import "string"
+
+struct inner { z i64 }
+struct outer { x i64; in inner }
+
+fn modify(var o outer) {
+	o.x = 999
+	o.in.z = 888
+}
+
+fn main() {
+	var o outer = outer{x: 1, in: inner{z: 2}}
+	modify(o)
+	string.puti(o.x); string.putc('\n')
+	string.puti(o.in.z); string.putc('\n')
+}

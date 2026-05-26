@@ -1,0 +1,16 @@
+package main
+
+import "string"
+
+struct wrap { p *mut i64 }
+
+fn poke(var w wrap) {
+	*w.p = 99
+}
+
+fn main() {
+	var x i64 = 1
+	var w wrap = wrap{p: &x}
+	poke(w)
+	string.puti(x); string.putc('\n')
+}

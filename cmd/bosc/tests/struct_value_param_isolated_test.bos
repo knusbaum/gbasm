@@ -1,0 +1,19 @@
+package main
+
+import "string"
+
+struct big { a i64; b i64; c i64 }
+
+fn modify(var p big) {
+	p.a = 100
+	p.b = 200
+	p.c = 300
+}
+
+fn main() {
+	var b big = big{a: 1, b: 2, c: 3}
+	modify(b)
+	string.puti(b.a); string.putc('\n')
+	string.puti(b.b); string.putc('\n')
+	string.puti(b.c); string.putc('\n')
+}
