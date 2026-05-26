@@ -1,0 +1,2 @@
+Compiling tests/owned_nullable_branch_free_then_free_after_err_test.bos
+Fatal: free(p) is redundant: p is statically known to be nil

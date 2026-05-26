@@ -549,7 +549,7 @@ func invalidatesOwnedFieldFactsParam(param ASTType) bool {
 	if param.Indirection == 0 || param.HasOwned() {
 		return false
 	}
-	return param.MutMask&(1<<uint(param.Indirection)) != 0
+	return param.MutMask != 0
 }
 
 func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST) {
@@ -564,6 +564,11 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 	case *Symbol:
 		checkOwnedSourceAvailable(c, val)
 		c.Move(v.Name)
+		declared, _ := c.DeclaredTypeForVar(v.Name)
+		if declared.Indirection > 0 && declared.NilMask&1 != 0 {
+			fmt.Fprintf(of, "\tmov %s 0\n", v.Name)
+			c.SetNullFact(VarFlowPath(v.Name), NullKnownNull)
+		}
 	case *Deref:
 		ptype := v.Val.ASTType(c)
 		if !canWriteImmediatePointee(ptype) {
@@ -1455,6 +1460,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if !hasName {
 			switch ast.Lit.(type) {
 			case *Index, *Dot:
+				if path, ok := FlowPathForExpr(ast.Lit); ok {
+					c.MarkAddress(path.Root)
+				}
 				// compileLval produces a register holding the address
 				// of an element/field, with type bumped by one
 				// Indirection — exactly what '&expr' is supposed to
@@ -1486,8 +1494,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// the volatile directive would be a no-op or unrecognized.
 		if !c.NameIsAddress(name) {
 			fmt.Fprintf(of, "\tvolatile %s\n", name)
-			c.MarkAddress(name)
 		}
+		c.MarkAddress(name)
 		fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, name)
 		return dest
 	case *Index:

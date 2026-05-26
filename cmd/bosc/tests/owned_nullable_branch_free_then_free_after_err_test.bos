@@ -1,0 +1,15 @@
+package main
+
+fn cond() bool {
+	return 1 == 0
+}
+
+fn main() {
+	var p owned *?mut i64 = nil
+	if (cond()) {
+	} else {
+		p = alloc(i64)
+		free(p)
+	}
+	free(p)
+}
