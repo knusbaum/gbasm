@@ -1,0 +1,2 @@
+Compiling tests/not_non_bool_err_test.bos
+Fatal: Logical not (!) requires scalar or pointer operand, got point

@@ -1,0 +1,5 @@
+package main
+
+fn main() {
+	var p **?i64 = nil
+}

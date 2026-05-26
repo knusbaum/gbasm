@@ -1,0 +1,2 @@
+Compiling tests/free_known_nil_err_test.bos
+Fatal: free(p) is redundant: p is statically known to be nil

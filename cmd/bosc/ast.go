@@ -157,6 +157,22 @@ func (c *Context) NameIsAddress(name string) bool {
 	return false
 }
 
+// AddressTaken reports whether `&name` has been compiled anywhere in
+// the program (which is also implicitly true for globals, since they
+// are marked at declaration time). Unlike NameIsAddress, this does not
+// fold in the type's memory-backing — a stack-allocated struct whose
+// address is never taken via `&` is not considered address-taken.
+func (c *Context) AddressTaken(name string) bool {
+	if c == nil {
+		return false
+	}
+	root := c
+	for root.parent != nil {
+		root = root.parent
+	}
+	return root.addressNames[name]
+}
+
 // MarkAddress records name as memory-backed on the root context.
 // Used by emitGlobalVarDecl when emitting a top-level var directive
 // so that later codegen sites can recognize the name as address-style
@@ -491,11 +507,11 @@ func (c *Context) PopContLabel() {
 
 func (c *Context) Continue(a AST, of io.Writer) {
 	if c.parent != nil {
-		c.RecordContinue(c.OwnedBindingsSnapshot())
+		c.RecordContinue(c.FlowSnapshot())
 		c.parent.emitContinue(a, of)
 		return
 	}
-	c.RecordContinue(c.OwnedBindingsSnapshot())
+	c.RecordContinue(c.FlowSnapshot())
 	c.emitContinue(a, of)
 }
 
@@ -510,7 +526,7 @@ func (c *Context) emitContinue(a AST, of io.Writer) {
 	fmt.Fprintf(of, "\tjmp %s\n", c.contlabs[len(c.contlabs)-1])
 }
 
-func (c *Context) RecordContinue(snap map[string]bool) {
+func (c *Context) RecordContinue(snap FlowSnapshot) {
 	if c.parent != nil {
 		c.parent.RecordContinue(snap)
 		return
@@ -518,7 +534,7 @@ func (c *Context) RecordContinue(snap map[string]bool) {
 	c.checker.RecordContinue(snap)
 }
 
-func (c *Context) ContinueStates() []map[string]bool {
+func (c *Context) ContinueStates() []FlowSnapshot {
 	if c.parent != nil {
 		return c.parent.ContinueStates()
 	}
@@ -546,11 +562,11 @@ func (c *Context) PopBreakLabel() {
 
 func (c *Context) Break(of io.Writer) {
 	if c.parent != nil {
-		c.RecordBreak(c.OwnedBindingsSnapshot())
+		c.RecordBreak(c.FlowSnapshot())
 		c.parent.emitBreak(of)
 		return
 	}
-	c.RecordBreak(c.OwnedBindingsSnapshot())
+	c.RecordBreak(c.FlowSnapshot())
 	c.emitBreak(of)
 }
 
@@ -562,7 +578,7 @@ func (c *Context) emitBreak(of io.Writer) {
 	fmt.Fprintf(of, "\tjmp %s\n", c.breaklabs[len(c.breaklabs)-1])
 }
 
-func (c *Context) RecordBreak(snap map[string]bool) {
+func (c *Context) RecordBreak(snap FlowSnapshot) {
 	if c.parent != nil {
 		c.parent.RecordBreak(snap)
 		return
@@ -570,7 +586,7 @@ func (c *Context) RecordBreak(snap map[string]bool) {
 	c.checker.RecordBreak(snap)
 }
 
-func (c *Context) BreakStates() []map[string]bool {
+func (c *Context) BreakStates() []FlowSnapshot {
 	if c.parent != nil {
 		return c.parent.BreakStates()
 	}
@@ -1079,7 +1095,7 @@ func (dst ASTType) Accepts(src ASTType) bool {
 		return true
 	}
 	if src.Name == "<nil>" {
-		return dst.Indirection > 0 && dst.NilMask != 0
+		return dst.Indirection > 0 && dst.NilMask&1 != 0
 	}
 	if !dst.HasOwned() {
 		src = src.StripOwned()
@@ -1870,7 +1886,19 @@ type Not struct {
 	p   position
 }
 
-func (n *Not) ASTType(*Context) ASTType {
+func (n *Not) ASTType(c *Context) ASTType {
+	t := n.Val.ASTType(c)
+	// Logical not requires a scalar zero/non-zero value: any pointer,
+	// integer, bool, or untyped integer literal. Slices, fixed arrays,
+	// structs, and function-pointer types have no meaningful zero test.
+	if t.Indirection == 0 {
+		if t.IsSliceOrArray() || t.FuncSig != nil {
+			CompileErrorF(n, "Logical not (!) requires scalar or pointer operand, got %s", t)
+		}
+		if _, ok := c.StructDeclForName(t.Name); ok {
+			CompileErrorF(n, "Logical not (!) requires scalar or pointer operand, got %s", t)
+		}
+	}
 	return boolASTType()
 }
 

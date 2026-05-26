@@ -1,0 +1,11 @@
+package main
+
+struct node { val i64 }
+
+fn check(p *?node) {
+	if (!p) {
+		var q *node = p?
+	}
+}
+
+fn main() {}

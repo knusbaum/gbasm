@@ -1,0 +1,15 @@
+package main
+
+struct node { val i64 }
+
+fn main() {
+	var p *?node = nil
+	for(;;) {
+		p = nil
+		if (!p) {
+			break
+		}
+		break
+	}
+	var v i64 = p.val
+}

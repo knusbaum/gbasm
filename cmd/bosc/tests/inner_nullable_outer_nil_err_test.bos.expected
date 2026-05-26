@@ -1,0 +1,2 @@
+Compiling tests/inner_nullable_outer_nil_err_test.bos
+Fatal: Cannot initialize **?i64 with value of type <nil>

@@ -1,0 +1,2 @@
+Compiling tests/loop_flow_null_leak_err_test.bos
+Fatal: Cannot access field val through nullable pointer type *?node

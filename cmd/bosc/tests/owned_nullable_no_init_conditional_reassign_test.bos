@@ -1,0 +1,14 @@
+package main
+
+fn maybe() bool {
+	var x bool
+	return x
+}
+
+fn main() {
+	var p owned *?mut i64
+	if (maybe()) {
+		p = alloc(i64)
+	}
+	free(p)
+}

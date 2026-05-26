@@ -81,17 +81,17 @@ func TestCheckerStateOwnsControlFlowFacts(t *testing.T) {
 	}
 
 	c.PushContLabel()
-	c.RecordContinue(map[string]bool{"x": true})
+	c.RecordContinue(FlowSnapshot{Owned: map[string]bool{"x": true}})
 	continues := c.ContinueStates()
-	if len(continues) != 1 || !continues[0]["x"] {
+	if len(continues) != 1 || !continues[0].Owned["x"] {
 		t.Fatalf("continue states = %#v, want recorded ownership snapshot", continues)
 	}
 	c.PopContLabel()
 
 	c.PushBreakLabel()
-	c.RecordBreak(map[string]bool{"y": true})
+	c.RecordBreak(FlowSnapshot{Owned: map[string]bool{"y": true}})
 	breaks := c.BreakStates()
-	if len(breaks) != 1 || !breaks[0]["y"] {
+	if len(breaks) != 1 || !breaks[0].Owned["y"] {
 		t.Fatalf("break states = %#v, want recorded ownership snapshot", breaks)
 	}
 	c.PopBreakLabel()

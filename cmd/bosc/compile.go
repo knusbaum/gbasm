@@ -210,11 +210,25 @@ func nullablePointerPathForIf(c *Context, cond AST) (FlowPath, ASTType, bool, bo
 	nonNullOnThen := true
 	var val AST
 	switch ast := cond.(type) {
-	case *Symbol:
+	case *Symbol, *Dot:
 		val = ast
 	case *Not:
 		val = ast.Val
 		nonNullOnThen = false
+	case *Op2:
+		if ast.Type != n_neq && ast.Type != n_deq {
+			return FlowPath{}, ASTType{}, false, false
+		}
+		if lit, ok := ast.Second.(*Literal); ok && lit.Val == nil {
+			val = ast.First
+		} else if lit, ok := ast.First.(*Literal); ok && lit.Val == nil {
+			val = ast.Second
+		} else {
+			return FlowPath{}, ASTType{}, false, false
+		}
+		if ast.Type == n_deq {
+			nonNullOnThen = false
+		}
 	default:
 		return FlowPath{}, ASTType{}, false, false
 	}
@@ -222,18 +236,54 @@ func nullablePointerPathForIf(c *Context, cond AST) (FlowPath, ASTType, bool, bo
 	if !ok {
 		return FlowPath{}, ASTType{}, false, false
 	}
-	t := val.ASTType(c)
-	if path.Fields == "" {
-		var ok bool
-		t, ok = c.DeclaredTypeForVar(path.Root)
-		if !ok {
-			return FlowPath{}, ASTType{}, false, false
-		}
+	t, ok := declaredPathType(c, val)
+	if !ok {
+		return FlowPath{}, ASTType{}, false, false
 	}
 	if t.Indirection == 0 || t.NilMask&1 == 0 {
 		return FlowPath{}, ASTType{}, false, false
 	}
 	return path, t, nonNullOnThen, true
+}
+
+// declaredPathType walks a (possibly multi-level) Symbol/Dot expression
+// and returns the declared (un-narrowed) type for the leaf, so that
+// flow-narrowing decisions are not skipped just because an outer pass
+// already narrowed the value through ASTType.
+func declaredPathType(c *Context, a AST) (ASTType, bool) {
+	switch v := a.(type) {
+	case *Symbol:
+		return c.DeclaredTypeForVar(v.Name)
+	case *Dot:
+		baseType, ok := declaredPathType(c, v.Val)
+		if !ok {
+			return ASTType{}, false
+		}
+		if baseType.Indirection != 0 {
+			if baseType.NilMask&1 != 0 {
+				return ASTType{}, false
+			}
+		}
+		decl, ok := c.StructDeclForName(baseType.Name)
+		if !ok {
+			return ASTType{}, false
+		}
+		for _, f := range decl.Fields {
+			if f.Name == v.Member {
+				return fieldTypeForBase(baseType, f.Type), true
+			}
+		}
+		return ASTType{}, false
+	case *NonNullAssert:
+		t, ok := declaredPathType(c, v.Val)
+		if !ok {
+			return ASTType{}, false
+		}
+		t.NilMask &^= 1
+		return t, true
+	default:
+		return ASTType{}, false
+	}
 }
 
 func updateNullFactForAssignment(c *Context, path FlowPath, dst ASTType, val AST, src ASTType) {
@@ -305,6 +355,21 @@ func mergeOwnedFieldFactsExact(c *Context, a AST, thenFacts, elseFacts map[FlowP
 		}
 	}
 	return out
+}
+
+// mergeFlowSnapshots joins two flow snapshots reached on different exits of
+// the same loop. Owned-binding consistency is checked separately by the
+// caller; this helper merges the remaining facts lossily where appropriate
+// (null and pointer state can disagree across exits, owned-field facts must
+// agree exactly).
+func mergeFlowSnapshots(c *Context, a AST, x, y FlowSnapshot) FlowSnapshot {
+	return FlowSnapshot{
+		Owned:       x.Owned,
+		Null:        MergeNullFacts(x.Null, y.Null),
+		OwnedFields: mergeOwnedFieldFactsExact(c, a, x.OwnedFields, y.OwnedFields),
+		Borrowed:    MergeBorrowedBindings(x.Borrowed, y.Borrowed),
+		Pointer:     flow.Merge(x.Pointer, y.Pointer),
+	}
 }
 
 func checkOwnedSourceAvailable(c *Context, val AST) {
@@ -690,6 +755,13 @@ func compileFreeBuiltin(of io.Writer, c *Context, a AST, ast *Funcall) spot {
 		CompileErrorF(ast.Args[0], "free requires an owned pointer, got %s", argt)
 	}
 	if path, ok := FlowPathForExpr(arg); ok {
+		// A statically-known-nil owned pointer carries no obligation: there
+		// is nothing to free. Reject the call as a likely bug. Runtime nil
+		// safety is still tested when the compiler cannot prove the
+		// argument is nil (e.g. via a function parameter).
+		if c.NullFact(path) == NullKnownNull {
+			CompileErrorF(arg, "free(%s) is redundant: %s is statically known to be nil", path.Key(), path.Key())
+		}
 		checkOwnedFieldsConsumedBeforeRawFree(c, arg, path, argt)
 	} else {
 		pointee := pointeeType(argt)
@@ -1093,16 +1165,20 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 		} else if !ast.Type.ZeroInitializable(c) {
 			CompileErrorF(a, "Variable \"%s\" of type %s requires an initializer", ast.Name, ast.Type)
+		} else if ast.Type.Indirection > 0 && ast.Type.NilMask&1 != 0 {
+			// `var p *?T` (with or without `owned`) is sugar for `= nil`:
+			// zero the storage so runtime reads see nil, and record the
+			// static fact. For owned bindings, NullFact=Null is what
+			// OwnedObligationLive uses to recognize the slot as carrying
+			// no obligation, so no `c.Move()` is needed (and would be
+			// wrong — it would forbid later reads through the binding).
+			fmt.Fprintf(of, "\tmov %s 0\n", s.ref)
+			c.SetNullFact(VarFlowPath(ast.Name), NullKnownNull)
 		} else if ast.Type.HasOwned() {
 			if _, ok := c.StructDeclForName(ast.Type.Name); ok && ast.Type.Indirection == 0 && parentOwnsFields(ast.Type) {
 				CompileErrorF(a, "Owned struct binding \"%s\" must have an initializer", ast.Name)
 			}
 			c.Move(ast.Name)
-			if ast.Type.Indirection > 0 && ast.Type.NilMask&1 != 0 {
-				c.SetNullFact(VarFlowPath(ast.Name), NullKnownNull)
-			}
-		} else if ast.Type.Indirection > 0 && ast.Type.NilMask&1 != 0 {
-			c.SetNullFact(VarFlowPath(ast.Name), NullKnownNull)
 		}
 		return nullspot
 	case *FuncDecl:
@@ -1581,7 +1657,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if c.IsConst(targetSym.Name) {
 				CompileErrorF(a, "Cannot assign to const binding \"%s\"", targetSym.Name)
 			}
-			if dstt.HasOwned() && !c.IsMoved(targetSym.Name) {
+			if c.OwnedObligationLive(targetSym.Name, dstt) {
 				CompileErrorF(a, "Cannot assign to owned binding \"%s\" before consuming its current value", targetSym.Name)
 			}
 		}
@@ -1717,12 +1793,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		elseFallsThrough := ast.Else == nil || fallsThrough(ast.Else)
 		condPath, condType, condNonNullOnThen, condIsNullablePtr := nullablePointerPathForIf(c, ast.Cond)
 
-		if condIsNullablePtr && condNonNullOnThen {
-			c.SetNullFact(condPath, NullKnownNonNull)
-		} else if condIsNullablePtr && condType.HasOwned() {
-			c.SetNullFact(condPath, NullKnownNull)
-			if condPath.Fields == "" {
-				c.Move(condPath.Root)
+		if condIsNullablePtr {
+			if condNonNullOnThen {
+				c.SetNullFact(condPath, NullKnownNonNull)
+			} else {
+				c.SetNullFact(condPath, NullKnownNull)
+				if condType.HasOwned() && condPath.Fields == "" {
+					c.Move(condPath.Root)
+				}
 			}
 		}
 		v = compileTop(of, c, ast.Then, nullspot)
@@ -1738,14 +1816,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 
 		// Restore to pre-branch state for the else branch.
 		c.RestoreFlowSnapshot(snapBefore)
-		if condIsNullablePtr && condNonNullOnThen && condType.HasOwned() {
-			c.SetNullFact(condPath, NullKnownNull)
-			if condPath.Fields == "" {
-				c.Move(condPath.Root)
+		if condIsNullablePtr {
+			if condNonNullOnThen {
+				c.SetNullFact(condPath, NullKnownNull)
+				if condType.HasOwned() && condPath.Fields == "" {
+					c.Move(condPath.Root)
+				}
+			} else {
+				c.SetNullFact(condPath, NullKnownNonNull)
 			}
-		}
-		if condIsNullablePtr && !condNonNullOnThen {
-			c.SetNullFact(condPath, NullKnownNonNull)
 		}
 
 		if ast.Else != nil {
@@ -1786,7 +1865,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		fmt.Fprintf(of, "\tlabel %s\n", labend)
 		return nullspot
 	case *Loop:
-		snapBeforeLoop := c.OwnedBindingsSnapshot()
+		snapBeforeLoop := c.FlowSnapshot()
 
 		start := c.Label("loop")
 		end := c.PushBreakLabel()
@@ -1797,43 +1876,49 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if !v.empty() {
 			v.free(of)
 		}
-		snapAfterBody := c.OwnedBindingsSnapshot()
+		snapAfterBody := c.FlowSnapshot()
 		continueStates := c.ContinueStates()
 		breakStates := c.BreakStates()
 
-		var backedgeStates []map[string]bool
+		var backedgeStates []FlowSnapshot
 		if bodyFallsThrough {
 			backedgeStates = append(backedgeStates, snapAfterBody)
 		}
 		backedgeStates = append(backedgeStates, continueStates...)
 		if len(backedgeStates) > 0 {
-			c.RestoreOwnedBindings(backedgeStates[0])
+			c.RestoreFlowSnapshot(backedgeStates[0])
 		}
 		snapAfterLoop := c.OwnedBindingsSnapshot()
 		if len(backedgeStates) > 1 {
 			for _, state := range backedgeStates[1:] {
-				for name := range snapBeforeLoop {
-					if snapAfterLoop[name] != state[name] {
+				for name := range snapBeforeLoop.Owned {
+					if snapAfterLoop[name] != state.Owned[name] {
 						CompileErrorF(a, "Owned binding \"%s\" has inconsistent state across loop backedges", name)
 					}
 				}
 			}
 		}
-		c.RestoreOwnedBindings(snapAfterLoop)
 		fmt.Fprintf(of, "\tlabel %s\n", cont)
 		fmt.Fprintf(of, "\tjmp %s\n", start)
 		fmt.Fprintf(of, "\tlabel %s\n", end)
 
 		if len(breakStates) > 0 {
-			baseExit := breakStates[0]
+			merged := breakStates[0]
 			for _, exit := range breakStates[1:] {
-				for name := range snapBeforeLoop {
-					if baseExit[name] != exit[name] {
+				for name := range snapBeforeLoop.Owned {
+					if merged.Owned[name] != exit.Owned[name] {
 						CompileErrorF(a, "Owned binding \"%s\" has inconsistent state across loop exits", name)
 					}
 				}
+				merged = mergeFlowSnapshots(c, a, merged, exit)
 			}
-			c.RestoreOwnedBindings(baseExit)
+			c.RestoreFlowSnapshot(merged)
+		} else {
+			// No reachable exit (e.g. `for(;;) { ... }` with no break / return).
+			// Post-loop code is unreachable; restore pre-loop facts so any
+			// remaining checks see a coherent state rather than the body's
+			// residual.
+			c.RestoreFlowSnapshot(snapBeforeLoop)
 		}
 		c.PopBreakLabel()
 		c.PopContLabel()
@@ -1841,7 +1926,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// Check that no pre-loop owned var reaches a loop backedge invalid.
 		// Values consumed in the body are allowed only if the step re-establishes
 		// them before the next condition/body.
-		for name, wasMoved := range snapBeforeLoop {
+		for name, wasMoved := range snapBeforeLoop.Owned {
 			if !wasMoved && len(backedgeStates) > 0 && snapAfterLoop[name] {
 				CompileErrorF(a, "Owned binding \"%s\" is consumed inside a loop body; this would be invalid on the second iteration", name)
 			}
@@ -2023,6 +2108,11 @@ func containsFuncall(a AST) bool {
 		return false
 	case *Symbol:
 		return false
+	case *Loop:
+		// Statement form; should not appear in expression contexts, but
+		// listed explicitly so the fallthrough panic stays informative
+		// for genuinely new node kinds.
+		return false
 	}
 	panic("ContainsFuncall Fallthrough\n")
 }
@@ -2152,6 +2242,10 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		argt := arg.ASTType(c)
 		param := d.Args[i].Type
 		if argt.Same(intlitASTType()) {
+			argt = param
+		} else if argt.Name == "<nil>" && param.Accepts(argt) {
+			// nil literal takes the parameter's nullable-pointer type
+			// rather than carrying its synthetic <nil> through codegen.
 			argt = param
 		} else if !param.Accepts(argt) {
 			CompileErrorF(arg, "For argument %d, expected type %v but got %v",

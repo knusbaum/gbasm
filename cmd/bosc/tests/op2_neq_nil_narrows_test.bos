@@ -1,0 +1,23 @@
+package main
+
+struct node { val i64 }
+
+fn use_nonnull(n *node) i64 {
+	return n.val
+}
+
+fn check(p *?node) i64 {
+	if (p != nil) {
+		return use_nonnull(p)
+	}
+	return 0
+}
+
+fn check_eq(p *?node) i64 {
+	if (p == nil) {
+		return 0
+	}
+	return use_nonnull(p)
+}
+
+fn main() {}

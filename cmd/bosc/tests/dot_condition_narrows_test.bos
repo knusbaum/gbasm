@@ -1,0 +1,19 @@
+package main
+
+struct node {
+	val i64
+	child *?node
+}
+
+fn use_nonnull(n *node) i64 {
+	return n.val
+}
+
+fn check(b *node) i64 {
+	if (b.child) {
+		return use_nonnull(b.child)
+	}
+	return 0
+}
+
+fn main() {}

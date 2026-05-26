@@ -86,8 +86,8 @@ type CheckerState struct {
 	movedBindings    map[string]bool
 
 	returnTypes    []ASTType
-	continueStates [][]map[string]bool
-	breakStates    [][]map[string]bool
+	continueStates [][]FlowSnapshot
+	breakStates    [][]FlowSnapshot
 
 	// pointerFlow is owned by the root checker state and shared through the
 	// checker parent chain, matching the function-wide nature of pointer facts.
@@ -142,7 +142,7 @@ func (s *CheckerState) PopContinueFrame() {
 	root.continueStates = root.continueStates[:len(root.continueStates)-1]
 }
 
-func (s *CheckerState) RecordContinue(snap map[string]bool) {
+func (s *CheckerState) RecordContinue(snap FlowSnapshot) {
 	root := s.root()
 	if root == nil || len(root.continueStates) == 0 {
 		return
@@ -151,12 +151,12 @@ func (s *CheckerState) RecordContinue(snap map[string]bool) {
 	root.continueStates[i] = append(root.continueStates[i], snap)
 }
 
-func (s *CheckerState) ContinueStates() []map[string]bool {
+func (s *CheckerState) ContinueStates() []FlowSnapshot {
 	root := s.root()
 	if root == nil || len(root.continueStates) == 0 {
 		return nil
 	}
-	return append([]map[string]bool(nil), root.continueStates[len(root.continueStates)-1]...)
+	return append([]FlowSnapshot(nil), root.continueStates[len(root.continueStates)-1]...)
 }
 
 func (s *CheckerState) PushBreakFrame() {
@@ -169,7 +169,7 @@ func (s *CheckerState) PopBreakFrame() {
 	root.breakStates = root.breakStates[:len(root.breakStates)-1]
 }
 
-func (s *CheckerState) RecordBreak(snap map[string]bool) {
+func (s *CheckerState) RecordBreak(snap FlowSnapshot) {
 	root := s.root()
 	if root == nil || len(root.breakStates) == 0 {
 		return
@@ -178,12 +178,12 @@ func (s *CheckerState) RecordBreak(snap map[string]bool) {
 	root.breakStates[i] = append(root.breakStates[i], snap)
 }
 
-func (s *CheckerState) BreakStates() []map[string]bool {
+func (s *CheckerState) BreakStates() []FlowSnapshot {
 	root := s.root()
 	if root == nil || len(root.breakStates) == 0 {
 		return nil
 	}
-	return append([]map[string]bool(nil), root.breakStates[len(root.breakStates)-1]...)
+	return append([]FlowSnapshot(nil), root.breakStates[len(root.breakStates)-1]...)
 }
 
 func (c *Context) SetBorrowedBinding(name string, borrowed bool) {
@@ -511,6 +511,14 @@ func (c *Context) InvalidateOwnedFieldFactsByPointerInvalidation(inv flow.Invali
 	for ctx := c; ctx != nil; ctx = ctx.parent {
 		for key := range ctx.checker.ownedFieldFacts {
 			path := FlowPathFromKey(key)
+			// Bindings that are not pointer-typed and whose address was
+			// never taken cannot be reached through any external pointer
+			// write, so invalidation through an unknown pointer cannot
+			// affect their fields.
+			if rootType, ok := c.DeclaredTypeForVar(path.Root); ok &&
+				rootType.Indirection == 0 && !c.AddressTaken(path.Root) {
+				continue
+			}
 			root := c.PointerFlow().Pointer(flow.Binding(path.Root))
 			if inv.Unknown || !root.KnownOrigin || inv.Origins[root.Origin] {
 				delete(ctx.checker.ownedFieldFacts, key)
@@ -531,12 +539,34 @@ func (c *Context) NullFact(path FlowPath) NullState {
 	return NullMaybe
 }
 
+// OwnedObligationLive reports whether the owned binding `name` currently
+// carries an obligation that must be discharged. A binding has a live
+// obligation when:
+//   - the binding has not been moved, AND
+//   - it is not an owned nullable pointer whose value is statically known nil.
+//
+// Owned nullable pointers represent the "no obligation" state with nil
+// at runtime, so a known-nil binding is considered discharged.
+func (c *Context) OwnedObligationLive(name string, t ASTType) bool {
+	if !t.HasOwned() {
+		return false
+	}
+	if c.IsMoved(name) {
+		return false
+	}
+	if t.Indirection > 0 && t.NilMask&1 != 0 &&
+		c.NullFact(VarFlowPath(name)) == NullKnownNull {
+		return false
+	}
+	return true
+}
+
 // UnconsumedOwned returns the names of any owned bindings in this (non-parent)
-// scope that have not yet been consumed. Used for scope-exit checks.
+// scope that still carry a live obligation. Used for scope-exit checks.
 func (c *Context) UnconsumedOwned() []string {
 	var out []string
 	for name, t := range c.bindings {
-		if t.HasOwned() && !c.checker.movedBindings[name] {
+		if c.OwnedObligationLive(name, t) {
 			out = append(out, name)
 		}
 	}

@@ -1,6 +1,9 @@
 package main
 
-fn main() {
-	var p owned *?mut i64 = nil
+fn maybe_free(p owned *?mut i64) {
 	free(p)
+}
+
+fn main() {
+	maybe_free(nil)
 }
