@@ -1,0 +1,2 @@
+Compiling tests/owned_alias_multihop_write_invalidate_err_test.bos
+Fatal: free(a) would leak owned field a.child

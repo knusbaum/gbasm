@@ -1,0 +1,11 @@
+package main
+
+struct thing {
+	val i64
+}
+
+fn main() {
+	const a owned *owned mut thing = new(thing{val: 1})
+	const slot **mut thing = &a
+	free(a)
+}

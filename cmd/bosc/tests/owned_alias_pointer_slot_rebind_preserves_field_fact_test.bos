@@ -1,0 +1,34 @@
+package main
+
+struct leaf {
+	val i64
+}
+
+struct box {
+	val i64
+	child owned *?owned mut leaf
+}
+
+fn destroy(b owned *owned mut box) {
+	var other owned *owned mut box = new(box{val: 2, child: nil})
+	var other_child owned *?owned mut leaf = other.child
+	var alias *mut box = b
+	var slot *mut *mut box = &alias
+	var child owned *?owned mut leaf = b.child
+	var other_alias *mut box = other
+	*slot = other_alias
+	alias.val = 3
+	free(b)
+	free(other)
+	if(child) {
+		free(child)
+	}
+	if(other_child) {
+		free(other_child)
+	}
+}
+
+fn main() {
+	const b owned *owned mut box = new(box{val: 1, child: nil})
+	destroy(b)
+}

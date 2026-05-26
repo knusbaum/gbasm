@@ -1,0 +1,2 @@
+Compiling tests/owned_alias_field_write_invalidate_err_test.bos
+Fatal: free(b) would leak owned field b.child

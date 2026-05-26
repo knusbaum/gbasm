@@ -1,0 +1,2 @@
+Compiling tests/owned_const_address_slot_copy_err_test.bos
+Fatal: Ownership promotion requires explicit owned(): initializing owned *mut owned thing with *mut thing

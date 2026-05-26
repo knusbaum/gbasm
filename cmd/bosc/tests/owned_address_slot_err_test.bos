@@ -1,0 +1,11 @@
+package main
+
+struct thing {
+	val i64
+}
+
+fn main() {
+	var a owned *owned mut thing = new(thing{val: 1})
+	var slot *mut owned *mut owned thing = &a
+	*slot = new(thing{val: 2})
+}

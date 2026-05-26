@@ -1,0 +1,25 @@
+package main
+
+struct leaf {
+	val i64
+}
+
+struct box {
+	val i64
+	child owned *?owned mut leaf
+}
+
+fn touch(b *mut box) {
+	b.val = b.val + 1
+}
+
+fn destroy(b owned *owned mut box) {
+	var child owned *?owned mut leaf = b.child
+	touch(b)
+	free(b)
+	if(child) {
+		free(child)
+	}
+}
+
+fn main() {}

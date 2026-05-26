@@ -1,0 +1,2 @@
+Compiling tests/owned_const_address_slot_write_err_test.bos
+Fatal: Cannot write through read-only pointer of type **mut thing; pointer must be *mut

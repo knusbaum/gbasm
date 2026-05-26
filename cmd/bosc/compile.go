@@ -5,6 +5,8 @@ import (
 	"io"
 	"math/big"
 	"strings"
+
+	"github.com/knusbaum/gbasm/cmd/bosc/flow"
 )
 
 var annotate bool = true
@@ -379,6 +381,112 @@ func updateBorrowedBindingForAssignment(c *Context, target AST, dst ASTType, val
 	c.SetBorrowedBinding(sym.Name, borrowedPointerExpr(c, val))
 }
 
+func canWriteImmediatePointee(t ASTType) bool {
+	return t.Indirection > 0 && t.MutMask&(1<<1) != 0
+}
+
+func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr {
+	if a.ASTType(c).Indirection == 0 {
+		return c.PointerFlow().UnknownPointer()
+	}
+	switch ast := a.(type) {
+	case *Symbol:
+		if c.IsGlobalBinding(ast.Name) {
+			return c.PointerFlow().UnknownPointer()
+		}
+		return c.PointerFlow().Pointer(flow.Binding(ast.Name))
+	case *Address:
+		name, _ := ast.NamedTarget()
+		if name == "" || c.IsGlobalBinding(name) {
+			return c.PointerFlow().UnknownPointer()
+		}
+		if t, ok := c.TypeForVar(name); ok && t.Indirection > 0 {
+			return c.PointerFlow().AddressOfPointerSlot(flow.Binding(name))
+		}
+		return c.PointerFlow().UnknownPointer()
+	case *NonNullAssert:
+		return pointerExprForAST(c, ast.Val, assignedName)
+	case *Funcall:
+		if ast.Pkg == "" && (ast.FName == "alloc" || ast.FName == "new") && assignedName != "" {
+			return c.PointerFlow().NewObject(flow.Binding(assignedName))
+		}
+		return c.PointerFlow().UnknownPointer()
+	default:
+		return c.PointerFlow().UnknownPointer()
+	}
+}
+
+func pointerSlotTargetForDeref(c *Context, target AST) (flow.PointerExpr, bool) {
+	deref, ok := target.(*Deref)
+	if !ok {
+		return flow.PointerExpr{}, false
+	}
+	ptr := pointerExprForAST(c, deref.Val, "")
+	if !ptr.KnownSlot {
+		return flow.PointerExpr{}, false
+	}
+	return ptr, true
+}
+
+func targetMayOverwriteOwnedStorage(c *Context, target AST) bool {
+	if target.ASTType(c).HasOwned() {
+		return true
+	}
+	if dot, ok := target.(*Dot); ok {
+		baseType := dot.Val.ASTType(c)
+		def, ok := c.StructDeclForName(baseType.Name)
+		if !ok {
+			return false
+		}
+		_, declaredType := def.ByteOffset(c, dot.Member)
+		return declaredType.HasOwned()
+	}
+	return false
+}
+
+func updatePointerFlowForAssignment(c *Context, target AST, dst ASTType, val AST) {
+	if ptr, ok := pointerSlotTargetForDeref(c, target); ok && dst.Indirection > 0 {
+		src := pointerExprForAST(c, val, string(ptr.SlotTarget))
+		c.PointerFlow().StorePointerThrough(ptr, src)
+		c.SetBorrowedBinding(string(ptr.SlotTarget), borrowedPointerExpr(c, val))
+		return
+	}
+	sym, ok := target.(*Symbol)
+	if !ok || dst.Indirection == 0 {
+		return
+	}
+	if c.IsGlobalBinding(sym.Name) {
+		c.PointerFlow().AssignPointer(flow.Binding(sym.Name), c.PointerFlow().UnknownPointer())
+		return
+	}
+	c.PointerFlow().AssignPointer(flow.Binding(sym.Name), pointerExprForAST(c, val, sym.Name))
+}
+
+func invalidateOwnedFieldFactsForMutableTarget(c *Context, target AST) {
+	if _, ok := pointerSlotTargetForDeref(c, target); ok {
+		return
+	}
+	path, ok := FlowPathForExpr(target)
+	if !ok || path.Fields == "" {
+		return
+	}
+	if !targetMayOverwriteOwnedStorage(c, target) {
+		return
+	}
+	ptr := c.PointerFlow().Pointer(flow.Binding(path.Root))
+	if ptr.KnownOrigin && ptr.Origin == flow.Origin(path.Root) {
+		return
+	}
+	c.InvalidateOwnedFieldFactsByPointerInvalidation(c.PointerFlow().WriteThroughPointer(ptr))
+}
+
+func invalidatesOwnedFieldFactsParam(param ASTType) bool {
+	if param.Indirection == 0 || param.HasOwned() {
+		return false
+	}
+	return param.MutMask&(1<<uint(param.Indirection)) != 0
+}
+
 func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST) {
 	if !expected.HasOwned() {
 		return
@@ -391,6 +499,11 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 	case *Symbol:
 		checkOwnedSourceAvailable(c, val)
 		c.Move(v.Name)
+	case *Deref:
+		ptype := v.Val.ASTType(c)
+		if !canWriteImmediatePointee(ptype) {
+			CompileErrorF(val, "Cannot move owned value through read-only pointer")
+		}
 	case *Dot:
 		baseType := v.Val.ASTType(c)
 		fieldType := v.ASTType(c)
@@ -650,6 +763,15 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 	panic("move TODO")
 }
 
+func materializePointerValue(of io.Writer, c *Context, s spot) spot {
+	if s.nameIsAddress && s.t.Indirection > 0 {
+		tmp := newSpot(of, c, c.Temp(), s.t)
+		move(of, c, tmp, s)
+		return tmp
+	}
+	return s
+}
+
 // compileLval compiles an AST into a spot of type a.ASTType *or* pointer to a.ASTType.
 // If the type is the same as the value, it must me suitable to mov dest src.
 // Otherwise, if a pointer, it must be suitable for mov [dest] src, or for larger
@@ -688,6 +810,11 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		// return dest
 	case *Dot:
 		l := compileLval(of, c, ast.Val, nullspot)
+		orig := l
+		l = materializePointerValue(of, c, l)
+		if !l.same(&orig) {
+			defer l.free(of)
+		}
 		if l.t.Indirection != 0 && l.t.NilMask&1 != 0 {
 			CompileErrorF(ast.Val, "Cannot access field %s through nullable pointer type %s", ast.Member, l.t)
 		}
@@ -906,6 +1033,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			return nullspot
 		}
 		c.BindVar(a, ast.Name, ast.Type, ast.IsConst)
+		if ast.Type.Indirection > 0 {
+			c.PointerFlow().DeclarePointer(flow.Binding(ast.Name))
+		}
 		s := newSpot(of, c, ast.Name, ast.Type)
 		if ast.Init != nil {
 			initIsBorrowed := borrowedPointerExpr(c, ast.Init)
@@ -959,6 +1089,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			updateNullFactForAssignment(c, VarFlowPath(ast.Name), dstt, ast.Init, srct)
 			if dstt.Indirection > 0 {
 				c.SetBorrowedBinding(ast.Name, initIsBorrowed)
+				c.PointerFlow().AssignPointer(flow.Binding(ast.Name), pointerExprForAST(c, ast.Init, ast.Name))
 			}
 		} else if !ast.Type.ZeroInitializable(c) {
 			CompileErrorF(a, "Variable \"%s\" of type %s requires an initializer", ast.Name, ast.Type)
@@ -976,6 +1107,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return nullspot
 	case *FuncDecl:
 		c := c.SubContext()
+		defer c.ForgetPointerBindings()
 		retlab := c.PushRetlabel(ast.Return)
 		defer c.PopRetlabel()
 		fmt.Fprintf(of, "function %s\n", ast.Name)
@@ -1002,6 +1134,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			c.BindVar(ast, a.Name, a.Type, a.IsConst)
 			if a.Type.Indirection > 0 && !a.Type.HasOwned() {
 				c.SetBorrowedBinding(a.Name, true)
+			}
+			if a.Type.Indirection > 0 {
+				c.PointerFlow().AssignPointer(flow.Binding(a.Name), c.PointerFlow().NewObject(flow.Binding(a.Name)))
 			}
 		}
 		fmt.Fprintf(of, "\n\tprologue\n\n")
@@ -1033,6 +1168,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
 			}
 		}
+		sc.ForgetPointerBindings()
 		sc.FreeLocalVars(of)
 		return nullspot
 	case *Funcall:
@@ -1098,6 +1234,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 
 		argorder := setupArgs(of, c, ast, decl)
+		for i, arg := range ast.Args {
+			if invalidatesOwnedFieldFactsParam(decl.Args[i].Type) {
+				c.InvalidateOwnedFieldFactsByPointerInvalidation(c.PointerFlow().MutBorrowCall(pointerExprForAST(c, arg, "")))
+			}
+		}
 
 		retType := ast.ASTType(c)
 		raxName := raxForType(retType)
@@ -1131,6 +1272,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return ret
 	case *Dot:
 		l := compileTop(of, c, ast.Val, nullspot)
+		orig := l
+		l = materializePointerValue(of, c, l)
+		if !l.same(&orig) {
+			defer l.free(of)
+		}
 		def, ok := c.StructDeclForName(l.t.Name)
 		if !ok {
 			//panic("No struct (TODO)")
@@ -1193,8 +1339,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// [v.ref] already does the one-step deref the caller wants.
 		src := v.ref
 		if v.nameIsAddress {
-			ptmp := newSpot(of, c, c.Temp(), v.t)
-			fmt.Fprintf(of, "\tmov %s [%s]\n", ptmp.ref, v.ref)
+			ptmp := materializePointerValue(of, c, v)
 			src = ptmp.ref
 			defer ptmp.free(of)
 		}
@@ -1230,11 +1375,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// either delegate to compileLval (which already knows how to
 		// compute element / field addresses) or are rejected (no
 		// stable storage for them at runtime).
-		name := ast.Var
-		if name == "" {
-			switch lv := ast.Lit.(type) {
-			case *Symbol:
-				name = lv.Name
+		name, hasName := ast.NamedTarget()
+		if !hasName {
+			switch ast.Lit.(type) {
 			case *Index, *Dot:
 				// compileLval produces a register holding the address
 				// of an element/field, with type bumped by one
@@ -1267,6 +1410,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// the volatile directive would be a no-op or unrecognized.
 		if !c.NameIsAddress(name) {
 			fmt.Fprintf(of, "\tvolatile %s\n", name)
+			c.MarkAddress(name)
 		}
 		fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, name)
 		return dest
@@ -1465,7 +1609,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// Reject write-through on a non-mut pointer: *p = x requires p: *mut T.
 		if deref, ok := ast.Target.(*Deref); ok {
 			ptype := deref.Val.ASTType(c)
-			if ptype.MutMask&(1<<uint(ptype.Indirection)) == 0 {
+			if !canWriteImmediatePointee(ptype) {
 				CompileErrorF(a, "Cannot write through read-only pointer of type %s; pointer must be *mut", ptype)
 			}
 		}
@@ -1491,11 +1635,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if targetIsSymbol && dstt.HasOwned() {
 				c.Unmove(targetSym.Name)
 			}
+			invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 			if path, ok := FlowPathForExpr(ast.Target); ok {
 				c.InvalidateFlowFacts(path)
 				updateNullFactForAssignment(c, path, dstt, ast.Val, srct)
 			}
 			updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
+			updatePointerFlowForAssignment(c, ast.Target, dstt, ast.Val)
 			return nullspot
 		}
 		// if !lv.t.Same(dstt) {
@@ -1524,11 +1670,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if targetIsSymbol && dstt.HasOwned() {
 				c.Unmove(targetSym.Name)
 			}
+			invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 			if path, ok := FlowPathForExpr(ast.Target); ok {
 				c.InvalidateFlowFacts(path)
 				updateNullFactForAssignment(c, path, dstt, ast.Val, srct)
 			}
 			updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
+			updatePointerFlowForAssignment(c, ast.Target, dstt, ast.Val)
 			return nullspot
 		}
 
@@ -1547,11 +1695,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if targetIsSymbol && dstt.HasOwned() {
 			c.Unmove(targetSym.Name)
 		}
+		invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 		if path, ok := FlowPathForExpr(ast.Target); ok {
 			c.InvalidateFlowFacts(path)
 			updateNullFactForAssignment(c, path, dstt, ast.Val, srct)
 		}
 		updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
+		updatePointerFlowForAssignment(c, ast.Target, dstt, ast.Val)
 		return nullspot
 	case *IfStmt:
 		v := compileTop(of, c, ast.Cond, nullspot)
@@ -1623,6 +1773,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				Null:        MergeNullFacts(snapAfterThen.Null, snapAfterElse.Null),
 				OwnedFields: mergeOwnedFieldFactsExact(c, a, snapAfterThen.OwnedFields, snapAfterElse.OwnedFields),
 				Borrowed:    MergeBorrowedBindings(snapAfterThen.Borrowed, snapAfterElse.Borrowed),
+				Pointer:     flow.Merge(snapAfterThen.Pointer, snapAfterElse.Pointer),
 			})
 		case thenFallsThrough:
 			c.RestoreFlowSnapshot(snapAfterThen)

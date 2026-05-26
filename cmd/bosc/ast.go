@@ -8,6 +8,7 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/knusbaum/gbasm"
+	"github.com/knusbaum/gbasm/cmd/bosc/flow"
 )
 
 type interpreterError struct {
@@ -32,6 +33,7 @@ type FlowSnapshot struct {
 	Null        map[FlowPath]NullState
 	OwnedFields map[FlowPath]bool
 	Borrowed    map[string]bool
+	Pointer     *flow.State
 }
 
 type FlowPath struct {
@@ -103,6 +105,8 @@ type Context struct {
 	ownedFieldFacts map[string]bool
 	// names whose pointer value is a non-escaping borrow.
 	borrowedBindings map[string]bool
+	// flow-sensitive pointer alias state shared across lexical child contexts.
+	pointerFlow *flow.State
 	// names that ToAST registered into bindings at the top level so that
 	// function bodies declared earlier in source can resolve forward
 	// references. The *VarDecl handler in Compile consumes the marker
@@ -166,6 +170,7 @@ func NewContext() *Context {
 		nullFacts:        make(map[string]NullState),
 		ownedFieldFacts:  make(map[string]bool),
 		borrowedBindings: make(map[string]bool),
+		pointerFlow:      flow.NewState(),
 		prebound:         make(map[string]bool),
 		addressNames:     make(map[string]bool),
 		constBindings:    make(map[string]bool),
@@ -292,6 +297,7 @@ func (c *Context) DrainAnonGlobals() []anonGlobal {
 func (c *Context) SubContext() *Context {
 	sc := NewContext()
 	sc.parent = c
+	sc.pointerFlow = c.PointerFlow()
 	return sc
 }
 
@@ -371,6 +377,35 @@ func (c *Context) IsBorrowedBinding(name string) bool {
 func (c *Context) IsGlobalBinding(name string) bool {
 	ctx := c.BindingContext(name)
 	return ctx != nil && ctx.parent == nil
+}
+
+func (c *Context) PointerFlow() *flow.State {
+	if c == nil {
+		return flow.NewState()
+	}
+	if c.parent != nil {
+		return c.parent.PointerFlow()
+	}
+	if c.pointerFlow == nil {
+		c.pointerFlow = flow.NewState()
+	}
+	return c.pointerFlow
+}
+
+func (c *Context) RestorePointerFlow(s *flow.State) {
+	if c.parent != nil {
+		c.parent.RestorePointerFlow(s)
+		return
+	}
+	c.pointerFlow = s.Clone()
+}
+
+func (c *Context) ForgetPointerBindings() {
+	for name, t := range c.bindings {
+		if t.Indirection > 0 {
+			c.PointerFlow().Forget(flow.Binding(name))
+		}
+	}
 }
 
 // Move marks an owned binding as consumed. Walks the parent chain to find the
@@ -515,6 +550,7 @@ func (c *Context) FlowSnapshot() FlowSnapshot {
 		Null:        c.NullFactsSnapshot(),
 		OwnedFields: c.OwnedFieldFactsSnapshot(),
 		Borrowed:    c.BorrowedBindingsSnapshot(),
+		Pointer:     c.PointerFlow().Clone(),
 	}
 }
 
@@ -523,6 +559,7 @@ func (c *Context) RestoreFlowSnapshot(snap FlowSnapshot) {
 	c.RestoreNullFacts(snap.Null)
 	c.RestoreOwnedFieldFacts(snap.OwnedFields)
 	c.RestoreBorrowedBindings(snap.Borrowed)
+	c.RestorePointerFlow(snap.Pointer)
 }
 
 func mergeNullState(a NullState, aok bool, b NullState, bok bool) (NullState, bool) {
@@ -637,6 +674,18 @@ func (c *Context) InvalidateFlowFacts(path FlowPath) {
 			}
 		}
 		return
+	}
+}
+
+func (c *Context) InvalidateOwnedFieldFactsByPointerInvalidation(inv flow.Invalidation) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for key := range ctx.ownedFieldFacts {
+			path := FlowPathFromKey(key)
+			root := c.PointerFlow().Pointer(flow.Binding(path.Root))
+			if inv.Unknown || !root.KnownOrigin || inv.Origins[root.Origin] {
+				delete(ctx.ownedFieldFacts, key)
+			}
+		}
 	}
 }
 
@@ -1943,6 +1992,8 @@ func (d *Deref) ASTType(c *Context) ASTType {
 	}
 	t.Indirection -= 1
 	t.MutMask >>= 1 // consume the outermost pointer level's mut bit
+	t.MutMask &^= 1 // mut bit 0 is not meaningful on value/pointer types
+	t.OwnedMask >>= 1
 	t.NilMask >>= 1
 	// If the result is a plain non-pointer, non-slice/array value, MutMask is
 	// meaningless (binding mutability is tracked in constBindings, not here).
@@ -2007,6 +2058,40 @@ type Address struct {
 }
 
 func (a *Address) ASTType(c *Context) ASTType {
+	if name, ok := a.NamedTarget(); ok {
+		// Function address: &someFn yields a function-pointer type
+		// (fn(args) ret) — pointer-sized value carrying the signature
+		// so call sites can set up the ABI correctly.
+		if decl, ok := c.FuncDeclForName(name); ok {
+			var sig FuncSig
+			for _, arg := range decl.Args {
+				sig.Args = append(sig.Args, arg.Type)
+			}
+			sig.Return = decl.Return
+			return ASTType{FuncSig: &sig}
+		}
+		t, ok := c.TypeForVar(name)
+		if !ok {
+			panic("Variable is not bound. TODO: Nice error reports.")
+		}
+		if t.HasOwned() && !c.IsConst(name) {
+			CompileErrorF(a, "Cannot take mutable address of owned binding \"%s\"", name)
+		}
+		if t.HasOwned() {
+			t = t.StripOwned()
+		}
+		// Adding one pointer level: shift existing mut/owned bits up by one position.
+		t.MutMask <<= 1
+		t.OwnedMask <<= 1
+		t.NilMask <<= 1
+		// &x places x at position 1 in the new type (one deref through the new pointer
+		// reaches x's binding). If x is var, bit 1 = write-through to x's value.
+		if !c.IsConst(name) {
+			t.MutMask |= 1 << 1
+		}
+		t.Indirection += 1
+		return t
+	}
 	if a.Lit != nil {
 		// Address-of-literal: the type is *(literal's type), with no
 		// existing mut/owned bits to shift since the literal is fresh
@@ -2015,32 +2100,17 @@ func (a *Address) ASTType(c *Context) ASTType {
 		t.Indirection += 1
 		return t
 	}
-	// Function address: &someFn yields a function-pointer type
-	// (fn(args) ret) — pointer-sized value carrying the signature
-	// so call sites can set up the ABI correctly.
-	if decl, ok := c.FuncDeclForName(a.Var); ok {
-		var sig FuncSig
-		for _, arg := range decl.Args {
-			sig.Args = append(sig.Args, arg.Type)
-		}
-		sig.Return = decl.Return
-		return ASTType{FuncSig: &sig}
+	panic("Address has no target")
+}
+
+func (a *Address) NamedTarget() (string, bool) {
+	if a.Var != "" {
+		return a.Var, true
 	}
-	t, ok := c.TypeForVar(a.Var)
-	if !ok {
-		panic("Variable is not bound. TODO: Nice error reports.")
+	if sym, ok := a.Lit.(*Symbol); ok {
+		return sym.Name, true
 	}
-	// Adding one pointer level: shift existing mut/owned bits up by one position.
-	t.MutMask <<= 1
-	t.OwnedMask <<= 1
-	t.NilMask <<= 1
-	// &x places x at position 1 in the new type (one deref through the new pointer
-	// reaches x's binding). If x is var, bit 1 = write-through to x's value.
-	if !c.IsConst(a.Var) {
-		t.MutMask |= 1 << 1
-	}
-	t.Indirection += 1
-	return t
+	return "", false
 }
 
 func (a *Address) Note() string {

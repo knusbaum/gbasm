@@ -1,0 +1,17 @@
+package main
+
+struct child {
+	val i64
+}
+
+struct box {
+	child owned child
+}
+
+fn destroy(b owned box) {
+	var child owned child = b.child
+	dispose(child)
+	dispose(b)
+}
+
+fn main() {}

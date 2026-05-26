@@ -1,0 +1,2 @@
+Compiling tests/owned_plain_field_partial_move_err_test.bos
+Fatal: Cannot move owned field child out of an owned aggregate

@@ -1,0 +1,2 @@
+Compiling tests/owned_unknown_global_write_invalidate_err_test.bos
+Fatal: Owned field "b.child" is consumed on one branch but not the other

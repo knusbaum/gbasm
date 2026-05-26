@@ -1,0 +1,2 @@
+Compiling tests/owned_mut_borrow_call_invalidate_err_test.bos
+Fatal: free(b) would leak owned field b.child

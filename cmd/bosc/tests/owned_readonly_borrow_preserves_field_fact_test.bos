@@ -1,0 +1,28 @@
+package main
+
+struct leaf {
+	val i64
+}
+
+struct box {
+	val i64
+	child owned *?owned mut leaf
+}
+
+fn read(b *box) i64 {
+	return b.val
+}
+
+fn destroy(b owned *owned mut box) {
+	var child owned *?owned mut leaf = b.child
+	read(b)
+	free(b)
+	if(child) {
+		free(child)
+	}
+}
+
+fn main() {
+	const b owned *owned mut box = new(box{val: 1, child: nil})
+	destroy(b)
+}
