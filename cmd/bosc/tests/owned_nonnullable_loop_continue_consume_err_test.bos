@@ -1,0 +1,17 @@
+package main
+
+fn cond() bool {
+	var b bool
+	return b
+}
+
+fn main() {
+	var p owned *mut i64 = alloc(i64)
+	var i i64
+	for(; i < 1; i = i + 1) {
+		if (cond()) {
+			free(p)
+			continue
+		}
+	}
+}

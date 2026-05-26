@@ -1,0 +1,2 @@
+Compiling tests/owned_nullable_if_alloc_no_free_err_test.bos
+Fatal: Owned binding "p" goes out of scope without being consumed; call dispose() or pass it to a consuming function

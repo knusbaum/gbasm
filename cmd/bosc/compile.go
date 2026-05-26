@@ -1837,13 +1837,16 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 
 		switch {
 		case thenFallsThrough && elseFallsThrough:
-			// Both fallthrough branches must agree on which pre-existing owned vars are consumed.
-			for name, movedInThen := range snapAfterThen.Owned {
+			// Both fallthrough branches must agree on obligation-live
+			// status for any owned binding that existed pre-branch.
+			// Compare obligation-live (not raw moved bits) so that
+			// "moved=true" and "moved=false with NullFact=Null" — both
+			// "no obligation" encodings — are treated as equivalent.
+			for name := range snapAfterThen.Owned {
 				if _, existed := snapBefore.Owned[name]; !existed {
 					continue // declared inside a branch, not our concern here
 				}
-				movedInElse := snapAfterElse.Owned[name]
-				if movedInThen != movedInElse {
+				if !c.SameObligationLiveAcross(snapAfterThen, snapAfterElse, name) {
 					CompileErrorF(a, "Owned binding \"%s\" is consumed on one branch but not the other", name)
 				}
 			}
@@ -1888,11 +1891,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if len(backedgeStates) > 0 {
 			c.RestoreFlowSnapshot(backedgeStates[0])
 		}
-		snapAfterLoop := c.OwnedBindingsSnapshot()
 		if len(backedgeStates) > 1 {
 			for _, state := range backedgeStates[1:] {
 				for name := range snapBeforeLoop.Owned {
-					if snapAfterLoop[name] != state.Owned[name] {
+					if !c.SameObligationLiveAcross(backedgeStates[0], state, name) {
 						CompileErrorF(a, "Owned binding \"%s\" has inconsistent state across loop backedges", name)
 					}
 				}
@@ -1906,7 +1908,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			merged := breakStates[0]
 			for _, exit := range breakStates[1:] {
 				for name := range snapBeforeLoop.Owned {
-					if merged.Owned[name] != exit.Owned[name] {
+					if !c.SameObligationLiveAcross(merged, exit, name) {
 						CompileErrorF(a, "Owned binding \"%s\" has inconsistent state across loop exits", name)
 					}
 				}
@@ -2004,6 +2006,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		if c.IsMoved(ast.Var) {
 			CompileErrorF(a, "dispose: \"%s\" was already moved", ast.Var)
+		}
+		// dispose() consumes an obligation; if there is none (because the
+		// binding is a statically-known-nil owned nullable pointer), the
+		// call is redundant. Mirror free's rejection for consistency.
+		declared, _ := c.DeclaredTypeForVar(ast.Var)
+		if declared.Indirection > 0 && declared.NilMask&1 != 0 &&
+			c.NullFact(VarFlowPath(ast.Var)) == NullKnownNull {
+			CompileErrorF(a, "dispose: \"%s\" is statically known to be nil; no obligation to discharge", ast.Var)
 		}
 		c.Move(ast.Var)
 		note(of, "\t// dispose %s — obligation satisfied, no runtime effect\n", ast.Var)

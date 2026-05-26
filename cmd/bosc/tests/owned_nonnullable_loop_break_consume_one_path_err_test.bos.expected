@@ -1,0 +1,2 @@
+Compiling tests/owned_nonnullable_loop_break_consume_one_path_err_test.bos
+Fatal: Owned binding "p" has inconsistent state across loop exits

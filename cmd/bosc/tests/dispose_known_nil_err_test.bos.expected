@@ -1,0 +1,2 @@
+Compiling tests/dispose_known_nil_err_test.bos
+Fatal: dispose: "p" is statically known to be nil; no obligation to discharge

@@ -583,6 +583,33 @@ func (c *Context) OwnedObligationLiveInSnap(snap FlowSnapshot, name string) bool
 	return true
 }
 
+// SameObligationLiveAcross reports whether the obligation-live status of
+// `name` is consistent across two control-flow paths. Use this — not
+// direct comparison of `snap.Owned[name]` — when checking branch-join,
+// loop-backedge, or loop-exit consistency.
+//
+// For non-nullable owned bindings, "consistent" means equal: the static
+// state must agree, because the runtime has no way to represent "maybe
+// has obligation".
+//
+// For nullable owned bindings, the runtime nil pointer IS the "no
+// obligation" representation, so a path that ends with NullFact=Null and
+// a path that ends with NullFact=Maybe (or moved=true) can legitimately
+// converge. The post-merge state will be NullFact=Maybe (lossy null-fact
+// merge), and the caller can discharge any remaining obligation with
+// free() — whose runtime handles nil safely — or leak-check at scope
+// exit will flag the binding if neither branch consumed it.
+func (c *Context) SameObligationLiveAcross(a, b FlowSnapshot, name string) bool {
+	t, ok := c.DeclaredTypeForVar(name)
+	if !ok {
+		return true
+	}
+	if t.Indirection > 0 && t.NilMask&1 != 0 {
+		return true
+	}
+	return c.OwnedObligationLiveInSnap(a, name) == c.OwnedObligationLiveInSnap(b, name)
+}
+
 // UnconsumedOwned returns the names of any owned bindings in this (non-parent)
 // scope that still carry a live obligation. Used for scope-exit checks.
 func (c *Context) UnconsumedOwned() []string {
