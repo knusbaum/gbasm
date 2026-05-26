@@ -1,0 +1,11 @@
+package main
+
+fn passthrough(bs owned byte[]) owned byte[] {
+	return bs
+}
+
+fn main() {
+	var buf byte[10]
+	var bs byte[] = buf[:]
+	passthrough(bs)
+}

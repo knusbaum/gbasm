@@ -1128,11 +1128,14 @@ func (t ASTType) String() string {
 		if t.IsArray() {
 			inner = fmt.Sprintf("%s[%d]", s, t.ArraySize)
 		} else {
-			if t.MutMask&(1<<1) != 0 {
-				inner = "mut " + s + "[]"
-			} else {
-				inner = s + "[]"
+			prefix := ""
+			if t.OwnedMask&(1<<1) != 0 {
+				prefix = "owned "
 			}
+			if t.MutMask&(1<<1) != 0 {
+				prefix += "mut "
+			}
+			inner = prefix + s + "[]"
 		}
 		// Parenthesize when there is outer pointer indirection so "*byte[]"
 		// (slice of *byte) is distinguishable from "*(byte[])" (pointer to
@@ -1197,15 +1200,16 @@ func mkTypename(n *Node) ASTType {
 	// slice/array wrappers in innermost-first order; each wrapper produces
 	// a new outer ASTType whose Element is the previous level.
 	//
-	// MutMask belongs on the outermost wrapper (the slice/array type itself),
-	// not on the scalar element — e.g. "mut byte[]" means the slice is
-	// writable through, not that "byte" is mutable.
+	// MutMask and OwnedMask belong on the outermost wrapper (the slice/array
+	// type itself), not on the scalar element — e.g. "mut byte[]" means the
+	// slice is writable through, and "owned byte[]" means the slice is owned.
 	baseMutMask := n.mutmask
+	baseOwnedMask := n.ownedmask
 	base := ASTType{
 		Name:        n.sval,
 		Indirection: int(n.ival),
 		MutMask:     0,
-		OwnedMask:   n.ownedmask,
+		OwnedMask:   0,
 		NilMask:     n.nilmask,
 	}
 	switch base.Name {
@@ -1214,8 +1218,9 @@ func mkTypename(n *Node) ASTType {
 	}
 
 	if len(n.args) == 0 {
-		// No wrappers: this is a pointer or scalar type. MutMask lives here.
+		// No wrappers: pointer or scalar type. Masks live on the base itself.
 		base.MutMask = baseMutMask
+		base.OwnedMask = baseOwnedMask
 		return base
 	}
 
@@ -1235,8 +1240,9 @@ func mkTypename(n *Node) ASTType {
 		}
 		cur = outer
 	}
-	// MutMask on the outermost slice/array wrapper.
+	// MutMask and OwnedMask belong on the outermost slice/array wrapper.
 	cur.MutMask = baseMutMask
+	cur.OwnedMask = baseOwnedMask
 	return cur
 }
 
