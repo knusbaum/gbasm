@@ -1,0 +1,21 @@
+package main
+
+struct node {
+	next owned *?owned mut node
+}
+
+fn destroy(l owned *owned mut node) {
+	var curr owned *owned mut node = l
+	var next owned *?owned mut node
+	for(;;) {
+		next = curr.next
+		free(curr)
+		if (!next) {
+			break
+		} else {
+			curr = next
+		}
+	}
+}
+
+fn main() {}

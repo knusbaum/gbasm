@@ -1924,11 +1924,20 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		c.PopContLabel()
 
 		// Check that no pre-loop owned var reaches a loop backedge invalid.
-		// Values consumed in the body are allowed only if the step re-establishes
-		// them before the next condition/body.
-		for name, wasMoved := range snapBeforeLoop.Owned {
-			if !wasMoved && len(backedgeStates) > 0 && snapAfterLoop[name] {
-				CompileErrorF(a, "Owned binding \"%s\" is consumed inside a loop body; this would be invalid on the second iteration", name)
+		// "Invalid" means: the body assumed an obligation was live going in,
+		// but the back-edge would deliver no obligation on iteration N+1.
+		// Compare obligation-live (not raw moved bits) so that
+		// owned-nullable bindings whose pre-loop state is NullKnownNull
+		// and whose back-edge state is moved=true are treated as
+		// "no obligation → no obligation", not as consumption.
+		if len(backedgeStates) > 0 {
+			for name := range snapBeforeLoop.Owned {
+				if !c.OwnedObligationLiveInSnap(snapBeforeLoop, name) {
+					continue
+				}
+				if !c.OwnedObligationLiveInSnap(backedgeStates[0], name) {
+					CompileErrorF(a, "Owned binding \"%s\" is consumed inside a loop body; this would be invalid on the second iteration", name)
+				}
 			}
 		}
 		return nullspot

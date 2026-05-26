@@ -561,6 +561,28 @@ func (c *Context) OwnedObligationLive(name string, t ASTType) bool {
 	return true
 }
 
+// OwnedObligationLiveInSnap is the snapshot-based variant of
+// OwnedObligationLive: it answers the same question against the facts
+// recorded in `snap` rather than the live checker state. The declared
+// type is looked up through `c` since types are static.
+func (c *Context) OwnedObligationLiveInSnap(snap FlowSnapshot, name string) bool {
+	t, ok := c.DeclaredTypeForVar(name)
+	if !ok {
+		return false
+	}
+	if !t.HasOwned() {
+		return false
+	}
+	if snap.Owned[name] {
+		return false
+	}
+	if t.Indirection > 0 && t.NilMask&1 != 0 &&
+		snap.Null[VarFlowPath(name)] == NullKnownNull {
+		return false
+	}
+	return true
+}
+
 // UnconsumedOwned returns the names of any owned bindings in this (non-parent)
 // scope that still carry a live obligation. Used for scope-exit checks.
 func (c *Context) UnconsumedOwned() []string {
