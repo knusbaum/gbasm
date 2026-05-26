@@ -428,6 +428,131 @@ inspect(tr)   // tr fully borrowed, both obligations stay with caller
 
 Passing `owned *owned T` to a function taking `*owned T` or `owned *T` — consuming one obligation while retaining the other — is not supported. That would require the variable's type to change at the call site, which is typestate. It is a known limitation; see the future direction section below.
 
+### Aliasing and ownership
+
+Ownership is unique, but pointer access may alias. The compiler separates these two ideas:
+
+- **Ownership aliases are not allowed.** An `owned T` value cannot be copied. Passing it to an owned parameter moves it; assigning it to another owned binding moves it; using it afterward is rejected.
+- **Non-owning pointer aliases are allowed.** A value of type `*T`, `*mut T`, `*?T`, etc. may be copied freely, even if it points at storage owned by some other binding.
+- **Borrowing strips ownership.** Passing `owned *owned mut node` to a parameter of type `*node` or `*mut node` does not move either obligation. The callee receives only an access capability.
+
+For example:
+
+```
+const n owned *owned mut node = new(node{...})
+const a *mut node = n
+const b *mut node = a
+
+b.val = 10       // mutates the object; ownership still belongs to n
+free(n)          // consumes n's allocation obligation
+```
+
+This is intentionally not Rust-style exclusive mutable borrowing. Multiple non-owning aliases to the same object may exist at the same time. The price is conservative flow invalidation: if a write through one alias may affect an owned field, facts learned through another alias are no longer trusted.
+
+```
+struct box {
+    val i64
+    child owned *?owned mut node
+}
+
+fn bad(b owned *owned mut box) {
+    const alias *mut box = b
+    var child owned *?owned mut node = b.child
+    alias.child = nil       // may have overwritten the field whose obligation was moved
+    free(b)                 // COMPILE ERROR: b.child fact was invalidated
+}
+
+fn ok(b owned *owned mut box) {
+    const alias *mut box = b
+    var child owned *?owned mut node = b.child
+    alias.val = 10          // does not touch owned storage
+    free(b)                 // allowed if all owned fields are known consumed
+    if (child) { free(child) }
+}
+```
+
+The compiler tracks pointer aliases by origin. A pointer created by `new` or `alloc` and assigned to local `p` has origin `p`; aliases copied from it share that origin. Writes through unknown pointers, globals, conflicting branch merges, or opaque `*mut` calls are conservative and invalidate every owned-field fact that could depend on pointer precision.
+
+Pointer-to-pointer aliases are tracked as aliases to pointer slots:
+
+```
+var alias *mut box = b
+var slot *mut *mut box = &alias
+*slot = other
+alias.val = 1       // now affects other, not b
+```
+
+In this case `*slot = other` changes the pointer value stored in `alias`; it does not mutate the object `alias` used to point at, so facts about `b` are not invalidated merely by the rebind.
+
+#### Why these rules exist
+
+The ownership and aliasing rules are not meant to make aliasing impossible. They are meant to preserve a small set of invariants that make local reasoning possible:
+
+- Every live ownership obligation has exactly one owner.
+- A consuming operation either receives the obligation or is rejected.
+- A caller that still owns an aggregate can prove which owned fields have already been consumed.
+- A non-owning alias can observe or mutate reachable data only through the capability in its type; it cannot silently become another owner.
+- A fact about an owned field remains valid only while no compiler-visible alias could have overwritten the storage that fact describes.
+
+These invariants are what let the compiler answer questions like "is this owned value still usable?", "will this scope leak an obligation?", and "is this aggregate safe to raw-free?" without needing whole-program reasoning for ordinary local code.
+
+The distinction between an owned value and a borrowed view is central. If `owned *owned mut node` is passed as `*mut node`, the callee may mutate the node, but it does not receive the allocation obligation and it does not receive the inner `owned node` obligation. The caller must still discharge both. This keeps ownership accounting independent from access aliasing.
+
+The pointer-flow model exists to preserve field-consumption facts in the presence of ordinary pointer aliases. If the compiler knows that `alias` and `b` point at the same object, then `alias.val = 10` does not invalidate the fact that `b.child` was consumed, because `val` is not owned storage. But `alias.child = nil` must invalidate that fact, because it writes exactly the slot whose obligation was previously moved out. Rejecting the later `free(b)` is required for soundness: otherwise the compiler would be trusting an old fact about storage that may no longer contain the consumed value.
+
+Pointer-to-pointer tracking is required for the same reason. A local pointer variable is itself storage. If `slot` points at the pointer variable `alias`, then `*slot = other` changes what `alias` points to. After that rebind, mutations through `alias` should affect `other`, not the object that `alias` used to point at. Without modeling pointer slots separately from pointed-to objects, the compiler would either invalidate too much or, worse, keep trusting facts for the wrong object.
+
+#### Required for soundness
+
+These rules are required by the ownership model:
+
+- `owned` values are not copyable. Copying ownership would create two cleanup obligations for the same resource.
+- Passing or assigning to an `owned` destination moves the obligation. The source cannot be used afterward.
+- Borrowing strips ownership. A borrowed pointer is an access capability, not a cleanup responsibility.
+- Writes that may touch owned storage invalidate facts about that storage unless the compiler can prove the write is unrelated.
+- Unknown pointer state is conservative. If the compiler cannot prove what a mutable pointer aliases, it must assume owned-field facts reachable through that pointer may be stale.
+- Mutable access to an owner slot is rejected. Code must not be able to replace `a` in `var a owned *T` without also consuming the old obligation.
+- Read-only access to an owner slot may exist only as a non-owning view. This permits inspection without allowing ownership duplication or replacement.
+
+The last two points are why address-taking of owned bindings has the extra rule described in [The address-of operator](#the-address-of-operator). Taking a read-only address of a const owned binding is safe because the resulting pointer cannot replace the owner slot and the type of the view has ownership stripped. Taking a mutable address would expose the owner slot itself; `*slot = other` could then lose the old owned value without running its cleanup path.
+
+#### Conservative current choices
+
+Some restrictions are not fundamental to ownership, but are the current shape of the implementation:
+
+- Mutable calls are treated as opaque unless the compiler is analyzing the write directly. A function taking `*mut T` may only write non-owned fields, but without an effect summary the caller must assume owned-field facts may be invalidated.
+- Unknown aliases collapse precision. Globals, unresolved pointer origins, conflicting branch merges, and values that cross boundaries the flow model does not understand all force conservative invalidation.
+- Stacked ownership cannot be partially moved. Consuming only the outer `owned *` or only the inner `owned T` would require the source binding's type/state to change.
+- Non-null owned fields cannot be moved out of an aggregate. There is no valid placeholder to leave behind, so the compiler cannot represent the aggregate as still borrowable or freeable after the move.
+- Stacked values and non-null aggregates have no explicit "partially consumed but still in scope" type. Nullable owned fields use `nil` as the representable consumed state; non-null fields do not have that escape hatch.
+- Borrow checking is call-local and non-escaping, not a full lifetime/provenance system. It prevents simple stored borrowed pointers, but it is not intended to prove every memory-safety property.
+
+These choices are deliberately conservative. They reject some programs that could be safe with a richer model, but they preserve the invariants above without requiring typestate, interprocedural effect summaries, or full region/lifetime analysis.
+
+#### Benefits and guarantees
+
+For accepted code, the compiler can guarantee the ownership properties it tracks:
+
+- Ownership obligations are not implicitly duplicated.
+- A moved owned value is not used again through its old binding.
+- Raw `free` of an owned aggregate is rejected unless owned fields are known consumed or not present.
+- Read-only borrows do not disturb ownership cleanup facts.
+- Local pointer aliases, including multi-level pointer-slot aliases, are modeled well enough to keep precise facts when a write is unrelated and invalidate facts when a write may matter.
+- Branch joins cannot silently hide ownership consumption on only one path.
+
+This gives Boson a practical C-like aliasing surface while still making owned cleanup mechanically checkable in common local code.
+
+#### Blind spots
+
+The model still has important limits:
+
+- `owned(expr)` is an assertion escape hatch. It can introduce an owned type without proving that the expression really contains fresh obligations.
+- Conservative invalidation creates false positives around opaque calls, unknown pointers, globals, and complex control flow.
+- The compiler does not yet have interprocedural write/effect summaries, so it cannot distinguish a harmless `*mut` helper from one that overwrites owned fields unless the write is visible locally.
+- There is no general typestate model for "this binding is still live, but one obligation inside it has moved."
+- There is no full lifetime model. Non-escaping borrowed parameters prevent the most direct dangling-pointer cases, but unsafe ownership promotion, raw disposal, and external code can still violate assumptions.
+- The guarantees are compile-time ownership guarantees, not runtime hardware isolation. Pointer arithmetic, foreign calls, or other unsafe features can still undermine them if added or used without matching rules.
+
 ### Owned struct fields
 
 `owned` on a struct field is conditional on the ownership of the containing value:
@@ -668,7 +793,34 @@ This is intentionally not a full Rust-style borrow checker. The first rule is si
 
 The current system verifies ownership cleanup along compiler-visible ownership paths. Non-escaping borrows are what make that meaningful: a function taking `*T` is not allowed to stash the pointer and observe freed storage later.
 
-The remaining hard area is alias analysis for mutable borrows of owned aggregates. The compiler currently tracks facts by path (`curr.next`, `box.child`). If the same object is reachable through multiple paths, a mutation through one path may need to invalidate facts on another path. The non-escaping borrow rule prevents long-lived dangling references, but it does not by itself solve every intra-call aliasing case. Future borrowing work should address how mutable borrows interact with owned-field flow facts.
+Within a function, mutable borrows interact with owned-field facts through pointer-flow analysis. The compiler tracks which local pointer bindings share an origin and invalidates owned-field facts when a mutable write or opaque `*mut` call may have changed owned storage through an alias.
+
+Read-only borrows preserve facts:
+
+```
+fn inspect(b *box) i64 { return b.val }
+
+fn destroy(b owned *owned mut box) {
+    var child owned *?owned mut node = b.child
+    inspect(b)       // read-only borrow; b.child fact remains valid
+    free(b)
+    if (child) { free(child) }
+}
+```
+
+Mutable borrows are conservative across function calls because the callee body may be unavailable or may write through the pointer:
+
+```
+fn touch(b *mut box) { b.val = b.val + 1 }
+
+fn destroy(b owned *owned mut box) {
+    var child owned *?owned mut node = b.child
+    touch(b)         // may have written owned fields; b.child fact invalidated
+    free(b)          // COMPILE ERROR
+}
+```
+
+Direct field writes are more precise: writing a non-owned field such as `b.val` does not invalidate facts for `b.child`, while writing an owned field does.
 
 ## Mutability and the Type System
 
@@ -741,6 +893,8 @@ const y *mut *mut i16  // const binding; CAN change intermediate pointer; CAN wr
 var   y *mut *mut i16  // all four: rebind y, change intermediate pointer, write innermost i16
 ```
 
+Assignment through `*p` checks mutability of the immediate pointee slot, not the deepest pointee. Therefore `*mut *mut T` permits replacing the intermediate pointer with `*p = other`, while `**mut T` only permits mutating the final `T` after another dereference; it does not permit replacing `*p`.
+
 ### The address-of operator
 
 The write-through permission of a pointer obtained via `&` matches the binding mutability of the source:
@@ -758,6 +912,24 @@ This prevents laundering a `const` binding into a `*mut` pointer. Write-through 
 The same rule applies to struct fields: `&myfoo.x` yields `*mut i16` if `myfoo` is `var`, and `*i16` if `myfoo` is `const`.
 
 `&` accepts more than bare names. At runtime, `&someVar`, `&arr[i]` (with constant or runtime index), and `&s.field` all produce a `*T` to the addressed storage; the compiler delegates index and field forms to the existing lvalue-walk machinery, which already knows how to compute element/field addresses.
+
+Owned bindings have one extra rule. Taking a mutable address of an owned binding is rejected, because it would expose the owner slot itself and allow code to overwrite the obligation without consuming it:
+
+```
+var a owned *owned mut thing = new(thing{...})
+var slot *mut *mut thing = &a      // COMPILE ERROR
+```
+
+Taking a read-only address of a const owned binding is allowed, but the borrowed view strips ownership:
+
+```
+const a owned *owned mut thing = new(thing{...})
+const slot **mut thing = &a        // read-only pointer to a non-owning view of a's pointer value
+
+*slot = other                      // COMPILE ERROR: slot is read-only at the immediate pointee
+```
+
+This follows the same rule as ordinary borrowing: access aliases may exist, but they do not carry ownership obligations and cannot be used to replace an owner slot unless the owner slot is mutable — which owned slots intentionally reject for now.
 
 In static-init context (see [Static Initializers](#static-initializers)) two more forms become legal:
 
@@ -958,6 +1130,8 @@ Walks the AST and emits `.bs` assembly text. Key responsibilities:
 ### Ownership tracking
 
 The compiler tracks per-binding move state in `Context.movedBindings`. Each `Funcall` whose parameter type contains `owned` marks the argument variable as moved. References to moved variables are compile errors.
+
+Pointer alias state is kept separately in `cmd/bosc/flow`. `Context` owns a flow state and snapshots it with other control-flow facts. The flow model records pointer origins (which local object a pointer aliases), pointer-slot targets (`&alias`), unknown pointers, branch merges, and invalidation results. `compile.go` converts AST expressions into flow operations such as pointer assignment, store-through-slot, direct mutable write, and opaque `*mut` call; owned-field facts remain in `Context` and are invalidated from the flow result.
 
 For `if`/`else`: the compiler snapshots `movedBindings` before each branch, compiles them independently, and at the join point compares the two snapshots. Pre-existing owned variables consumed on one branch but not the other are an error.
 
