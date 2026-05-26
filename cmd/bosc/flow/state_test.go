@@ -116,6 +116,13 @@ func TestUnknownPointerWriteInvalidatesUnknown(t *testing.T) {
 	requireUnknownInvalidation(t, s.WriteThroughPointer(s.UnknownPointer()))
 }
 
+func TestMutBorrowCallInvalidatesPointerOrigin(t *testing.T) {
+	s := NewState()
+	s.AssignPointer("p", s.NewObject("p"))
+
+	requireInvalidates(t, s.MutBorrowCall(s.Pointer("p")), "p")
+}
+
 func TestAssignUnknownPointerForgetsPreciseOrigin(t *testing.T) {
 	s := NewState()
 	s.AssignPointer("p", s.NewObject("p"))

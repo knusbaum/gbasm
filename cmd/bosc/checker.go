@@ -1,0 +1,554 @@
+package main
+
+import (
+	"strings"
+
+	"github.com/knusbaum/gbasm/cmd/bosc/flow"
+)
+
+type NullState int
+
+const (
+	NullMaybe NullState = iota
+	NullKnownNull
+	NullKnownNonNull
+)
+
+type FlowSnapshot struct {
+	Owned       map[string]bool
+	Null        map[FlowPath]NullState
+	OwnedFields map[FlowPath]bool
+	Borrowed    map[string]bool
+	Pointer     *flow.State
+}
+
+type FlowPath struct {
+	Root   string
+	Fields string
+}
+
+func VarFlowPath(name string) FlowPath {
+	return FlowPath{Root: name}
+}
+
+func (p FlowPath) Key() string {
+	if p.Fields == "" {
+		return p.Root
+	}
+	return p.Root + "." + p.Fields
+}
+
+func (p FlowPath) ParentRoot() FlowPath {
+	return FlowPath{Root: p.Root}
+}
+
+func (p FlowPath) Append(field string) FlowPath {
+	if p.Fields == "" {
+		return FlowPath{Root: p.Root, Fields: field}
+	}
+	return FlowPath{Root: p.Root, Fields: p.Fields + "." + field}
+}
+
+func FlowPathFromKey(key string) FlowPath {
+	parts := strings.Split(key, ".")
+	if len(parts) == 0 {
+		return FlowPath{}
+	}
+	return FlowPath{Root: parts[0], Fields: strings.Join(parts[1:], ".")}
+}
+
+func FlowPathForExpr(a AST) (FlowPath, bool) {
+	switch ast := a.(type) {
+	case *Symbol:
+		return VarFlowPath(ast.Name), true
+	case *Dot:
+		base, ok := FlowPathForExpr(ast.Val)
+		if !ok {
+			return FlowPath{}, false
+		}
+		return base.Append(ast.Member), true
+	case *NonNullAssert:
+		return FlowPathForExpr(ast.Val)
+	default:
+		return FlowPath{}, false
+	}
+}
+
+// CheckerState holds flow-sensitive semantic state. Context owns names, types,
+// codegen labels, temporaries, and emitted data; checker state owns facts about
+// those names during checking and compilation.
+type CheckerState struct {
+	parent *CheckerState
+
+	nullFacts        map[string]NullState
+	ownedFieldFacts  map[string]bool
+	borrowedBindings map[string]bool
+	movedBindings    map[string]bool
+
+	returnTypes    []ASTType
+	continueStates [][]map[string]bool
+	breakStates    [][]map[string]bool
+
+	// pointerFlow is owned by the root checker state and shared through the
+	// checker parent chain, matching the function-wide nature of pointer facts.
+	pointerFlow *flow.State
+}
+
+func NewCheckerState(parent *CheckerState) *CheckerState {
+	return &CheckerState{
+		parent:           parent,
+		nullFacts:        make(map[string]NullState),
+		ownedFieldFacts:  make(map[string]bool),
+		borrowedBindings: make(map[string]bool),
+		movedBindings:    make(map[string]bool),
+	}
+}
+
+func (s *CheckerState) root() *CheckerState {
+	if s == nil {
+		return nil
+	}
+	for s.parent != nil {
+		s = s.parent
+	}
+	return s
+}
+
+func (s *CheckerState) PushReturnType(t ASTType) {
+	root := s.root()
+	root.returnTypes = append(root.returnTypes, t)
+}
+
+func (s *CheckerState) PopReturnType() {
+	root := s.root()
+	root.returnTypes = root.returnTypes[:len(root.returnTypes)-1]
+}
+
+func (s *CheckerState) ReturnType() ASTType {
+	root := s.root()
+	if root == nil || len(root.returnTypes) == 0 {
+		return voidASTType()
+	}
+	return root.returnTypes[len(root.returnTypes)-1]
+}
+
+func (s *CheckerState) PushContinueFrame() {
+	root := s.root()
+	root.continueStates = append(root.continueStates, nil)
+}
+
+func (s *CheckerState) PopContinueFrame() {
+	root := s.root()
+	root.continueStates = root.continueStates[:len(root.continueStates)-1]
+}
+
+func (s *CheckerState) RecordContinue(snap map[string]bool) {
+	root := s.root()
+	if root == nil || len(root.continueStates) == 0 {
+		return
+	}
+	i := len(root.continueStates) - 1
+	root.continueStates[i] = append(root.continueStates[i], snap)
+}
+
+func (s *CheckerState) ContinueStates() []map[string]bool {
+	root := s.root()
+	if root == nil || len(root.continueStates) == 0 {
+		return nil
+	}
+	return append([]map[string]bool(nil), root.continueStates[len(root.continueStates)-1]...)
+}
+
+func (s *CheckerState) PushBreakFrame() {
+	root := s.root()
+	root.breakStates = append(root.breakStates, nil)
+}
+
+func (s *CheckerState) PopBreakFrame() {
+	root := s.root()
+	root.breakStates = root.breakStates[:len(root.breakStates)-1]
+}
+
+func (s *CheckerState) RecordBreak(snap map[string]bool) {
+	root := s.root()
+	if root == nil || len(root.breakStates) == 0 {
+		return
+	}
+	i := len(root.breakStates) - 1
+	root.breakStates[i] = append(root.breakStates[i], snap)
+}
+
+func (s *CheckerState) BreakStates() []map[string]bool {
+	root := s.root()
+	if root == nil || len(root.breakStates) == 0 {
+		return nil
+	}
+	return append([]map[string]bool(nil), root.breakStates[len(root.breakStates)-1]...)
+}
+
+func (c *Context) SetBorrowedBinding(name string, borrowed bool) {
+	if ctx := c.BindingContext(name); ctx != nil {
+		if borrowed {
+			ctx.checker.borrowedBindings[name] = true
+		} else {
+			delete(ctx.checker.borrowedBindings, name)
+		}
+	}
+}
+
+func (c *Context) IsBorrowedBinding(name string) bool {
+	if ctx := c.BindingContext(name); ctx != nil {
+		return ctx.checker.borrowedBindings[name]
+	}
+	return false
+}
+
+func (c *Context) PointerFlow() *flow.State {
+	if c == nil {
+		return flow.NewState()
+	}
+	if c.parent != nil {
+		return c.parent.PointerFlow()
+	}
+	if c.checker == nil {
+		c.checker = NewCheckerState(nil)
+	}
+	if c.checker.pointerFlow == nil {
+		c.checker.pointerFlow = flow.NewState()
+	}
+	return c.checker.pointerFlow
+}
+
+func (c *Context) RestorePointerFlow(s *flow.State) {
+	if c.parent != nil {
+		c.parent.RestorePointerFlow(s)
+		return
+	}
+	if c.checker == nil {
+		c.checker = NewCheckerState(nil)
+	}
+	c.checker.pointerFlow = s.Clone()
+}
+
+func (c *Context) ForgetPointerBindings() {
+	for name, t := range c.bindings {
+		if t.Indirection > 0 {
+			c.PointerFlow().Forget(flow.Binding(name))
+		}
+	}
+}
+
+// Move marks an owned binding as consumed. Walks the parent chain to find the
+// context that owns the binding so the state is stored in the right checker.
+func (c *Context) Move(name string) {
+	if c == nil {
+		return
+	}
+	if _, ok := c.bindings[name]; ok {
+		c.checker.movedBindings[name] = true
+		return
+	}
+	c.parent.Move(name)
+}
+
+// Unmove clears the consumed flag on a var binding after re-assignment.
+func (c *Context) Unmove(name string) {
+	if c == nil {
+		return
+	}
+	if _, ok := c.bindings[name]; ok {
+		c.checker.movedBindings[name] = false
+		return
+	}
+	c.parent.Unmove(name)
+}
+
+// IsMoved reports whether an owned binding has been consumed.
+func (c *Context) IsMoved(name string) bool {
+	if c == nil {
+		return false
+	}
+	if _, ok := c.bindings[name]; ok {
+		return c.checker.movedBindings[name]
+	}
+	return c.parent.IsMoved(name)
+}
+
+// OwnedBindingsSnapshot returns a map of name->moved-state for all owned
+// bindings visible in this context and its parents. Used for branch analysis.
+func (c *Context) OwnedBindingsSnapshot() map[string]bool {
+	snap := make(map[string]bool)
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for name, t := range ctx.bindings {
+			if t.HasOwned() {
+				if _, exists := snap[name]; !exists {
+					snap[name] = ctx.checker.movedBindings[name]
+				}
+			}
+		}
+	}
+	return snap
+}
+
+// RestoreOwnedBindings restores move state from a snapshot, for each owned
+// binding named in the snapshot that still exists in the context chain.
+func (c *Context) RestoreOwnedBindings(snap map[string]bool) {
+	for name, moved := range snap {
+		for ctx := c; ctx != nil; ctx = ctx.parent {
+			if _, ok := ctx.bindings[name]; ok {
+				ctx.checker.movedBindings[name] = moved
+				break
+			}
+		}
+	}
+}
+
+func (c *Context) NullFactsSnapshot() map[FlowPath]NullState {
+	snap := make(map[FlowPath]NullState)
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for key, state := range ctx.checker.nullFacts {
+			path := FlowPathFromKey(key)
+			if _, exists := snap[path]; !exists {
+				snap[path] = state
+			}
+		}
+	}
+	return snap
+}
+
+func (c *Context) OwnedFieldFactsSnapshot() map[FlowPath]bool {
+	snap := make(map[FlowPath]bool)
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for key, consumed := range ctx.checker.ownedFieldFacts {
+			path := FlowPathFromKey(key)
+			if _, exists := snap[path]; !exists {
+				snap[path] = consumed
+			}
+		}
+	}
+	return snap
+}
+
+func (c *Context) BorrowedBindingsSnapshot() map[string]bool {
+	snap := make(map[string]bool)
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for name, borrowed := range ctx.checker.borrowedBindings {
+			if _, exists := snap[name]; !exists {
+				snap[name] = borrowed
+			}
+		}
+	}
+	return snap
+}
+
+func (c *Context) RestoreBorrowedBindings(snap map[string]bool) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for name := range ctx.checker.borrowedBindings {
+			delete(ctx.checker.borrowedBindings, name)
+		}
+	}
+	for name, borrowed := range snap {
+		c.SetBorrowedBinding(name, borrowed)
+	}
+}
+
+func (c *Context) RestoreOwnedFieldFacts(snap map[FlowPath]bool) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for name := range ctx.checker.ownedFieldFacts {
+			delete(ctx.checker.ownedFieldFacts, name)
+		}
+	}
+	for path, consumed := range snap {
+		c.SetOwnedFieldConsumed(path, consumed)
+	}
+}
+
+func (c *Context) RestoreNullFacts(snap map[FlowPath]NullState) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for name := range ctx.checker.nullFacts {
+			delete(ctx.checker.nullFacts, name)
+		}
+	}
+	for path, state := range snap {
+		c.SetNullFact(path, state)
+	}
+}
+
+func (c *Context) FlowSnapshot() FlowSnapshot {
+	return FlowSnapshot{
+		Owned:       c.OwnedBindingsSnapshot(),
+		Null:        c.NullFactsSnapshot(),
+		OwnedFields: c.OwnedFieldFactsSnapshot(),
+		Borrowed:    c.BorrowedBindingsSnapshot(),
+		Pointer:     c.PointerFlow().Clone(),
+	}
+}
+
+func (c *Context) RestoreFlowSnapshot(snap FlowSnapshot) {
+	c.RestoreOwnedBindings(snap.Owned)
+	c.RestoreNullFacts(snap.Null)
+	c.RestoreOwnedFieldFacts(snap.OwnedFields)
+	c.RestoreBorrowedBindings(snap.Borrowed)
+	c.RestorePointerFlow(snap.Pointer)
+}
+
+func mergeNullState(a NullState, aok bool, b NullState, bok bool) (NullState, bool) {
+	if !aok {
+		a = NullMaybe
+	}
+	if !bok {
+		b = NullMaybe
+	}
+	if a == b && a != NullMaybe {
+		return a, true
+	}
+	return NullMaybe, false
+}
+
+func MergeNullFacts(a, b map[FlowPath]NullState) map[FlowPath]NullState {
+	out := make(map[FlowPath]NullState)
+	seen := make(map[FlowPath]bool)
+	for path := range a {
+		seen[path] = true
+	}
+	for path := range b {
+		seen[path] = true
+	}
+	for path := range seen {
+		state, ok := mergeNullState(a[path], a[path] != 0, b[path], b[path] != 0)
+		if ok {
+			out[path] = state
+		}
+	}
+	return out
+}
+
+func MergeBorrowedBindings(a, b map[string]bool) map[string]bool {
+	out := make(map[string]bool)
+	for name, borrowed := range a {
+		if borrowed {
+			out[name] = true
+		}
+	}
+	for name, borrowed := range b {
+		if borrowed {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+func (c *Context) SetNullFact(path FlowPath, state NullState) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		if _, ok := ctx.bindings[path.Root]; ok {
+			key := path.Key()
+			if state == NullMaybe {
+				delete(ctx.checker.nullFacts, key)
+			} else {
+				ctx.checker.nullFacts[key] = state
+			}
+			return
+		}
+	}
+}
+
+func (c *Context) SetOwnedFieldConsumed(path FlowPath, consumed bool) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		if _, ok := ctx.bindings[path.Root]; ok {
+			key := path.Key()
+			if consumed {
+				ctx.checker.ownedFieldFacts[key] = true
+			} else {
+				delete(ctx.checker.ownedFieldFacts, key)
+			}
+			return
+		}
+	}
+}
+
+func (c *Context) OwnedFieldConsumed(path FlowPath) bool {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		if consumed, ok := ctx.checker.ownedFieldFacts[path.Key()]; ok {
+			return consumed
+		}
+		if _, ok := ctx.bindings[path.Root]; ok {
+			return false
+		}
+	}
+	return false
+}
+
+func flowPathIsOrDescendsFrom(path, base FlowPath) bool {
+	if path.Root != base.Root {
+		return false
+	}
+	if base.Fields == "" {
+		return true
+	}
+	return path.Fields == base.Fields || strings.HasPrefix(path.Fields, base.Fields+".")
+}
+
+func (c *Context) InvalidateFlowFacts(path FlowPath) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		if _, ok := ctx.bindings[path.Root]; !ok {
+			continue
+		}
+		for key := range ctx.checker.nullFacts {
+			if flowPathIsOrDescendsFrom(FlowPathFromKey(key), path) {
+				delete(ctx.checker.nullFacts, key)
+			}
+		}
+		for key := range ctx.checker.ownedFieldFacts {
+			if flowPathIsOrDescendsFrom(FlowPathFromKey(key), path) {
+				delete(ctx.checker.ownedFieldFacts, key)
+			}
+		}
+		return
+	}
+}
+
+func (c *Context) InvalidateOwnedFieldFactsByPointerInvalidation(inv flow.Invalidation) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for key := range ctx.checker.ownedFieldFacts {
+			path := FlowPathFromKey(key)
+			root := c.PointerFlow().Pointer(flow.Binding(path.Root))
+			if inv.Unknown || !root.KnownOrigin || inv.Origins[root.Origin] {
+				delete(ctx.checker.ownedFieldFacts, key)
+			}
+		}
+	}
+}
+
+func (c *Context) NullFact(path FlowPath) NullState {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		if state, ok := ctx.checker.nullFacts[path.Key()]; ok {
+			return state
+		}
+		if _, ok := ctx.bindings[path.Root]; ok {
+			return NullMaybe
+		}
+	}
+	return NullMaybe
+}
+
+// UnconsumedOwned returns the names of any owned bindings in this (non-parent)
+// scope that have not yet been consumed. Used for scope-exit checks.
+func (c *Context) UnconsumedOwned() []string {
+	var out []string
+	for name, t := range c.bindings {
+		if t.HasOwned() && !c.checker.movedBindings[name] {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// UnconsumedOwnedVisible returns unconsumed owned bindings in this context and
+// its parents. Used when a non-local exit such as return leaves all scopes.
+func (c *Context) UnconsumedOwnedVisible() []string {
+	var out []string
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		out = append(out, ctx.UnconsumedOwned()...)
+	}
+	return out
+}
