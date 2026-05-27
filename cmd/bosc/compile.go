@@ -627,6 +627,8 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 		return c.PointerFlow().UnknownPointer()
 	case *NonNullAssert:
 		return pointerExprForAST(c, ast.Val, assignedName)
+	case *OwnedPromotion:
+		return pointerExprForAST(c, ast.Val, assignedName)
 	case *Funcall:
 		if assignedName != "" {
 			retType := ast.ASTType(c)
@@ -2224,12 +2226,16 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			checkLocalOriginDoesNotEscape(c, ast.Val, "return")
 		}
 		if retType.Indirection == 0 {
-			if sym, ok := ast.Val.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) {
+			retVal := ast.Val
+			if op, ok := retVal.(*OwnedPromotion); ok {
+				retVal = op.Val
+			}
+			if sym, ok := retVal.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) {
 				if escaped, field := c.PointerFlow().CheckStructFieldEscape(flow.Binding(sym.Name)); escaped {
 					CompileErrorF(ast.Val, "Cannot return %q by value: field %q contains a pointer to local-scope storage; the alias would dangle in the returned copy", sym.Name, field)
 				}
 			}
-			if sl, ok := ast.Val.(*StructLiteral); ok {
+			if sl, ok := retVal.(*StructLiteral); ok {
 				for _, f := range sl.Fields {
 					if f.Val != nil && f.Val.ASTType(c).Indirection > 0 {
 						ptr := pointerExprForAST(c, f.Val, "")
