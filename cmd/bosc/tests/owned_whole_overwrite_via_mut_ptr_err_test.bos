@@ -1,0 +1,12 @@
+package main
+
+struct foo {
+	x i64
+}
+
+fn main() {
+	var f owned foo = foo{x: 1}
+	var fp *mut owned foo = &f
+	*fp = foo{x: 20}
+	dispose(fp)
+}

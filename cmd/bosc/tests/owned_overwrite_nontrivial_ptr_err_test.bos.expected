@@ -1,0 +1,2 @@
+Compiling tests/owned_overwrite_nontrivial_ptr_err_test.bos
+Fatal: Cannot overwrite owned storage through a non-trivial pointer expression; assign through a named pointer or consume the obligation first

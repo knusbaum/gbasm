@@ -734,16 +734,26 @@ func checkAddressOfOwnedForDest(c *Context, val AST, dst ASTType) {
 	if !canWriteImmediatePointee(dst) {
 		return
 	}
-	if ok {
-		if c.IsConst(name) {
-			return
-		}
-		t, ok := c.TypeForVar(name)
-		if ok && t.HasOwned() {
-			CompileErrorF(a, "Cannot take mutable address of owned binding \"%s\"", name)
-		}
+	if !ok {
 		return
 	}
+	if c.IsConst(name) {
+		return
+	}
+	t, ok := c.TypeForVar(name)
+	if !ok || !t.HasOwned() {
+		return
+	}
+	// If the destination's immediate pointee is owned, the ownership
+	// obligation transfers through the pointer to the destination, which
+	// becomes responsible for discharging it. Overwrites through the
+	// pointer are then policed by the deref-target obligation check at
+	// the assignment site, so blocking the address-take here is no longer
+	// necessary.
+	if dst.OwnedMask&(1<<1) != 0 {
+		return
+	}
+	CompileErrorF(a, "Cannot take mutable address of owned binding \"%s\"", name)
 }
 
 func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST) {
@@ -1973,6 +1983,41 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if targetIsSymbol {
 			if c.OwnedObligationLive(targetSym.Name, dstt) {
 				CompileErrorF(a, "Cannot assign to owned binding \"%s\" before consuming its current value", targetSym.Name)
+			} else if dstt.HasOwned() && c.IsMoved(targetSym.Name) && c.AddressTaken(targetSym.Name) {
+				// Phase A re-init: assignment to a previously-consumed
+				// owned binding starts a fresh lifecycle, but only when
+				// no pointer to its storage could still be live. The
+				// `AddressTaken` flag is sticky, so we reject if `&x`
+				// was ever taken in this binding's lifetime; precise
+				// alias liveness would be Phase B.
+				CompileErrorF(a, "Cannot re-initialize \"%s\": its address was taken; an alias may still reference its storage", targetSym.Name)
+			}
+		}
+		// Deref-target obligation check: when overwriting *p and the
+		// pointee carries owned, follow pointer flow to the binding the
+		// pointer references and reject if it still holds a live
+		// obligation. This is the indirect equivalent of the Symbol
+		// check above. Both pointer-flow shapes count: `NewLocalOrigin`
+		// (pointer to a value binding's storage) and
+		// `AddressOfPointerSlot` (pointer to a pointer binding's slot).
+		// Deref-target obligation check: when overwriting `*p` and the
+		// pointee carries owned, the pointer `p` itself holds the
+		// obligation (it transferred to `p` at the address-take or by
+		// later moves). Reject if `p` still owes the obligation. This
+		// is the indirect equivalent of the Symbol check above.
+		//
+		// For non-trivial pointer expressions (anything that isn't a
+		// bare Symbol — e.g. *p.field, **pp), the obligation lives at
+		// some node we don't have a direct query for, so reject
+		// conservatively. Phase B can sharpen this with pointer-flow.
+		if deref, isDeref := ast.Target.(*Deref); isDeref && dstt.HasOwned() {
+			if sym, ok := deref.Val.(*Symbol); ok {
+				ptype, hasType := c.DeclaredTypeForVar(sym.Name)
+				if hasType && c.OwnedObligationLive(sym.Name, ptype) {
+					CompileErrorF(a, "Cannot overwrite *%s before consuming its current value", sym.Name)
+				}
+			} else {
+				CompileErrorF(a, "Cannot overwrite owned storage through a non-trivial pointer expression; assign through a named pointer or consume the obligation first")
 			}
 		}
 		if dot, ok := ast.Target.(*Dot); ok {
@@ -1988,6 +2033,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// Reject implicit ownership promotion: if the destination has owned bits
 		// that the source doesn't, the source must be wrapped in owned().
 		// Integer literals are exempt — they initialize owned values without a wrapper.
+		// Struct literals matching the destination shape (ignoring owned) are also
+		// exempt, mirroring the VarDecl special case: `foo{...}` is the canonical
+		// way to initialize an `owned foo` binding, so re-init via the same syntax
+		// after dispose stays consistent with first-init.
 		{
 			dsttmp := dstt
 			srctmp := ast.Val.ASTType(c)
@@ -1995,7 +2044,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				gained := dsttmp.OwnedMask &^ srctmp.OwnedMask
 				if gained != 0 {
 					if _, ok := ast.Val.(*OwnedPromotion); !ok {
-						CompileErrorF(a, "Ownership promotion requires explicit owned(): assigning %s to %s", srctmp, dsttmp)
+						sl, isSL := ast.Val.(*StructLiteral)
+						if !isSL || !sameIgnoringOwned(dsttmp, sl.Type) {
+							CompileErrorF(a, "Ownership promotion requires explicit owned(): assigning %s to %s", srctmp, dsttmp)
+						}
 					}
 				}
 			}
@@ -2010,6 +2062,26 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if c.IsInterfaceType(dstt) && srct.Indirection > 0 {
 			emitInterfaceFatPtr(of, c, a, dstt, srct, ast.Val, lv.ref)
 			markMovedIfOwnedSource(of, c, dstt, ast.Val)
+			invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
+			if path, ok := FlowPathForExpr(ast.Target); ok {
+				c.InvalidateFlowFacts(path)
+				updateNullFactForAssignment(c, path, dstt, ast.Val, srct)
+			}
+			updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
+			updatePointerFlowForAssignment(c, ast.Target, dstt, ast.Val)
+			updateFieldPointerFactsForAssignment(c, ast.Target, targetIsSymbol, targetSym, dstt, ast.Val)
+			return nullspot
+		}
+		// Struct-literal assignment to a matching destination (modulo owned):
+		// initialize the slot directly through compileStructLiteralInto, the
+		// same path VarDecl uses for `var f owned foo = foo{...}`. This makes
+		// struct-literal re-init after dispose work without an explicit owned()
+		// wrapper, and stays consistent with first-init.
+		if sl, ok := ast.Val.(*StructLiteral); ok && sameIgnoringOwned(dstt, sl.Type) {
+			compileStructLiteralInto(of, c, a, sl, lv, dstt)
+			if targetIsSymbol && dstt.HasOwned() {
+				c.Unmove(targetSym.Name)
+			}
 			invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 			if path, ok := FlowPathForExpr(ast.Target); ok {
 				c.InvalidateFlowFacts(path)

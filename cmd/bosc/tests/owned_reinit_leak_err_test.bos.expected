@@ -1,0 +1,2 @@
+Compiling tests/owned_reinit_leak_err_test.bos
+Fatal: Owned binding "f" goes out of scope without being consumed; call dispose() or pass it to a consuming function

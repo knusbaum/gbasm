@@ -1,0 +1,12 @@
+package main
+
+struct foo {
+	x i64
+}
+
+fn main() i64 {
+	var f owned foo = foo{x: 1}
+	dispose(f)
+	f = foo{x: 2}
+	return 0
+}

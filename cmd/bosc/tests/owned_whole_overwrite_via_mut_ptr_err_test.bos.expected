@@ -1,0 +1,2 @@
+Compiling tests/owned_whole_overwrite_via_mut_ptr_err_test.bos
+Fatal: Cannot overwrite *fp before consuming its current value

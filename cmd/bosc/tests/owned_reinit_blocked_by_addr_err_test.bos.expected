@@ -1,0 +1,2 @@
+Compiling tests/owned_reinit_blocked_by_addr_err_test.bos
+Fatal: Cannot re-initialize "f": its address was taken; an alias may still reference its storage

@@ -1,0 +1,2 @@
+Compiling tests/owned_ptr_rebind_err_test.bos
+Fatal: Cannot assign to owned binding "fp" before consuming its current value

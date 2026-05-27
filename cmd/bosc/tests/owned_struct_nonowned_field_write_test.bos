@@ -1,0 +1,19 @@
+package main
+
+import "string"
+
+struct foo {
+	x i64
+	y i64
+}
+
+fn main() {
+	var f owned foo = foo{x: 1, y: 2}
+	f.x = 10
+	f.y = 20
+	string.puti(f.x)
+	string.puts("\n")
+	string.puti(f.y)
+	string.puts("\n")
+	dispose(f)
+}
