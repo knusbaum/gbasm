@@ -625,6 +625,31 @@ func invalidatesOwnedFieldFactsParam(param ASTType) bool {
 	return param.MutMask != 0
 }
 
+func checkAddressOfOwnedForDest(c *Context, val AST, dst ASTType) {
+	if nn, ok := val.(*NonNullAssert); ok {
+		checkAddressOfOwnedForDest(c, nn.Val, dst)
+		return
+	}
+	a, ok := val.(*Address)
+	if !ok {
+		return
+	}
+	name, ok := a.NamedTarget()
+	if !canWriteImmediatePointee(dst) {
+		return
+	}
+	if ok {
+		if c.IsConst(name) {
+			return
+		}
+		t, ok := c.TypeForVar(name)
+		if ok && t.HasOwned() {
+			CompileErrorF(a, "Cannot take mutable address of owned binding \"%s\"", name)
+		}
+		return
+	}
+}
+
 func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST) {
 	if !expected.HasOwned() {
 		return
@@ -687,6 +712,7 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 		fieldType := fieldTypeForBase(ctxType, declaredType)
 		srcType := f.Val.ASTType(c)
 		checkBorrowedPointerDoesNotEscape(c, f.Val, fmt.Sprintf("field %v.%s", lit.Type, f.Name))
+		checkAddressOfOwnedForDest(c, f.Val, fieldType)
 		if srcType.Same(intlitASTType()) {
 			srcType = fieldType
 		} else if !fieldType.Accepts(srcType) {
@@ -796,6 +822,7 @@ func compileValueIntoAddress(of io.Writer, c *Context, a AST, val AST, addr spot
 	if srcType.Same(intlitASTType()) || srcType.Name == "<nil>" {
 		srcType = pointee
 	}
+	checkAddressOfOwnedForDest(c, val, pointee)
 	if !pointee.Accepts(srcType) {
 		CompileErrorF(val, "Cannot initialize allocated %s with value of type %s", pointee, val.ASTType(c))
 	}
@@ -1247,6 +1274,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 					srct = inferred
 				}
 			}
+			checkAddressOfOwnedForDest(c, ast.Init, dstt)
 			// Ownership promotion check, unless source is an integer literal.
 			if !srct.Same(intlitASTType()) && srct.Name != "<nil>" {
 				gained := dstt.OwnedMask &^ srct.OwnedMask
@@ -1790,6 +1818,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if sl, ok := ast.Val.(*StructLiteral); ok {
 			fillAnonymousLiteralIfNeeded(sl, dstt)
 		}
+		checkAddressOfOwnedForDest(c, ast.Val, dstt)
 		// Reject implicit ownership promotion: if the destination has owned bits
 		// that the source doesn't, the source must be wrapped in owned().
 		// Integer literals are exempt — they initialize owned values without a wrapper.
@@ -1844,6 +1873,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// this means the dsttype is not a pointer to the location.
 			// and we can use lv as the dest in the compile call.
 
+			checkAddressOfOwnedForDest(c, ast.Val, dstt)
 			// Would be nice to be able to compile *into* lv,
 			// But sometimes lv is also in the Val AST, i.e.
 			// n = 1 - n.
@@ -1872,6 +1902,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			return nullspot
 		}
 
+		checkAddressOfOwnedForDest(c, ast.Val, dstt)
 		val := compileTop(of, c, ast.Val, nullspot)
 		// if val.t.Size(c) != 8 {
 		// 	panic(fmt.Sprintf("CANNOT MOVE TYPES THAT ARE NOT 64 BITS YET, but have %v %d\n", val.t.Size(c), val.t))
@@ -2082,6 +2113,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if sl, ok := ast.Val.(*StructLiteral); ok && sameIgnoringOwned(retType, sl.Type) {
 			valType = retType
 		}
+		checkAddressOfOwnedForDest(c, ast.Val, retType)
 		if valType.Same(intlitASTType()) {
 			valType = numASTType()
 		}
@@ -2382,6 +2414,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 			fillAnonymousLiteralIfNeeded(sl, param)
 		}
 		argt := arg.ASTType(c)
+		checkAddressOfOwnedForDest(c, arg, param)
 		if argt.Same(intlitASTType()) {
 			argt = param
 		} else if argt.Name == "<nil>" && param.Accepts(argt) {

@@ -1,0 +1,2 @@
+Compiling tests/owned_var_address_mut_err_test.bos
+Fatal: Cannot take mutable address of owned binding "x"

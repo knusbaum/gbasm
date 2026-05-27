@@ -1,0 +1,11 @@
+package main
+
+import "string"
+
+fn main() {
+	var x owned i64 = 10
+	var xp *i64 = &x
+	string.puti(*xp)
+	string.puts("\n")
+	dispose(x)
+}

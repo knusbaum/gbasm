@@ -1772,9 +1772,6 @@ func (a *Address) ASTType(c *Context) ASTType {
 		if !ok {
 			panic("Variable is not bound. TODO: Nice error reports.")
 		}
-		if t.HasOwned() && !c.IsConst(name) {
-			CompileErrorF(a, "Cannot take mutable address of owned binding \"%s\"", name)
-		}
 		if t.HasOwned() {
 			t = t.StripOwned()
 		}
