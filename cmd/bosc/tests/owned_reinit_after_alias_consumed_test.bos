@@ -1,13 +1,18 @@
 package main
 
+import "string"
+
 struct foo {
 	x i64
 }
 
-fn main() {
+fn main() i64 {
 	var f owned foo = foo{x: 1}
 	var fp *owned foo = &f
 	dispose(fp)
 	f = foo{x: 20}
+	string.puti(f.x)
+	string.puts("\n")
 	dispose(f)
+	return 0
 }

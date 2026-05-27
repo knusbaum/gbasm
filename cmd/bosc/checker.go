@@ -578,6 +578,36 @@ func (c *Context) OwnedObligationLive(name string, t ASTType) bool {
 	return true
 }
 
+// HasLiveOwnedAlias reports whether any currently-live owned pointer
+// binding aliases the storage of `target`. Used to decide whether a
+// previously-moved owned binding can be re-initialized: a re-init is
+// safe only when no other binding could still observe or consume the
+// storage through its existing pointer.
+//
+// A binding y is a live owned alias of target when ALL of:
+//   - y's tracked pointer expression references target (via Origin or
+//     SlotTarget),
+//   - y's declared type carries an owned obligation,
+//   - y still holds that obligation (not moved, not known-nil).
+//
+// Non-owned pointer bindings are not considered aliases for this
+// check: they have no cleanup responsibility and would simply observe
+// whatever value is in target's slot after the re-init, which is
+// memory-safe.
+func (c *Context) HasLiveOwnedAlias(target string) bool {
+	for _, name := range c.PointerFlow().AliasesOf(flow.Binding(target)) {
+		nameStr := string(name)
+		t, ok := c.DeclaredTypeForVar(nameStr)
+		if !ok {
+			continue
+		}
+		if c.OwnedObligationLive(nameStr, t) {
+			return true
+		}
+	}
+	return false
+}
+
 // OwnedObligationLiveInSnap is the snapshot-based variant of
 // OwnedObligationLive: it answers the same question against the facts
 // recorded in `snap` rather than the live checker state. The declared

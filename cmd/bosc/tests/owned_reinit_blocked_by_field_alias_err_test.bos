@@ -1,0 +1,18 @@
+package main
+
+struct foo {
+	x i64
+}
+
+struct box {
+	fp *mut owned foo
+}
+
+fn main() i64 {
+	var f owned foo = foo{x: 1}
+	var b owned box = box{fp: &f}
+	f = foo{x: 20}
+	dispose(b)
+	dispose(f)
+	return 0
+}

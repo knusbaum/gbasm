@@ -1983,14 +1983,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if targetIsSymbol {
 			if c.OwnedObligationLive(targetSym.Name, dstt) {
 				CompileErrorF(a, "Cannot assign to owned binding \"%s\" before consuming its current value", targetSym.Name)
-			} else if dstt.HasOwned() && c.IsMoved(targetSym.Name) && c.AddressTaken(targetSym.Name) {
-				// Phase A re-init: assignment to a previously-consumed
-				// owned binding starts a fresh lifecycle, but only when
-				// no pointer to its storage could still be live. The
-				// `AddressTaken` flag is sticky, so we reject if `&x`
-				// was ever taken in this binding's lifetime; precise
-				// alias liveness would be Phase B.
-				CompileErrorF(a, "Cannot re-initialize \"%s\": its address was taken; an alias may still reference its storage", targetSym.Name)
+			} else if dstt.HasOwned() && c.IsMoved(targetSym.Name) && c.HasLiveOwnedAlias(targetSym.Name) {
+				// Re-init of a previously-consumed owned binding starts
+				// a fresh lifecycle. It is rejected when any live owned
+				// pointer could still observe or consume the binding's
+				// storage; once those aliases are themselves consumed
+				// the re-init is allowed.
+				CompileErrorF(a, "Cannot re-initialize \"%s\": a live owned pointer still references its storage", targetSym.Name)
 			}
 		}
 		// Deref-target obligation check: when overwriting *p and the

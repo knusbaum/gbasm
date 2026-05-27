@@ -201,6 +201,47 @@ func (s *State) Pointer(name Binding) PointerExpr {
 	return ptr
 }
 
+// AliasesOf returns the names of bindings that reference `target` via
+// pointer flow — either as a direct pointer binding whose PointerExpr
+// matches target as an origin or slot, or as the *owner* of a field
+// pointer that matches. For the field-pointer case the binding name
+// returned is the owning struct binding, since that binding's liveness
+// (and ownership obligation) governs whether the field alias is live.
+// The caller is expected to filter by liveness and type qualifiers.
+func (s *State) AliasesOf(target Binding) []Binding {
+	if s == nil {
+		return nil
+	}
+	matches := func(ptr PointerExpr) bool {
+		return (ptr.KnownOrigin && ptr.Origin == Origin(target)) ||
+			(ptr.KnownSlot && ptr.SlotTarget == target)
+	}
+	var out []Binding
+	for name, ptr := range s.pointers {
+		if name == target {
+			continue
+		}
+		if matches(ptr) {
+			out = append(out, name)
+		}
+	}
+	for k, ptr := range s.fieldPointers {
+		if !matches(ptr) {
+			continue
+		}
+		i := strings.IndexByte(k, '.')
+		if i <= 0 {
+			continue
+		}
+		owner := Binding(k[:i])
+		if owner == target {
+			continue
+		}
+		out = append(out, owner)
+	}
+	return out
+}
+
 func (s *State) NewObject(name Binding) PointerExpr {
 	return PointerExpr{Origin: Origin(name), KnownOrigin: true}
 }

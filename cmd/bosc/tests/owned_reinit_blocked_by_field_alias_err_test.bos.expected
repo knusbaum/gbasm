@@ -1,0 +1,2 @@
+Compiling tests/owned_reinit_blocked_by_field_alias_err_test.bos
+Fatal: Cannot re-initialize "f": a live owned pointer still references its storage
