@@ -1,0 +1,25 @@
+package main
+
+import "string"
+
+struct Foo {
+	x  i64
+	xp *?i64
+}
+
+fn mkfoo(var set i64) Foo {
+	var s Foo = Foo{x: 10, xp: nil}
+	if (set) {
+		s.xp = &s.x
+	}
+	return s
+}
+
+fn main() {
+	var a Foo = mkfoo(0)
+	var b Foo = mkfoo(1)
+	string.puti(a.x)
+	string.puts("\n")
+	string.puti(b.x)
+	string.puts("\n")
+}

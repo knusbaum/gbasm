@@ -1,0 +1,2 @@
+Compiling tests/return_local_addr_err_test.bos
+Fatal: Pointer to local variable "x" escapes via return

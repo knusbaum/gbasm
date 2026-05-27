@@ -1,0 +1,2 @@
+Compiling tests/dispose_alias_use_err_test.bos
+Fatal: cannot dereference pointer to "myint": the target was consumed

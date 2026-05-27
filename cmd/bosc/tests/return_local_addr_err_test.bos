@@ -1,0 +1,8 @@
+package main
+
+fn bad() *i64 {
+	var x i64 = 10
+	return &x
+}
+
+fn main() {}

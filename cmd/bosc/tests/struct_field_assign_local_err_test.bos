@@ -1,0 +1,14 @@
+package main
+
+struct Foo {
+	x  i64
+	xp *?i64
+}
+
+fn bad() Foo {
+	var s Foo = Foo{x: 10, xp: nil}
+	s.xp = &s.x
+	return s
+}
+
+fn main() {}

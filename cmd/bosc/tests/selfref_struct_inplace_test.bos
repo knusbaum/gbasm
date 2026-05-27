@@ -1,0 +1,20 @@
+package main
+
+import "string"
+
+struct SelfRef {
+	x  i64
+	xp *i64
+}
+
+fn main() {
+	var s SelfRef = SelfRef{
+		x: 10
+		xp: &s.x
+	}
+	string.puti(*s.xp)
+	string.puts("\n")
+	s.x = 100
+	string.puti(*s.xp)
+	string.puts("\n")
+}

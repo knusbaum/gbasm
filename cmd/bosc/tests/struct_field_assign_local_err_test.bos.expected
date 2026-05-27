@@ -1,0 +1,2 @@
+Compiling tests/struct_field_assign_local_err_test.bos
+Fatal: Cannot return "s" by value: field "xp" contains a pointer to local-scope storage; the alias would dangle in the returned copy

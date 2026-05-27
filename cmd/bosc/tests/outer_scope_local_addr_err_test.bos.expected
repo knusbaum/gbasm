@@ -1,0 +1,2 @@
+Compiling tests/outer_scope_local_addr_err_test.bos
+Fatal: cannot dereference pointer to "x": the target was consumed

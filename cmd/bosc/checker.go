@@ -96,7 +96,7 @@ type CheckerState struct {
 
 func NewCheckerState(parent *CheckerState) *CheckerState {
 	return &CheckerState{
-		parent:           parent,
+		parent:             parent,
 		nullFacts:        make(map[string]NullState),
 		ownedFieldFacts:  make(map[string]bool),
 		borrowedBindings: make(map[string]bool),
@@ -238,6 +238,22 @@ func (c *Context) ForgetPointerBindings() {
 	}
 }
 
+// InvalidateLocalOriginsForScope marks TargetMoved for every OriginLocal
+// registered for a non-pointer binding declared in this context level.
+// Must be called before ForgetPointerBindings so outer-scope aliases see
+// the invalidation.
+func (c *Context) InvalidateLocalOriginsForScope() {
+	pf := c.PointerFlow()
+	for name, t := range c.bindings {
+		if t.Indirection == 0 {
+			o := flow.Origin(name)
+			if pf.OriginKindOf(o) == flow.OriginLocal {
+				pf.InvalidateOrigin(o, flow.TargetMoved)
+			}
+		}
+	}
+}
+
 // Move marks an owned binding as consumed. Walks the parent chain to find the
 // context that owns the binding so the state is stored in the right checker.
 func (c *Context) Move(name string) {
@@ -273,6 +289,7 @@ func (c *Context) IsMoved(name string) bool {
 	}
 	return c.parent.IsMoved(name)
 }
+
 
 // OwnedBindingsSnapshot returns a map of name->moved-state for all owned
 // bindings visible in this context and its parents. Used for branch analysis.

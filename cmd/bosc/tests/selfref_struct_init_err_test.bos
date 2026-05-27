@@ -1,0 +1,16 @@
+package main
+
+struct SelfRef {
+	x  i64
+	xp *i64
+}
+
+fn mkSelfRef() SelfRef {
+	var s SelfRef = SelfRef{
+		x: 10
+		xp: &s.x
+	}
+	return s
+}
+
+fn main() {}

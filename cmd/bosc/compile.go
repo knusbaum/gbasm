@@ -435,6 +435,72 @@ func checkBorrowedPointerDoesNotEscape(c *Context, a AST, what string) {
 	}
 }
 
+func checkLocalOriginDoesNotEscape(c *Context, a AST, what string) {
+	ptr := pointerExprForAST(c, a, "")
+	if !ptr.KnownOrigin {
+		return
+	}
+	if c.PointerFlow().OriginKindOf(ptr.Origin) == flow.OriginLocal {
+		CompileErrorF(a, "Pointer to local variable %q escapes via %s", string(ptr.Origin), what)
+	}
+}
+
+// rootSymbolName walks a Dot/Index/NonNullAssert chain to the rooted Symbol
+// and returns its name. Returns ("", false) for any other shape.
+func rootSymbolName(expr AST) (string, bool) {
+	for {
+		switch v := expr.(type) {
+		case *Symbol:
+			return v.Name, true
+		case *Dot:
+			expr = v.Val
+		case *Index:
+			expr = v.Val
+		case *NonNullAssert:
+			expr = v.Val
+		default:
+			return "", false
+		}
+	}
+}
+
+// isDirectStructFieldTarget returns (binding, field, true) if target is a
+// single-level field access on a local non-pointer struct binding.
+func isDirectStructFieldTarget(c *Context, target AST) (binding string, field string, ok bool) {
+	dot, isDot := target.(*Dot)
+	if !isDot {
+		return "", "", false
+	}
+	sym, isSym := dot.Val.(*Symbol)
+	if !isSym || c.IsGlobalBinding(sym.Name) {
+		return "", "", false
+	}
+	t, exists := c.TypeForVar(sym.Name)
+	if !exists || t.Indirection != 0 {
+		return "", "", false
+	}
+	return sym.Name, dot.Member, true
+}
+
+func updateFieldPointerFactsForAssignment(c *Context, target AST, targetIsSymbol bool, targetSym *Symbol, dstt ASTType, val AST) {
+	if targetIsSymbol && dstt.Indirection == 0 {
+		c.PointerFlow().ForgetFieldPointers(flow.Binding(targetSym.Name))
+		if sym, ok := val.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) {
+			c.PointerFlow().CopyFieldPointers(flow.Binding(sym.Name), flow.Binding(targetSym.Name))
+		} else if sl, ok := val.(*StructLiteral); ok {
+			for _, f := range sl.Fields {
+				if f.Val != nil && f.Val.ASTType(c).Indirection > 0 {
+					pexpr := pointerExprForAST(c, f.Val, "")
+					c.PointerFlow().SetFieldPointer(flow.Binding(targetSym.Name), f.Name, pexpr)
+				}
+			}
+		}
+	} else if binding, field, ok := isDirectStructFieldTarget(c, target); ok && dstt.Indirection > 0 {
+		pexpr := pointerExprForAST(c, val, "")
+		c.PointerFlow().SetFieldPointer(flow.Binding(binding), field, pexpr)
+	}
+}
+
 func checkBorrowedPointerAssignment(c *Context, a *Assignment, dst ASTType) {
 	if !borrowedPointerExpr(c, a.Val) {
 		return
@@ -534,19 +600,39 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 		}
 		return c.PointerFlow().Pointer(flow.Binding(ast.Name))
 	case *Address:
-		name, _ := ast.NamedTarget()
-		if name == "" || c.IsGlobalBinding(name) {
-			return c.PointerFlow().UnknownPointer()
+		if ast.Var != "" {
+			name := ast.Var
+			if c.IsGlobalBinding(name) {
+				return c.PointerFlow().UnknownPointer()
+			}
+			if t, ok := c.TypeForVar(name); ok && t.Indirection > 0 {
+				return c.PointerFlow().AddressOfPointerSlot(flow.Binding(name))
+			}
+			return c.PointerFlow().NewLocalOrigin(flow.Binding(name))
 		}
-		if t, ok := c.TypeForVar(name); ok && t.Indirection > 0 {
-			return c.PointerFlow().AddressOfPointerSlot(flow.Binding(name))
+		if ast.Lit != nil {
+			if root, ok := rootSymbolName(ast.Lit); ok && !c.IsGlobalBinding(root) {
+				if t, ok := c.TypeForVar(root); ok && t.Indirection == 0 {
+					return c.PointerFlow().NewLocalOrigin(flow.Binding(root))
+				}
+			}
+		}
+		return c.PointerFlow().UnknownPointer()
+	case *Dot:
+		if sym, ok := ast.Val.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) {
+			if t, ok2 := c.TypeForVar(sym.Name); ok2 && t.Indirection == 0 {
+				return c.PointerFlow().GetFieldPointer(flow.Binding(sym.Name), ast.Member)
+			}
 		}
 		return c.PointerFlow().UnknownPointer()
 	case *NonNullAssert:
 		return pointerExprForAST(c, ast.Val, assignedName)
 	case *Funcall:
-		if ast.Pkg == "" && (ast.FName == "alloc" || ast.FName == "new") && assignedName != "" {
-			return c.PointerFlow().NewObject(flow.Binding(assignedName))
+		if assignedName != "" {
+			retType := ast.ASTType(c)
+			if retType.Indirection > 0 && retType.OwnedMask&1 != 0 {
+				return c.PointerFlow().NewAllocatedOrigin(flow.Binding(assignedName))
+			}
 		}
 		return c.PointerFlow().UnknownPointer()
 	default:
@@ -909,6 +995,12 @@ func compileFreeBuiltin(of io.Writer, c *Context, a AST, ast *Funcall) spot {
 	fmt.Fprintf(of, "\trelease rdi\n")
 	rdi.free(of)
 	markMovedIfOwnedSource(of, c, argt, arg)
+	{
+		ptrExpr := pointerExprForAST(c, arg, "")
+		if ptrExpr.KnownOrigin {
+			c.PointerFlow().InvalidateOrigin(ptrExpr.Origin, flow.TargetDead)
+		}
+	}
 	return nullspot
 }
 
@@ -1256,6 +1348,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			initIsBorrowed := borrowedPointerExpr(c, ast.Init)
 			if sl, ok := ast.Init.(*StructLiteral); ok && sameIgnoringOwned(ast.Type, sl.Type) {
 				compileStructLiteralInto(of, c, a, sl, s, ast.Type)
+				for _, f := range sl.Fields {
+					if f.Val != nil && f.Val.ASTType(c).Indirection > 0 {
+						pexpr := pointerExprForAST(c, f.Val, "")
+						c.PointerFlow().SetFieldPointer(flow.Binding(ast.Name), f.Name, pexpr)
+					}
+				}
 				return nullspot
 			}
 			// Array literal initializer takes its own path: ASTType
@@ -1306,6 +1404,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if dstt.Indirection > 0 {
 				c.SetBorrowedBinding(ast.Name, initIsBorrowed)
 				c.PointerFlow().AssignPointer(flow.Binding(ast.Name), pointerExprForAST(c, ast.Init, ast.Name))
+			}
+			// Propagate field pointer facts on struct copy.
+			if sym, ok := ast.Init.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) && dstt.Indirection == 0 {
+				c.PointerFlow().CopyFieldPointers(flow.Binding(sym.Name), flow.Binding(ast.Name))
 			}
 		} else if !ast.Type.ZeroInitializable(c) {
 			CompileErrorF(a, "Variable \"%s\" of type %s requires an initializer", ast.Name, ast.Type)
@@ -1388,6 +1490,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
 			}
 		}
+		sc.InvalidateLocalOriginsForScope()
 		sc.ForgetPointerBindings()
 		sc.FreeLocalVars(of)
 		return nullspot
@@ -1531,6 +1634,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		return dest
 	case *Deref:
+		{
+			ptr := pointerExprForAST(c, ast.Val, "")
+			if ok, reason := c.PointerFlow().CheckDerefValidity(ptr); !ok {
+				CompileErrorF(a, "%s", reason)
+			}
+		}
 		v := compileTop(of, c, ast.Val, nullspot)
 		t := v.t
 		if t.Indirection == 0 {
@@ -1863,6 +1972,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
 			updatePointerFlowForAssignment(c, ast.Target, dstt, ast.Val)
+			updateFieldPointerFactsForAssignment(c, ast.Target, targetIsSymbol, targetSym, dstt, ast.Val)
 			return nullspot
 		}
 		// if !lv.t.Same(dstt) {
@@ -1899,6 +2009,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
 			updatePointerFlowForAssignment(c, ast.Target, dstt, ast.Val)
+			updateFieldPointerFactsForAssignment(c, ast.Target, targetIsSymbol, targetSym, dstt, ast.Val)
 			return nullspot
 		}
 
@@ -1925,6 +2036,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
 		updatePointerFlowForAssignment(c, ast.Target, dstt, ast.Val)
+		updateFieldPointerFactsForAssignment(c, ast.Target, targetIsSymbol, targetSym, dstt, ast.Val)
 		return nullspot
 	case *IfStmt:
 		v := compileTop(of, c, ast.Cond, nullspot)
@@ -2109,6 +2221,24 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		valType := ast.Val.ASTType(c)
 		if retType.Indirection > 0 {
 			checkBorrowedPointerDoesNotEscape(c, ast.Val, "return")
+			checkLocalOriginDoesNotEscape(c, ast.Val, "return")
+		}
+		if retType.Indirection == 0 {
+			if sym, ok := ast.Val.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) {
+				if escaped, field := c.PointerFlow().CheckStructFieldEscape(flow.Binding(sym.Name)); escaped {
+					CompileErrorF(ast.Val, "Cannot return %q by value: field %q contains a pointer to local-scope storage; the alias would dangle in the returned copy", sym.Name, field)
+				}
+			}
+			if sl, ok := ast.Val.(*StructLiteral); ok {
+				for _, f := range sl.Fields {
+					if f.Val != nil && f.Val.ASTType(c).Indirection > 0 {
+						ptr := pointerExprForAST(c, f.Val, "")
+						if ptr.KnownOrigin && c.PointerFlow().OriginKindOf(ptr.Origin) == flow.OriginLocal {
+							CompileErrorF(ast.Val, "Cannot return struct literal by value: field %q contains a pointer to local-scope storage; the alias would dangle in the returned copy", f.Name)
+						}
+					}
+				}
+			}
 		}
 		if sl, ok := ast.Val.(*StructLiteral); ok && sameIgnoringOwned(retType, sl.Type) {
 			valType = retType
@@ -2167,6 +2297,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			CompileErrorF(a, "dispose: \"%s\" is statically known to be nil; no obligation to discharge", ast.Var)
 		}
 		c.Move(ast.Var)
+		if declared.Indirection > 0 {
+			ptrExpr := c.PointerFlow().Pointer(flow.Binding(ast.Var))
+			if ptrExpr.KnownOrigin {
+				c.PointerFlow().InvalidateOrigin(ptrExpr.Origin, flow.TargetDead)
+			}
+		} else {
+			c.PointerFlow().InvalidateOrigin(flow.Origin(ast.Var), flow.TargetMoved)
+		}
 		note(of, "\t// dispose %s — obligation satisfied, no runtime effect\n", ast.Var)
 		return nullspot
 	case *Continue:
@@ -2453,6 +2591,15 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 	for i := 0; i < len(f.Args); i++ {
 		if d.Args[i].Type.HasOwned() {
 			markMovedIfOwnedSource(of, c, d.Args[i].Type, f.Args[i])
+		}
+	}
+	// Invalidate pointer aliases for consumed owned-pointer arguments.
+	for i := 0; i < len(f.Args); i++ {
+		if d.Args[i].Type.Indirection > 0 && d.Args[i].Type.OwnedMask&1 != 0 {
+			ptrExpr := pointerExprForAST(c, f.Args[i], "")
+			if ptrExpr.KnownOrigin {
+				c.PointerFlow().InvalidateOrigin(ptrExpr.Origin, flow.TargetDead)
+			}
 		}
 	}
 	// Apply pointer-flow invalidation for any non-owning mutable pointer

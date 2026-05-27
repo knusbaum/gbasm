@@ -1,0 +1,18 @@
+package main
+
+import "string"
+
+struct Foo {
+	x  i64
+	xp *?i64
+}
+
+fn main() {
+	var s Foo = Foo{x: 10, xp: nil}
+	s.xp = &s.x
+	string.puti(*s.xp)
+	string.puts("\n")
+	s.x = 100
+	string.puti(*s.xp)
+	string.puts("\n")
+}

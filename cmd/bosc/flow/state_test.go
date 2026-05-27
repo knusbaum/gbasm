@@ -191,3 +191,88 @@ func TestCloneIsIndependent(t *testing.T) {
 	requireInvalidates(t, s.WriteThroughPointer(s.Pointer("p")), "p")
 	requireInvalidates(t, clone.WriteThroughPointer(clone.Pointer("p")), "other")
 }
+
+func TestNewLocalOriginRegistersLive(t *testing.T) {
+	s := NewState()
+	ptr := s.NewLocalOrigin("x")
+	if s.OriginKindOf(ptr.Origin) != OriginLocal {
+		t.Fatalf("got kind %v, want OriginLocal", s.OriginKindOf(ptr.Origin))
+	}
+	if ok, reason := s.CheckDerefValidity(ptr); !ok {
+		t.Fatalf("expected live, got %q", reason)
+	}
+}
+
+func TestInvalidateOriginMovedBlocksDeref(t *testing.T) {
+	s := NewState()
+	ptr := s.NewLocalOrigin("x")
+	s.InvalidateOrigin(ptr.Origin, TargetMoved)
+	ok, reason := s.CheckDerefValidity(ptr)
+	if ok {
+		t.Fatalf("expected dereference to fail, got ok")
+	}
+	if reason == "" {
+		t.Fatalf("expected reason, got empty")
+	}
+}
+
+func TestInvalidateOriginDeadBlocksDeref(t *testing.T) {
+	s := NewState()
+	ptr := s.NewAllocatedOrigin("p")
+	s.InvalidateOrigin(ptr.Origin, TargetDead)
+	ok, reason := s.CheckDerefValidity(ptr)
+	if ok {
+		t.Fatalf("expected dereference to fail, got ok")
+	}
+	if reason == "" {
+		t.Fatalf("expected reason, got empty")
+	}
+}
+
+func TestUnknownPointerAlwaysPassesValidity(t *testing.T) {
+	s := NewState()
+	if ok, _ := s.CheckDerefValidity(s.UnknownPointer()); !ok {
+		t.Fatalf("expected unknown pointer to pass validity check")
+	}
+}
+
+func TestNewAllocatedOriginRegistersAllocated(t *testing.T) {
+	s := NewState()
+	ptr := s.NewAllocatedOrigin("p")
+	if s.OriginKindOf(ptr.Origin) != OriginAllocated {
+		t.Fatalf("got kind %v, want OriginAllocated", s.OriginKindOf(ptr.Origin))
+	}
+}
+
+func TestOriginKindOfUnregistered(t *testing.T) {
+	s := NewState()
+	if s.OriginKindOf("nonexistent") != OriginUnknown {
+		t.Fatalf("got kind %v, want OriginUnknown", s.OriginKindOf("nonexistent"))
+	}
+}
+
+func TestMergePreservesWorstValidity(t *testing.T) {
+	a := NewState()
+	pa := a.NewAllocatedOrigin("p")
+	b := NewState()
+	pb := b.NewAllocatedOrigin("p")
+	b.InvalidateOrigin(pb.Origin, TargetDead)
+
+	merged := Merge(a, b)
+	if ok, _ := merged.CheckDerefValidity(pa); ok {
+		t.Fatalf("merge should preserve worst validity (TargetDead)")
+	}
+}
+
+func TestMergeLiveAndMovedPicksMoved(t *testing.T) {
+	a := NewState()
+	pa := a.NewLocalOrigin("x")
+	b := NewState()
+	pb := b.NewLocalOrigin("x")
+	b.InvalidateOrigin(pb.Origin, TargetMoved)
+
+	merged := Merge(a, b)
+	if ok, _ := merged.CheckDerefValidity(pa); ok {
+		t.Fatalf("merge should preserve TargetMoved over TargetLive")
+	}
+}

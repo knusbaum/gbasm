@@ -1,0 +1,2 @@
+Compiling tests/free_alias_use_err_test.bos
+Fatal: cannot dereference pointer to "p": the allocation was freed

@@ -1,0 +1,2 @@
+Compiling tests/struct_assign_propagate_err_test.bos
+Fatal: Cannot return "t" by value: field "xp" contains a pointer to local-scope storage; the alias would dangle in the returned copy

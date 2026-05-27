@@ -1,0 +1,12 @@
+package main
+
+import "string"
+
+fn main() {
+	var p *?i64 = nil
+	{
+		var x i64 = 10
+		p = &x
+	}
+	string.puti(*p?)
+}
