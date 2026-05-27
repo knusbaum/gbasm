@@ -790,6 +790,7 @@ type ASTType struct {
 	NilMask     uint64    // nullable pointer bit per pointer level
 	FuncSig     *FuncSig  // when set: function-pointer type, pointer-sized
 	AnonFields  []Binding // non-nil: anonymous struct type (Name == "", no StructDecl lookup)
+	p           position  // source position where this type was written; used in error messages
 }
 
 // FuncSig is the signature of a function-pointer type — the argument
@@ -884,7 +885,7 @@ func (t *ASTType) Size(c *Context) int {
 	// Named structs.
 	d, ok := c.StructDeclForName(t.Name)
 	if !ok {
-		panic(&interpreterError{msg: fmt.Sprintf("No such type %q", t.Name)})
+		panic(&interpreterError{msg: fmt.Sprintf("No such type %q", t.Name), p: t.p})
 	}
 	return d.Size(c)
 }
@@ -1325,6 +1326,7 @@ func mkTypename(n *Node) ASTType {
 		MutMask:     0,
 		OwnedMask:   0,
 		NilMask:     n.nilmask,
+		p:           n.p,
 	}
 	switch base.Name {
 	case "i8", "i16", "i32", "i64":

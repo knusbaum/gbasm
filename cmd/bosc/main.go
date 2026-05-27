@@ -233,14 +233,6 @@ func main() {
 				fatalCtx("Failed to parse: %v", err)
 			}
 			asts = append(asts, a)
-			// err = Validate(n, c)
-			// if err != nil {
-			// 	log.Fatalf("Validation error: %v\n", err)
-			// 	return
-			// }
-			// //fmt.Printf("WRITING %#v\n", n)
-			//n.replaceStrings(ctx)
-			// n.compile(ctx, &bs, valnew{})
 		}
 
 		for _, a := range asts {

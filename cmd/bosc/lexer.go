@@ -325,17 +325,14 @@ func (l *lexer) consumeLine() {
 	}
 }
 
-func (l *lexer) parseNumber(head *rune) token {
+func (l *lexer) parseNumber(p position) token {
 	var ret []rune
-	if head != nil {
-		ret = append(ret, *head)
-	}
 	for r := l.headRune(); strings.ContainsRune(numberset, r); r = l.headRune() {
 		ret = append(ret, r)
 		l.nextRune()
 	}
 	if string(ret) == "." {
-		return token{t: tok_dot, p: l.p}
+		return token{t: tok_dot, p: p}
 	}
 	// Parse the integer portion losslessly. A trailing fractional part (e.g.
 	// "1234.5") is silently truncated — boson does not yet have float support,
@@ -351,12 +348,12 @@ func (l *lexer) parseNumber(head *rune) token {
 	}
 	n, err := strconv.ParseUint(intStr, 10, 64)
 	if err != nil {
-		panic(&interpreterError{fmt.Sprintf("parsing number %q: %v", string(ret), err), l.p})
+		panic(&interpreterError{fmt.Sprintf("parsing number %q: %v", string(ret), err), p})
 	}
-	return token{t: tok_number, nval: n, p: l.p}
+	return token{t: tok_number, nval: n, p: p}
 }
 
-func (l *lexer) parseIdent() token {
+func (l *lexer) parseIdent(p position) token {
 	var ret []rune
 	for r := l.headRune(); unicode.IsLetter(r) || unicode.IsNumber(r) || r == '_'; r = l.headRune() {
 		ret = append(ret, r)
@@ -364,24 +361,25 @@ func (l *lexer) parseIdent() token {
 	}
 	id := string(ret)
 	if t, ok := keywords[id]; ok {
-		return token{t: t, p: l.p}
+		return token{t: t, p: p}
 	}
-	return token{t: tok_ident, sval: string(ret), p: l.p}
+	return token{t: tok_ident, sval: string(ret), p: p}
 }
 
 func (l *lexer) parseString() token {
+	p := l.p
 	l.nextRune()
 	var ret []rune
 	for r := l.readRune(); r != '"'; r = l.readRune() {
 		// readRune returns 0 on EOF (no error), so a missing closing quote
 		// would otherwise spin here forever.
 		if r == 0 {
-			panic(&interpreterError{"Unterminated string literal", l.p})
+			panic(&interpreterError{"Unterminated string literal", p})
 		}
 		if r == '\\' {
 			r = l.readRune()
 			if r == 0 {
-				panic(&interpreterError{"Unterminated string literal after escape", l.p})
+				panic(&interpreterError{"Unterminated string literal after escape", p})
 			}
 			switch r {
 			case 'n':
@@ -395,10 +393,11 @@ func (l *lexer) parseString() token {
 			ret = append(ret, r)
 		}
 	}
-	return token{t: tok_str, sval: string(ret), p: l.p}
+	return token{t: tok_str, sval: string(ret), p: p}
 }
 
 func (l *lexer) parseChar() token {
+	p := l.p
 	l.nextRune()
 	var ret rune
 	r := l.readRune()
@@ -419,7 +418,7 @@ func (l *lexer) parseChar() token {
 	if r != '\'' {
 		panic(&interpreterError{fmt.Sprintf("too many characters in char literal"), l.p})
 	}
-	return token{t: tok_byte, nval: uint64(ret), p: l.p}
+	return token{t: tok_byte, nval: uint64(ret), p: p}
 }
 
 func unparseString(s string) string {
@@ -493,75 +492,76 @@ func (l *lexer) Next() (rt token, re error) {
 		return token{t: tok_semicolon, p: l.p}, nil
 	}
 
+	p := l.p // start position of this token, before any consumption
 	r := l.headRune()
 	switch r {
 	case '(':
 		l.nextRune()
-		return token{t: tok_lparen, p: l.p}, nil
+		return token{t: tok_lparen, p: p}, nil
 	case ')':
 		l.nextRune()
-		return token{t: tok_rparen, p: l.p}, nil
+		return token{t: tok_rparen, p: p}, nil
 	case '{':
 		l.nextRune()
-		return token{t: tok_lcurly, p: l.p}, nil
+		return token{t: tok_lcurly, p: p}, nil
 	case '}':
 		l.nextRune()
-		return token{t: tok_rcurly, p: l.p}, nil
+		return token{t: tok_rcurly, p: p}, nil
 	case '[':
 		l.nextRune()
-		return token{t: tok_lsquare, p: l.p}, nil
+		return token{t: tok_lsquare, p: p}, nil
 	case ']':
 		l.nextRune()
-		return token{t: tok_rsquare, p: l.p}, nil
+		return token{t: tok_rsquare, p: p}, nil
 	case '-':
 		l.nextRune()
 		// if strings.ContainsRune(numberset, l.headRune()) {
 		// 	return l.parseNumber(&r), nil
 		// }
-		return token{t: tok_minus, p: l.p}, nil
+		return token{t: tok_minus, p: p}, nil
 	case ':':
 		l.nextRune()
-		return token{t: tok_colon, p: l.p}, nil
+		return token{t: tok_colon, p: p}, nil
 	case ';':
 		l.nextRune()
-		return token{t: tok_semicolon, p: l.p}, nil
+		return token{t: tok_semicolon, p: p}, nil
 	case ',':
 		l.nextRune()
-		return token{t: tok_comma, p: l.p}, nil
+		return token{t: tok_comma, p: p}, nil
 	case '"':
 		return l.parseString(), nil
 	case '\'':
 		return l.parseChar(), nil
 	case '.':
 		l.nextRune()
-		return token{t: tok_dot, p: l.p}, nil
+		return token{t: tok_dot, p: p}, nil
 	case '+':
 		l.nextRune()
-		return token{t: tok_plus, p: l.p}, nil
+		return token{t: tok_plus, p: p}, nil
 	case '*':
 		l.nextRune()
 		if l.headRune() == '?' {
 			l.nextRune()
-			return token{t: tok_maybe_ptr, p: l.p}, nil
+			return token{t: tok_maybe_ptr, p: p}, nil
 		}
-		return token{t: tok_star, p: l.p}, nil
+		return token{t: tok_star, p: p}, nil
 	case '?':
 		l.nextRune()
-		return token{t: tok_question, p: l.p}, nil
+		return token{t: tok_question, p: p}, nil
 	case '&':
 		l.nextRune()
 		if l.headRune() == '&' {
 			l.nextRune()
-			return token{t: tok_booland, p: l.p}, nil
+			return token{t: tok_booland, p: p}, nil
 		}
-		return token{t: tok_amp, p: l.p}, nil
+		return token{t: tok_amp, p: p}, nil
 	case '|':
 		l.nextRune()
 		if l.headRune() == '|' {
 			l.nextRune()
-			return token{t: tok_boolor, p: l.p}, nil
+			return token{t: tok_boolor, p: p}, nil
 		}
-		panic(&interpreterError{"Bitwise OR is not supported; use || for logical OR", l.p})
+		panic(&interpreterError{"Bitwise OR is not supported; use || for logical OR", p})
 	case '/':
 		l.nextRune()
 		if l.headRune() == '/' {
@@ -569,40 +569,40 @@ func (l *lexer) Next() (rt token, re error) {
 			l.consumeLine()
 			return l.Next()
 		}
-		return token{t: tok_fslash, p: l.p}, nil
+		return token{t: tok_fslash, p: p}, nil
 	case '!':
 		l.nextRune()
 		if l.headRune() == '=' {
 			l.nextRune()
-			return token{t: tok_neq, p: l.p}, nil
+			return token{t: tok_neq, p: p}, nil
 		}
-		return token{t: tok_not, p: l.p}, nil
+		return token{t: tok_not, p: p}, nil
 	case '=':
 		l.nextRune()
 		if l.headRune() == '=' {
 			l.nextRune()
-			return token{t: tok_deq, p: l.p}, nil
+			return token{t: tok_deq, p: p}, nil
 		}
-		return token{t: tok_eq, p: l.p}, nil
+		return token{t: tok_eq, p: p}, nil
 	case '<':
 		l.nextRune()
 		if l.headRune() == '=' {
 			l.nextRune()
-			return token{t: tok_le, p: l.p}, nil
+			return token{t: tok_le, p: p}, nil
 		}
-		return token{t: tok_lt, p: l.p}, nil
+		return token{t: tok_lt, p: p}, nil
 	case '>':
 		l.nextRune()
 		if l.headRune() == '=' {
 			l.nextRune()
-			return token{t: tok_ge, p: l.p}, nil
+			return token{t: tok_ge, p: p}, nil
 		}
-		return token{t: tok_gt, p: l.p}, nil
+		return token{t: tok_gt, p: p}, nil
 	}
 	if strings.ContainsRune(numberset, r) {
-		return l.parseNumber(nil), nil
+		return l.parseNumber(p), nil
 	} else if unicode.IsLetter(r) || r == '_' {
-		return l.parseIdent(), nil
+		return l.parseIdent(p), nil
 	}
 	if r == 0 {
 		return token{t: tok_none, p: l.p}, nil
