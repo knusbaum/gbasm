@@ -1,0 +1,26 @@
+package main
+
+import "string"
+
+type counter i64 {
+	value(c *counter) i64 {
+		return *c
+	}
+	inc(c *mut counter) void {
+		*c = *c + 1
+	}
+}
+
+fn main() i64 {
+	var x counter = 10
+	string.puti(x.value())
+	string.puts("\n")
+	x.inc()
+	string.puti(x.value())
+	string.puts("\n")
+	x.inc()
+	x.inc()
+	string.puti(x.value())
+	string.puts("\n")
+	return 0
+}

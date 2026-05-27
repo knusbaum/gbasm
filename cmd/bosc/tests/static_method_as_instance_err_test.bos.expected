@@ -1,0 +1,2 @@
+Compiling tests/static_method_as_instance_err_test.bos
+Fatal: thingy.hello is a static method (no receiver); call as thingy.hello(...), not x.hello(...)

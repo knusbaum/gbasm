@@ -49,57 +49,10 @@ fn list_destroy(l owned *owned mut node) {
 	}
 }
 
-struct SelfRef {
-	x i64
-	xp *i64
-}
-
-fn mkSelfRef() SelfRef {
-	var s SelfRef = SelfRef{
-		x: 10
-		xp: &s.x
-	}
-	return s
-}
-
-fn doSomeThing() {
-	var x i64[100]
-
-	for(var i i64 = 0; i < 100; i = i + 1) {
-		x[i] = i
-	}
-}
-
 fn main(args byte[][]) {
 	const lst owned *owned mut node = list_new(10)
 	list_append(lst, 20)
 	list_append(lst, 30)
 	list_print(lst)
 	list_destroy(lst)
-
-	
-	var s SelfRef = SelfRef{
-		x: 10
-		xp: &s.x
-	}
-	string.puti(*s.xp)
-	string.puts("\n")
-	s.x = 100
-	string.puti(*s.xp)
-	string.puts("\n")
-
-	string.puts("Creating self referential struct from the stack.\n*s.xp: ")
-	s = mkSelfRef()
-	string.puti(*s.xp)
-	string.puts("\n")
-
-	string.puts("Running something that overwrites lower stack memory.\n*s.xp: ")
-	doSomeThing()
-	string.puti(*s.xp)
-	string.puts("\n")
-
-
-	var myint owned i64 = 10
-	var myintp *i64 = &myint
-	
 }

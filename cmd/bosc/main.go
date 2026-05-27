@@ -251,6 +251,7 @@ func main() {
 		// for name, f := range actx.funcs {
 		// 	fmt.Printf("func %v: %#v\n", name, f)
 		// }
+		actx.WriteVtables(of)
 		actx.WriteStrings(of)
 		io.Copy(of, &bs)
 	}

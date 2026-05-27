@@ -70,6 +70,12 @@ type Context struct {
 	imports map[string]map[string]*FuncDecl
 	// maps user-defined type alias names to their underlying types.
 	typeAliases map[string]ASTType
+	// maps interface names to their declarations.
+	interfaceDecls map[string]*InterfaceDecl
+	// maps type alias names to their attached methods.
+	typeMethods map[string][]*FuncDecl
+	// vtables collects (vtableName → spec) for emission at end of compilation.
+	vtables map[string]vtableSpec
 
 	// return, continue, break label stack. Return returns from the current Context
 	// by jumping to the label. Continue and break do the usual within loops.
@@ -87,16 +93,19 @@ type Context struct {
 
 func NewContext() *Context {
 	return &Context{
-		bindings:      make(map[string]ASTType),
-		checker:       NewCheckerState(nil),
-		prebound:      make(map[string]bool),
-		addressNames:  make(map[string]bool),
-		constBindings: make(map[string]bool),
-		structs:       make(map[string]*StructDecl),
-		funcs:         make(map[string]*FuncDecl),
-		imports:       make(map[string]map[string]*FuncDecl),
-		typeAliases:   make(map[string]ASTType),
-		strngs:        make(map[string]string),
+		bindings:       make(map[string]ASTType),
+		checker:        NewCheckerState(nil),
+		prebound:       make(map[string]bool),
+		addressNames:   make(map[string]bool),
+		constBindings:  make(map[string]bool),
+		structs:        make(map[string]*StructDecl),
+		funcs:          make(map[string]*FuncDecl),
+		imports:        make(map[string]map[string]*FuncDecl),
+		typeAliases:    make(map[string]ASTType),
+		interfaceDecls: make(map[string]*InterfaceDecl),
+		typeMethods:    make(map[string][]*FuncDecl),
+		vtables:        make(map[string]vtableSpec),
+		strngs:         make(map[string]string),
 	}
 }
 
@@ -127,6 +136,11 @@ func typeIsMemoryBacked(c *Context, t ASTType) bool {
 	}
 	if t.AnonFields != nil {
 		return true
+	}
+	if c != nil {
+		if _, ok := c.InterfaceForName(t.Name); ok {
+			return true
+		}
 	}
 	if _, isStruct := c.StructDeclForName(t.Name); isStruct {
 		return true
@@ -306,6 +320,178 @@ func (c *Context) DefineTypeAlias(p position, name string, underlying ASTType) {
 	c.typeAliases[name] = underlying
 }
 
+// DefineInterface registers an interface declaration on the root context.
+func (c *Context) DefineInterface(p position, name string, decl *InterfaceDecl) {
+	root := c
+	for root.parent != nil {
+		root = root.parent
+	}
+	if _, ok := root.interfaceDecls[name]; ok {
+		panic(&interpreterError{fmt.Sprintf("Interface %q already defined", name), p})
+	}
+	root.interfaceDecls[name] = decl
+}
+
+// InterfaceForName looks up an interface declaration by name, searching the root context.
+func (c *Context) InterfaceForName(name string) (*InterfaceDecl, bool) {
+	if c == nil {
+		return nil, false
+	}
+	root := c
+	for root.parent != nil {
+		root = root.parent
+	}
+	d, ok := root.interfaceDecls[name]
+	return d, ok
+}
+
+// IsInterfaceType reports whether t is an interface type (non-pointer, non-slice,
+// registered as an interface in the context).
+func (c *Context) IsInterfaceType(t ASTType) bool {
+	if c == nil {
+		return false
+	}
+	if t.Indirection > 0 || t.IsSliceOrArray() || t.FuncSig != nil {
+		return false
+	}
+	_, ok := c.InterfaceForName(t.Name)
+	return ok
+}
+
+// DefineTypeMethods registers the methods for a type alias on the root context.
+func (c *Context) DefineTypeMethods(typeName string, methods []*FuncDecl) {
+	root := c
+	for root.parent != nil {
+		root = root.parent
+	}
+	root.typeMethods[typeName] = methods
+}
+
+// TypeMethodsFor returns the methods registered for a type alias.
+func (c *Context) TypeMethodsFor(typeName string) ([]*FuncDecl, bool) {
+	if c == nil {
+		return nil, false
+	}
+	root := c
+	for root.parent != nil {
+		root = root.parent
+	}
+	m, ok := root.typeMethods[typeName]
+	return m, ok
+}
+
+// MethodForType finds a specific method by name for a given type.
+func (c *Context) MethodForType(typeName, methodName string) (*FuncDecl, bool) {
+	methods, ok := c.TypeMethodsFor(typeName)
+	if !ok {
+		return nil, false
+	}
+	for _, m := range methods {
+		if m.Name == methodName {
+			return m, true
+		}
+	}
+	return nil, false
+}
+
+// substituteReceiver replaces "self" type name with typeName at all levels of t.
+func substituteReceiver(t ASTType, typeName string) ASTType {
+	if t.Name == "self" {
+		t.Name = typeName
+		return t
+	}
+	if t.Element != nil {
+		elem := substituteReceiver(*t.Element, typeName)
+		t.Element = &elem
+	}
+	return t
+}
+
+// TypeSatisfiesInterface checks structural satisfaction: does type typeName
+// implement all methods of iface, with self→typeName substituted in receiver types?
+func (c *Context) TypeSatisfiesInterface(typeName string, iface *InterfaceDecl) bool {
+	methods, ok := c.TypeMethodsFor(typeName)
+	if !ok {
+		return false
+	}
+	for _, isig := range iface.Methods {
+		found := false
+		for _, m := range methods {
+			if m.Name != isig.Name {
+				continue
+			}
+			if len(m.Args) == 0 || len(isig.Params) == 0 {
+				continue
+			}
+			expectedReceiver := substituteReceiver(isig.Params[0].Type, typeName)
+			if !m.Args[0].Type.Same(expectedReceiver) {
+				continue
+			}
+			if len(m.Args) != len(isig.Params) {
+				continue
+			}
+			match := true
+			for i := 1; i < len(isig.Params); i++ {
+				if !m.Args[i].Type.Same(isig.Params[i].Type) {
+					match = false
+					break
+				}
+			}
+			if !match {
+				continue
+			}
+			if !m.Return.Same(isig.Return) {
+				continue
+			}
+			found = true
+			break
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// NeedVtable registers a vtable to be emitted; no-op if already registered.
+func (c *Context) NeedVtable(name, typeName, ifaceName, pkgName string, iface *InterfaceDecl) {
+	root := c
+	for root.parent != nil {
+		root = root.parent
+	}
+	if _, ok := root.vtables[name]; ok {
+		return
+	}
+	var methods []string
+	for _, m := range iface.Methods {
+		methods = append(methods, m.Name)
+	}
+	root.vtables[name] = vtableSpec{
+		typeName:  typeName,
+		ifaceName: ifaceName,
+		pkgName:   pkgName,
+		methods:   methods,
+	}
+}
+
+// WriteVtables emits all registered vtable globals as `var` blocks to of.
+func (c *Context) WriteVtables(of io.Writer) {
+	root := c
+	for root.parent != nil {
+		root = root.parent
+	}
+	for name, spec := range root.vtables {
+		n := len(spec.methods)
+		zeros := make([]byte, n*8)
+		fmt.Fprintf(of, "var %s byte[%d] {\n", name, n*8)
+		fmt.Fprintf(of, "\tbytes \"%s\"\n", bytesToBasStringLiteral(zeros))
+		for i, m := range spec.methods {
+			fmt.Fprintf(of, "\treloc %d %s.%s.%s 0\n", i*8, spec.pkgName, spec.typeName, m)
+		}
+		fmt.Fprintf(of, "}\n")
+	}
+}
+
 // TypeAliasFor returns the underlying ASTType for a user-defined alias, searching
 // up the parent chain.
 func (c *Context) TypeAliasFor(name string) (ASTType, bool) {
@@ -456,6 +642,12 @@ func (c *Context) FuncDeclForCall(pkg, name string) (*FuncDecl, string, bool) {
 	if pkgFuncs, ok := c.imports[pkg]; ok {
 		d, ok := pkgFuncs[name]
 		return d, pkg, ok
+	}
+	// Static method call: methods are registered as `TypeName.method` via
+	// DefineFunc, so `thingy.hello()` resolves to the locally-defined
+	// function `thingy.hello`.
+	if d, ok := c.funcs[pkg+"."+name]; ok {
+		return d, "", true
 	}
 	return c.parent.FuncDeclForCall(pkg, name)
 }
@@ -873,6 +1065,12 @@ func (t *ASTType) Size(c *Context) int {
 	// User-defined type aliases (resolve to underlying).
 	if underlying, ok := c.TypeAliasFor(t.Name); ok {
 		return underlying.Size(c)
+	}
+	// Interface type: fat pointer (data ptr + vtable ptr), always 16 bytes.
+	if c != nil {
+		if _, ok := c.InterfaceForName(t.Name); ok {
+			return 16
+		}
 	}
 	// Anonymous struct: sum of field sizes.
 	if t.AnonFields != nil {
@@ -1617,6 +1815,20 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 		}
 	} else {
 		if vt, ok := c.TypeForVar(f.Pkg); ok {
+			// Interface method dispatch: return the method's declared return type.
+			if c.IsInterfaceType(vt) {
+				if ifaceDecl, iok := c.InterfaceForName(vt.Name); iok {
+					for _, isig := range ifaceDecl.Methods {
+						if isig.Name == f.FName {
+							return isig.Return
+						}
+					}
+				}
+			}
+			// Concrete type method call: look up by qualified name.
+			if method, mok := c.MethodForType(vt.Name, f.FName); mok {
+				return method.Return
+			}
 			if sdecl, sok := c.StructDeclForName(vt.Name); sok {
 				_, mtype := sdecl.ByteOffset(c, f.FName)
 				if mtype.FuncSig != nil {
@@ -1773,9 +1985,6 @@ func (a *Address) ASTType(c *Context) ASTType {
 		t, ok := c.TypeForVar(name)
 		if !ok {
 			CompileErrorF(a, "Variable %q is not declared", name)
-		}
-		if t.HasOwned() {
-			t = t.StripOwned()
 		}
 		// Adding one pointer level: shift existing mut/owned bits up by one position.
 		t.MutMask <<= 1
@@ -2179,6 +2388,49 @@ type TypeAliasDecl struct {
 func (*TypeAliasDecl) ASTType(*Context) ASTType { return voidASTType() }
 func (d *TypeAliasDecl) Note() string           { return fmt.Sprintf("type %s %s", d.Name, d.Underlying) }
 func (d *TypeAliasDecl) Pos() position          { return d.p }
+
+// InterfaceMethodSig is a single method signature in an interface declaration.
+// Params[0] is the receiver; its type uses "self" as a placeholder for the
+// concrete implementing type.
+type InterfaceMethodSig struct {
+	Name   string
+	Params []Binding
+	Return ASTType
+	p      position
+}
+
+// InterfaceDecl is the AST node for `interface Name { sig... }`.
+type InterfaceDecl struct {
+	Name    string
+	Methods []InterfaceMethodSig
+	p       position
+}
+
+func (*InterfaceDecl) ASTType(*Context) ASTType { return voidASTType() }
+func (d *InterfaceDecl) Note() string           { return fmt.Sprintf("interface %s", d.Name) }
+func (d *InterfaceDecl) Pos() position          { return d.p }
+
+// TypeWithMethodsDecl is the AST node for `type TypeName Base { methods... }`.
+type TypeWithMethodsDecl struct {
+	Name       string
+	Underlying ASTType
+	Methods    []*FuncDecl // each FuncDecl.Name is the bare method name
+	p          position
+}
+
+func (*TypeWithMethodsDecl) ASTType(*Context) ASTType { return voidASTType() }
+func (d *TypeWithMethodsDecl) Note() string {
+	return fmt.Sprintf("type %s %s { ... }", d.Name, d.Underlying)
+}
+func (d *TypeWithMethodsDecl) Pos() position { return d.p }
+
+// vtableSpec records one vtable entry to be emitted.
+type vtableSpec struct {
+	typeName  string   // concrete type name (e.g. "myerror")
+	ifaceName string   // interface name (e.g. "error")
+	pkgName   string   // package that defines the type
+	methods   []string // method names in interface declaration order
+}
 
 type Dispose struct {
 	Var string
@@ -2647,6 +2899,78 @@ func (n *Node) toASTTop(c *Context) AST {
 		}
 		c.DefineTypeAlias(n.p, n.sval, underlying)
 		return &TypeAliasDecl{Name: n.sval, Underlying: underlying, p: n.p}
+	case n_typedecl_with_methods:
+		underlying := mkTypename(n.args[0])
+		switch underlying.Name {
+		case "i8", "i16", "i32", "i64":
+			underlying.Signed = true
+		}
+		c.DefineTypeAlias(n.p, n.sval, underlying)
+		var methods []*FuncDecl
+		for _, mn := range n.args[1:] {
+			if mn.t != n_fn {
+				ParseErrorF(mn, "Expected method definition in type block, got %v", mn.t)
+			}
+			var fn FuncDecl
+			fn.Name = mn.sval // bare method name
+			fn.p = mn.p
+			nargs := int(mn.ival)
+			margs := mn.args
+			for i := 0; i < nargs; i++ {
+				a := margs[0]
+				fn.Args = append(fn.Args, Binding{
+					Name:    a.sval,
+					Type:    mkTypename(a.args[0]),
+					IsConst: a.ival == 0,
+				})
+				margs = margs[1:]
+			}
+			fn.Return = mkTypename(margs[0])
+			body := margs[1]
+			if body.t != n_block {
+				ParseErrorF(body, "Expected a block for method body, got %v", body.t)
+			}
+			fn.Body = body.toASTTop(NewContext()).(*Block)
+			// Register method under qualified name so FuncDeclForCall can find it.
+			qualName := n.sval + "." + fn.Name
+			c.DefineFunc(qualName, &FuncDecl{
+				Name:   qualName,
+				Args:   fn.Args,
+				Return: fn.Return,
+				Body:   fn.Body,
+				p:      fn.p,
+			})
+			methods = append(methods, &fn)
+		}
+		c.DefineTypeMethods(n.sval, methods)
+		return &TypeWithMethodsDecl{Name: n.sval, Underlying: underlying, Methods: methods, p: n.p}
+	case n_interface_decl:
+		var decl InterfaceDecl
+		decl.Name = n.sval
+		decl.p = n.p
+		for _, sig := range n.args {
+			if sig.t != n_interface_method {
+				ParseErrorF(sig, "Expected interface method signature, got %v", sig.t)
+			}
+			var isig InterfaceMethodSig
+			isig.Name = sig.sval
+			isig.p = sig.p
+			nparams := int(sig.ival)
+			sargs := sig.args
+			for i := 0; i < nparams; i++ {
+				a := sargs[0]
+				isig.Params = append(isig.Params, Binding{
+					Name:    a.sval,
+					Type:    mkTypename(a.args[0]),
+					IsConst: true,
+				})
+				sargs = sargs[1:]
+			}
+			isig.Return = mkTypename(sargs[0])
+			decl.Methods = append(decl.Methods, isig)
+		}
+		c.DefineInterface(n.p, n.sval, &decl)
+		return &decl
 	}
 	spew.Dump(n)
 	ParseErrorF(n, "Node Type %s Fell through AST Generator.\n", n.t)

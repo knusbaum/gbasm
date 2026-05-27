@@ -1,0 +1,26 @@
+## A minimal Boson project. Builds an executable from src/ and links
+## against whatever packages the source imports.
+##
+## Build with:
+##   BOSON_HOME=../.. mmk
+
+# Defaults: use binaries from the gbasm repo build outputs.
+BOSON_HOME=${BOSON_HOME:-../..}
+BOSC=${BOSC:-$BOSON_HOME/bosc}
+BAS=${BAS:-$BOSON_HOME/bas}
+BLD=${BLD:-$BOSON_HOME/bld}
+BDOC=${BDOC:-$BOSON_HOME/bdoc}
+
+include $BOSON_HOME/boson.mmk
+
+all : build
+
+bos_exe linked source=src :
+
+build {
+    set -e
+    (cd ../../ && make)
+    mmk linked
+}
+
+[run all] : build { ./linked }

@@ -53,6 +53,9 @@ const (
 	n_ownedpromo
 	n_arrlit
 	n_nonnull
+	n_typedecl_with_methods // type TypeName Base { method... }
+	n_interface_decl        // interface Name { sig... }
+	n_interface_method      // method signature (no body)
 )
 
 func (t nodetype) String() string {
@@ -147,6 +150,12 @@ func (t nodetype) String() string {
 		return "n_arrlit"
 	case n_nonnull:
 		return "n_nonnull"
+	case n_typedecl_with_methods:
+		return "n_typedecl_with_methods"
+	case n_interface_decl:
+		return "n_interface_decl"
+	case n_interface_method:
+		return "n_interface_method"
 	}
 	return "UNKNOWN"
 }
@@ -1134,6 +1143,72 @@ func (p *Parser) parseImport() *Node {
 	return &Node{t: n_import, p: importpos, sval: path.sval}
 }
 
+// parseMethodDef parses a method definition inside a type block:
+// name(params) [rettype] { body }
+// Returns an n_fn node, same structure as parseFn but without the `fn` keyword.
+func (p *Parser) parseMethodDef() *Node {
+	fnpos := p.current().p
+	fname := p.parseTok()
+	if fname.t != n_symbol {
+		panic(&interpreterError{fmt.Sprintf("Expected method name, but found: %v", fname), fname.p})
+	}
+	p.expect(tok_lparen)
+	params := p.parseParams()
+	p.expect(tok_rparen)
+	rettype := &Node{t: n_typename, p: p.current().p, sval: "void"}
+	if p.current().t != tok_lcurly {
+		rettype = p.parseTypeName()
+	}
+	args := append(params, rettype)
+	body := p.parseExpression()
+	args = append(args, body)
+	return &Node{t: n_fn, p: fnpos, ival: uint64(len(params)), sval: fname.sval, args: args}
+}
+
+// parseInterfaceMethodSig parses an interface method signature: name(params) [rettype]
+// Returns an n_interface_method node.
+func (p *Parser) parseInterfaceMethodSig() *Node {
+	sigpos := p.current().p
+	fname := p.parseTok()
+	if fname.t != n_symbol {
+		panic(&interpreterError{fmt.Sprintf("Expected method name, but found: %v", fname), fname.p})
+	}
+	p.expect(tok_lparen)
+	params := p.parseParams()
+	p.expect(tok_rparen)
+	var rettype *Node
+	if isTypeStart(p.current().t) {
+		rettype = p.parseTypeName()
+	} else {
+		rettype = &Node{t: n_typename, p: p.current().p, sval: "void"}
+	}
+	args := append(params, rettype)
+	return &Node{t: n_interface_method, p: sigpos, ival: uint64(len(params)), sval: fname.sval, args: args}
+}
+
+// parseInterfaceDecl parses: interface Name { sig1 sig2 ... }
+func (p *Parser) parseInterfaceDecl() *Node {
+	pos := p.current().p
+	p.expect(tok_interface)
+	name := p.parseTok()
+	if name.t != n_symbol {
+		panic(&interpreterError{fmt.Sprintf("Expected interface name, but found: %v", name), name.p})
+	}
+	p.expect(tok_lcurly)
+	var sigs []*Node
+	for p.current().t != tok_rcurly {
+		for p.current().t == tok_semicolon {
+			p.advance()
+		}
+		if p.current().t == tok_rcurly {
+			break
+		}
+		sigs = append(sigs, p.parseInterfaceMethodSig())
+	}
+	p.expect(tok_rcurly)
+	return &Node{t: n_interface_decl, p: pos, sval: name.sval, args: sigs}
+}
+
 func (p *Parser) parseTypeDecl() *Node {
 	pos := p.current().p
 	p.expect(tok_type)
@@ -1142,6 +1217,22 @@ func (p *Parser) parseTypeDecl() *Node {
 		panic(&interpreterError{fmt.Sprintf("Expected type name, but found: %v\n", name), name.p})
 	}
 	base := p.parseTypeName()
+	if p.current().t == tok_lcurly {
+		p.advance() // consume '{'
+		var methods []*Node
+		for p.current().t != tok_rcurly {
+			for p.current().t == tok_semicolon {
+				p.advance()
+			}
+			if p.current().t == tok_rcurly {
+				break
+			}
+			methods = append(methods, p.parseMethodDef())
+		}
+		p.expect(tok_rcurly)
+		args := append([]*Node{base}, methods...)
+		return &Node{t: n_typedecl_with_methods, p: pos, sval: name.sval, args: args}
+	}
 	return &Node{t: n_typedecl, p: pos, sval: name.sval, args: []*Node{base}}
 }
 
@@ -1152,6 +1243,8 @@ func (p *Parser) parseTopLevel() *Node {
 		return p.parseImport()
 	} else if p.current().t == tok_type {
 		return p.parseTypeDecl()
+	} else if p.current().t == tok_interface {
+		return p.parseInterfaceDecl()
 	}
 	return p.parseExpression()
 }

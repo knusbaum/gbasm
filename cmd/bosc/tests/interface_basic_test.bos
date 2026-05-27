@@ -1,0 +1,22 @@
+package main
+
+import "string"
+
+type myint i64 {
+	describe(m *myint) byte[] {
+		return "myint"
+	}
+}
+
+interface Describer {
+	describe(d *self) byte[]
+}
+
+fn main() i64 {
+	var x myint = 42
+	var d Describer = &x
+	var s byte[] = d.describe()
+	string.puts(s)
+	string.puts("\n")
+	return 0
+}

@@ -1,0 +1,18 @@
+package main
+
+type dog i64 {
+	speak(d *dog) byte[] {
+		return "woof"
+	}
+}
+
+interface Animal {
+	speak(a *self) byte[]
+	name(a *self) byte[]
+}
+
+fn main() i64 {
+	var d dog = 0
+	var a Animal = &d
+	return 0
+}

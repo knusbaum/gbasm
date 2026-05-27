@@ -1,0 +1,17 @@
+package main
+
+import "string"
+
+type thingy i64
+
+fn consume(t *owned thingy) {
+	string.puts("consumed\n")
+	dispose(t)
+}
+
+fn main() i64 {
+	var x owned thingy = 0
+	consume(owned(&x))
+	consume(owned(&x))
+	return 0
+}

@@ -434,7 +434,7 @@ Ownership is unique, but pointer access may alias. The compiler separates these 
 
 - **Ownership aliases are not allowed.** An `owned T` value cannot be copied. Passing it to an owned parameter moves it; assigning it to another owned binding moves it; using it afterward is rejected.
 - **Non-owning pointer aliases are allowed.** A value of type `*T`, `*mut T`, `*?T`, etc. may be copied freely, even if it points at storage owned by some other binding.
-- **Borrowing strips ownership.** Passing `owned *owned mut node` to a parameter of type `*node` or `*mut node` does not move either obligation. The callee receives only an access capability.
+- **Coercing to a non-owned destination strips ownership.** Passing `owned *owned mut node` to a parameter of type `*node` or `*mut node` does not move either obligation: `Accepts` strips owned at the coercion site. The callee receives only an access capability. Coercing to an `owned` destination (e.g. `*owned node`) moves instead.
 
 For example:
 
@@ -508,13 +508,12 @@ These rules are required by the ownership model:
 
 - `owned` values are not copyable. Copying ownership would create two cleanup obligations for the same resource.
 - Passing or assigning to an `owned` destination moves the obligation. The source cannot be used afterward.
-- Borrowing strips ownership. A borrowed pointer is an access capability, not a cleanup responsibility.
+- Coercing to a non-owned destination strips ownership at the coercion site. A borrowed pointer is an access capability, not a cleanup responsibility.
 - Writes that may touch owned storage invalidate facts about that storage unless the compiler can prove the write is unrelated.
 - Unknown pointer state is conservative. If the compiler cannot prove what a mutable pointer aliases, it must assume owned-field facts reachable through that pointer may be stale.
 - Mutable access to an owner slot is rejected. Code must not be able to replace `a` in `var a owned *T` without also consuming the old obligation.
-- Read-only access to an owner slot may exist only as a non-owning view. This permits inspection without allowing ownership duplication or replacement.
 
-The last two points are why address-taking of owned bindings has the extra rule described in [The address-of operator](#the-address-of-operator). Taking a read-only address of a const owned binding is safe because the resulting pointer cannot replace the owner slot and the type of the view has ownership stripped. Taking a mutable address would expose the owner slot itself; `*slot = other` could then lose the old owned value without running its cleanup path.
+The mutable-address rule is what address-taking of owned bindings enforces (see [The address-of operator](#the-address-of-operator)). `&x` itself carries the source's owned bits — whether the result acts as a borrow or as a move is determined by the destination type, the same way it is for value-typed `owned T` bindings. `*slot = other` is foreclosed by rejecting any `*mut` view of an owner slot, not by stripping ownership from the pointer expression.
 
 #### Conservative current choices
 
@@ -920,16 +919,28 @@ var a owned *owned mut thing = new(thing{...})
 var slot *mut *mut thing = &a      // COMPILE ERROR
 ```
 
-Taking a read-only address of a const owned binding is allowed, but the borrowed view strips ownership:
+`&` of an owned binding preserves the owned bits in the resulting pointer type. Whether the result acts as a borrow or as an ownership transfer is determined entirely by the destination type:
 
 ```
+var x owned foo = make_foo()
+
+inspect(&x)                  // param is *foo: Accepts strips owned, x stays owned (borrow)
+var y *owned foo = &x        // dest is *owned foo: x is moved; y now carries the obligation
+dispose(y)                   // discharges through y
+// x is no longer usable
+
 const a owned *owned mut thing = new(thing{...})
-const slot **mut thing = &a        // read-only pointer to a non-owning view of a's pointer value
-
-*slot = other                      // COMPILE ERROR: slot is read-only at the immediate pointee
+const slot *owned *owned mut thing = &a     // const owned ptr: a is moved into slot
+free(slot)
 ```
 
-This follows the same rule as ordinary borrowing: access aliases may exist, but they do not carry ownership obligations and cannot be used to replace an owner slot unless the owner slot is mutable — which owned slots intentionally reject for now.
+This mirrors how value-typed owned bindings behave: `var y owned T = x` moves x because the destination is owned, while `var y T = x` would borrow. The pointer form follows the same destination-driven rule.
+
+The compiler enforces these invariants without relying on `&` itself stripping ownership:
+
+1. `Accepts` strips owned at coercion sites whose destination is non-owned, so `inspect(&x)` (param `*foo`) borrows without moving.
+2. Move tracking marks the underlying variable as consumed when its address is delivered to an owned destination, and rejects subsequent reads or address-taking of the moved binding.
+3. The mutable-address rule above prevents creating any `*mut`-shaped view of an owner slot, eliminating slot-replacement leaks.
 
 In static-init context (see [Static Initializers](#static-initializers)) two more forms become legal:
 
@@ -1005,6 +1016,170 @@ String literals are emitted by the compiler with both the slice data and a trail
 ### Future: unused-mutability warning
 
 The compiler could warn when a `var` binding is never directly reassigned and no mutable reference to it (`&x`) is ever taken: "var x i16 never mutated — use const instead." Taking `&x` (which yields `*mut T` for a `var` binding) counts as a potential mutation even if the callee only reads through the pointer, to avoid false positives. The check fires at the end of each scope and at function exit for `var` parameters. Not yet implemented.
+
+---
+
+## Interfaces
+
+Interfaces provide structural polymorphism over types that share a common set of method signatures. An interface value is a fat pointer (data pointer + vtable pointer, 16 bytes) whose dispatch table is generated statically by the compiler at each coercion site.
+
+### Type aliases with methods
+
+The existing `type Name Underlying` form is extended to optionally include a method block:
+
+```
+type foo bar {
+    do_something(self *foo) {
+        string.puts("did something\n")
+    }
+    compute(self *foo, x i64) i64 {
+        return self.x + x
+    }
+}
+```
+
+- Every method must have a pointer receiver as its first parameter. The parameter name is arbitrary; `self` is conventional. **Value receivers are not allowed.**
+- The receiver may carry ownership qualifiers: `*T` (borrow), `*mut T` (mutable borrow), `owned *owned T` (consuming — takes ownership of the pointed-to value).
+- Methods are emitted as regular functions with three-part symbol names: `pkg.TypeName.method_name` (e.g. `mypkg.foo.compute`).
+- `type foo bar` without a block continues to work as before — a distinct named type with no attached methods.
+
+**Concrete method call desugaring:**
+
+- `v.method(args...)` where `v` has type `T` → `T.method(&v, args...)` (address taken automatically for the pointer receiver).
+- `p.method(args...)` where `p` has type `*T` or `*mut T` → `T.method(p, args...)` (passed directly, no extra indirection).
+- Ownership qualifiers on the receiver are checked at the call site: calling a method with `owned *owned T` receiver on a non-owned binding is a compile error.
+
+### Interface declarations
+
+```
+interface Writer {
+    write(self *self, b byte[]) i64
+}
+
+interface error {
+    message(self *self) byte[]
+    destroy(self owned *owned self)
+}
+```
+
+- `self` is a reserved type placeholder in interface method signatures. It substitutes for the concrete implementing type at satisfaction-check time.
+- Method signatures use the same ownership qualifiers as regular function parameters. The placeholder type `self` can appear at any pointer level: `*self`, `*mut self`, `owned *owned self`.
+- The parameter name before the receiver type (e.g. `self` in `self *self`) is arbitrary and ignored by the compiler; only the type matters for satisfaction checking.
+- The interface name becomes a type usable in parameter positions, return types, and variable declarations.
+
+### Structural satisfaction
+
+A type `T` satisfies interface `I` if, for every method `m` declared in `I`, type `T` has a method where:
+- The name matches exactly.
+- The first-parameter type matches after substituting `self` → `T` (including all ownership and mutability qualifiers).
+- The remaining parameter types and return type match exactly.
+
+Satisfaction is checked at coercion sites only — there is no eager or declaration-time check. If a coercion is never written, the compiler never checks whether the type satisfies the interface.
+
+### Interface values (fat pointer)
+
+An interface value is 16 bytes regardless of how many methods the interface declares:
+
+```
+{ data *byte, vtable *VtableShape }
+```
+
+The `data` pointer is an opaque type-erased pointer to the concrete value. The `vtable` pointer points to a compiler-generated static global.
+
+### Vtable layout
+
+For concrete type `T` satisfying interface `I` with N methods, the compiler emits one static vtable global per `(T, I)` pair, named `__vtable_pkg.T_I`:
+
+```
+data __vtable_mypkg.foo_Writer {
+    bytes 8
+    reloc 0 mypkg.foo.write 0
+    ...one entry per method, in interface declaration order...
+}
+```
+
+Each entry is an 8-byte function pointer to the concrete method. Entries appear in the order methods are declared in the interface.
+
+**ABI note:** vtable entries are called with the opaque `data` pointer as the first argument, followed by the remaining method arguments. Since `*byte` and `*T` have identical representation and calling convention on x86-64 (pointer-sized register), no thunks are needed. The concrete method interprets its first argument as `*T` and the caller passes the interface's `data` field — both sides agree on the machine-level ABI.
+
+### Ownership in interfaces
+
+Interface types carry an optional `owned` qualifier:
+
+- `I` (no qualifier): the interface value **borrows** the underlying data.
+  - Only methods with `*self` or `*mut self` receivers are callable.
+  - Calling a method with an `owned *owned self` receiver is a compile error.
+- `owned I`: the interface value **owns** the underlying data.
+  - Methods with any receiver qualifier are callable.
+  - Calling a method with an `owned *owned self` receiver consumes the interface binding (same as any other owned-parameter call).
+
+Both representations are identical at runtime (16 bytes). The ownership qualifier is compile-time-only, consistent with how `owned *T` differs from `*T` elsewhere in the type system.
+
+**Coercion from a concrete owned pointer to `owned I`:**
+
+```
+var e owned *owned myerror = alloc(myerror)
+// ... initialize ...
+const err owned error = e   // moves ownership into the interface value; e is consumed
+err.message()               // ok — borrows from owned interface
+err.destroy()               // ok — consumes err (owned *owned self receiver)
+// err is no longer usable after destroy()
+```
+
+Stack-allocated values can only coerce to a non-owned interface (borrow). An `owned I` value requires an `owned *owned T` source.
+
+**Calling a consuming method on an owned interface:**
+
+1. Load the vtable pointer from the interface binding.
+2. Load the function pointer at the method's vtable slot.
+3. Call it, passing the `data` pointer as `owned *owned T`.
+4. The interface binding is marked consumed — it cannot be used after this call.
+
+The concrete method (e.g. `destroy(self owned *owned myerror)`) receives ownership and is responsible for calling `free` or `dispose` as appropriate.
+
+### Example: the error interface
+
+```
+interface error {
+    message(self *self) byte[]
+    destroy(self owned *owned self)
+}
+
+type myerror i64 {
+    message(self *myerror) byte[] {
+        return "an error occurred\n"
+    }
+    destroy(self owned *owned myerror) {
+        free(self)
+    }
+}
+
+fn make_error() owned error {
+    const e owned *owned myerror = alloc(myerror)
+    *e = myerror(42)
+    return e    // coerces owned *owned myerror → owned error
+}
+
+fn handle(err owned error) {
+    string.puts(err.message())   // borrows from owned err; err survives
+    err.destroy()                // consumes err; cannot use err after this
+}
+```
+
+### Implementation notes
+
+A change to add interfaces touches each compiler layer in order:
+
+1. **Lexer** (`cmd/bosc/lexer.go`): add `interface` and `self` as keywords.
+2. **Parser** (`cmd/bosc/parser.go`): extend `type Name Base` to parse an optional `{ method... }` block; add `interface Name { sig... }` top-level form; add method-signature parsing (method name, parameter list with `self` placeholder, return type, optional body).
+3. **AST** (`cmd/bosc/ast.go`): new node types for method definitions and interface declarations; new `ASTType` variant for interface types; `Context` extended to map type names → method sets and interface names → method signatures.
+4. **Checker** (`cmd/bosc/checker.go`): structural satisfaction check at coercion sites; ownership compatibility checks at interface method call sites (owned vs. non-owned interface value vs. receiver qualifier).
+5. **Codegen** (`cmd/bosc/compile.go`):
+   - Method definitions → emit as `.bs` functions named `pkg.TypeName.method`.
+   - Concrete method call on `v.method(args)` → desugar to `pkg.TypeName.method(&v, args)` or `pkg.TypeName.method(v, args)` depending on whether `v` is already a pointer.
+   - Coercion from concrete type to interface type → emit `__vtable_pkg.T_I` static global (if not already emitted for this pair); build 16-byte fat pointer in two slots (`data` + vtable address).
+   - Interface method call → load vtable, index to method offset, indirect call with data pointer prepended.
+6. **Symbol naming**: three-part `pkg.TypeName.method` names flow through the assembler's auto-qualification and the linker's symbol table without structural changes — they are just dot-separated symbol strings like cross-package calls today.
 
 ---
 

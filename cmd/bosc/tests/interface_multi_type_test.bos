@@ -1,0 +1,51 @@
+package main
+
+import "string"
+
+type dog i64 {
+	speak(d *dog) byte[] {
+		return "woof"
+	}
+	name(d *dog) byte[] {
+		return "dog"
+	}
+}
+
+type cat i64 {
+	speak(c *cat) byte[] {
+		return "meow"
+	}
+	name(c *cat) byte[] {
+		return "cat"
+	}
+}
+
+interface Animal {
+	speak(a *self) byte[]
+	name(a *self) byte[]
+}
+
+fn greet(a Animal) void {
+	string.puts(a.name())
+	string.puts(" says: ")
+	string.puts(a.speak())
+	string.puts("\n")
+}
+
+fn main() i64 {
+	var d dog = 0
+	var c cat = 0
+
+	var ad Animal = &d
+	var ac Animal = &c
+
+	string.puts(ad.speak())
+	string.puts("\n")
+	string.puts(ac.speak())
+	string.puts("\n")
+
+	greet(ad)
+	greet(ac)
+
+	return 0
+}

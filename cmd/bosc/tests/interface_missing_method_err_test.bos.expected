@@ -1,0 +1,2 @@
+Compiling tests/interface_missing_method_err_test.bos
+Fatal: Type dog does not implement interface Animal

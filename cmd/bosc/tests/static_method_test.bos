@@ -1,0 +1,25 @@
+package main
+
+import "string"
+
+type thingy i64 {
+	hello() {
+		string.puts("hello, thingy\n")
+	}
+	greet(name byte[]) {
+		string.puts("greetings, ")
+		string.puts(name)
+		string.puts("\n")
+	}
+	answer() i64 {
+		return 42
+	}
+}
+
+fn main() i64 {
+	thingy.hello()
+	thingy.greet("world")
+	string.puti(thingy.answer())
+	string.puts("\n")
+	return 0
+}

@@ -387,10 +387,18 @@ func checkOwnedSourceAvailable(c *Context, val AST) {
 		checkOwnedSourceAvailable(c, nn.Val)
 		return
 	}
+	if op, ok := val.(*OwnedPromotion); ok {
+		checkOwnedSourceAvailable(c, op.Val)
+		return
+	}
 	switch v := val.(type) {
 	case *Symbol:
 		if c.IsMoved(v.Name) {
 			CompileErrorF(val, "Cannot move \"%s\": it was already moved", v.Name)
+		}
+	case *Address:
+		if v.Var != "" && c.IsMoved(v.Var) {
+			CompileErrorF(val, "Cannot move \"%s\": it was already moved", v.Var)
 		}
 	case *Dot:
 		baseType := v.Val.ASTType(c)
@@ -746,6 +754,10 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 		markMovedIfOwnedSource(of, c, expected, nn.Val)
 		return
 	}
+	if op, ok := val.(*OwnedPromotion); ok {
+		markMovedIfOwnedSource(of, c, expected, op.Val)
+		return
+	}
 	switch v := val.(type) {
 	case *Symbol:
 		checkOwnedSourceAvailable(c, val)
@@ -754,6 +766,13 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 		if declared.Indirection > 0 && declared.NilMask&1 != 0 {
 			fmt.Fprintf(of, "\tmov %s 0\n", v.Name)
 			c.SetNullFact(VarFlowPath(v.Name), NullKnownNull)
+		}
+	case *Address:
+		// owned(&x) discharges x's obligation through the pointer: the
+		// callee will consume what x's slot referenced. Mark x as moved.
+		if v.Var != "" {
+			checkOwnedSourceAvailable(c, &Symbol{Name: v.Var, p: v.p})
+			c.Move(v.Var)
 		}
 	case *Deref:
 		ptype := v.Val.ASTType(c)
@@ -1302,6 +1321,24 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	case *TypeAliasDecl:
 		// Already registered in toASTTop; nothing to emit.
 		return nullspot
+	case *TypeWithMethodsDecl:
+		// Type alias already registered in toASTTop.
+		// Emit each method as `function TypeName.method_name` — the assembler
+		// prepends the package name, producing pkg.TypeName.method_name.
+		for _, m := range ast.Methods {
+			qualified := &FuncDecl{
+				Name:   ast.Name + "." + m.Name,
+				Args:   m.Args,
+				Return: m.Return,
+				Body:   m.Body,
+				p:      m.p,
+			}
+			compileTop(of, c, qualified, nullspot)
+		}
+		return nullspot
+	case *InterfaceDecl:
+		// No code to emit; interface declarations are purely type-level.
+		return nullspot
 	case *StructDecl:
 		c.DefineStruct(ast.TName, ast)
 		// Emit the struct shape so bas can carry it into the .bo for
@@ -1375,6 +1412,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				}
 			}
 			checkAddressOfOwnedForDest(c, ast.Init, dstt)
+			// Interface coercion: concrete pointer → interface fat pointer.
+			if c.IsInterfaceType(dstt) && srct.Indirection > 0 {
+				emitInterfaceFatPtr(of, c, a, dstt, srct, ast.Init, s.ref)
+				if dstt.OwnedMask != 0 {
+					markMovedIfOwnedSource(of, c, dstt, ast.Init)
+				}
+				return nullspot
+			}
 			// Ownership promotion check, unless source is an integer literal.
 			if !srct.Same(intlitASTType()) && srct.Name != "<nil>" {
 				gained := dstt.OwnedMask &^ srct.OwnedMask
@@ -1534,14 +1579,24 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				}
 			} else {
 				if vt, vok := c.TypeForVar(ast.Pkg); vok {
+					// Interface method dispatch: v.method(args) where v is an interface type.
+					if c.IsInterfaceType(vt) {
+						ifaceDecl, _ := c.InterfaceForName(vt.Name)
+						return compileInterfaceMethodCall(of, c, a, ast, vt, ifaceDecl, dest)
+					}
+					// Concrete method call: v.method(args) → TypeName.method(receiver, args).
+					typeName := vt.Name // leaf type name regardless of pointer depth
+					if method, mok := c.MethodForType(typeName, ast.FName); mok {
+						if len(method.Args) == 0 {
+							CompileErrorF(a, "%s.%s is a static method (no receiver); call as %s.%s(...), not %s.%s(...)",
+								typeName, ast.FName, typeName, ast.FName, ast.Pkg, ast.FName)
+						}
+						return compileConcreteMethodCall(of, c, a, ast, vt, typeName, method, dest)
+					}
+					// Struct function-pointer field call.
 					if sdecl, sok := structDeclForType(c, vt); sok {
 						off, mtype := sdecl.ByteOffset(c, ast.FName)
 						if mtype.FuncSig != nil {
-							// Compute the address of the field. For a
-							// memory-backed struct local, the variable
-							// name is itself the address; otherwise we
-							// need the address from a Symbol lvalue
-							// walk. compileLval handles that.
 							baseAddr := compileTop(of, c, &Symbol{Name: ast.Pkg}, nullspot)
 							srcRef := fmt.Sprintf("[%s+%d]", baseAddr.ref, off)
 							ret := compileIndirectCall(of, c, a, ast, srcRef, mtype.FuncSig, dest)
@@ -1572,7 +1627,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if callPkg == "" {
 			callPkg = c.Pkgname()
 		}
-		fmt.Fprintf(of, "\tcall %s.%s\n", callPkg, ast.FName)
+		fmt.Fprintf(of, "\tcall %s.%s\n", callPkg, decl.Name)
 		for i := 0; i < len(ast.Args); i++ {
 			note(of, "\t// release call registers\n")
 			fmt.Fprintf(of, "\trelease %s\n", argorder[i])
@@ -1951,6 +2006,20 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		srct := ast.Val.ASTType(c)
 		checkBorrowedPointerAssignment(c, ast, dstt)
+		// Interface coercion at assignment: concrete pointer → fat pointer.
+		if c.IsInterfaceType(dstt) && srct.Indirection > 0 {
+			emitInterfaceFatPtr(of, c, a, dstt, srct, ast.Val, lv.ref)
+			markMovedIfOwnedSource(of, c, dstt, ast.Val)
+			invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
+			if path, ok := FlowPathForExpr(ast.Target); ok {
+				c.InvalidateFlowFacts(path)
+				updateNullFactForAssignment(c, path, dstt, ast.Val, srct)
+			}
+			updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
+			updatePointerFlowForAssignment(c, ast.Target, dstt, ast.Val)
+			updateFieldPointerFactsForAssignment(c, ast.Target, targetIsSymbol, targetSym, dstt, ast.Val)
+			return nullspot
+		}
 		if !srct.Same(dstt) {
 			if !dstt.Accepts(srct) {
 				CompileErrorF(a, "Cannot assign different types %s = %s", dstt, srct)
@@ -2250,6 +2319,21 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			valType = retType
 		}
 		checkAddressOfOwnedForDest(c, ast.Val, retType)
+		// Interface coercion at return: concrete pointer → fat pointer in rax.
+		if c.IsInterfaceType(retType) && valType.Indirection > 0 {
+			s := newSpotWithReg(of, c, c.Temp(), retType, "rax")
+			emitInterfaceFatPtr(of, c, a, retType, valType, ast.Val, s.ref)
+			fmt.Fprintf(of, "\tinreg %s rax\n", s.ref)
+			s.free(of)
+			if retType.HasOwned() {
+				markMovedIfOwnedSource(of, c, retType, ast.Val)
+			}
+			for _, name := range c.UnconsumedOwnedVisible() {
+				CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
+			}
+			c.Return(of)
+			return nullspot
+		}
 		if valType.Same(intlitASTType()) {
 			valType = numASTType()
 		}
@@ -2559,6 +2643,16 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		}
 		argt := arg.ASTType(c)
 		checkAddressOfOwnedForDest(c, arg, param)
+		// Interface coercion at a call site: concrete pointer → fat pointer.
+		if c.IsInterfaceType(param) && argt.Indirection > 0 {
+			s := newSpot(of, c, c.Temp(), param)
+			emitInterfaceFatPtr(of, c, arg, param, argt, arg, s.ref)
+			if param.OwnedMask != 0 {
+				markMovedIfOwnedSource(of, c, param, arg)
+			}
+			argspots = append(argspots, s)
+			continue
+		}
 		if argt.Same(intlitASTType()) {
 			argt = param
 		} else if argt.Name == "<nil>" && param.Accepts(argt) {
@@ -3185,4 +3279,191 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		return dest
 	}
 	panic("Could not do op\n")
+}
+
+// compileConcreteMethodCall desugars v.method(args) into TypeName.method(receiver, args)
+// and delegates to compileTop. The receiver is &v when v is a value type, or v itself
+// when v is already a pointer type (since methods always take pointer receivers).
+func compileConcreteMethodCall(of io.Writer, c *Context, a AST, callNode *Funcall,
+	receiverType ASTType, typeName string, method *FuncDecl, dest spot) spot {
+	var receiver AST
+	if receiverType.Indirection > 0 {
+		receiver = &Symbol{Name: callNode.Pkg, p: callNode.p}
+	} else {
+		receiver = &Address{Var: callNode.Pkg, p: callNode.p}
+	}
+	allArgs := make([]AST, 0, 1+len(callNode.Args))
+	allArgs = append(allArgs, receiver)
+	allArgs = append(allArgs, callNode.Args...)
+	synthCall := &Funcall{
+		Pkg:   "",
+		FName: typeName + "." + callNode.FName,
+		Args:  allArgs,
+		p:     callNode.p,
+	}
+	return compileTop(of, c, synthCall, dest)
+}
+
+// compileInterfaceMethodCall emits a vtable-dispatch call for an interface method.
+// The interface variable (named callNode.Pkg) is a memory-backed 16-byte fat pointer:
+// [var+0] = data pointer, [var+8] = vtable pointer. The data pointer is passed as
+// the first argument (rdi); user-supplied args follow (rsi, rdx, ...).
+func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funcall,
+	ifaceType ASTType, ifaceDecl *InterfaceDecl, dest spot) spot {
+
+	// Locate the method and its index in the interface.
+	methodIdx := -1
+	var isig InterfaceMethodSig
+	for i, m := range ifaceDecl.Methods {
+		if m.Name == callNode.FName {
+			methodIdx = i
+			isig = m
+			break
+		}
+	}
+	if methodIdx < 0 {
+		CompileErrorF(a, "Interface %s has no method %s", ifaceDecl.Name, callNode.FName)
+	}
+
+	// Params[0] is the receiver; user provides Params[1:].
+	userParams := isig.Params[1:]
+	if len(callNode.Args) != len(userParams) {
+		CompileErrorF(a, "Method %s.%s expected %d arguments, but called with %d",
+			ifaceDecl.Name, callNode.FName, len(userParams), len(callNode.Args))
+	}
+
+	// The interface variable is memory-backed; its name is the base address.
+	ifaceRef := callNode.Pkg
+
+	// Load data ptr, vtable ptr, and fn ptr into temps BEFORE setting up call
+	// registers, so they are not evicted by arg compilation.
+	dataPtr := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	vtablePtr := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	fnPtr := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	fmt.Fprintf(of, "\tmov %s [%s+0]\n", dataPtr.ref, ifaceRef)
+	fmt.Fprintf(of, "\tmov %s [%s+8]\n", vtablePtr.ref, ifaceRef)
+	fmt.Fprintf(of, "\tmov %s [%s+%d]\n", fnPtr.ref, vtablePtr.ref, methodIdx*8)
+	vtablePtr.free(of)
+
+	order := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+
+	// Compile user args into temp spots. They go into rsi+ (index 1+);
+	// rdi (index 0) is reserved for the data pointer.
+	var argspots []spot
+	for i, arg := range callNode.Args {
+		param := userParams[i].Type
+		argt := arg.ASTType(c)
+		if argt.Same(intlitASTType()) {
+			argt = param
+		} else if argt.Name == "<nil>" && param.Accepts(argt) {
+			argt = param
+		} else if !param.Accepts(argt) {
+			CompileErrorF(arg, "For argument %d, expected type %v but got %v", i, param, argt)
+		}
+		if param.HasOwned() {
+			checkOwnedSourceAvailable(c, arg)
+		}
+		argIdx := i + 1 // rsi=1, rdx=2, ...
+		if argIdx > 5 {
+			CompileErrorF(arg, "More than 5 user arguments not supported for interface methods")
+		}
+		var s spot
+		if argt.Size(c) == PTR_SIZE {
+			s = newSpotWithReg(of, c, c.Temp(), argt, order[argIdx])
+		} else {
+			s = newSpot(of, c, c.Temp(), argt)
+		}
+		compiled := compileTop(of, c, arg, s)
+		if compiled.empty() {
+			panic("interface method arg compiled to nullspot")
+		}
+		if !compiled.same(&s) {
+			s.free(of)
+			s = compiled
+		}
+		argspots = append(argspots, s)
+	}
+
+	// Mark owned moves after all args are compiled.
+	for i, arg := range callNode.Args {
+		if userParams[i].Type.HasOwned() {
+			markMovedIfOwnedSource(of, c, userParams[i].Type, arg)
+		}
+	}
+
+	// Move user args into rsi, rdx, ...
+	for i, s := range argspots {
+		argIdx := i + 1
+		argt := s.t
+		if argt.Size(c) >= PTR_SIZE {
+			fmt.Fprintf(of, "\tinreg %s %s\n", s.ref, order[argIdx])
+		} else {
+			fmt.Fprintf(of, "\tacquire %s\n", order[argIdx])
+			if argt.Signed {
+				fmt.Fprintf(of, "\tmovsx %s %s\n", order[argIdx], s.ref)
+			} else {
+				fmt.Fprintf(of, "\tmovzx %s %s\n", order[argIdx], s.ref)
+			}
+		}
+		s.free(of)
+	}
+
+	// Move data pointer into rdi.
+	fmt.Fprintf(of, "\tinreg %s rdi\n", dataPtr.ref)
+	dataPtr.free(of)
+
+	// Acquire rax for return value.
+	retType := isig.Return
+	raxName := raxForType(retType)
+	note(of, "\t// acquire %s for interface method return\n", raxName)
+	rax := regSpot(of, raxName)
+	rax.t = retType
+
+	fmt.Fprintf(of, "\tcall %s\n", fnPtr.ref)
+	fnPtr.free(of)
+
+	// Release call registers: rdi + user arg regs.
+	nRegs := len(callNode.Args) + 1
+	for i := 0; i < nRegs; i++ {
+		note(of, "\t// release call registers\n")
+		fmt.Fprintf(of, "\trelease %s\n", order[i])
+	}
+
+	ret := nullspot
+	if !retType.Same(voidASTType()) {
+		if !dest.empty() {
+			ret = dest
+		} else {
+			ret = newSpot(of, c, c.Temp(), retType)
+		}
+		move(of, c, ret, rax)
+	}
+	note(of, "\t// free %s for interface method return\n", raxName)
+	rax.t = regtype
+	rax.free(of)
+	return ret
+}
+
+// emitInterfaceFatPtr validates that srct (a concrete pointer) satisfies the interface
+// dstt, registers the vtable, and emits stores to fill the two-word fat pointer at
+// destRef. The caller is responsible for allocating destRef before calling and for
+// handling owned-source marking and flow updates afterwards.
+func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTType, valAST AST, destRef string) {
+	concreteTypeName := srct.StripOwned().Name
+	ifaceDecl, _ := c.InterfaceForName(dstt.Name)
+	if !c.TypeSatisfiesInterface(concreteTypeName, ifaceDecl) {
+		CompileErrorF(errNode, "Type %s does not implement interface %s", concreteTypeName, dstt.Name)
+	}
+	if dstt.OwnedMask != 0 && srct.OwnedMask == 0 {
+		CompileErrorF(errNode, "Cannot use non-owned %s where owned %s is required", srct, dstt.Name)
+	}
+	vtableName := fmt.Sprintf("__vtable_%s_%s", concreteTypeName, dstt.Name)
+	c.NeedVtable(vtableName, concreteTypeName, dstt.Name, c.Pkgname(), ifaceDecl)
+	val := compileTop(of, c, valAST, nullspot)
+	fmt.Fprintf(of, "\tmov [%s+0] %s\n", destRef, val.ref)
+	val.free(of)
+	vtmp := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	fmt.Fprintf(of, "\tlea %s %s\n", vtmp.ref, vtableName)
+	fmt.Fprintf(of, "\tmov [%s+8] %s\n", destRef, vtmp.ref)
+	vtmp.free(of)
 }

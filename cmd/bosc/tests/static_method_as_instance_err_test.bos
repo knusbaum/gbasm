@@ -1,0 +1,15 @@
+package main
+
+import "string"
+
+type thingy i64 {
+	hello() {
+		string.puts("hello\n")
+	}
+}
+
+fn main() i64 {
+	var x thingy = 0
+	x.hello()
+	return 0
+}

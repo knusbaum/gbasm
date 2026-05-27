@@ -1,0 +1,53 @@
+package main
+
+import "string"
+
+interface helloer {
+	hello(h *self)
+}
+
+type thingy i64 {
+	// Instance method: takes a receiver, callable as x.hello().
+	hello(t *thingy) {
+		string.puts("hello, thingy\n")
+	}
+	// Static method: no receiver, callable as thingy.greet() only.
+	greet() {
+		string.puts("greetings from thingy\n")
+	}
+}
+
+type otherthingy i64 {
+	hello(o *otherthingy) {
+		string.puts("hello, other thingy.\n")
+	}
+}
+
+fn do_helloer(h helloer) {
+	h.hello()
+}
+
+fn take(i owned i64) {
+	dispose(i)
+}
+
+fn main(args byte[][]) {
+	var i owned i64 = 10
+	var y *owned i64 = &i
+
+	
+	var x thingy = 0
+	x.hello()
+
+	thingy.greet()
+
+	var h helloer = &x
+	h.hello()
+
+
+	var t thingy
+	var ot otherthingy
+
+	do_helloer(&t)
+	do_helloer(&ot)
+}

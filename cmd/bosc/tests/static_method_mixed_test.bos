@@ -1,0 +1,30 @@
+package main
+
+import "string"
+
+type counter i64 {
+	// Static method: not tied to an instance.
+	describe() {
+		string.puts("a counter\n")
+	}
+	// Instance methods: bound to a counter.
+	value(c *counter) i64 {
+		return *c
+	}
+	inc(c *mut counter) void {
+		*c = *c + 1
+	}
+}
+
+fn main() i64 {
+	counter.describe()
+
+	var c counter = 10
+	string.puti(c.value())
+	string.puts("\n")
+	c.inc()
+	c.inc()
+	string.puti(c.value())
+	string.puts("\n")
+	return 0
+}
