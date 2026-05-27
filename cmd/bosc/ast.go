@@ -884,7 +884,7 @@ func (t *ASTType) Size(c *Context) int {
 	// Named structs.
 	d, ok := c.StructDeclForName(t.Name)
 	if !ok {
-		panic(fmt.Sprintf("No such type %q", t.Name))
+		panic(&interpreterError{msg: fmt.Sprintf("No such type %q", t.Name)})
 	}
 	return d.Size(c)
 }
