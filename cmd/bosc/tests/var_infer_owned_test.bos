@@ -1,0 +1,19 @@
+package main
+
+import "string"
+
+fn main() i64 {
+	// infer owned *mut i64 from alloc
+	var p = alloc(i64)
+	*p = 99
+	string.puti(*p)
+	string.puts("\n")
+	dispose(p)
+
+	// infer const
+	const c = 7
+	string.puti(c)
+	string.puts("\n")
+
+	return 0
+}

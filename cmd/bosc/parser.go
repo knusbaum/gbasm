@@ -152,9 +152,10 @@ func (t nodetype) String() string {
 }
 
 type Parser struct {
-	l     *lexer
-	curr  *token
-	fname string
+	l      *lexer
+	curr   *token
+	pushed *token // one extra look-ahead slot for pushback
+	fname  string
 }
 
 type Node struct {
@@ -198,17 +199,34 @@ func (p *Parser) ParseFunctype() (FuncDecl, error) {
 
 func (p *Parser) current() token {
 	if p.curr == nil {
-		next, err := p.l.Next()
-		if err != nil {
-			panic(err)
+		if p.pushed != nil {
+			p.curr = p.pushed
+			p.pushed = nil
+		} else {
+			next, err := p.l.Next()
+			if err != nil {
+				panic(err)
+			}
+			p.curr = &next
 		}
-		p.curr = &next
 	}
 	return *p.curr
 }
 
 func (p *Parser) advance() {
 	p.curr = nil
+}
+
+// pushback inserts t before whatever token is currently pending.
+// After this call, the next current() returns t; the token that was
+// pending (if any) is returned after t. Requires pushed == nil (only
+// one look-ahead slot is available).
+func (p *Parser) pushback(t token) {
+	if p.pushed != nil {
+		panic("pushback: look-ahead slots exhausted")
+	}
+	p.pushed = p.curr
+	p.curr = &t
 }
 
 // expect ensures that the current token matches the specified toktype and avances to the next one.
@@ -285,7 +303,7 @@ func (p *Parser) parseTok() *Node {
 // "no return type, infer void."
 func isTypeStart(t toktype) bool {
 	switch t {
-	case tok_ident, tok_fn, tok_star, tok_maybe_ptr, tok_owned, tok_mut:
+	case tok_ident, tok_fn, tok_star, tok_maybe_ptr, tok_owned, tok_mut, tok_struct:
 		return true
 	}
 	return false
@@ -355,6 +373,40 @@ func (p *Parser) parseTypeName() *Node {
 	}
 
 	c := p.current()
+
+	// Anonymous struct type: `struct { field Type, ... }`.
+	// Packed into an n_typename with sval="<struct>" and args = n_stfield nodes,
+	// recognized by mkTypename to assemble an ASTType with AnonFields.
+	if c.t == tok_struct {
+		structpos := c.p
+		p.advance()
+		p.expect(tok_lcurly)
+		var fieldNodes []*Node
+		for p.current().t != tok_rcurly {
+			if p.current().t == tok_semicolon || p.current().t == tok_comma {
+				p.advance()
+				continue
+			}
+			fieldpos := p.current().p
+			fname := p.parseTok()
+			if fname.t != n_symbol {
+				panic(&interpreterError{fmt.Sprintf("Expected field name, but found: %v", fname), fname.p})
+			}
+			ftypeNode := p.parseTypeName()
+			fieldNodes = append(fieldNodes, &Node{t: n_stfield, p: fieldpos, sval: fname.sval, args: []*Node{ftypeNode}})
+		}
+		p.expect(tok_rcurly)
+		return &Node{
+			t:         n_typename,
+			p:         structpos,
+			sval:      "<struct>",
+			mutmask:   mutmask,
+			ownedmask: ownedmask,
+			nilmask:   nilmask,
+			ival:      indirection,
+			args:      fieldNodes,
+		}
+	}
 
 	// Function-pointer type: `fn(t1, t2, ...) [ret]`. The leading `fn`
 	// disambiguates it from a regular identifier-typed form. Parses
@@ -746,12 +798,36 @@ func (p *Parser) parseParens() *Node {
 		return v
 	} else if c.t == tok_lcurly {
 		p.advance()
+		// Skip leading semicolons (blank lines, auto-inserted ';' before first statement).
+		for p.current().t == tok_semicolon {
+			p.advance()
+		}
+		// Two-token lookahead: `ident :` → bare anonymous struct literal `{ field: val, ... }`.
+		// Any other opener (keyword, number, non-colon after ident, etc.) → block.
+		// In Boson, `ident :` never starts a valid statement, so this is unambiguous.
+		if p.current().t == tok_ident {
+			identTok := p.current()
+			p.advance()
+			if p.current().t == tok_colon {
+				// Anonymous struct literal: parse first field, then the rest via parseStructLiteral.
+				p.advance() // consume ':'
+				firstVal := p.parseExpression()
+				fields := []*Node{
+					{t: n_stfield, p: identTok.p, sval: identTok.sval, args: []*Node{firstVal}},
+				}
+				if p.current().t == tok_comma || p.current().t == tok_semicolon {
+					p.advance()
+					fields = append(fields, p.parseStructLiteral()...)
+				}
+				p.expect(tok_rcurly)
+				return &Node{t: n_stlit, p: c.p, sval: "", args: fields}
+			}
+			// Not a struct literal: restore the identifier so block parsing sees it.
+			p.pushback(identTok)
+		}
+		// Parse as a block.
 		var block []*Node
 		for p.current().t != tok_rcurly {
-			// Statements within a block are separated by ';' tokens
-			// — typically auto-inserted by the lexer on newlines that
-			// follow a statement-ending token. Multiple consecutive
-			// ';' (blank lines, etc.) are just skipped.
 			if p.current().t == tok_semicolon {
 				p.advance()
 				continue
@@ -892,9 +968,9 @@ func (p *Parser) parseAddSub() *Node {
 }
 
 // parseBindingDecl parses a var or const declaration after the keyword has been consumed.
-// Form: `<kw> name TypeName` or `<kw> name TypeName = expr`.
+// Form: `<kw> name TypeName` or `<kw> name TypeName = expr` or `<kw> name = expr` (inferred).
 // isConst is encoded in the node via ival: 0 = var, 1 = const.
-// args[0] is the typename node; args[1] (if present) is the initializer expression.
+// args[0] is the typename node (sval="<infer>" when type is omitted); args[1] (if present) is the initializer expression.
 func (p *Parser) parseBindingDecl(isConst bool) *Node {
 	if p.current().t != tok_ident {
 		panic(&interpreterError{fmt.Sprintf("Expected an identifier in binding declaration, but found: %s\n", p.current().t), p.current().p})
@@ -902,7 +978,13 @@ func (p *Parser) parseBindingDecl(isConst bool) *Node {
 	pos := p.current().p
 	name := p.current().sval
 	p.advance()
-	typeNode := p.parseTypeName()
+	var typeNode *Node
+	if p.current().t == tok_eq {
+		// No explicit type: use sentinel for type inference.
+		typeNode = &Node{t: n_typename, p: pos, sval: "<infer>"}
+	} else {
+		typeNode = p.parseTypeName()
+	}
 	constVal := uint64(0)
 	if isConst {
 		constVal = 1

@@ -186,6 +186,16 @@ func sameIgnoringOwned(a, b ASTType) bool {
 	return a.StripOwned().Same(b.StripOwned())
 }
 
+// fillAnonymousLiteralIfNeeded fills in the type of a bare struct literal
+// (one whose Type has Name=="" and AnonFields==nil) from the expected context
+// type. Call this at every site where a StructLiteral may appear with an
+// unresolved anonymous type: return, var init, assignment, and call arguments.
+func fillAnonymousLiteralIfNeeded(sl *StructLiteral, expectedType ASTType) {
+	if sl.Type.Name == "" && sl.Type.AnonFields == nil {
+		sl.Type = expectedType
+	}
+}
+
 func fallsThrough(a AST) bool {
 	switch ast := a.(type) {
 	case *Break, *Continue, *Return:
@@ -264,7 +274,7 @@ func declaredPathType(c *Context, a AST) (ASTType, bool) {
 				return ASTType{}, false
 			}
 		}
-		decl, ok := c.StructDeclForName(baseType.Name)
+		decl, ok := structDeclForType(c, baseType)
 		if !ok {
 			return ASTType{}, false
 		}
@@ -562,7 +572,7 @@ func targetMayOverwriteOwnedStorage(c *Context, target AST) bool {
 	}
 	if dot, ok := target.(*Dot); ok {
 		baseType := dot.Val.ASTType(c)
-		def, ok := c.StructDeclForName(baseType.Name)
+		def, ok := structDeclForType(c, baseType)
 		if !ok {
 			return false
 		}
@@ -658,30 +668,30 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 	} else {
 		dest.t = ctxType
 	}
-	def, ok := c.StructDeclForName(lit.Type.Name)
+	def, ok := structDeclForType(c, lit.Type)
 	if !ok {
-		CompileErrorF(a, "No such structure \"%v\"", lit.Type.Name)
+		CompileErrorF(a, "No such structure %v", lit.Type)
 	}
 
 	seen := make(map[string]bool)
 	for _, f := range lit.Fields {
 		if seen[f.Name] {
-			CompileErrorF(a, "Duplicate field %q in struct literal %s", f.Name, lit.Type.Name)
+			CompileErrorF(a, "Duplicate field %q in struct literal %v", f.Name, lit.Type)
 		}
 		seen[f.Name] = true
 
 		off, declaredType := def.ByteOffset(c, f.Name)
-		if declaredType.Name == "" && declaredType.Element == nil && declaredType.FuncSig == nil {
-			CompileErrorF(a, "No such struct member %q in struct %q", f.Name, lit.Type.Name)
+		if declaredType.Name == "" && declaredType.Element == nil && declaredType.FuncSig == nil && declaredType.AnonFields == nil {
+			CompileErrorF(a, "No such struct member %q in struct %v", f.Name, lit.Type)
 		}
 		fieldType := fieldTypeForBase(ctxType, declaredType)
 		srcType := f.Val.ASTType(c)
-		checkBorrowedPointerDoesNotEscape(c, f.Val, fmt.Sprintf("field %s.%s", lit.Type.Name, f.Name))
+		checkBorrowedPointerDoesNotEscape(c, f.Val, fmt.Sprintf("field %v.%s", lit.Type, f.Name))
 		if srcType.Same(intlitASTType()) {
 			srcType = fieldType
 		} else if !fieldType.Accepts(srcType) {
-			CompileErrorF(f.Val, "For field %s.%s, expected type %v but got %v",
-				lit.Type.Name, f.Name, fieldType, srcType)
+			CompileErrorF(f.Val, "For field %v.%s, expected type %v but got %v",
+				lit.Type, f.Name, fieldType, srcType)
 		}
 
 		// Memory-backed field (nested struct, array, anything > 8 bytes
@@ -723,10 +733,10 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 		ft := fieldTypeForBase(ctxType, field.Type)
 		if !seen[field.Name] {
 			if parentOwnsFields(ctxType) && ft.HasOwned() {
-				CompileErrorF(a, "Missing owned field %s.%s in owned struct literal", lit.Type.Name, field.Name)
+				CompileErrorF(a, "Missing owned field %v.%s in owned struct literal", lit.Type, field.Name)
 			}
 			if !ft.ZeroInitializable(c) {
-				CompileErrorF(a, "Missing non-zero-initializable field %s.%s in struct literal", lit.Type.Name, field.Name)
+				CompileErrorF(a, "Missing non-zero-initializable field %v.%s in struct literal", lit.Type, field.Name)
 			}
 		}
 	}
@@ -853,7 +863,7 @@ func compileFreeBuiltin(of io.Writer, c *Context, a AST, ast *Funcall) spot {
 		checkOwnedFieldsConsumedBeforeRawFree(c, arg, path, argt)
 	} else {
 		pointee := pointeeType(argt)
-		if def, ok := c.StructDeclForName(pointee.Name); ok {
+		if def, ok := structDeclForType(c, pointee); ok {
 			for _, field := range def.Fields {
 				if fieldTypeForBase(pointee, field.Type).HasOwned() {
 					CompileErrorF(arg, "free(%s) would leak owned fields", argt)
@@ -892,7 +902,7 @@ func compileFreeBuiltin(of io.Writer, c *Context, a AST, ast *Funcall) spot {
 
 // can move T to T or T into *T
 func move(of io.Writer, c *Context, dest spot, src spot) {
-	if dest.t == regtype || src.t == regtype {
+	if dest.t.Same(regtype) || src.t.Same(regtype) {
 		// We have a register. Just move it.
 		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, src.ref)
 		return
@@ -978,9 +988,9 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		if l.t.Indirection != 0 && l.t.NilMask&1 != 0 {
 			CompileErrorF(ast.Val, "Cannot access field %s through nullable pointer type %s", ast.Member, l.t)
 		}
-		def, ok := c.StructDeclForName(l.t.Name)
+		def, ok := structDeclForType(c, l.t)
 		if !ok {
-			CompileErrorF(a, "No such structure \"%v\"", l.t.Name)
+			CompileErrorF(a, "No such structure \"%v\"", l.t)
 		}
 		offset, declaredType := def.ByteOffset(c, ast.Member)
 		mtype := fieldTypeForBase(l.t, declaredType)
@@ -1192,12 +1202,30 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			emitGlobalVarDecl(of, c, a, ast)
 			return nullspot
 		}
+		if ast.Type.Name == "<infer>" {
+			if c.parent == nil {
+				CompileErrorF(a, "type inference not supported for file-scope variables")
+			}
+			inferred := ast.Init.ASTType(c)
+			switch inferred.Name {
+			case "<intlit>":
+				inferred = numASTType()
+			case "<nil>":
+				CompileErrorF(a, "var %s: cannot infer type from nil", ast.Name)
+			case "void":
+				CompileErrorF(a, "var %s: cannot infer type from void expression", ast.Name)
+			}
+			ast.Type = inferred
+		}
 		c.BindVar(a, ast.Name, ast.Type, ast.IsConst)
 		if ast.Type.Indirection > 0 {
 			c.PointerFlow().DeclarePointer(flow.Binding(ast.Name))
 		}
 		s := newSpot(of, c, ast.Name, ast.Type)
 		if ast.Init != nil {
+			if sl, ok := ast.Init.(*StructLiteral); ok {
+				fillAnonymousLiteralIfNeeded(sl, ast.Type)
+			}
 			initIsBorrowed := borrowedPointerExpr(c, ast.Init)
 			if sl, ok := ast.Init.(*StructLiteral); ok && sameIgnoringOwned(ast.Type, sl.Type) {
 				compileStructLiteralInto(of, c, a, sl, s, ast.Type)
@@ -1263,7 +1291,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, "\tmov %s 0\n", s.ref)
 			c.SetNullFact(VarFlowPath(ast.Name), NullKnownNull)
 		} else if ast.Type.HasOwned() {
-			if _, ok := c.StructDeclForName(ast.Type.Name); ok && ast.Type.Indirection == 0 && parentOwnsFields(ast.Type) {
+			if _, ok := structDeclForType(c, ast.Type); ok && ast.Type.Indirection == 0 && parentOwnsFields(ast.Type) {
 				CompileErrorF(a, "Owned struct binding \"%s\" must have an initializer", ast.Name)
 			}
 			c.Move(ast.Name)
@@ -1373,7 +1401,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				}
 			} else {
 				if vt, vok := c.TypeForVar(ast.Pkg); vok {
-					if sdecl, sok := c.StructDeclForName(vt.Name); sok {
+					if sdecl, sok := structDeclForType(c, vt); sok {
 						off, mtype := sdecl.ByteOffset(c, ast.FName)
 						if mtype.FuncSig != nil {
 							// Compute the address of the field. For a
@@ -1417,7 +1445,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, "\trelease %s\n", argorder[i])
 		}
 		ret := nullspot
-		if decl.Return != voidASTType() {
+		if !decl.Return.Same(voidASTType()) {
 			if !dest.empty() {
 				ret = dest
 			} else {
@@ -1436,10 +1464,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if !l.same(&orig) {
 			defer l.free(of)
 		}
-		def, ok := c.StructDeclForName(l.t.Name)
+		def, ok := structDeclForType(c, l.t)
 		if !ok {
-			//panic("No struct (TODO)")
-			CompileErrorF(a, "No such structure \"%v\"", l.t.Name)
+			CompileErrorF(a, "No such structure \"%v\"", l.t)
 		}
 		offset, declaredType := def.ByteOffset(c, ast.Member)
 		mtype := fieldTypeForBase(l.t, declaredType)
@@ -1457,7 +1484,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			addrType.Indirection++
 			addr := newSpot(of, c, c.Temp(), addrType)
 			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", addr.ref, l.ref, offset)
-			_, memberIsStruct := c.StructDeclForName(mtype.Name)
+			_, memberIsStruct := structDeclForType(c, mtype)
 			if memberIsStruct && mtype.Size(c) <= 8 {
 				// Small struct: callers expect to keep walking through
 				// this address. Return the lea'd address directly with
@@ -1760,6 +1787,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				CompileErrorF(a, "Cannot assign to owned field %s of an owned aggregate after initialization", dot.Member)
 			}
 		}
+		if sl, ok := ast.Val.(*StructLiteral); ok {
+			fillAnonymousLiteralIfNeeded(sl, dstt)
+		}
 		// Reject implicit ownership promotion: if the destination has owned bits
 		// that the source doesn't, the source must be wrapped in owned().
 		// Integer literals are exempt — they initialize owned values without a wrapper.
@@ -2041,8 +2071,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		v.free(of)
 		return dest
 	case *Return:
-		valType := ast.Val.ASTType(c)
 		retType := c.ReturnType()
+		if sl, ok := ast.Val.(*StructLiteral); ok {
+			fillAnonymousLiteralIfNeeded(sl, retType)
+		}
+		valType := ast.Val.ASTType(c)
 		if retType.Indirection > 0 {
 			checkBorrowedPointerDoesNotEscape(c, ast.Val, "return")
 		}
@@ -2344,8 +2377,11 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 	var argspots []spot
 	for i := 0; i < len(f.Args); i++ {
 		arg := f.Args[i]
-		argt := arg.ASTType(c)
 		param := d.Args[i].Type
+		if sl, ok := arg.(*StructLiteral); ok {
+			fillAnonymousLiteralIfNeeded(sl, param)
+		}
+		argt := arg.ASTType(c)
 		if argt.Same(intlitASTType()) {
 			argt = param
 		} else if argt.Name == "<nil>" && param.Accepts(argt) {
@@ -2371,7 +2407,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 			dest = newSpot(of, c, c.Temp(), argt)
 		}
 		a := compileTop(of, c, arg, dest)
-		if a == nullspot {
+		if a.empty() {
 			panic("AAAH! NULLSPOT! This should not happen. An ast that's supposed to produce a value for the call produced a null spot.\n")
 		}
 		if !a.same(&dest) {

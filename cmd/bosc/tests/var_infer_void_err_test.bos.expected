@@ -1,0 +1,2 @@
+Compiling tests/var_infer_void_err_test.bos
+Fatal: var x: cannot infer type from void expression

@@ -125,6 +125,9 @@ func typeIsMemoryBacked(c *Context, t ASTType) bool {
 	if t.IsArray() {
 		return true
 	}
+	if t.AnonFields != nil {
+		return true
+	}
 	if _, isStruct := c.StructDeclForName(t.Name); isStruct {
 		return true
 	}
@@ -777,15 +780,16 @@ func (c *Context) WriteStrings(of io.Writer) {
 // ASTType is not suitable as a Go map key; if you need that, hash the
 // String() form or intern types.
 type ASTType struct {
-	Name        string   // scalar/pointee-leaf name (for shapes 3 and 4)
-	Indirection int      // pointer depth (for shapes 3 and 4)
-	ArraySize   int      // element count (for shape 2); 0 otherwise
-	Element     *ASTType // element type (for shapes 1 and 2); nil otherwise
-	Signed      bool     // signed integer marker for scalar/pointee leaf
-	MutMask     uint64   // write-through bit per level
-	OwnedMask   uint64   // ownership bit per level
-	NilMask     uint64   // nullable pointer bit per pointer level
-	FuncSig     *FuncSig // when set: function-pointer type, pointer-sized
+	Name        string    // scalar/pointee-leaf name (for shapes 3 and 4); "" for anonymous struct
+	Indirection int       // pointer depth (for shapes 3 and 4)
+	ArraySize   int       // element count (for shape 2); 0 otherwise
+	Element     *ASTType  // element type (for shapes 1 and 2); nil otherwise
+	Signed      bool      // signed integer marker for scalar/pointee leaf
+	MutMask     uint64    // write-through bit per level
+	OwnedMask   uint64    // ownership bit per level
+	NilMask     uint64    // nullable pointer bit per pointer level
+	FuncSig     *FuncSig  // when set: function-pointer type, pointer-sized
+	AnonFields  []Binding // non-nil: anonymous struct type (Name == "", no StructDecl lookup)
 }
 
 // FuncSig is the signature of a function-pointer type — the argument
@@ -869,7 +873,15 @@ func (t *ASTType) Size(c *Context) int {
 	if underlying, ok := c.TypeAliasFor(t.Name); ok {
 		return underlying.Size(c)
 	}
-	// Structs.
+	// Anonymous struct: sum of field sizes.
+	if t.AnonFields != nil {
+		total := 0
+		for _, f := range t.AnonFields {
+			total += f.Type.Size(c)
+		}
+		return total
+	}
+	// Named structs.
 	d, ok := c.StructDeclForName(t.Name)
 	if !ok {
 		panic(fmt.Sprintf("No such type %v. TODO: Errors", t.Name))
@@ -914,6 +926,19 @@ func (t ASTType) SameExact(t2 ASTType) bool {
 			return false
 		}
 	}
+	// Anonymous struct fields: named struct (nil) never equals anonymous struct (non-nil).
+	if (t.AnonFields == nil) != (t2.AnonFields == nil) {
+		return false
+	}
+	if len(t.AnonFields) != len(t2.AnonFields) {
+		return false
+	}
+	for i := range t.AnonFields {
+		if t.AnonFields[i].Name != t2.AnonFields[i].Name ||
+			!t.AnonFields[i].Type.SameExact(t2.AnonFields[i].Type) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -938,6 +963,18 @@ func (t ASTType) SameRepr(t2 ASTType) bool {
 	if (t.FuncSig == nil) != (t2.FuncSig == nil) {
 		return false
 	}
+	if (t.AnonFields == nil) != (t2.AnonFields == nil) {
+		return false
+	}
+	if len(t.AnonFields) != len(t2.AnonFields) {
+		return false
+	}
+	for i := range t.AnonFields {
+		if t.AnonFields[i].Name != t2.AnonFields[i].Name ||
+			!t.AnonFields[i].Type.SameRepr(t2.AnonFields[i].Type) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -956,6 +993,11 @@ func (t ASTType) HasOwned() bool {
 			}
 		}
 		return t.FuncSig.Return.HasOwned()
+	}
+	for _, f := range t.AnonFields {
+		if f.Type.HasOwned() {
+			return true
+		}
 	}
 	return false
 }
@@ -979,6 +1021,14 @@ func (t ASTType) ZeroInitializable(c *Context) bool {
 		(underlying.Element == nil) != (t.Element == nil) ||
 		(underlying.FuncSig == nil) != (t.FuncSig == nil) {
 		return underlying.ZeroInitializable(c)
+	}
+	if t.AnonFields != nil {
+		for _, field := range t.AnonFields {
+			if !fieldTypeForBase(t, field.Type).ZeroInitializable(c) {
+				return false
+			}
+		}
+		return true
 	}
 	if def, ok := c.StructDeclForName(t.Name); ok {
 		for _, field := range def.Fields {
@@ -1020,6 +1070,18 @@ func (t ASTType) SameOwned(t2 ASTType) bool {
 			return false
 		}
 	}
+	if (t.AnonFields == nil) != (t2.AnonFields == nil) {
+		return false
+	}
+	if len(t.AnonFields) != len(t2.AnonFields) {
+		return false
+	}
+	for i := range t.AnonFields {
+		if t.AnonFields[i].Name != t2.AnonFields[i].Name ||
+			!t.AnonFields[i].Type.SameOwned(t2.AnonFields[i].Type) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -1040,6 +1102,13 @@ func (t ASTType) StripOwned() ASTType {
 		sig.Return = sig.Return.StripOwned()
 		t.FuncSig = &sig
 	}
+	if t.AnonFields != nil {
+		newFields := make([]Binding, len(t.AnonFields))
+		for i, f := range t.AnonFields {
+			newFields[i] = Binding{Name: f.Name, Type: f.Type.StripOwned()}
+		}
+		t.AnonFields = newFields
+	}
 	return t
 }
 
@@ -1057,6 +1126,18 @@ func (dst ASTType) NilCompatible(src ASTType) bool {
 	}
 	if src.NilMask&^dst.NilMask != 0 {
 		return false
+	}
+	if (dst.AnonFields == nil) != (src.AnonFields == nil) {
+		return false
+	}
+	if len(dst.AnonFields) != len(src.AnonFields) {
+		return false
+	}
+	for i := range dst.AnonFields {
+		if dst.AnonFields[i].Name != src.AnonFields[i].Name ||
+			!dst.AnonFields[i].Type.NilCompatible(src.AnonFields[i].Type) {
+			return false
+		}
 	}
 	return true
 }
@@ -1076,6 +1157,18 @@ func (dst ASTType) MutCompatible(src ASTType) bool {
 	}
 	if dst.Element != nil && !dst.Element.MutCompatible(*src.Element) {
 		return false
+	}
+	if (dst.AnonFields == nil) != (src.AnonFields == nil) {
+		return false
+	}
+	if len(dst.AnonFields) != len(src.AnonFields) {
+		return false
+	}
+	for i := range dst.AnonFields {
+		if dst.AnonFields[i].Name != src.AnonFields[i].Name ||
+			!dst.AnonFields[i].Type.MutCompatible(src.AnonFields[i].Type) {
+			return false
+		}
 	}
 	return dst.MutMask&src.MutMask == dst.MutMask
 }
@@ -1165,6 +1258,17 @@ func (t ASTType) String() string {
 		if !t.FuncSig.Return.Same(voidASTType()) {
 			sb.WriteString(t.FuncSig.Return.String())
 		}
+	} else if t.AnonFields != nil {
+		sb.WriteString("struct{")
+		for i, f := range t.AnonFields {
+			if i > 0 {
+				sb.WriteString(",")
+			}
+			sb.WriteString(f.Name)
+			sb.WriteString(":")
+			sb.WriteString(f.Type.String())
+		}
+		sb.WriteString("}")
 	} else {
 		sb.WriteString(t.Name)
 	}
@@ -1174,6 +1278,16 @@ func (t ASTType) String() string {
 func mkTypename(n *Node) ASTType {
 	if n.t != n_typename {
 		ParseErrorF(n, "Expected type name but found %v", n.t)
+	}
+	// Anonymous struct type sentinel: parseTypeName packs `struct { f T, ... }`
+	// into an n_typename with sval="<struct>" and args = n_stfield nodes.
+	if n.sval == "<struct>" {
+		var fields []Binding
+		for _, fn := range n.args {
+			ft := mkTypename(fn.args[0])
+			fields = append(fields, Binding{Name: fn.sval, Type: ft})
+		}
+		return ASTType{AnonFields: fields}
 	}
 	// Function-pointer type sentinel: parseTypeName packs `fn(...) ret`
 	// into an n_typename with sval="fn", ival=arg-count, and args=
@@ -1324,6 +1438,16 @@ func (s *StructDecl) ByteOffset(c *Context, field string) (int, ASTType) {
 		offset += f.Type.Size(c)
 	}
 	return offset, mtype
+}
+
+// structDeclForType returns a StructDecl for either a named struct
+// (looked up by name in c) or an anonymous struct type (constructed
+// from AnonFields inline). Returns false only when t is not a struct type.
+func structDeclForType(c *Context, t ASTType) (*StructDecl, bool) {
+	if t.AnonFields != nil {
+		return &StructDecl{Fields: t.AnonFields}, true
+	}
+	return c.StructDeclForName(t.Name)
 }
 
 func parentOwnsFields(t ASTType) bool {
@@ -1525,9 +1649,9 @@ func (d *Dot) ASTType(c *Context) ASTType {
 			CompileErrorF(d.Val, "Cannot access field %s through nullable pointer type %s", d.Member, t)
 		}
 	}
-	decl, ok := c.StructDeclForName(t.Name)
+	decl, ok := structDeclForType(c, t)
 	if !ok {
-		CompileErrorF(d, "No such struct \"%s\"", t.Name)
+		CompileErrorF(d, "No such struct \"%s\"", t)
 	}
 	for _, f := range decl.Fields {
 		if f.Name == d.Member {
@@ -1540,7 +1664,7 @@ func (d *Dot) ASTType(c *Context) ASTType {
 			return ft
 		}
 	}
-	CompileErrorF(d, "No such struct member \"%s\" in struct \"%s\"", d.Member, t.Name)
+	CompileErrorF(d, "No such struct member \"%s\" in struct \"%s\"", d.Member, t)
 	return voidASTType()
 }
 
@@ -1727,6 +1851,15 @@ type StructLiteral struct {
 }
 
 func (s *StructLiteral) ASTType(c *Context) ASTType {
+	if s.Type.AnonFields != nil {
+		return s.Type
+	}
+	if s.Type.Name == "" {
+		panic(&interpreterError{
+			msg: "anonymous struct literal type not resolved; use in a typed context (return, var x T = ..., etc.)",
+			p:   s.p,
+		})
+	}
 	_, ok := c.StructDeclForName(s.Type.Name)
 	if !ok {
 		panic(&interpreterError{
@@ -2278,19 +2411,31 @@ func (n *Node) toASTTop(c *Context) AST {
 	case n_var:
 		var v VarDecl
 		v.Name = n.sval
-		v.Type = mkTypename(n.args[0])
 		v.IsConst = n.ival != 0
 		v.p = n.p
-		if len(n.args) > 1 {
+		if n.args[0].sval == "<infer>" {
+			// Type inference: leave type as sentinel; compile.go resolves it
+			// from the initializer once the full context is available.
+			if len(n.args) < 2 {
+				ParseErrorF(n, "var %s: type inference requires an initializer", v.Name)
+			}
+			v.Type = ASTType{Name: "<infer>"}
 			v.Init = n.args[1].toASTTop(c)
+			// Don't call BindVar or set prebound here; compile.go handles both
+			// after resolving the inferred type.
+		} else {
+			v.Type = mkTypename(n.args[0])
+			if len(n.args) > 1 {
+				v.Init = n.args[1].toASTTop(c)
+			}
+			c.BindVar(&v, v.Name, v.Type, v.IsConst)
+			// Mark the binding as pre-installed by ToAST so the *VarDecl
+			// handler in Compile skips the redundant re-bind when it
+			// revisits this declaration. For nested vars, c here is the
+			// throwaway NewContext() passed by n_fn/n_block, and the
+			// marker is discarded along with that context.
+			c.prebound[v.Name] = true
 		}
-		c.BindVar(&v, v.Name, v.Type, v.IsConst)
-		// Mark the binding as pre-installed by ToAST so the *VarDecl
-		// handler in Compile skips the redundant re-bind when it
-		// revisits this declaration. For nested vars, c here is the
-		// throwaway NewContext() passed by n_fn/n_block, and the
-		// marker is discarded along with that context.
-		c.prebound[v.Name] = true
 		return &v
 	case n_fn:
 		var fn FuncDecl

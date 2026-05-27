@@ -1,0 +1,39 @@
+package main
+
+import "string"
+
+fn divide(a i64, b i64) struct { quot i64, rem i64 } {
+	var q i64 = a / b
+	return { quot: q, rem: a - q * b }
+}
+
+fn add_result(r struct { quot i64, rem i64 }) i64 {
+	return r.quot + r.rem
+}
+
+fn main() i64 {
+	// var with explicit anonymous struct type
+	var r struct { quot i64, rem i64 } = divide(17, 5)
+	string.puti(r.quot)
+	string.puts("\n")
+	string.puti(r.rem)
+	string.puts("\n")
+
+	// var with type inference from function returning anonymous struct
+	var r2 = divide(100, 7)
+	string.puti(r2.quot)
+	string.puts("\n")
+	string.puti(r2.rem)
+	string.puts("\n")
+
+	// pass anonymous struct to a function
+	string.puti(add_result(r2))
+	string.puts("\n")
+
+	// assignment to anonymous struct var
+	r = { quot: 99, rem: 1 }
+	string.puti(r.quot)
+	string.puts("\n")
+
+	return 0
+}
