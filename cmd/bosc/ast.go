@@ -258,7 +258,7 @@ func (c *Context) SetPkgname(name string) {
 func (c *Context) DefineStruct(name string, s *StructDecl) {
 	if es, ok := c.structs[name]; ok {
 		if es != s {
-			panic(fmt.Sprintf("RE-defining struct [%v]\n", name))
+			panic(&interpreterError{msg: fmt.Sprintf("Struct %q already defined", name), p: s.p})
 		}
 	}
 	c.structs[name] = s
@@ -267,7 +267,7 @@ func (c *Context) DefineStruct(name string, s *StructDecl) {
 func (c *Context) DefineFunc(name string, f *FuncDecl) {
 	if ef, ok := c.funcs[name]; ok {
 		if ef != f {
-			panic(fmt.Sprintf("RE-defining function [%v]\n", name))
+			panic(&interpreterError{msg: fmt.Sprintf("Function %q already defined", name), p: f.p})
 		}
 	}
 	c.funcs[name] = f
@@ -884,7 +884,7 @@ func (t *ASTType) Size(c *Context) int {
 	// Named structs.
 	d, ok := c.StructDeclForName(t.Name)
 	if !ok {
-		panic(fmt.Sprintf("No such type %v. TODO: Errors", t.Name))
+		panic(fmt.Sprintf("No such type %q", t.Name))
 	}
 	return d.Size(c)
 }
@@ -1683,7 +1683,7 @@ type Deref struct {
 func (d *Deref) ASTType(c *Context) ASTType {
 	t := d.Val.ASTType(c)
 	if t.Indirection == 0 {
-		panic("Cannot dereference non-pointer. TODO: Nice error reports.")
+		CompileErrorF(d, "Cannot dereference non-pointer type %s", t)
 	}
 	if t.NilMask&1 != 0 {
 		CompileErrorF(d.Val, "Cannot dereference nullable pointer type %s", t)
@@ -1770,7 +1770,7 @@ func (a *Address) ASTType(c *Context) ASTType {
 		}
 		t, ok := c.TypeForVar(name)
 		if !ok {
-			panic("Variable is not bound. TODO: Nice error reports.")
+			CompileErrorF(a, "Variable %q is not declared", name)
 		}
 		if t.HasOwned() {
 			t = t.StripOwned()
@@ -1992,7 +1992,7 @@ func (o *Op2) ASTType(c *Context) ASTType {
 		}
 		return ft
 	}
-	panic("Bad Operation. TODO: Nice error reports.")
+	panic(&interpreterError{msg: fmt.Sprintf("Operator %q is not supported on types %s and %s", o.Note(), o.First.ASTType(c), o.Second.ASTType(c)), p: o.Pos()})
 }
 
 func (o *Op2) Note() string {
@@ -2309,7 +2309,7 @@ func (l *Literal) ASTType(*Context) ASTType {
 	case nil:
 		return ASTType{Name: "<nil>"}
 	}
-	panic("Bad Literal. TODO: Nice error reports.")
+	panic(&interpreterError{msg: fmt.Sprintf("Unsupported literal value of type %T", l.Val), p: l.p})
 }
 
 func (l *Literal) Note() string {

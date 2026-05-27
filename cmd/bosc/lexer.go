@@ -561,8 +561,7 @@ func (l *lexer) Next() (rt token, re error) {
 			l.nextRune()
 			return token{t: tok_boolor, p: l.p}, nil
 		}
-		//return token{t: tok_amp, p: l.p}, nil
-		panic("BINARY OR NOT IMPLEMENTED")
+		panic(&interpreterError{"Bitwise OR is not supported; use || for logical OR", l.p})
 	case '/':
 		l.nextRune()
 		if l.headRune() == '/' {

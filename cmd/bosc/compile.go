@@ -2575,7 +2575,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 			checkOwnedSourceAvailable(c, arg)
 		}
 		if i > 5 {
-			panic("More than 6 args not supported yet (TODO)")
+			CompileErrorF(arg, "More than 6 arguments are not supported")
 		}
 		var dest spot
 		if argt.Size(c) == PTR_SIZE {
@@ -2763,11 +2763,11 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 	if srcType.Same(intlitASTType()) {
 		val, ok := EvalConst(c, src)
 		if !ok {
-			panic("compileCast: could not evaluate integer literal at compile time")
+			CompileErrorF(src, "Could not evaluate integer literal at compile time")
 		}
 		underlying := c.ResolveUnderlying(destType)
 		if !litFitsIn(val, underlying) {
-			panic(fmt.Sprintf("compileCast: literal %s does not fit in type %s", val, destType))
+			CompileErrorF(src, "Literal %s does not fit in type %s", val, destType)
 		}
 		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, val.String())
 		return dest
