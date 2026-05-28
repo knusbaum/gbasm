@@ -15,12 +15,12 @@ include $BOSON_HOME/boson.mmk
 
 all : build
 
-bos_exe linked source=src :
+bos_exe interface source=src :
 
 build {
     set -e
     (cd ../../ && make)
-    mmk linked
+    mmk interface
 }
 
-[run all] : build { ./linked }
+[run all] : build { ./interface }
