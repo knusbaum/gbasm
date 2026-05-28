@@ -19,6 +19,18 @@ package io
 import "_io_sys"
 import "string"
 
+// Flags for open(). These correspond to the O_* constants in <fcntl.h> on
+// Linux x86-64. Combine with bitwise OR for multi-flag values.
+const O_RDONLY   i64 = 0       // open for reading only
+const O_WRONLY   i64 = 1       // open for writing only
+const O_RDWR     i64 = 2       // open for reading and writing
+const O_CREAT    i64 = 64      // create file if it does not exist (0100 octal)
+const O_EXCL     i64 = 128     // error if O_CREAT and file exists (0200 octal)
+const O_TRUNC    i64 = 512     // truncate file to zero length on open (01000 octal)
+const O_APPEND   i64 = 1024    // writes always append to end of file (02000 octal)
+const O_NONBLOCK i64 = 2048    // non-blocking I/O (04000 octal)
+const O_CLOEXEC  i64 = 524288  // set close-on-exec flag (02000000 octal)
+
 // STDIN is the standard input file descriptor (fd 0), pre-opened by the
 // kernel at process start. It is borrowed: do not pass it to close.
 var STDIN  FD = FD(0)
@@ -110,9 +122,10 @@ interface writer {
 // syscall requires, so callers do not need to embed a trailing \x00 or
 // otherwise concern themselves with C-string representation.
 //
-// flags is the bitwise OR of the O_* constants (O_RDONLY, O_WRONLY,
-// O_CREAT, …). mode is the permission bits applied when O_CREAT creates
-// a new file.
+// flags is the bitwise OR of the O_* constants defined in this package
+// (O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_EXCL, O_TRUNC, O_APPEND, …).
+// mode is the permission bits applied when O_CREAT creates a new file
+// (e.g. 0o644 = 420).
 //
 // Returns (fd, err): on success err is 0 and fd is the opened descriptor.
 // On failure err is a positive errno value and fd is invalid — the caller
