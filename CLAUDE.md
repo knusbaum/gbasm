@@ -398,10 +398,12 @@ items that are not pending work:
   by `cmd/bosc/run_tests.sh` when it compiles the `pair` runtime
   package for cross-package-struct tests. The script removes them
   on a clean pass; if the suite was interrupted, they're left over.
-- `examples/linked/linked`, `examples/linked/linked.work/`,
-  `examples/linked/target/`, `examples/interface/linked`,
-  `examples/interface/linked.work/`, `examples/interface/target/`
-  — built example artifacts.
+- `examples/linked/target/`, `examples/interface/target/`,
+  `examples/hello/target/` — built example artifacts. Each example's
+  `target/` holds the executable (e.g. `target/linked`), the
+  per-package `.bo` files, and the per-package work directories
+  (`target/<name>.work/` with intermediate `.bs`/`.bo` files). There
+  are no build outputs at the example's project root anymore.
 - `cmd/bosc/main.bs`, `main.bs`, `bld`, `bosc` at repo root — see
   above.
 

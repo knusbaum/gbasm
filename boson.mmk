@@ -174,7 +174,7 @@ defbody bos_pkg clean {
 # together with the runtime init.
 
 deftype bos_exe {
-    stat -c %Y "$target" 2>/dev/null || return 1
+    stat -c %Y "target/$target" 2>/dev/null || return 1
 }
 
 defbody bos_exe : $(bos_exe_deps "$source") {
@@ -182,10 +182,12 @@ defbody bos_exe : $(bos_exe_deps "$source") {
     # with a clean error rather than letting subsequent steps (chmod, etc.)
     # run on stale or missing artifacts.
     set -e
-    # Build the executable's own package into a local .bo (not in target/,
-    # since it isn't importable by name).
-    workdir="$target.work"
-    mkdir -p "$workdir"
+    # All build artifacts (the exe itself, intermediate .bs/.bo) live under
+    # target/. The exe's workdir is prefixed with `_exe_` so it can't collide
+    # with a same-named package's workdir (bos_pkg writes target/<pkg>.work/).
+    outexe="target/$target"
+    workdir="target/_exe_$target.work"
+    mkdir -p "$(dirname "$outexe")" "$workdir"
 
     cfg=$(mktemp)
     trap 'rm -f $cfg' EXIT
@@ -214,13 +216,13 @@ defbody bos_exe : $(bos_exe_deps "$source") {
         esac
     done
 
-    $BLD -o "$target" "${link_files[@]}"
-    chmod +x "$target"
+    $BLD -o "$outexe" "${link_files[@]}"
+    chmod +x "$outexe"
 }
 
 defbody bos_exe clean {
-    rm -f "$target"
-    rm -rf "$target.work"
+    rm -f "target/$target"
+    rm -rf "target/_exe_$target.work"
 }
 
 # ---- docs ------------------------------------------------------------------

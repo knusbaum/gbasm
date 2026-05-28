@@ -1716,7 +1716,9 @@ Beyond the toolchain itself, gbasm ships a build orchestrator integration with *
   1. Discovers sources in `$source`
   2. Runs `bosc -listimports $source` to find direct imports, each becoming a `target/<path>.bo` dep
   3. Adds `target/_init.bo` as an implicit dep (the runtime entry code)
-  4. At body time: builds the executable's own package locally, then links it with all the `target/*.bo` deps plus init
+  4. At body time: builds the executable's own package into `target/_exe_<name>.work/`, then links the final executable to `target/<name>` along with all the `target/*.bo` deps plus init. The `_exe_` prefix on the workdir avoids a collision with `target/<name>.work/` from a same-named package.
+
+All build artifacts — the executable, package `.bo`s, and per-package work directories holding intermediate `.bs` files — live under `target/`. Nothing is written to the project root.
 
 A package can be pure `.bos`, pure `.bs`, or mixed; `bos_pkg` handles all three uniformly by compiling any `.bos` files to `.bs` first and then passing every `.bs` (source or generated) to the assembler in a single invocation.
 

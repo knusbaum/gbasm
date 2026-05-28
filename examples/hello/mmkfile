@@ -17,4 +17,4 @@ all : hello
 
 bos_exe hello source=src :
 
-[run all] : hello { ./hello }
+[run all] : hello { ./target/hello }

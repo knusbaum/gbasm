@@ -23,4 +23,4 @@ build {
     mmk interface
 }
 
-[run all] : build { ./interface }
+[run all] : build { ./target/interface }
