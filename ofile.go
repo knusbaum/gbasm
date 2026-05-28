@@ -111,6 +111,13 @@ type OFile struct {
 	// register the alias and reconstruct its method table.
 	TypeAliases map[string]*TypeAliasShape
 
+	// Interfaces are Boson-level interface declarations exported by this
+	// package (e.g. `interface reader { ... }`). bas populates this via
+	// the `interface` directive; bosc reads it during Context.Import to
+	// register the interface so cross-package code can declare values of
+	// the qualified interface type.
+	Interfaces map[string]*InterfaceShape
+
 	// Not written
 	a *Asm
 }
@@ -140,6 +147,24 @@ type TypeAliasShape struct {
 	MethodNames []string
 }
 
+// InterfaceShape is the wire-level description of a Boson interface
+// declaration. Each method records its name, the ordered parameter
+// list (the first param is conventionally the receiver, with type
+// "*self" or similar), and the return type. Param/Return type strings
+// are ASTType.String() output, reparsed by the importer.
+type InterfaceShape struct {
+	Name    string
+	Methods []InterfaceMethodShape
+}
+
+// InterfaceMethodShape captures one method signature inside an
+// InterfaceShape.
+type InterfaceMethodShape struct {
+	Name   string
+	Params []FieldShape // FieldShape{Name: paramName, Type: paramType}
+	Return string
+}
+
 func NewOFile(name string, pkgname string) (*OFile, error) {
 	a, err := LoadAsm(AMD64)
 	if err != nil {
@@ -154,6 +179,7 @@ func NewOFile(name string, pkgname string) (*OFile, error) {
 		Funcs:       make(map[string]*Function),
 		Structs:     make(map[string]*StructShape),
 		TypeAliases: make(map[string]*TypeAliasShape),
+		Interfaces:  make(map[string]*InterfaceShape),
 		a:           a, // TODO: Hard coded for now. This should be a parameter and written to the ofile.
 	}, nil
 }
@@ -177,6 +203,15 @@ func (o *OFile) AddTypeAlias(name, underlying string, methodNames []string) erro
 		return fmt.Errorf("TypeAlias %s already declared.", name)
 	}
 	o.TypeAliases[name] = &TypeAliasShape{Name: name, Underlying: underlying, MethodNames: methodNames}
+	return nil
+}
+
+// AddInterface registers a Boson interface declaration for export.
+func (o *OFile) AddInterface(name string, methods []InterfaceMethodShape) error {
+	if o.Interfaces[name] != nil {
+		return fmt.Errorf("Interface %s already declared.", name)
+	}
+	o.Interfaces[name] = &InterfaceShape{Name: name, Methods: methods}
 	return nil
 }
 

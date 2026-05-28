@@ -1397,7 +1397,20 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		return nullspot
 	case *InterfaceDecl:
-		// No code to emit; interface declarations are purely type-level.
+		// Emit an interface directive so bas can carry the shape into
+		// the .bo for cross-package import. Each method's param/return
+		// types are rendered via ASTType.String() and reparsed by the
+		// importer with parseTypeString.
+		fmt.Fprintf(of, "interface %s {\n", ast.Name)
+		for _, m := range ast.Methods {
+			fmt.Fprintf(of, "\tmethod %s {\n", m.Name)
+			for _, p := range m.Params {
+				fmt.Fprintf(of, "\t\tparam %s %s\n", p.Name, p.Type.String())
+			}
+			fmt.Fprintf(of, "\t\treturn %s\n", m.Return.String())
+			fmt.Fprintf(of, "\t}\n")
+		}
+		fmt.Fprintf(of, "}\n")
 		return nullspot
 	case *StructDecl:
 		c.DefineStruct(ast.TName, ast)
@@ -3733,8 +3746,21 @@ func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTTy
 	if dstt.OwnedMask != 0 && srct.OwnedMask == 0 {
 		CompileErrorF(errNode, "Cannot use non-owned %s where owned %s is required", srct, dstt.Name)
 	}
-	vtableName := fmt.Sprintf("__vtable_%s_%s", concreteTypeName, dstt.Name)
-	c.NeedVtable(vtableName, concreteTypeName, dstt.Name, c.Pkgname(), ifaceDecl)
+	// Split qualified type names (e.g. "io.FD") so the vtable's method
+	// relocations target the correct owning package, and so the vtable
+	// global's own name itself doesn't contain dots — bas treats '.' as
+	// a package separator, so a name like __vtable_io.FD_io.writer
+	// would be misparsed and miss the linker's name table.
+	typePkg := c.Pkgname()
+	bareType := concreteTypeName
+	if dot := strings.LastIndex(concreteTypeName, "."); dot >= 0 {
+		typePkg = concreteTypeName[:dot]
+		bareType = concreteTypeName[dot+1:]
+	}
+	vtableName := fmt.Sprintf("__vtable_%s__%s",
+		strings.ReplaceAll(concreteTypeName, ".", "_"),
+		strings.ReplaceAll(dstt.Name, ".", "_"))
+	c.NeedVtable(vtableName, bareType, dstt.Name, typePkg, ifaceDecl)
 	if destBinding != "" && dstt.OwnedMask == 0 {
 		c.PointerFlow().SetFieldPointer(flow.Binding(destBinding), "data", pointerExprForAST(c, valAST, ""))
 	}

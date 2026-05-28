@@ -229,6 +229,8 @@ string.puti(pair.sum(p))                  // call takes pair.pair, transparent
 
 The `.bs` carries Boson struct shapes via the `struct Name { … }` directive (see [Directives Reference](#directives-reference)); the assembler stores them in the `.bo` and bosc reads them back during `Context.Import`. Built-in type names and any cross-package references inside imported signatures are left alone; only leaf type names that match the producer's own structs get qualified at import time.
 
+**Cross-package interfaces.** Interface declarations export the same way structs and type aliases do. The producer's `.bs` carries each `interface Name { method ... }` declaration via the `interface` directive; the `.bo` stores it as an `InterfaceShape` (method name, ordered params with names and ASTType-rendered type strings, plus the return-type string). On import, bosc reparses the types, qualifies any leaf names that match the producer's structs or aliases, and registers the interface under the qualified name (e.g. `io.reader`). Caller code can then write `fn use(r io.reader) { ... }` and coerce a borrowed `*io.FD` into it; the vtable is emitted in the *consumer's* `.bo` and its method-pointer relocations target the type's owning package (`io.FD.read`).
+
 ### Built-in Functions
 
 Built-ins are not part of the language proper — they live in runtime packages that any program imports. The standard library currently provides one package, `string`, that bundles both string utilities and basic IO:
@@ -253,6 +255,8 @@ File IO lives in the `io` and `_io_sys` packages. The typed FD API in `io`:
 | `io.FD.write` | `(*FD, byte[] buf) i64` | Write buf to fd; returns count or -errno |
 | `io.FD.close` | `(*owned FD) i64` | Close the fd and consume the owned obligation |
 | `io.STDIN`/`STDOUT`/`STDERR` | `FD` | Standard file descriptors (0, 1, 2) |
+| `io.reader` | `interface { read(*self, mut byte[]) i64 }` | Anything readable; `FD` satisfies it |
+| `io.writer` | `interface { write(*self, byte[]) i64 }` | Anything writable; `FD` satisfies it |
 
 The raw syscall wrappers, taking i64 fd values directly, live in `_io_sys`:
 
@@ -1466,6 +1470,8 @@ function add
 | `var` (size) | `var name type N` | Global writable data, N zero-filled bytes (uninitialized). |
 | `var` (block) | `var name type { bytes "..." reloc <off> <sym> <addend> ... }` | Multi-line form: explicit bytes payload plus zero or more per-var data relocations. Used by bosc to emit globals containing pointers (slice headers, struct fields holding addresses, anonymous-globals-as-pointers). |
 | `struct` | `struct Name { fname ftype \n ... }` | Multi-line declaration carrying a Boson struct shape into the `.bo`. Field types are stored verbatim; bosc reparses them on import. Used for cross-package struct types. |
+| `typealias` | `typealias Name underlying [m1 m2 ...]` | Single-line declaration carrying a Boson type alias into the `.bo`. The method-name list lets bosc reconstruct the type's method table on import from the already-imported function set. |
+| `interface` | `interface Name { method m1 { param p t \n ... \n return rt } ... }` | Multi-line declaration carrying a Boson interface shape into the `.bo`. Each method's params and return type are reparsed by bosc on import. Used for cross-package interface types. |
 | `local` | `local name bits [reg]` | Stack/register local variable (scalars and pointers) |
 | `bytes` | `bytes name size [reg]` | Stack byte array (non-register; required for structs and arrays) |
 | `arg` | `arg name reg` | Pin argument to register |

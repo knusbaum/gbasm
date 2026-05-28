@@ -73,6 +73,24 @@ type FD i64 {
 	}
 }
 
+// reader is the interface satisfied by any value with a read method of
+// the appropriate shape. Mirrors Go's io.Reader: read fills buf with up
+// to len(buf) bytes and returns the count actually read, 0 for EOF, or
+// a negative value for an error (the negation of errno on FD-backed
+// implementations).
+interface reader {
+	read(r *self, buf mut byte[]) i64
+}
+
+// writer is the interface satisfied by any value with a write method of
+// the appropriate shape. Mirrors Go's io.Writer: write attempts to
+// write all of buf and returns the count actually written. A return
+// less than len(buf) is a short write that the caller is responsible
+// for retrying; a negative value is an error.
+interface writer {
+	write(w *self, buf byte[]) i64
+}
+
 // open opens the file at path with the given open(2) flags and mode,
 // returning an owned FD that the caller is responsible for closing.
 //

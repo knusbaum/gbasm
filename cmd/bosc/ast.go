@@ -972,6 +972,31 @@ func (c *Context) Import(importKey, path string) error {
 		qualifyImportedType(&vt, o.Pkgname, o.Structs, o.TypeAliases)
 		c.DefineImportedVar(o.Pkgname, v.Name, vt)
 	}
+	for _, ifc := range o.Interfaces {
+		qname := o.Pkgname + "." + ifc.Name
+		decl := &InterfaceDecl{Name: qname}
+		for _, m := range ifc.Methods {
+			sig := InterfaceMethodSig{Name: m.Name}
+			for _, p := range m.Params {
+				pt, err := parseTypeString(p.Type)
+				if err != nil {
+					return fmt.Errorf("import %q: interface %s method %s param %s: %v",
+						importKey, ifc.Name, m.Name, p.Name, err)
+				}
+				qualifyImportedType(&pt, o.Pkgname, o.Structs, o.TypeAliases)
+				sig.Params = append(sig.Params, Binding{Name: p.Name, Type: pt, IsConst: true})
+			}
+			rt, err := parseTypeString(m.Return)
+			if err != nil {
+				return fmt.Errorf("import %q: interface %s method %s return: %v",
+					importKey, ifc.Name, m.Name, err)
+			}
+			qualifyImportedType(&rt, o.Pkgname, o.Structs, o.TypeAliases)
+			sig.Return = rt
+			decl.Methods = append(decl.Methods, sig)
+		}
+		c.DefineInterface(position{}, qname, decl)
+	}
 	return nil
 }
 

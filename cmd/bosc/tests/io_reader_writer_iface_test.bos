@@ -1,0 +1,43 @@
+package main
+
+import "io"
+import "string"
+
+// Cross-package interface dispatch test. The io package declares
+// `interface reader` and `interface writer`; io.FD's read/write
+// methods satisfy them. This test:
+//   - imports io.reader and io.writer from another package
+//   - coerces a borrowed *io.FD into each interface
+//   - dispatches read/write through the interface
+//
+// Exercises the cross-package interface export path (.bo carries
+// InterfaceShape; bosc reconstructs the InterfaceDecl on import)
+// and the vtable-naming fix so __vtable_io_FD__io_writer doesn't
+// collide with bas's '.'-as-package-separator convention.
+
+fn writeline(w io.writer, msg byte[]) {
+	w.write(msg)
+}
+
+fn readbyte(r io.reader, buf mut byte[]) i64 {
+	return r.read(buf)
+}
+
+fn main() i64 {
+	// Borrowed FD (copy of STDOUT) into io.writer.
+	var out io.FD = io.STDOUT
+	writeline(&out, "hello via io.writer\n")
+
+	// Owned FD opened against /dev/null, borrowed into io.reader.
+	// /dev/null returns EOF (0 bytes) on read.
+	var null owned io.FD = io.open("/dev/null", 0, 0)
+	var buf byte[8]
+	const n i64 = readbyte(&null, buf[:])
+	if (n != 0) {
+		string.puts("expected EOF from /dev/null\n")
+	}
+	null.close()
+
+	string.puts("done\n")
+	return 0
+}

@@ -368,6 +368,119 @@ func main() {
 				}
 				continue
 			}
+			if strings.HasPrefix(line, "interface") {
+				// Multi-line directive:
+				//   interface Name {
+				//     method methodName {
+				//       param paramName paramType
+				//       ...
+				//       return returnType
+				//     }
+				//     ...
+				//   }
+				// Inside a method block the lines are:
+				//   "param <name> <type-with-spaces>"
+				//   "return <type-with-spaces>"
+				// `param` lines record the receiver and other parameters
+				// in declaration order; the receiver type is conventionally
+				// "*self" or some variant. Comments and blank lines are
+				// permitted in the body.
+				rest := strings.TrimSpace(strings.TrimPrefix(line, "interface"))
+				openIdx := strings.IndexByte(rest, '{')
+				if openIdx < 0 {
+					fmt.Printf("Fatal: interface directive: missing '{' on the same line, got: %q\n", line)
+					os.Exit(1)
+				}
+				iname := strings.TrimSpace(rest[:openIdx])
+				if iname == "" {
+					fmt.Printf("Fatal: interface directive: missing name before '{'\n")
+					os.Exit(1)
+				}
+				var methods []gbasm.InterfaceMethodShape
+				for {
+					if !scanner.Scan() {
+						fmt.Printf("Fatal: interface %s: unexpected EOF before '}'\n", iname)
+						os.Exit(1)
+					}
+					ln++
+					body := strings.TrimSpace(scanner.Text())
+					if body == "" || strings.HasPrefix(body, "//") {
+						continue
+					}
+					if body == "}" {
+						break
+					}
+					if !strings.HasPrefix(body, "method ") {
+						fmt.Printf("Fatal: interface %s: expected 'method <name> {' or '}', got %q\n", iname, body)
+						os.Exit(1)
+					}
+					headRest := strings.TrimSpace(strings.TrimPrefix(body, "method"))
+					mOpen := strings.IndexByte(headRest, '{')
+					if mOpen < 0 {
+						fmt.Printf("Fatal: interface %s: method directive missing '{' on the same line, got: %q\n", iname, body)
+						os.Exit(1)
+					}
+					mname := strings.TrimSpace(headRest[:mOpen])
+					if mname == "" {
+						fmt.Printf("Fatal: interface %s: method directive missing name before '{'\n", iname)
+						os.Exit(1)
+					}
+					var params []gbasm.FieldShape
+					var retType string
+					sawReturn := false
+					for {
+						if !scanner.Scan() {
+							fmt.Printf("Fatal: interface %s: method %s: unexpected EOF before '}'\n", iname, mname)
+							os.Exit(1)
+						}
+						ln++
+						mbody := strings.TrimSpace(scanner.Text())
+						if mbody == "" || strings.HasPrefix(mbody, "//") {
+							continue
+						}
+						if mbody == "}" {
+							break
+						}
+						if strings.HasPrefix(mbody, "param ") {
+							rest := strings.TrimSpace(strings.TrimPrefix(mbody, "param"))
+							sp := strings.IndexAny(rest, " \t")
+							if sp < 0 {
+								fmt.Printf("Fatal: interface %s: method %s: param line %q lacks a type\n", iname, mname, mbody)
+								os.Exit(1)
+							}
+							pname := rest[:sp]
+							ptype := strings.TrimSpace(rest[sp+1:])
+							if ptype == "" {
+								fmt.Printf("Fatal: interface %s: method %s: param %s has empty type\n", iname, mname, pname)
+								os.Exit(1)
+							}
+							params = append(params, gbasm.FieldShape{Name: pname, Type: ptype})
+							continue
+						}
+						if strings.HasPrefix(mbody, "return ") {
+							retType = strings.TrimSpace(strings.TrimPrefix(mbody, "return"))
+							sawReturn = true
+							continue
+						}
+						fmt.Printf("Fatal: interface %s: method %s: unknown line %q\n", iname, mname, mbody)
+						os.Exit(1)
+					}
+					if !sawReturn {
+						fmt.Printf("Fatal: interface %s: method %s: missing 'return <type>' line\n", iname, mname)
+						os.Exit(1)
+					}
+					methods = append(methods, gbasm.InterfaceMethodShape{
+						Name:   mname,
+						Params: params,
+						Return: retType,
+					})
+				}
+				if err := o.AddInterface(iname, methods); err != nil {
+					fmt.Printf("Fatal: interface %s: %s\n", iname, err)
+					os.Exit(1)
+				}
+				continue
+			}
 			if strings.HasPrefix(line, "struct") {
 				// Multi-line directive:
 				//   struct Name {

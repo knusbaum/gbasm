@@ -523,6 +523,10 @@ func writeOFile(w io.Writer, o *OFile) error {
 	if err != nil {
 		return err
 	}
+	err = writeInterfaces(w, o.Interfaces)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -559,6 +563,10 @@ func readOFile(r io.Reader) (*OFile, error) {
 	if err != nil {
 		return nil, err
 	}
+	interfaces, err := readInterfaces(r)
+	if err != nil {
+		return nil, err
+	}
 	return &OFile{
 		Pkgname:     pkgname,
 		ExeFormat:   exeformat,
@@ -568,6 +576,7 @@ func readOFile(r io.Reader) (*OFile, error) {
 		Funcs:       funcs,
 		Structs:     structs,
 		TypeAliases: typeAliases,
+		Interfaces:  interfaces,
 	}, nil
 }
 
@@ -690,6 +699,94 @@ func readTypeAliases(r io.Reader) (map[string]*TypeAliasShape, error) {
 			methods[j] = mn
 		}
 		m[name] = &TypeAliasShape{Name: name, Underlying: underlying, MethodNames: methods}
+	}
+	return m, nil
+}
+
+func writeInterfaces(w io.Writer, ifaces map[string]*InterfaceShape) error {
+	names := make([]string, 0, len(ifaces))
+	for n := range ifaces {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	if err := writeSize(w, len(names)); err != nil {
+		return err
+	}
+	for _, name := range names {
+		ifc := ifaces[name]
+		if err := writeString(w, ifc.Name); err != nil {
+			return err
+		}
+		if err := writeSize(w, len(ifc.Methods)); err != nil {
+			return err
+		}
+		for _, m := range ifc.Methods {
+			if err := writeString(w, m.Name); err != nil {
+				return err
+			}
+			if err := writeSize(w, len(m.Params)); err != nil {
+				return err
+			}
+			for _, p := range m.Params {
+				if err := writeString(w, p.Name); err != nil {
+					return err
+				}
+				if err := writeString(w, p.Type); err != nil {
+					return err
+				}
+			}
+			if err := writeString(w, m.Return); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func readInterfaces(r io.Reader) (map[string]*InterfaceShape, error) {
+	n, err := readSize(r)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]*InterfaceShape, n)
+	for i := 0; i < n; i++ {
+		name, err := readString(r)
+		if err != nil {
+			return nil, err
+		}
+		nMethods, err := readSize(r)
+		if err != nil {
+			return nil, err
+		}
+		methods := make([]InterfaceMethodShape, nMethods)
+		for j := range methods {
+			mname, err := readString(r)
+			if err != nil {
+				return nil, err
+			}
+			nParams, err := readSize(r)
+			if err != nil {
+				return nil, err
+			}
+			params := make([]FieldShape, nParams)
+			for k := range params {
+				pname, err := readString(r)
+				if err != nil {
+					return nil, err
+				}
+				ptype, err := readString(r)
+				if err != nil {
+					return nil, err
+				}
+				params[k] = FieldShape{Name: pname, Type: ptype}
+			}
+			ret, err := readString(r)
+			if err != nil {
+				return nil, err
+			}
+			methods[j] = InterfaceMethodShape{Name: mname, Params: params, Return: ret}
+		}
+		m[name] = &InterfaceShape{Name: name, Methods: methods}
 	}
 	return m, nil
 }
