@@ -254,15 +254,17 @@ func (c *Context) InvalidateLocalOriginsForScope() {
 	}
 }
 
-// Move marks an owned binding as consumed. Walks the parent chain to find the
-// context that owns the binding so the state is stored in the right checker.
-// Also invalidates any pointer-flow aliases tied to the binding: if the binding
-// is a pointer, its target allocation is treated as freed (TargetDead); if it
-// is not a pointer, aliases like &name become stale (TargetMoved). Keeping the
-// two halves of consumption state in sync at the single call site means every
-// caller of Move (dispose, owned-arg passing, assignment overwrite, condition
-// narrowing, ...) gets correct deref-after-move rejection automatically.
-func (c *Context) Move(name string) {
+// MoveConsume marks an owned binding as consumed *and* invalidates the
+// pointer-flow Origin associated with the binding's storage. For pointer
+// bindings the pointed-at allocation is treated as freed (TargetDead);
+// for value bindings the binding's own storage is treated as moved
+// (TargetMoved). Use this when the move actually destroys the obligation
+// — `dispose(p)`, passing a value-typed owned to a consuming parameter,
+// branch-narrowing to a known-nil owned pointer, an uninitialized owned
+// declaration. Any alias pointing at the invalidated Origin (borrowed
+// pointer, value-alias of an owned scalar) is now stale and the next
+// read of it through `CheckDerefValidity` will be rejected.
+func (c *Context) MoveConsume(name string) {
 	if c == nil {
 		return
 	}
@@ -279,7 +281,25 @@ func (c *Context) Move(name string) {
 		}
 		return
 	}
-	c.parent.Move(name)
+	c.parent.MoveConsume(name)
+}
+
+// MoveTransfer marks an owned binding as consumed without touching the
+// pointer-flow Origin. Use this when the move hands the obligation to
+// another binding that references the same storage — `var y *owned T =
+// &x` transfers x's storage to y, `var q owned *T = p` transfers p's
+// allocation to q. The source binding can no longer be used, but the
+// storage is still live (the new owner references it) and aliases of
+// that storage stay usable until the new owner is consumed.
+func (c *Context) MoveTransfer(name string) {
+	if c == nil {
+		return
+	}
+	if _, ok := c.bindings[name]; ok {
+		c.checker.movedBindings[name] = true
+		return
+	}
+	c.parent.MoveTransfer(name)
 }
 
 // Unmove clears the consumed flag on a var binding after re-assignment.

@@ -289,21 +289,42 @@ parameter kind, those two are the invariants to preserve.
 state (compile.go's VarDecl branch). Coercing to a non-owned
 destination — `var t i64 = fd`, `thingy(fd)`, passing as an `i64`
 parameter — produces an alias: `pointers["t"] = {Origin: "fd"}`.
-Reading the destination later goes through the Symbol case in
-compileTop, which calls `CheckDerefValidity` for non-pointer types.
-`c.Move(fd)` invalidates `Origin("fd")` with `TargetMoved`, so any
-later use of `t` is rejected with "cannot dereference pointer to
-'fd': the target was consumed."
-
-The Symbol-site check is gated on `c.ResolveUnderlying(...).
-Indirection == 0` so pointer-typed reads keep their current
-behavior — those are still validated at the `*p` deref site, not
-at the bare Symbol read.
+Reading the destination goes through the Symbol case in compileTop,
+which calls `CheckDerefValidity` on the binding's link.
+`c.MoveConsume(fd)` invalidates `Origin("fd")` with `TargetMoved`,
+so any later use of `t` is rejected with "cannot dereference
+pointer to 'fd': the target was consumed." Same machinery catches
+use-of-stale-pointer (`use_ptr(p)` after `take(i)` where `p = &i`):
+the Symbol read of `p` fires the same check.
 
 If you add a new path that creates an owned scalar binding or a
 non-owned scalar from one, mirror the existing decl/assign sites:
 register the Origin at owned decl, run the source through
 `pointerExprForAST` and `AssignPointer` at the coercion site.
+
+#### MoveConsume vs MoveTransfer
+
+Two distinct operations on owned bindings, both in checker.go:
+
+- **`c.MoveConsume(name)`** — binding is dead AND its storage is
+  dead. Invalidates the relevant Origin (`TargetDead` for pointers,
+  `TargetMoved` for values), so any alias of that storage becomes
+  stale. Use for `dispose(p)`, value-typed Symbol consume in
+  `markMovedIfOwnedSource`, branch-narrow-to-null on an owned
+  nullable, and the uninitialized-owned-decl path.
+- **`c.MoveTransfer(name)`** — binding is dead but the storage
+  transferred to a new owner who still references it. Only marks
+  `movedBindings[name]`; Origin stays Live, so other pointer
+  aliases of the same storage remain usable until the *new* owner
+  is consumed. Use for `&x` into `*owned T` and pointer-typed
+  Symbol move into owned destination.
+
+Pick the wrong one and either aliases survive a real consume (test
+suite catches it via the use-after-move tests), or every pointer
+transfer falsely invalidates its own destination (test suite
+catches via `owned_address_transfer_test` and friends). When in
+doubt, search for an analogous case already in `markMoved
+IfOwnedSource` or the dispose handler.
 
 #### `&owned` and re-init
 

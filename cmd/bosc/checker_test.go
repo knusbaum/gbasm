@@ -17,12 +17,12 @@ func TestCheckerStateTracksFactsAcrossContextScopes(t *testing.T) {
 		t.Fatal("child context should have distinct checker state")
 	}
 
-	child.Move("owner")
+	child.MoveConsume("owner")
 	if !root.IsMoved("owner") {
 		t.Fatal("moving parent binding from child should update parent checker state")
 	}
 
-	child.Move("local")
+	child.MoveConsume("local")
 	snap := child.OwnedBindingsSnapshot()
 	if !snap["owner"] || !snap["local"] {
 		t.Fatalf("snapshot did not include moved parent and child owned bindings: %#v", snap)
@@ -131,7 +131,7 @@ func TestCheckerStateMoveUnmoveAndUnconsumed(t *testing.T) {
 		t.Fatalf("unconsumed = %#v, want x", got)
 	}
 
-	c.Move("x")
+	c.MoveConsume("x")
 	if !c.IsMoved("x") {
 		t.Fatal("x should be moved")
 	}

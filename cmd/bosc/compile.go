@@ -804,20 +804,14 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 		checkOwnedSourceAvailable(c, val)
 		declared, _ := c.DeclaredTypeForVar(v.Name)
 		// Pointer-typed owned source moving into an owned destination is a
-		// *transfer*: the destination pointer now owns the same allocation
-		// the source pointed at. c.Move below will invalidate that origin
-		// (treating the source as if its allocation went dead); capture the
-		// origin first so we can restore it. Other aliases of the same
-		// allocation remain usable until the new owner is consumed.
-		var transferOrigin flow.Origin
+		// *transfer*: the destination pointer becomes the new owner of the
+		// same allocation, the storage stays alive. Value-typed sources are
+		// a *consume*: the source's bits are conceptually moved out and
+		// any aliases reading those bits afterwards are stale.
 		if declared.Indirection > 0 {
-			if ptrExpr := c.PointerFlow().Pointer(flow.Binding(v.Name)); ptrExpr.KnownOrigin {
-				transferOrigin = ptrExpr.Origin
-			}
-		}
-		c.Move(v.Name)
-		if transferOrigin != "" {
-			c.PointerFlow().InvalidateOrigin(transferOrigin, flow.TargetLive)
+			c.MoveTransfer(v.Name)
+		} else {
+			c.MoveConsume(v.Name)
 		}
 		if declared.Indirection > 0 && declared.NilMask&1 != 0 {
 			fmt.Fprintf(of, "\tmov %s 0\n", v.Name)
@@ -826,15 +820,13 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 	case *Address:
 		// `&x` into an owned-pointer destination transfers ownership: the
 		// destination pointer becomes the new owner of x's storage, and x
-		// the binding can no longer be used. But the storage itself is
-		// still live — the destination points at it and will be the one
-		// to discharge the obligation. Re-validate Origin(x) so any other
-		// pointer aliases of the same storage stay usable until the new
-		// owner is consumed.
+		// the binding can no longer be used. The storage itself is still
+		// live — the destination points at it and will be the one to
+		// discharge the obligation, so other pointer aliases of the same
+		// storage stay usable until the new owner is consumed.
 		if v.Var != "" {
 			checkOwnedSourceAvailable(c, &Symbol{Name: v.Var, p: v.p})
-			c.Move(v.Var)
-			c.PointerFlow().InvalidateOrigin(flow.Origin(v.Var), flow.TargetLive)
+			c.MoveTransfer(v.Var)
 		}
 	case *Deref:
 		ptype := v.Val.ASTType(c)
@@ -1555,7 +1547,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if _, ok := structDeclForType(c, ast.Type); ok && ast.Type.Indirection == 0 && parentOwnsFields(ast.Type) {
 				CompileErrorF(a, "Owned struct binding \"%s\" must have an initializer", ast.Name)
 			}
-			c.Move(ast.Name)
+			// Uninitialized owned binding holds no resource; mark consumed so
+			// scope exit doesn't complain. No aliases yet, so the Origin
+			// invalidation in MoveConsume is a no-op.
+			c.MoveConsume(ast.Name)
 		}
 		return nullspot
 	case *FuncDecl:
@@ -2306,7 +2301,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			} else {
 				c.SetNullFact(condPath, NullKnownNull)
 				if condType.HasOwned() && condPath.Fields == "" {
-					c.Move(condPath.Root)
+					c.MoveConsume(condPath.Root)
 				}
 			}
 		}
@@ -2327,7 +2322,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if condNonNullOnThen {
 				c.SetNullFact(condPath, NullKnownNull)
 				if condType.HasOwned() && condPath.Fields == "" {
-					c.Move(condPath.Root)
+					c.MoveConsume(condPath.Root)
 				}
 			} else {
 				c.SetNullFact(condPath, NullKnownNonNull)
@@ -2573,7 +2568,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			c.NullFact(VarFlowPath(ast.Var)) == NullKnownNull {
 			CompileErrorF(a, "dispose: \"%s\" is statically known to be nil; no obligation to discharge", ast.Var)
 		}
-		c.Move(ast.Var)
+		c.MoveConsume(ast.Var)
 		note(of, "\t// dispose %s — obligation satisfied, no runtime effect\n", ast.Var)
 		return nullspot
 	case *Continue:
