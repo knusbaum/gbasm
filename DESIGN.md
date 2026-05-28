@@ -48,8 +48,20 @@ Boson is a statically typed, imperative language. It is intentionally small: no 
 | `*?T` | Nullable pointer to T |
 | `T[]` | Slice (fat pointer: data pointer + length, 16 bytes) |
 | `T[N]` | Fixed-size array |
-| `struct { ... }` | Named record type |
+| `struct Name { ... }` | Named record type (file scope) |
+| `struct { ... }` | Anonymous struct type (usable as a parameter, return, or var type) |
 | `fn(args) ret` | Function-pointer type (pointer-sized) |
+
+Anonymous struct types appear in parameter, return, and var-declaration positions just like named ones; two anonymous types are compatible when their field lists agree on both name and type, field-by-field. They are otherwise identical to named structs in layout and semantics.
+
+```
+fn divide(a i64, b i64) struct { quot i64, rem i64 } {
+    var q i64 = a / b
+    return { quot: q, rem: a - q * b }
+}
+
+fn use_result(r struct { quot i64, rem i64 }) i64 { return r.quot + r.rem }
+```
 
 Types are divided into **direct** (fit in a single register: scalars, pointers) and **indirect** (too large for a register: structs, arrays, slices — held as pointers in registers, with their data on the stack or in memory).
 
@@ -116,7 +128,9 @@ Slice operations: `s[lo:hi]`, `s[lo:]`, `s[:hi]` produce new slice headers witho
 ```
 var x i64                 // declaration without initializer
 var x i64 = 42            // declaration with initializer
+var x = 42                // type inferred from initializer (i64)
 const y i64 = 100         // const binding (must be initialized)
+const y = 100             // const binding with inferred type
 x = 10                    // assignment
 p.x = i + 1               // field assignment
 *p = 5                    // write-through (requires p: *mut T)
@@ -129,6 +143,14 @@ break
 continue
 return expr
 dispose(x)                // consume an owned binding (see Ownership)
+```
+
+**Type inference for `var`/`const`.** When the type slot is omitted, the binding's type is inferred from the initializer. Untyped integer literals infer as `i64`; expressions whose type cannot be expressed as a value (a `void` call, the `nil` literal) are rejected with a directed error.
+
+```
+var p = alloc(i64)            // owned *mut i64
+var r = divide(17, 5)         // struct { quot i64, rem i64 }
+var n = some_void_call()      // COMPILE ERROR: cannot infer from void expression
 ```
 
 `for` loops are source-level sugar. The compiler lowers them to a block containing the initializer and an unconditional loop with an explicit conditional `break`, body, and step. `continue` inside a lowered `for` carries the step expression so loop ownership and nullability checks use the same control-flow machinery as other blocks and branches.
@@ -252,6 +274,18 @@ var p point = point{ x: 10, y: 20, z: 30 }
 
 Struct literals are context-typed. Omitted fields are zero-initialized only if the field's type is zero-initializable. Non-null pointer fields are not zero-initializable and must be provided explicitly.
 
+**Bare struct literals.** A `{ field: val, ... }` form without a leading type name is legal at any site where the destination shape is known: return statements, typed `var`/`const` initializers, assignments to a struct-typed lvalue, and function arguments whose parameter type is a struct. The literal takes the destination's struct shape. Using a bare literal where no shape is in scope (e.g. as an unbound expression) is a compile error.
+
+```
+fn divide(a i64, b i64) struct { quot i64, rem i64 } {
+    var q i64 = a / b
+    return { quot: q, rem: a - q * b }     // shape from return type
+}
+
+var r struct { quot i64, rem i64 } = { quot: 1, rem: 0 }
+r = { quot: 99, rem: 1 }                   // shape from lvalue
+```
+
 ### Built-in operations
 
 - `dispose(x)` — consume an `owned T` binding with no other effect. See [Ownership](#ownership).
@@ -340,6 +374,30 @@ var fd owned i64 = open(...)
 close(fd)           // fd invalid
 fd = open(...)      // fd valid again — new obligation
 close(fd)
+```
+
+The re-init form also accepts a struct literal of the matching shape, mirroring how the first initialization works:
+
+```
+var f owned foo = foo{x: 1}
+dispose(f)
+f = foo{x: 20}      // re-init via struct literal, no owned(...) wrapper needed
+dispose(f)
+```
+
+Re-initialization is rejected while any **live owned alias** still references the binding's storage. The check uses the pointer-flow tracker: an alias is `&f` (or a struct field that copied `&f`) bound to an owned type whose obligation has not yet been consumed. Borrowed `*T` aliases do not block re-init — they carry no cleanup responsibility, so observing the new value through them is memory-safe.
+
+```
+var f owned foo = foo{x: 1}
+var fp *owned foo = &f
+f = foo{x: 20}        // COMPILE ERROR: fp still owns f's storage
+dispose(fp)
+
+var f owned foo = foo{x: 1}
+var fp *owned foo = &f
+dispose(fp)           // fp consumed; alias is no longer live
+f = foo{x: 20}        // ok
+dispose(f)
 ```
 
 `const` bindings cannot be re-established — once moved, they remain invalid for the rest of the scope.
@@ -483,6 +541,8 @@ alias.val = 1       // now affects other, not b
 ```
 
 In this case `*slot = other` changes the pointer value stored in `alias`; it does not mutate the object `alias` used to point at, so facts about `b` are not invalidated merely by the rebind.
+
+**Writing through an owned pointer.** `*p = value` where `p`'s immediate pointee is owned is the indirect form of "cannot reassign an owned binding before consuming it." When `p` is a bare symbol with a live obligation, the assignment is rejected just as `f = ...` would be on a still-live `owned f`. For non-trivial pointer expressions (`*p.field`, `**pp`, etc.), the write is rejected conservatively today; sharpening this is a future refinement on top of the pointer-flow alias machinery.
 
 #### Why these rules exist
 
@@ -1038,8 +1098,9 @@ type foo bar {
 }
 ```
 
-- Every method must have a pointer receiver as its first parameter. The parameter name is arbitrary; `self` is conventional. **Value receivers are not allowed.**
+- Instance methods take a pointer receiver as their first parameter. The parameter name is arbitrary; `self` is conventional. **Value receivers are not allowed.**
 - The receiver may carry ownership qualifiers: `*T` (borrow), `*mut T` (mutable borrow), `owned *owned T` (consuming — takes ownership of the pointed-to value).
+- **Static methods** take *no* receiver. They are namespaced under the type and called as `T.method(args)`. A static method has the same symbol shape (`pkg.T.method`) as an instance method; the only difference is that no receiver is implicit at the call site.
 - Methods are emitted as regular functions with three-part symbol names: `pkg.TypeName.method_name` (e.g. `mypkg.foo.compute`).
 - `type foo bar` without a block continues to work as before — a distinct named type with no attached methods.
 
@@ -1047,7 +1108,9 @@ type foo bar {
 
 - `v.method(args...)` where `v` has type `T` → `T.method(&v, args...)` (address taken automatically for the pointer receiver).
 - `p.method(args...)` where `p` has type `*T` or `*mut T` → `T.method(p, args...)` (passed directly, no extra indirection).
+- `T.method(args...)` where `T` is a type with a zero-receiver static method → direct call to `pkg.T.method(args...)` with no implicit receiver.
 - Ownership qualifiers on the receiver are checked at the call site: calling a method with `owned *owned T` receiver on a non-owned binding is a compile error.
+- Calling a static method through an instance (`v.method(...)` where `T.method` has no receiver) is rejected with a directed error suggesting the `T.method(...)` form.
 
 ### Interface declarations
 
@@ -1685,6 +1748,9 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Type aliases (`type Name Underlying`) with distinct-type semantics
 - Type casts (`T(expr)`) including widening/narrowing/reinterpretation
 - Slices (`T[]`), fixed arrays (`T[N]`), pointers (`*T`), structs
+- Anonymous struct types (`struct { quot i64, rem i64 }`) as parameter, return, and var types
+- Bare struct literals (`{ field: val }`) with shape inferred from the surrounding context (return, typed initializer, assignment lvalue, argument position)
+- `var x = expr` / `const x = expr` type inference from the initializer (`<intlit>` resolves to `i64`; void/nil sources rejected)
 - Nullable pointers (`*?T`), non-null pointers (`*T`), boolean narrowing for nullable pointers, and postfix `?` non-null assertions
 - Nested slices/arrays (`byte[][]`, `T[N][M]`, etc.)
 - `const`/`var` bindings with declaration initializers (`const x i64 = 42`)
@@ -1692,6 +1758,11 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Array literals at runtime as initializers for fixed-array locals; slice destinations rejected with a directed error (lifetime issue)
 - Full nested `*mut T` write-through mutability with implicit coercion
 - Full `owned T` ownership type system: move semantics, `dispose()`, `owned()` promotion, owned struct fields, owned-field move tracking, if/else branch analysis, loop backedge/exit checks, and scope-exit checks
+- Re-initialization of a moved `var owned` binding via assignment (including struct-literal RHS), gated by a pointer-flow check that rejects when a live owned alias still references the binding's storage
+- Address-of of an owned binding (`&x`) preserves owned bits; whether the result borrows or moves is decided by the destination type (`*T` borrows, `*owned T` moves; `*mut`-shaped views of the owner slot remain rejected)
+- Field-level pointer provenance: per-field pointer facts in flow state catch self-referential struct escapes at return, dispose/free invalidating field-pointer aliases, and out-of-scope local-address extraction through a struct field
+- Interfaces: structural satisfaction at coercion sites, fat-pointer representation (data + vtable, 16 bytes), automatic vtable emission per `(T, I)` pair, indirect dispatch through the vtable, and `owned I` / `I` interface qualifiers
+- Type-block methods: `type T <base> { ... }` declarations carrying instance methods (pointer receiver) and static methods (no receiver), called as `v.method(args)` / `T.method(args)` respectively
 - Non-escaping borrowed pointer parameters by default, including local alias provenance and escape rejection for returns, globals, fields, and struct literals
 - Compiler built-ins `alloc(T)`, `new(expr)`, and `free(p)` backed by the `_heap` runtime package; `alloc(T)` and `new(expr)` return owned mutable pointers
 - `for` lowering to block + loop control flow; `continue` runs the lowered step expression
@@ -1703,7 +1774,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Register-scaled indexing into globals via `lea` materialization (no `[symbol + reg*scale]` SIB form exists on x86-64; bosc emits an `lea` to materialize the base, then `[reg + idx*scale]`)
 - Postfix chains compose: `a.b[i].c[lo:hi]` parses and codegens uniformly
 - Go-style automatic semicolon insertion (newline after a statement-ending token; suppressed inside `(...)` and `[...]`)
-- Positioned compiler diagnostics with source-context snippets (5 lines + colored caret on TTY)
+- Positioned compiler diagnostics with source-context snippets (5 lines + colored caret on TTY); the lexer records each token's start position, and `ASTType` carries that position into "no such type" and related shape diagnostics
 - mmk-driven build with auto-discovery via `bosc -listimports`; build failures halt the chain cleanly (set -e in defbody scripts, proper exit-code propagation through `pkg_import_targets`)
 - bas synthetic instructions: `volatile`, `name:N` partials, size-qualified indirects, `movzx r64, r/m32`
 - bas struct directive (carries Boson struct shape into .bo); bas var block form with embedded `reloc` lines for data-section relocations; bas string escapes include `\xHH`, `\r`, `\t`
