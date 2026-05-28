@@ -141,7 +141,7 @@ fn copy(dst writer, src reader) i64 {
 	var bs mut byte[]
 	for(;;) {
 		bs = b[:]
-		const n, const err = src.read(bs)
+		const n, var err = src.read(bs)
 		if (err != 0) {
 			return err
 		}
@@ -149,9 +149,9 @@ fn copy(dst writer, src reader) i64 {
 			return 0
 		}
 		bs = bs[:n]
-		const wn, err2 = dst.write(bs)
-		if(err2 != 0) {
-			return err2
+		const wn, err = dst.write(bs)
+		if(err != 0) {
+			return err
 		}
 		if(wn != n) {
 			return -1 // this is shit, we will fix this with proper error types.

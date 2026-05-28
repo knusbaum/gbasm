@@ -1637,27 +1637,53 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if !bindType.Accepts(field.Type) {
 				CompileErrorF(a, "multi-bind %s: cannot assign %s to %s", b.Name, field.Type, bindType)
 			}
-			c.BindVar(a, b.Name, bindType, b.IsConst)
-			if c.ResolveUnderlying(bindType).Indirection > 0 {
-				c.PointerFlow().DeclarePointer(flow.Binding(b.Name))
-			} else if bindType.HasOwned() {
-				pexpr := c.PointerFlow().NewLocalOrigin(flow.Binding(b.Name))
-				c.PointerFlow().AssignPointer(flow.Binding(b.Name), pexpr)
-			}
-			s := newSpot(of, c, b.Name, bindType)
-			offset, _ := initDecl.ByteOffset(c, field.Name)
-			if s.nameIsAddress {
-				// Memory-backed binding: copy field bytes from srcSpot[offset].
-				tmp := c.Temp()
-				fmt.Fprintf(of, "\tlocal %s 64\n", tmp)
-				sz := bindType.Size(c)
-				for off := 0; off < sz; off += 8 {
-					fmt.Fprintf(of, "\tmov %s [%s+%d]\n", tmp, srcSpot.ref, offset+off)
-					fmt.Fprintf(of, "\tmov [%s+%d] %s\n", b.Name, off, tmp)
+			_, rebind := c.bindings[b.Name]
+			if rebind {
+				// Name already declared in this scope — re-binding, not a new declaration.
+				// Apply the same writability check as regular assignment.
+				if c.IsConst(b.Name) {
+					CompileErrorF(a, "Cannot assign to const binding %q", b.Name)
 				}
-				fmt.Fprintf(of, "\tforget %s\n", tmp)
 			} else {
-				fmt.Fprintf(of, "\tmov %s [%s+%d]\n", b.Name, srcSpot.ref, offset)
+				c.BindVar(a, b.Name, bindType, b.IsConst)
+				if c.ResolveUnderlying(bindType).Indirection > 0 {
+					c.PointerFlow().DeclarePointer(flow.Binding(b.Name))
+				} else if bindType.HasOwned() {
+					pexpr := c.PointerFlow().NewLocalOrigin(flow.Binding(b.Name))
+					c.PointerFlow().AssignPointer(flow.Binding(b.Name), pexpr)
+				}
+			}
+			offset, _ := initDecl.ByteOffset(c, field.Name)
+			if rebind {
+				existingType := c.bindings[b.Name]
+				s := spot{ref: b.Name, t: existingType, nameIsAddress: typeIsMemoryBacked(c, existingType)}
+				if s.nameIsAddress {
+					tmp := c.Temp()
+					fmt.Fprintf(of, "\tlocal %s 64\n", tmp)
+					sz := existingType.Size(c)
+					for off := 0; off < sz; off += 8 {
+						fmt.Fprintf(of, "\tmov %s [%s+%d]\n", tmp, srcSpot.ref, offset+off)
+						fmt.Fprintf(of, "\tmov [%s+%d] %s\n", b.Name, off, tmp)
+					}
+					fmt.Fprintf(of, "\tforget %s\n", tmp)
+				} else {
+					fmt.Fprintf(of, "\tmov %s [%s+%d]\n", b.Name, srcSpot.ref, offset)
+				}
+			} else {
+				s := newSpot(of, c, b.Name, bindType)
+				if s.nameIsAddress {
+					// Memory-backed binding: copy field bytes from srcSpot[offset].
+					tmp := c.Temp()
+					fmt.Fprintf(of, "\tlocal %s 64\n", tmp)
+					sz := bindType.Size(c)
+					for off := 0; off < sz; off += 8 {
+						fmt.Fprintf(of, "\tmov %s [%s+%d]\n", tmp, srcSpot.ref, offset+off)
+						fmt.Fprintf(of, "\tmov [%s+%d] %s\n", b.Name, off, tmp)
+					}
+					fmt.Fprintf(of, "\tforget %s\n", tmp)
+				} else {
+					fmt.Fprintf(of, "\tmov %s [%s+%d]\n", b.Name, srcSpot.ref, offset)
+				}
 			}
 		}
 		srcSpot.free(of)
