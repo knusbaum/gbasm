@@ -1,0 +1,70 @@
+package main
+
+import "string"
+
+struct SelfRef {
+	x i64
+	xp *i64
+}
+
+var gx i64 = 10
+
+fn mkSelfRef() SelfRef {
+	var x = 10
+	var s SelfRef = SelfRef{
+		x: 10
+		xp: &gx
+	}
+	return s // move of SelfRef s invalidates s.xp
+}
+
+fn doSomeThing() {
+	var x i64[100]
+
+	for(var i i64 = 0; i < 100; i = i + 1) {
+		x[i] = i
+	}
+}
+
+fn pointers_1() {
+	var myint owned i64 = 10
+	var myintp *i64 = &myint
+	dispose(myint)
+	// string.puti(myint) //compiler treats myint as "moved" from dispose(myint)
+	//string.puti(*myintp) // but our pointer tracker doesn't recognize that myintp points at a "moved" object.
+}
+
+fn retty() struct{ x i64, y i64 } {
+	return {x: 10, y: 11}
+}
+
+fn main(args byte[][]) {	
+	pointers_1()
+	
+	var s SelfRef = SelfRef{
+		x: 10
+		xp: &s.x
+	}
+	string.puti(*s.xp)
+	string.puts("\n")
+	s.x = 100
+	string.puti(*s.xp)
+	string.puts("\n")
+
+	string.puts("Creating self referential struct from the stack.\n*s.xp: ")
+	s = mkSelfRef()
+	string.puti(*s.xp)
+	string.puts("\n")
+
+	string.puts("Running something that overwrites lower stack memory.\n*s.xp: ")
+	doSomeThing()
+	string.puti(*s.xp) // doSomeThing() demonstrates that s.xp is a stale pointer by overwriting stack memory.
+	string.puts("\n")
+
+	var myret = retty();
+	string.puts("RETTY: ")
+	string.puti(myret.x)
+	string.puts(", ")
+	string.puti(myret.y)
+	string.puts("\n")
+}
