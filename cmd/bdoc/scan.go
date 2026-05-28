@@ -208,10 +208,7 @@ func tryBosDecl(s *bufio.Scanner, head string, lineno *int, srcfile string) (Dec
 	// fn name(...) ret { ... }
 	if strings.HasPrefix(head, "fn ") {
 		name := extractName(head[3:], "(")
-		sig := head
-		if i := strings.Index(sig, "{"); i >= 0 {
-			sig = strings.TrimSpace(sig[:i])
-		}
+		sig := strings.TrimSpace(stripBodyOpener(head))
 		skipBracedBody(s, head, lineno)
 		return Decl{
 			Kind:      DeclFunc,
@@ -290,7 +287,7 @@ func parseBosType(s *bufio.Scanner, head string, lineno *int, srcfile string, st
 		d.Body = body
 		d.Signature = "type " + name + " " + collapseBody(body)
 		if methodOpen {
-			d.Methods = parseBosMethodList(s, lineno)
+			d.Methods = parseBosMethodList(s, lineno, srcfile)
 		}
 		return d, true
 	}
@@ -313,7 +310,7 @@ func parseBosType(s *bufio.Scanner, head string, lineno *int, srcfile string, st
 		d.Signature += " " + underlying
 	}
 	if methodOpen {
-		d.Methods = parseBosMethodList(s, lineno)
+		d.Methods = parseBosMethodList(s, lineno, srcfile)
 	}
 	return d, true
 }
@@ -428,7 +425,7 @@ func collapseBody(body string) string {
 // Each method has the form `name(params) [rettype] { body }`. The body is
 // skipped via brace tracking; only the header line becomes the method's
 // signature.
-func parseBosMethodList(s *bufio.Scanner, lineno *int) []Decl {
+func parseBosMethodList(s *bufio.Scanner, lineno *int, srcfile string) []Decl {
 	var methods []Decl
 	var pending []string
 	for s.Scan() {
@@ -451,13 +448,10 @@ func parseBosMethodList(s *bufio.Scanner, lineno *int) []Decl {
 			return methods
 		}
 
-		// Otherwise, this line opens a method. Header up to the first '{' is
+		// Otherwise, this line opens a method. Header up to the body brace is
 		// the signature; the rest of the body is skipped.
 		startLine := *lineno
-		sig := line
-		if i := strings.IndexByte(sig, '{'); i >= 0 {
-			sig = strings.TrimSpace(sig[:i])
-		}
+		sig := strings.TrimSpace(stripBodyOpener(line))
 		name := extractName(line, "(")
 
 		// Skip method body — depth starts at 1 (the outer { of the method
@@ -469,7 +463,7 @@ func parseBosMethodList(s *bufio.Scanner, lineno *int) []Decl {
 			Name:      name,
 			Signature: sig,
 			Doc:       strings.Join(pending, "\n"),
-			SrcFile:   "",
+			SrcFile:   srcfile,
 			SrcLine:   startLine,
 		})
 		pending = nil
@@ -626,6 +620,48 @@ func skipBracedBody(s *bufio.Scanner, head string, lineno *int) {
 		*lineno++
 		depth += countBraces(s.Text())
 	}
+}
+
+// stripBodyOpener returns head with the function-body opening '{' (and
+// anything after it) removed. The body brace is found by brace-balance, so a
+// `{` that belongs to a struct return type — e.g. `fn f() struct{ a: T } {` —
+// is correctly distinguished from the body opener. If no body brace appears
+// on this line, head is returned unchanged.
+func stripBodyOpener(head string) string {
+	if i := strings.Index(head, "//"); i >= 0 {
+		head = head[:i]
+	}
+	depth := 0
+	for i := 0; i < len(head); i++ {
+		switch head[i] {
+		case '{':
+			if depth == 0 {
+				// Tentative body opener — but if a matching '}' follows on
+				// this line, it's a struct (or similar) and we keep looking.
+				j := i + 1
+				bal := 1
+				for j < len(head) && bal > 0 {
+					switch head[j] {
+					case '{':
+						bal++
+					case '}':
+						bal--
+					}
+					j++
+				}
+				if bal != 0 {
+					// Unmatched on this line — this is the body opener.
+					return head[:i]
+				}
+				// Matched on this line; skip past the closing '}' and keep
+				// scanning for a later body brace.
+				i = j - 1
+			} else {
+				depth++
+			}
+		}
+	}
+	return head
 }
 
 // countBraces returns the net change in brace depth over the line: +1 for each

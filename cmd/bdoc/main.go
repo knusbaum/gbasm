@@ -45,6 +45,7 @@ func main() {
 	state := newDocState(packages)
 	http.HandleFunc("/", state.serveIndex)
 	http.HandleFunc("/pkg/", state.servePkg)
+	http.HandleFunc("/styles.css", state.serveCSS)
 
 	fmt.Fprintf(os.Stderr, "bdoc: listening on %s\n", *addr)
 	if err := http.ListenAndServe(*addr, nil); err != nil {
