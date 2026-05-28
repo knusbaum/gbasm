@@ -26,6 +26,7 @@ rm -f string.bo init.bo heap.bo pair.bo pair.bs io.bo io.bs io_sys.bo
 # tests have something to import.
 cat > io.importcfg <<EOF
 _io_sys=io_sys.bo
+string=string.bo
 EOF
 ./bosc -importcfg=io.importcfg -o io.bs $RUNTIME/io/io.bos >/dev/null 2>&1
 ./bas -o io.bo io.bs >/dev/null 2>&1

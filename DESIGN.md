@@ -248,7 +248,7 @@ File IO lives in the `io` and `_io_sys` packages. The typed FD API in `io`:
 
 | Function/Method | Signature | Description |
 |------|------|------|
-| `io.open` | `(byte[] path, i64 flags, i64 mode) owned FD` | Open a file (path must be null-terminated); returns an owned FD |
+| `io.open` | `(byte[] path, i64 flags, i64 mode) owned FD` | Open a file; path is a normal byte slice (NUL-termination is handled internally). Returns an owned FD or one wrapping -errno on failure |
 | `io.FD.read` | `(*FD, mut byte[] buf) i64` | Read up to len(buf) bytes; returns count or -errno |
 | `io.FD.write` | `(*FD, byte[] buf) i64` | Write buf to fd; returns count or -errno |
 | `io.FD.close` | `(*owned FD) i64` | Close the fd and consume the owned obligation |

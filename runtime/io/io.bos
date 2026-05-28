@@ -12,6 +12,7 @@
 package io
 
 import "_io_sys"
+import "string"
 
 // STDIN is the standard input file descriptor (fd 0), pre-opened by the
 // kernel at process start. It is borrowed: do not pass it to close.
@@ -75,13 +76,29 @@ type FD i64 {
 // open opens the file at path with the given open(2) flags and mode,
 // returning an owned FD that the caller is responsible for closing.
 //
-// path must be a null-terminated byte slice — Linux's open(2) expects a
-// C string and does not honour an explicit length. flags is the bitwise
-// OR of the O_* constants (O_RDONLY, O_WRONLY, O_CREAT, …). mode is the
-// permission bits applied when O_CREAT creates a new file.
+// path is an ordinary Boson byte slice — open copies it into an internal
+// buffer and appends the NUL terminator that the underlying open(2)
+// syscall requires, so callers do not need to embed a trailing \x00 or
+// otherwise concern themselves with C-string representation.
 //
-// On failure the returned FD wraps the negation of errno. The caller
-// should check for a negative i64(fd) before using the result.
+// flags is the bitwise OR of the O_* constants (O_RDONLY, O_WRONLY,
+// O_CREAT, …). mode is the permission bits applied when O_CREAT creates
+// a new file.
+//
+// Paths longer than 4095 bytes — one short of Linux's PATH_MAX, leaving
+// room for the NUL — return an owned FD wrapping -ENAMETOOLONG (-36).
+// All other failures surface as the negation of errno from open(2); the
+// caller should check for a negative i64(fd) before using the result.
 fn open(path byte[], flags i64, mode i64) owned FD {
-	return owned(FD(_io_sys.open(path, flags, mode)))
+	var buf byte[4096]
+	const n i64 = string.lenb(path)
+	if (n >= 4096) {
+		return owned(FD(-36))
+	}
+	var i i64
+	for (i = 0; i < n; i = i + 1) {
+		buf[i] = path[i]
+	}
+	buf[n] = 0
+	return owned(FD(_io_sys.open(buf[:n+1], flags, mode)))
 }

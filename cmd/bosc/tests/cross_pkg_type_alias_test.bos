@@ -11,7 +11,7 @@ import "string"
 //   - the owned obligation is satisfied by close
 fn main() i64 {
     // Write to /dev/null through a FD — result discarded, proves type works.
-    var null owned io.FD = io.open("/dev/null\x00", 1, 0)
+    var null owned io.FD = io.open("/dev/null", 1, 0)
     null.write("this goes nowhere\n")
     null.close()
 
