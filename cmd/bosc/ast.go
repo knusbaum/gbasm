@@ -1933,6 +1933,12 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 	if f.Pkg == "" && f.FName == "free" {
 		return voidASTType()
 	}
+	if f.Pkg == "" && f.FName == "len" {
+		if len(f.Args) != 1 {
+			CompileErrorF(f, "len() requires exactly one argument")
+		}
+		return numASTType()
+	}
 	// Cast expression: type name used as a function. Works for both
 	// unqualified (FD(x)) and qualified (io.FD(x)) forms.
 	{

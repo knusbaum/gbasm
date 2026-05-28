@@ -6,7 +6,7 @@ fn sumslice(ns i64[]) i64 {
 	var i i64
 	var s i64
 	s = 0
-	for (i = 0; i < string.lenn(ns); i = i + 1) {
+	for (i = 0; i < len(ns); i = i + 1) {
 		s = s + ns[i]
 	}
 	return s
@@ -22,7 +22,7 @@ fn main() {
 
 	var ns i64[]
 	ns = arr[:]
-	string.puti(string.lenn(ns))
+	string.puti(len(ns))
 	string.puts("\n")
 	string.puti(ns[2])
 	string.puts("\n")
@@ -30,7 +30,7 @@ fn main() {
 	string.puts("\n")
 
 	ns = arr[1:4]
-	string.puti(string.lenn(ns))
+	string.puti(len(ns))
 	string.puts("\n")
 	string.puti(sumslice(ns))
 	string.puts("\n")

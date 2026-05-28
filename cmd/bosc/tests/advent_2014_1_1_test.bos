@@ -12,7 +12,7 @@ type state struct {
 
 fn skip(var bs mut byte[]) mut byte[] {
 	var i i64
-	for (i = 0; i < string.lenb(bs); i = i+1) {
+	for (i = 0; i < len(bs); i = i+1) {
 		if ((bs[i] >= '0') && (bs[i] <= '9')) {
 			bs = bs[i:]
 			break
@@ -36,7 +36,7 @@ fn readRow(var bs mut byte[]) state {
 	var i i64
 	var bsi i64
 	bsi = 0
-	for (i = 0; i < string.lenb(bs); i=i+1) {
+	for (i = 0; i < len(bs); i=i+1) {
 		if (bs[i] < '0' || bs[i] > '9') {
 			// we're out of the number
 			// slice the slice
@@ -52,7 +52,7 @@ fn readRow(var bs mut byte[]) state {
 	bs = skip(bs)
 
 	bsi = 0
-	for (i = 0; i < string.lenb(bs); i=i+1) {
+	for (i = 0; i < len(bs); i=i+1) {
 		if (bs[i] < '0' || bs[i] > '9') {
 			// we're out of the number
 			// slice the slice
@@ -67,7 +67,7 @@ fn readRow(var bs mut byte[]) state {
 	// look for newline to ensure we read the full line.
 	var found i64
 	found = 0
-	for (i = 0; i < string.lenb(bs); i = i+1) {
+	for (i = 0; i < len(bs); i = i+1) {
 	 	if(bs[i] == '\n') {
 	 		found = 1
 	 		bs = bs[i:]
@@ -104,7 +104,7 @@ fn readRow(var bs mut byte[]) state {
 
 fn dumpbs(bs byte[]) {
 	var i i64
-	for (i = 0; i < string.lenb(bs); i = i + 1) {
+	for (i = 0; i < len(bs); i = i + 1) {
 		string.putc(bs[i])
 	}
 	string.puts("\n")
@@ -112,7 +112,7 @@ fn dumpbs(bs byte[]) {
 
 fn dumpns(ns i64[]) {
 	var i i64
-	for (i = 0; i < string.lenn(ns); i = i + 1) {
+	for (i = 0; i < len(ns); i = i + 1) {
 		string.puti(ns[i])
 		string.putc(' ')
 	}
@@ -120,7 +120,7 @@ fn dumpns(ns i64[]) {
 }
 
 fn qsort(ns mut i64[]) {
-	if (string.lenn(ns) <= 0) {
+	if (len(ns) <= 0) {
 		return 0
 	}
 	var pi i64
@@ -130,7 +130,7 @@ fn qsort(ns mut i64[]) {
 		t = pi
 		qsort(ns[:t])
 	}
-	if (pi < string.lenn(ns)-1) {
+	if (pi < len(ns)-1) {
 		var t2 i64
 		t2 = pi + 1
 		qsort(ns[t2:])
@@ -140,11 +140,11 @@ fn qsort(ns mut i64[]) {
 fn partition(ns mut i64[]) i64 {
 	var pivot i64
 	var i i64
-	pivot = ns[string.lenn(ns) - 1]	
+	pivot = ns[len(ns) - 1]	
 	i = 0
 
 	var j i64
-	for (j = 0; j < string.lenn(ns) - 1; j = j + 1) {
+	for (j = 0; j < len(ns) - 1; j = j + 1) {
 		if (ns[j] <= pivot) {
 			var tmp i64
 			tmp = ns[i]
@@ -155,8 +155,8 @@ fn partition(ns mut i64[]) i64 {
 	}
 	var tmp i64
 	tmp = ns[i]
-	ns[i] = ns[string.lenn(ns) - 1]
-	ns[string.lenn(ns)- 1] = tmp
+	ns[i] = ns[len(ns) - 1]
+	ns[len(ns)- 1] = tmp
 	return i
 }
 
@@ -190,7 +190,7 @@ fn main() i64 {
 		}
 
 		var s state
-		for(0; string.lenb(bs) > 4; 0) {
+		for(0; len(bs) > 4; 0) {
 			s = readRow(bs)
 			if ( s.complete == 0 ) {
 				s.remaining = bs
@@ -205,11 +205,11 @@ fn main() i64 {
 		// copy out the remaining buffer for the next round.
 		var i i64
 		bs = s.remaining
-		for (i = 0; i < string.lenb(bs); i = i + 1) {
+		for (i = 0; i < len(bs); i = i + 1) {
 			buf[i] = bs[i]
 		}
 		bs = buf[i:]
-		remaining = string.lenb(s.remaining)
+		remaining = len(s.remaining)
 	}
 
 	var i i64
@@ -244,12 +244,12 @@ fn similarity(left i64[], right i64[]) i64 {
 	var j i64
 	var sim i64
 	sim = 0
-	for (i = 0; i < string.lenn(left); i = i + 1) {
+	for (i = 0; i < len(left); i = i + 1) {
 		var ln i64
 		ln = left[i]
 		var instances i64
 		instances = 0
-		for (j = 0; j < string.lenn(right); j = j + 1) {
+		for (j = 0; j < len(right); j = j + 1) {
 			var rn i64
 			rn = right[j]
 			if(ln == rn) {
@@ -277,7 +277,7 @@ fn atoi(s byte[]) nret {
 	false = (1 == 0)
 	
 	var l i64
-	l = string.lenb(s)
+	l = len(s)
 	var i i64
 	var r i64
 	r = 0

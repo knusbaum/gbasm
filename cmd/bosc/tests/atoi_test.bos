@@ -14,7 +14,7 @@ fn atoi(s byte[]) nret {
 	false = (1 == 0)
 
 	var l i64
-	l = string.lenb(s)
+	l = len(s)
 	var i i64
 	var r i64
 	r = 0

@@ -15,7 +15,7 @@ fn main() {
 	string.puts("\n")
 
 	var len i64
-	len = string.lenb(s)
+	len = len(s)
 
 	var i i64
 	for (i = 0; i < len; i = i + 1) {

@@ -4,7 +4,7 @@ import "string"
 
 fn dumpbs(bs byte[]) {
 	var i i64
-	for (i = 0; i < string.lenb(bs); i = i + 1) {
+	for (i = 0; i < len(bs); i = i + 1) {
 		string.putb(bs[i])
 		string.putc(' ')
 	}

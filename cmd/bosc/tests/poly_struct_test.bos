@@ -33,6 +33,6 @@ fn main() i64 {
 	string.puts("\nY: ")
 	string.puti(p.y)
 	string.puts("\nbs: ")
-	string.puti(string.lenb(p.bs))
+	string.puti(len(p.bs))
 	string.puts("\n")
 }

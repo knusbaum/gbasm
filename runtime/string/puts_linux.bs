@@ -23,23 +23,6 @@ function puts
 	epilogue
 	ret
 
-function lenb
-	type fn(byte[]) i64
-
-	mov rax [rdi+8]
-
-	ret
-
-function lenn
-	type fn(i64[]) i64
-	mov rax [rdi+8]
-	ret
-
-function lenbb
-	type fn(byte[][]) i64
-	mov rax [rdi+8]
-	ret
-
 function exit
 	type fn(i64) void
 	// exit code already in rdi

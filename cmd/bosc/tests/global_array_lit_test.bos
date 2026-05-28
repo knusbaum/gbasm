@@ -35,7 +35,7 @@ fn main() {
 	string.putc('\n')
 
 	// Slice global: length and content.
-	string.puti(string.lenn(slice))
+	string.puti(len(slice))
 	string.putc('\n')
 	string.puti(slice[0])
 	string.putc(' ')

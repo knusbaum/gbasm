@@ -1765,6 +1765,25 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if ast.Pkg == "" && ast.FName == "free" {
 			return compileFreeBuiltin(of, c, a, ast)
 		}
+		if ast.Pkg == "" && ast.FName == "len" {
+			if len(ast.Args) != 1 {
+				CompileErrorF(a, "len() requires exactly one argument")
+			}
+			v := compileTop(of, c, ast.Args[0], nullspot)
+			if !v.t.IsSliceOrArray() {
+				CompileErrorF(a, "len() argument must be a slice or array, got %s", v.t)
+			}
+			if dest.empty() {
+				dest = newSpot(of, c, c.Temp(), numASTType())
+			}
+			if v.t.IsArray() {
+				fmt.Fprintf(of, "\tmov %s %d\n", dest.ref, v.t.ArraySize)
+			} else {
+				fmt.Fprintf(of, "\tmov %s [%s+8]\n", dest.ref, v.ref)
+			}
+			v.free(of)
+			return dest
+		}
 		// Cast expression: type name used as a single-argument function.
 		// Works for unqualified names (FD(x)) and qualified names (io.FD(x)).
 		{

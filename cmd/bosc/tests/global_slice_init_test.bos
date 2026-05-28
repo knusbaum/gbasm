@@ -12,8 +12,8 @@ var with_escapes byte[] = "line one\nline two\n"
 fn main() {
 	string.puts(greeting)
 
-	// Empty slice: lenb should report 0, puts should write nothing.
-	if (string.lenb(empty) == 0) {
+	// Empty slice: len should report 0, puts should write nothing.
+	if (len(empty) == 0) {
 		string.puts("empty ok\n")
 	}
 

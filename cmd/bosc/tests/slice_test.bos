@@ -72,23 +72,23 @@ fn slicetest(var bs mut byte[]) {
 	bs[5] = 10
 	bs[6] = 20
 
-	string.puti(string.lenb(bs))
+	string.puti(len(bs))
 	string.puts("\n")
 	
 	bs = bs[i:]
-	string.puti(string.lenb(bs))
+	string.puti(len(bs))
 	string.puts("\n")
 
 	string.putb(bs[0])
 	string.puts("\n")
 
 	bs = bs[:i]
-	string.puti(string.lenb(bs))
+	string.puti(len(bs))
 	string.puts("\n")
 
 	i = 1
 	bs = bs[i:i+1]
-	string.puti(string.lenb(bs))
+	string.puti(len(bs))
 	string.puts("\n")
 	
 	string.putb(bs[0])

@@ -120,7 +120,7 @@ interface writer {
 // Paths longer than 4095 bytes return err = 36 (ENAMETOOLONG).
 fn open(path byte[], flags i64, mode i64) owned FD, i64 {
 	var buf byte[4096]
-	const n i64 = string.lenb(path)
+	const n i64 = len(path)
 	if (n >= 4096) {
 		return owned(FD(-1)), 36
 	}
