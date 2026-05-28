@@ -105,6 +105,12 @@ type OFile struct {
 	// during Context.Import to register cross-package struct types.
 	Structs map[string]*StructShape
 
+	// TypeAliases are Boson-level named type aliases exported by this
+	// package (e.g. `type FD i64 { ... }`). bas populates this via the
+	// `typealias` directive; bosc reads it during Context.Import to
+	// register the alias and reconstruct its method table.
+	TypeAliases map[string]*TypeAliasShape
+
 	// Not written
 	a *Asm
 }
@@ -123,20 +129,32 @@ type FieldShape struct {
 	Type string
 }
 
+// TypeAliasShape is the wire-level description of a Boson type alias
+// (e.g. `type FD i64 { ... }`). Underlying is the ASTType.String()
+// form of the underlying type. MethodNames lists the bare method names
+// so the importer can reconstruct the method table from the already-
+// imported function signatures.
+type TypeAliasShape struct {
+	Name        string
+	Underlying  string
+	MethodNames []string
+}
+
 func NewOFile(name string, pkgname string) (*OFile, error) {
 	a, err := LoadAsm(AMD64)
 	if err != nil {
 		return nil, err
 	}
 	return &OFile{
-		Filename: name,
-		Pkgname:  pkgname,
-		Types:    make(map[string]*TypeDescr),
-		Data:     make(map[string]*Var),
-		Vars:     make(map[string]*Var),
-		Funcs:    make(map[string]*Function),
-		Structs:  make(map[string]*StructShape),
-		a:        a, // TODO: Hard coded for now. This should be a parameter and written to the ofile.
+		Filename:    name,
+		Pkgname:     pkgname,
+		Types:       make(map[string]*TypeDescr),
+		Data:        make(map[string]*Var),
+		Vars:        make(map[string]*Var),
+		Funcs:       make(map[string]*Function),
+		Structs:     make(map[string]*StructShape),
+		TypeAliases: make(map[string]*TypeAliasShape),
+		a:           a, // TODO: Hard coded for now. This should be a parameter and written to the ofile.
 	}, nil
 }
 
@@ -150,6 +168,15 @@ func (o *OFile) AddStruct(name string, fields []FieldShape) error {
 		return fmt.Errorf("Name %s already declared.", name)
 	}
 	o.Structs[name] = &StructShape{Name: name, Fields: fields}
+	return nil
+}
+
+// AddTypeAlias registers a Boson type alias for export.
+func (o *OFile) AddTypeAlias(name, underlying string, methodNames []string) error {
+	if o.TypeAliases[name] != nil {
+		return fmt.Errorf("TypeAlias %s already declared.", name)
+	}
+	o.TypeAliases[name] = &TypeAliasShape{Name: name, Underlying: underlying, MethodNames: methodNames}
 	return nil
 }
 

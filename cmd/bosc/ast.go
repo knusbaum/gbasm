@@ -889,9 +889,9 @@ func (c *Context) Import(importKey, path string) error {
 				return err
 			}
 			for i := range t.Args {
-				qualifyImportedType(&t.Args[i].Type, o.Pkgname, o.Structs)
+				qualifyImportedType(&t.Args[i].Type, o.Pkgname, o.Structs, o.TypeAliases)
 			}
-			qualifyImportedType(&t.Return, o.Pkgname, o.Structs)
+			qualifyImportedType(&t.Return, o.Pkgname, o.Structs, o.TypeAliases)
 			t.Name = fn.Name
 			c.DefineImportedFunc(o.Pkgname, fn.Name, &t)
 		}
@@ -903,27 +903,52 @@ func (c *Context) Import(importKey, path string) error {
 			if err != nil {
 				return fmt.Errorf("import %q: struct %s field %s: %v", importKey, sh.Name, fs.Name, err)
 			}
-			qualifyImportedType(&ft, o.Pkgname, o.Structs)
+			qualifyImportedType(&ft, o.Pkgname, o.Structs, o.TypeAliases)
 			fields = append(fields, Binding{Name: fs.Name, Type: ft})
 		}
 		qname := o.Pkgname + "." + sh.Name
 		c.DefineStruct(qname, &StructDecl{TName: qname, Fields: fields})
 	}
+	for _, ta := range o.TypeAliases {
+		ut, err := parseTypeString(ta.Underlying)
+		if err != nil {
+			return fmt.Errorf("import %q: type alias %s underlying: %v", importKey, ta.Name, err)
+		}
+		qname := o.Pkgname + "." + ta.Name
+		c.DefineTypeAlias(position{}, qname, ut)
+		// Reconstruct the method FuncDecls from the already-imported function table.
+		if len(ta.MethodNames) > 0 {
+			pkgFuncs := c.imports[o.Pkgname]
+			fds := make([]*FuncDecl, 0, len(ta.MethodNames))
+			for _, mn := range ta.MethodNames {
+				key := ta.Name + "." + mn
+				if fd, ok := pkgFuncs[key]; ok {
+					// Clone with bare method name so MethodForType matches on mn.
+					clone := *fd
+					clone.Name = mn
+					fds = append(fds, &clone)
+				}
+			}
+			c.DefineTypeMethods(qname, fds)
+		}
+	}
 	return nil
 }
 
-// qualifyImportedType walks t's element chain and, when the leaf
-// name matches a struct defined in `structs` (the producer .bo's
-// own struct map), rewrites it as "pkgname.LeafName". Built-in
-// names (i64, byte, bool, …) and already-qualified names (those
-// containing a dot, presumably from a transitive import) are left
-// alone.
-func qualifyImportedType(t *ASTType, pkgname string, structs map[string]*gbasm.StructShape) {
+// qualifyImportedType walks t's element chain and, when the leaf name
+// matches a struct or type alias defined in the producer .bo, rewrites
+// it as "pkgname.LeafName". Built-in names and already-qualified names
+// (containing a dot) are left alone.
+func qualifyImportedType(t *ASTType, pkgname string, structs map[string]*gbasm.StructShape, aliases map[string]*gbasm.TypeAliasShape) {
 	if t.Element != nil {
-		qualifyImportedType(t.Element, pkgname, structs)
+		qualifyImportedType(t.Element, pkgname, structs, aliases)
 		return
 	}
 	if _, ok := structs[t.Name]; ok {
+		t.Name = pkgname + "." + t.Name
+		return
+	}
+	if _, ok := aliases[t.Name]; ok {
 		t.Name = pkgname + "." + t.Name
 	}
 }
@@ -1795,9 +1820,14 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 	if f.Pkg == "" && f.FName == "free" {
 		return voidASTType()
 	}
-	// Cast expression: type name used as a function. Only valid for unqualified calls.
-	if f.Pkg == "" {
-		if t, ok := c.TypeByName(f.FName); ok {
+	// Cast expression: type name used as a function. Works for both
+	// unqualified (FD(x)) and qualified (io.FD(x)) forms.
+	{
+		castName := f.FName
+		if f.Pkg != "" {
+			castName = f.Pkg + "." + f.FName
+		}
+		if t, ok := c.TypeByName(castName); ok {
 			return t
 		}
 	}

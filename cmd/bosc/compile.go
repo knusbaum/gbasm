@@ -1373,10 +1373,16 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		return s
 	case *TypeAliasDecl:
-		// Already registered in toASTTop; nothing to emit.
+		// Emit typealias directive so bas can carry it into the .bo.
+		fmt.Fprintf(of, "typealias %s %s\n", ast.Name, ast.Underlying)
 		return nullspot
 	case *TypeWithMethodsDecl:
-		// Type alias already registered in toASTTop.
+		// Emit typealias directive with method names for cross-package import.
+		fmt.Fprintf(of, "typealias %s %s", ast.Name, ast.Underlying)
+		for _, m := range ast.Methods {
+			fmt.Fprintf(of, " %s", m.Name)
+		}
+		fmt.Fprintf(of, "\n")
 		// Emit each method as `function TypeName.method_name` — the assembler
 		// prepends the package name, producing pkg.TypeName.method_name.
 		for _, m := range ast.Methods {
@@ -1643,11 +1649,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			return compileFreeBuiltin(of, c, a, ast)
 		}
 		// Cast expression: type name used as a single-argument function.
-		// Only valid for unqualified calls.
-		if ast.Pkg == "" {
-			if destType, ok := c.TypeByName(ast.FName); ok {
+		// Works for unqualified names (FD(x)) and qualified names (io.FD(x)).
+		{
+			castName := ast.FName
+			if ast.Pkg != "" {
+				castName = ast.Pkg + "." + ast.FName
+			}
+			if destType, ok := c.TypeByName(castName); ok {
 				if len(ast.Args) != 1 {
-					CompileErrorF(a, "Type cast %s() requires exactly one argument", ast.FName)
+					CompileErrorF(a, "Type cast %s() requires exactly one argument", castName)
 				}
 				return compileCast(of, c, ast.Args[0], destType, dest)
 			}
@@ -3509,9 +3519,17 @@ func compileConcreteMethodCall(of io.Writer, c *Context, a AST, callNode *Funcal
 	allArgs := make([]AST, 0, 1+len(callNode.Args))
 	allArgs = append(allArgs, receiver)
 	allArgs = append(allArgs, callNode.Args...)
+	// If typeName is qualified (e.g. "io.FD"), split so the Funcall routes
+	// through c.imports["io"]["FD.method"] rather than c.funcs["io.FD.method"].
+	synthPkg := ""
+	synthName := typeName + "." + callNode.FName
+	if dot := strings.LastIndex(typeName, "."); dot >= 0 {
+		synthPkg = typeName[:dot]
+		synthName = typeName[dot+1:] + "." + callNode.FName
+	}
 	synthCall := &Funcall{
-		Pkg:   "",
-		FName: typeName + "." + callNode.FName,
+		Pkg:   synthPkg,
+		FName: synthName,
 		Args:  allArgs,
 		p:     callNode.p,
 	}

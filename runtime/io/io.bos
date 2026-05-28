@@ -1,0 +1,23 @@
+package io
+
+import "string"
+
+type FD i64 {
+	read(fd *FD, buf mut byte[]) i64 {
+		return string.read(i64(*fd), buf)
+	}
+	write(fd *FD, buf byte[]) i64 {
+		return string.write(i64(*fd), buf)
+	}
+	close(fd *owned FD) i64 {
+		const result i64 = string.close(i64(*fd))
+		dispose(fd)
+		return result
+	}
+}
+
+// open opens the file at path with the given flags and mode.
+// path must be null-terminated.
+fn open(path byte[], flags i64, mode i64) owned FD {
+	return owned(FD(string.open(path, flags, mode)))
+}

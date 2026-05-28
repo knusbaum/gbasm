@@ -519,6 +519,10 @@ func writeOFile(w io.Writer, o *OFile) error {
 	if err != nil {
 		return err
 	}
+	err = writeTypeAliases(w, o.TypeAliases)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -551,14 +555,19 @@ func readOFile(r io.Reader) (*OFile, error) {
 	if err != nil {
 		return nil, err
 	}
+	typeAliases, err := readTypeAliases(r)
+	if err != nil {
+		return nil, err
+	}
 	return &OFile{
-		Pkgname:   pkgname,
-		ExeFormat: exeformat,
-		Types:     types,
-		Data:      data,
-		Vars:      vars,
-		Funcs:     funcs,
-		Structs:   structs,
+		Pkgname:     pkgname,
+		ExeFormat:   exeformat,
+		Types:       types,
+		Data:        data,
+		Vars:        vars,
+		Funcs:       funcs,
+		Structs:     structs,
+		TypeAliases: typeAliases,
 	}, nil
 }
 
@@ -620,6 +629,67 @@ func readStructs(r io.Reader) (map[string]*StructShape, error) {
 			fields[j] = FieldShape{Name: fName, Type: fType}
 		}
 		m[name] = &StructShape{Name: name, Fields: fields}
+	}
+	return m, nil
+}
+
+func writeTypeAliases(w io.Writer, aliases map[string]*TypeAliasShape) error {
+	names := make([]string, 0, len(aliases))
+	for n := range aliases {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	if err := writeSize(w, len(names)); err != nil {
+		return err
+	}
+	for _, name := range names {
+		a := aliases[name]
+		if err := writeString(w, a.Name); err != nil {
+			return err
+		}
+		if err := writeString(w, a.Underlying); err != nil {
+			return err
+		}
+		if err := writeSize(w, len(a.MethodNames)); err != nil {
+			return err
+		}
+		for _, mn := range a.MethodNames {
+			if err := writeString(w, mn); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func readTypeAliases(r io.Reader) (map[string]*TypeAliasShape, error) {
+	n, err := readSize(r)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]*TypeAliasShape, n)
+	for i := 0; i < n; i++ {
+		name, err := readString(r)
+		if err != nil {
+			return nil, err
+		}
+		underlying, err := readString(r)
+		if err != nil {
+			return nil, err
+		}
+		nMethods, err := readSize(r)
+		if err != nil {
+			return nil, err
+		}
+		methods := make([]string, nMethods)
+		for j := range methods {
+			mn, err := readString(r)
+			if err != nil {
+				return nil, err
+			}
+			methods[j] = mn
+		}
+		m[name] = &TypeAliasShape{Name: name, Underlying: underlying, MethodNames: methods}
 	}
 	return m, nil
 }

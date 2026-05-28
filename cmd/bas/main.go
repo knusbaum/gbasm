@@ -351,6 +351,23 @@ func main() {
 				fmt.Printf("Fatal: Need package declaration before anything else.")
 				os.Exit(1)
 			}
+			if strings.HasPrefix(line, "typealias ") {
+				// Single-line directive:
+				//   typealias Name underlying [method1 method2 ...]
+				parts := strings.Fields(strings.TrimPrefix(line, "typealias "))
+				if len(parts) < 2 {
+					fmt.Printf("Fatal: typealias directive: expected name and underlying type\n")
+					os.Exit(1)
+				}
+				aname := parts[0]
+				underlying := parts[1]
+				methods := parts[2:]
+				if err := o.AddTypeAlias(aname, underlying, methods); err != nil {
+					fmt.Printf("Fatal: typealias %s: %s\n", aname, err)
+					os.Exit(1)
+				}
+				continue
+			}
 			if strings.HasPrefix(line, "struct") {
 				// Multi-line directive:
 				//   struct Name {

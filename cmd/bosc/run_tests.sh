@@ -7,7 +7,7 @@ if [[ $? != 0 ]]; then
 fi
 
 RUNTIME=../../runtime
-rm -f string.bo init.bo heap.bo pair.bo pair.bs
+rm -f string.bo init.bo heap.bo pair.bo pair.bs io.bo io.bs
 ./bas -o string.bo $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs >/dev/null 2>&1
 ./bas -o init.bo $RUNTIME/_init/init_linux.bs >/dev/null 2>&1
 ./bas -o heap.bo $RUNTIME/_heap/heap_linux.bs >/dev/null 2>&1
@@ -18,10 +18,20 @@ rm -f string.bo init.bo heap.bo pair.bo pair.bs
 ./bosc -importcfg=/dev/null -o pair.bs $RUNTIME/pair/pair.bos >/dev/null 2>&1
 ./bas -o pair.bo pair.bs >/dev/null 2>&1
 
+# Compile the Boson-source `io` runtime package so cross-package type-alias
+# tests have something to import.
+cat > io.importcfg <<EOF
+string=string.bo
+EOF
+./bosc -importcfg=io.importcfg -o io.bs $RUNTIME/io/io.bos >/dev/null 2>&1
+./bas -o io.bo io.bs >/dev/null 2>&1
+rm -f io.importcfg
+
 # Generate a project-wide importcfg.
 cat > test.importcfg <<EOF
 string=string.bo
 pair=pair.bo
+io=io.bo
 EOF
 
 #set -e
@@ -80,11 +90,14 @@ for t in `ls tests/*_test.bos`; do
 		continue
     fi
     # cat ${t}.bas.out
-    # Link in pair.bo only when the test actually imports the pair package.
+    # Link in extra packages only when the test actually imports them.
     # Stale references would otherwise pull in unused symbols.
     extra_bo=""
     if grep -q '^import "pair"' "$t"; then
-        extra_bo="pair.bo"
+        extra_bo="$extra_bo pair.bo"
+    fi
+    if grep -q '^import "io"' "$t"; then
+        extra_bo="$extra_bo io.bo"
     fi
     ./bld -o ${t}.o ${t}.bo string.bo init.bo heap.bo $extra_bo >${t}.bld.out 2>&1
     if [[ $? != 0 ]]; then
@@ -131,6 +144,6 @@ if [[ $fail != '' ]]; then
 fi
 
 rm tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout
-rm bosc bas bld string.bo init.bo heap.bo test.importcfg
+rm bosc bas bld string.bo init.bo heap.bo pair.bo pair.bs io.bo io.bs test.importcfg
 echo "SUITE PASSED"
 exit 0
