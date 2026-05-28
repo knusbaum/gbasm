@@ -1,6 +1,6 @@
-all: bld bas bosc
+all: bld bas bosc bdoc
 
-.PHONY: bld bas bosc
+.PHONY: bld bas bosc bdoc
 
 bld:
 	go build ./cmd/bld
@@ -10,6 +10,9 @@ bas:
 
 bosc:
 	go build ./cmd/bosc
+
+bdoc:
+	go build ./cmd/bdoc
 
 test: go_test bas_test bosc_test
 

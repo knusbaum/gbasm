@@ -52,10 +52,9 @@ func (d *docState) servePkg(w http.ResponseWriter, r *http.Request) {
 type packageView struct {
 	Pkg        *PackageScan
 	Funcs      []Decl
-	Structs    []Decl
-	TypeDecls  []Decl
+	Types      []Decl
+	Interfaces []Decl
 	VarDecls   []Decl
-	DataDecls  []Decl
 	AsmFuncs   []Decl
 	AsmVars    []Decl
 	AsmData    []Decl
@@ -68,14 +67,12 @@ func buildPackageView(p *PackageScan) *packageView {
 		switch d.Kind {
 		case DeclFunc:
 			v.Funcs = append(v.Funcs, d)
-		case DeclStruct:
-			v.Structs = append(v.Structs, d)
-		case DeclTypeAlias:
-			v.TypeDecls = append(v.TypeDecls, d)
-		case DeclVar:
+		case DeclType:
+			v.Types = append(v.Types, d)
+		case DeclInterface:
+			v.Interfaces = append(v.Interfaces, d)
+		case DeclVar, DeclData:
 			v.VarDecls = append(v.VarDecls, d)
-		case DeclData:
-			v.DataDecls = append(v.DataDecls, d)
 		case DeclAsmFunc:
 			v.AsmFuncs = append(v.AsmFuncs, d)
 		case DeclAsmVar:
@@ -84,7 +81,7 @@ func buildPackageView(p *PackageScan) *packageView {
 			v.AsmData = append(v.AsmData, d)
 		}
 	}
-	for _, list := range [][]Decl{v.Funcs, v.Structs, v.TypeDecls, v.VarDecls, v.DataDecls, v.AsmFuncs, v.AsmVars, v.AsmData} {
+	for _, list := range [][]Decl{v.Funcs, v.Types, v.Interfaces, v.VarDecls, v.AsmFuncs, v.AsmVars, v.AsmData} {
 		sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
 	}
 	if p.DocComment != "" {
@@ -108,14 +105,14 @@ func splitDoc(s string) []string {
 // ---- HTML templates ---------------------------------------------------------
 
 var tmplFuncs = template.FuncMap{
-	"isAsm": func(d Decl) bool {
-		return d.Kind == DeclAsmFunc || d.Kind == DeclAsmVar || d.Kind == DeclAsmData
+	"hasStructBody": func(d Decl) bool {
+		return strings.HasPrefix(strings.TrimSpace(d.Body), "struct")
 	},
 }
 
 const baseCSS = `
 body { font-family: -apple-system, sans-serif; max-width: 900px; margin: 2em auto; padding: 0 1em; color: #222; }
-h1, h2, h3 { color: #003a70; }
+h1, h2, h3, h4 { color: #003a70; }
 a { color: #003a70; }
 a:hover { text-decoration: underline; }
 code, pre { font-family: "SF Mono", Menlo, Consolas, monospace; }
@@ -124,11 +121,17 @@ pre { background: #f5f5f5; padding: 0.8em 1em; border-radius: 4px; overflow-x: a
 .decl .sig { font-family: "SF Mono", Menlo, Consolas, monospace; font-weight: 600; color: #111; background: #f5f5f5; padding: 0.5em 0.8em; border-left: 3px solid #003a70; }
 .decl .doc { margin: 0.5em 0 0 0; }
 .decl .doc p { margin: 0.5em 0; }
+.method { margin: 0.8em 0 0.8em 1.5em; padding-left: 0.8em; border-left: 2px solid #e0e0e0; }
+.method .sig { font-family: "SF Mono", Menlo, Consolas, monospace; font-weight: 600; color: #111; background: #fafafa; padding: 0.35em 0.6em; border-left: 3px solid #6688aa; }
+.method .doc { margin: 0.3em 0 0 0; font-size: 0.95em; }
+.method .doc p { margin: 0.3em 0; }
+.method .srcref { font-size: 0.8em; }
 .srcref { color: #888; font-size: 0.85em; }
 .pkglist li { margin: 0.3em 0; }
 .pkglist code { background: none; }
 .pkgname { font-size: 0.9em; color: #888; }
 .kind-tag { display: inline-block; padding: 0.1em 0.5em; background: #eee; color: #555; font-size: 0.75em; border-radius: 3px; margin-right: 0.5em; }
+.methods-label { color: #555; font-size: 0.85em; margin: 0.6em 0 0.2em 1.5em; text-transform: uppercase; letter-spacing: 0.05em; }
 hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
 `
 
@@ -180,24 +183,43 @@ var pkgTmpl = template.Must(template.New("pkg").Funcs(tmplFuncs).Parse(`
 </div>
 {{end}}
 
-{{if .TypeDecls}}
+{{if .Types}}
 <h2>Types</h2>
-{{range .TypeDecls}}
+{{range .Types}}
 <div class="decl">
   <div class="sig">{{.Signature}}</div>
+  {{if hasStructBody .}}<pre>{{.Body}}</pre>{{end}}
   {{if .Doc}}<div class="doc"><p>{{.Doc}}</p></div>{{end}}
   <p class="srcref">{{.SrcFile}}:{{.SrcLine}}</p>
+  {{if .Methods}}
+    <div class="methods-label">Methods</div>
+    {{range .Methods}}
+    <div class="method">
+      <div class="sig">{{.Signature}}</div>
+      {{if .Doc}}<div class="doc"><p>{{.Doc}}</p></div>{{end}}
+    </div>
+    {{end}}
+  {{end}}
 </div>
 {{end}}
 {{end}}
 
-{{if .Structs}}
-<h2>Structs</h2>
-{{range .Structs}}
+{{if .Interfaces}}
+<h2>Interfaces</h2>
+{{range .Interfaces}}
 <div class="decl">
-  <div class="sig"><pre>{{.Body}}</pre></div>
+  <div class="sig">{{.Signature}}</div>
   {{if .Doc}}<div class="doc"><p>{{.Doc}}</p></div>{{end}}
   <p class="srcref">{{.SrcFile}}:{{.SrcLine}}</p>
+  {{if .Methods}}
+    <div class="methods-label">Methods</div>
+    {{range .Methods}}
+    <div class="method">
+      <div class="sig">{{.Signature}}</div>
+      {{if .Doc}}<div class="doc"><p>{{.Doc}}</p></div>{{end}}
+    </div>
+    {{end}}
+  {{end}}
 </div>
 {{end}}
 {{end}}
@@ -264,4 +286,3 @@ var pkgTmpl = template.Must(template.New("pkg").Funcs(tmplFuncs).Parse(`
 </ul>
 </body></html>
 `))
-

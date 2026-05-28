@@ -40,6 +40,12 @@ func discoverPackages(bosonpath string) ([]*PackageScan, error) {
 			if !d.IsDir() {
 				return nil
 			}
+			// Skip per-package work directories produced by boson.mmk. They
+			// hold intermediate .bs files generated from .bos sources and
+			// would otherwise show up as duplicate "packages" in the index.
+			if strings.HasSuffix(d.Name(), ".work") {
+				return filepath.SkipDir
+			}
 			if !dirHasBosonSources(path) {
 				return nil
 			}
