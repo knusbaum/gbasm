@@ -1,0 +1,12 @@
+package main
+
+fn take(x owned i64) {
+	dispose(x)
+}
+
+fn main() {
+	var i owned i64 = 10
+	var t i64 = i
+	take(i)
+	var r i64 = t
+}

@@ -597,14 +597,13 @@ func lvalueIsWritable(c *Context, a AST) (bool, string) {
 	return false, fmt.Sprintf("Cannot assign to expression of this form")
 }
 
+// pointerExprForAST returns the binding-flow link for an expression: an Origin
+// or pointer-slot reference that downstream alias bookkeeping can record.
+// Despite the name, the link is not pointer-specific — a value-typed `owned`
+// binding also has an Origin (created at its declaration), and any non-owned
+// scalar derived from it carries the same Origin so c.Move on the source
+// invalidates the alias the same way TargetDead invalidates a borrowed *T.
 func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr {
-	// Resolve through type aliases: `type myptr *T` has Indirection==0 on its
-	// name but is a pointer when followed through. Otherwise a value cast
-	// like `myptr(&i)` would short-circuit to UnknownPointer here and the
-	// destination binding would lose its origin/validity link to the source.
-	if c.ResolveUnderlying(a.ASTType(c)).Indirection == 0 {
-		return c.PointerFlow().UnknownPointer()
-	}
 	switch ast := a.(type) {
 	case *Symbol:
 		if c.IsGlobalBinding(ast.Name) {
@@ -619,6 +618,16 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 			}
 			if t, ok := c.TypeForVar(name); ok && t.Indirection > 0 {
 				return c.PointerFlow().AddressOfPointerSlot(flow.Binding(name))
+			}
+			// Value-typed local. If the binding already carries a flow
+			// link (owned self-link, or alias of another owned), &name
+			// should preserve it so the resulting pointer references the
+			// same Origin. Without this, taking &t of an aliased value
+			// would silently produce a fresh Live origin and discard the
+			// chain back to the moved source.
+			existing := c.PointerFlow().Pointer(flow.Binding(name))
+			if existing.KnownOrigin {
+				return existing
 			}
 			return c.PointerFlow().NewLocalOrigin(flow.Binding(name))
 		}
@@ -703,13 +712,18 @@ func updatePointerFlowForAssignment(c *Context, target AST, dst ASTType, val AST
 		return
 	}
 	sym, ok := target.(*Symbol)
-	if !ok || dst.Indirection == 0 {
+	if !ok {
 		return
 	}
 	if c.IsGlobalBinding(sym.Name) {
 		c.PointerFlow().AssignPointer(flow.Binding(sym.Name), c.PointerFlow().UnknownPointer())
 		return
 	}
+	// Update the binding's flow link. For pointer-typed dests this is the
+	// usual *p alias bookkeeping; for value-typed dests, an owned source
+	// produces a value-alias whose origin gets invalidated on c.Move.
+	// When the source has no link (UnknownPointer), assigning still clears
+	// any stale link the destination held from a prior owned source.
 	c.PointerFlow().AssignPointer(flow.Binding(sym.Name), pointerExprForAST(c, val, sym.Name))
 }
 
@@ -788,18 +802,39 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 	switch v := val.(type) {
 	case *Symbol:
 		checkOwnedSourceAvailable(c, val)
-		c.Move(v.Name)
 		declared, _ := c.DeclaredTypeForVar(v.Name)
+		// Pointer-typed owned source moving into an owned destination is a
+		// *transfer*: the destination pointer now owns the same allocation
+		// the source pointed at. c.Move below will invalidate that origin
+		// (treating the source as if its allocation went dead); capture the
+		// origin first so we can restore it. Other aliases of the same
+		// allocation remain usable until the new owner is consumed.
+		var transferOrigin flow.Origin
+		if declared.Indirection > 0 {
+			if ptrExpr := c.PointerFlow().Pointer(flow.Binding(v.Name)); ptrExpr.KnownOrigin {
+				transferOrigin = ptrExpr.Origin
+			}
+		}
+		c.Move(v.Name)
+		if transferOrigin != "" {
+			c.PointerFlow().InvalidateOrigin(transferOrigin, flow.TargetLive)
+		}
 		if declared.Indirection > 0 && declared.NilMask&1 != 0 {
 			fmt.Fprintf(of, "\tmov %s 0\n", v.Name)
 			c.SetNullFact(VarFlowPath(v.Name), NullKnownNull)
 		}
 	case *Address:
-		// owned(&x) discharges x's obligation through the pointer: the
-		// callee will consume what x's slot referenced. Mark x as moved.
+		// `&x` into an owned-pointer destination transfers ownership: the
+		// destination pointer becomes the new owner of x's storage, and x
+		// the binding can no longer be used. But the storage itself is
+		// still live — the destination points at it and will be the one
+		// to discharge the obligation. Re-validate Origin(x) so any other
+		// pointer aliases of the same storage stay usable until the new
+		// owner is consumed.
 		if v.Var != "" {
 			checkOwnedSourceAvailable(c, &Symbol{Name: v.Var, p: v.p})
 			c.Move(v.Var)
+			c.PointerFlow().InvalidateOrigin(flow.Origin(v.Var), flow.TargetLive)
 		}
 	case *Deref:
 		ptype := v.Val.ASTType(c)
@@ -1405,6 +1440,17 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		c.BindVar(a, ast.Name, ast.Type, ast.IsConst)
 		if c.ResolveUnderlying(ast.Type).Indirection > 0 {
 			c.PointerFlow().DeclarePointer(flow.Binding(ast.Name))
+		} else if ast.Type.HasOwned() {
+			// Owned value-typed bindings (`var fd owned i64 = ...`) get an
+			// Origin entry so c.Move(name) has a flow-state slot to
+			// invalidate. The binding also stores a self-link in `pointers`
+			// so a coercion at `var t i64 = fd` can read fd's PointerExpr
+			// (Origin=fd) and stamp the same link on t. Reading t after
+			// `take(fd)` then trips CheckDerefValidity at the Symbol read,
+			// the same way `*p` would for a borrowed pointer to a moved
+			// binding.
+			pexpr := c.PointerFlow().NewLocalOrigin(flow.Binding(ast.Name))
+			c.PointerFlow().AssignPointer(flow.Binding(ast.Name), pexpr)
 		}
 		s := newSpot(of, c, ast.Name, ast.Type)
 		if ast.Init != nil {
@@ -1480,7 +1526,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// same flow-state registration as a bare *T.
 			if c.ResolveUnderlying(dstt).Indirection > 0 {
 				c.SetBorrowedBinding(ast.Name, initIsBorrowed)
-				c.PointerFlow().AssignPointer(flow.Binding(ast.Name), pointerExprForAST(c, ast.Init, ast.Name))
+			}
+			// Record the source's flow link on the destination. For pointer-
+			// typed bindings this is the *p alias relationship; for value-typed
+			// non-owned destinations coerced from an owned source it is the
+			// value-alias relationship. Either way, c.Move on the linked
+			// Origin invalidates this binding's reads via CheckDerefValidity.
+			pexpr := pointerExprForAST(c, ast.Init, ast.Name)
+			if pexpr.KnownOrigin || pexpr.KnownSlot {
+				c.PointerFlow().AssignPointer(flow.Binding(ast.Name), pexpr)
 			}
 			// Propagate field pointer facts on struct copy.
 			if sym, ok := ast.Init.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) && dstt.Indirection == 0 {
@@ -1816,6 +1870,28 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			pkg := c.Pkgname()
 			fmt.Fprintf(of, "\tlea %s %s.%s\n", dest.ref, pkg, name)
 			return dest
+		}
+		// Validate the value-alias link before producing the pointer.
+		// `&t` on a binding whose origin chain has been invalidated
+		// (e.g. t aliases `i` and `take(i)` already ran) creates a way
+		// to observe stale storage. Catch here rather than waiting for
+		// a downstream deref, which may never happen if the pointer
+		// crosses a function boundary into opaque callee scope. Skipped
+		// for pointer-typed bindings; their deref sites still own the
+		// validity check.
+		if t, ok := c.TypeForVar(name); ok && c.ResolveUnderlying(t).Indirection == 0 {
+			ptr := c.PointerFlow().Pointer(flow.Binding(name))
+			if ptr.KnownOrigin {
+				if origin := string(ptr.Origin); origin != "" {
+					if ok, _ := c.PointerFlow().CheckDerefValidity(ptr); !ok {
+						if origin == name {
+							CompileErrorF(a, "cannot take address of \"%s\": it was consumed", name)
+						} else {
+							CompileErrorF(a, "cannot take address of \"%s\": its alias source \"%s\" was consumed", name, origin)
+						}
+					}
+				}
+			}
 		}
 		// For register-resident locals, force-spill to memory so the
 		// taken address is stable; for memory-backed names (globals,
@@ -2515,6 +2591,18 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	case *Symbol:
 		if c.IsMoved(ast.Name) {
 			CompileErrorF(a, "Use of \"%s\" after it was moved", ast.Name)
+		}
+		// Validate the binding's flow link. Value-typed bindings catch a
+		// use-after-move on an aliased source (`var t i64 = fd; take(fd);
+		// read t`). Pointer-typed bindings catch a use-after-move on a
+		// derived pointer (`var p *i64 = &fd; take(fd); use_ptr(p)`).
+		// The pointee *p deref site already validates explicit derefs;
+		// this catches the cases where the pointer crosses a function or
+		// method boundary opaquely (interface dispatch, fn args, method
+		// receiver) — there is no other place the local tracker can flag
+		// the staleness before the link is lost to the callee's scope.
+		if ok, reason := c.PointerFlow().CheckDerefValidity(c.PointerFlow().Pointer(flow.Binding(ast.Name))); !ok {
+			CompileErrorF(a, "%s", reason)
 		}
 		s := spot{ref: ast.Name, t: ast.ASTType(c), nameIsAddress: c.NameIsAddress(ast.Name)}
 		if dest.same(&nullspot) {

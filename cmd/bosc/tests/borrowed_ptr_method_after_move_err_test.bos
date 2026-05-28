@@ -1,0 +1,18 @@
+package main
+
+type thingy i64 {
+	hello(t *thingy) {
+	}
+}
+
+fn take(x owned i64) {
+	dispose(x)
+}
+
+fn main() {
+	var i owned i64 = 10
+	var t thingy = thingy(i)
+	var tp *thingy = &t
+	take(i)
+	tp.hello()
+}

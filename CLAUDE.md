@@ -283,6 +283,28 @@ drive most of the code:
 When you're touching call-site code or thinking about a new
 parameter kind, those two are the invariants to preserve.
 
+#### Owned scalars create aliases on coercion, not copies
+
+`var fd owned i64 = 10` registers `Origin("fd")` in the pointer-flow
+state (compile.go's VarDecl branch). Coercing to a non-owned
+destination — `var t i64 = fd`, `thingy(fd)`, passing as an `i64`
+parameter — produces an alias: `pointers["t"] = {Origin: "fd"}`.
+Reading the destination later goes through the Symbol case in
+compileTop, which calls `CheckDerefValidity` for non-pointer types.
+`c.Move(fd)` invalidates `Origin("fd")` with `TargetMoved`, so any
+later use of `t` is rejected with "cannot dereference pointer to
+'fd': the target was consumed."
+
+The Symbol-site check is gated on `c.ResolveUnderlying(...).
+Indirection == 0` so pointer-typed reads keep their current
+behavior — those are still validated at the `*p` deref site, not
+at the bare Symbol read.
+
+If you add a new path that creates an owned scalar binding or a
+non-owned scalar from one, mirror the existing decl/assign sites:
+register the Origin at owned decl, run the source through
+`pointerExprForAST` and `AssignPointer` at the coercion site.
+
 #### `&owned` and re-init
 
 `&x` of an owned binding keeps its owned bits in the resulting

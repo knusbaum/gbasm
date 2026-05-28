@@ -306,7 +306,7 @@ The ownership system enforces these invariants at compile time. It is not a secu
 
 `owned` is a compile-time qualifier that can be applied to any type. It has no effect on runtime representation — `owned i64` is still just an i64 in registers and memory. What it does is:
 
-1. Make the value **non-copyable** — you cannot duplicate an owned value.
+1. Make the obligation **non-duplicable** — the cleanup responsibility cannot be held by two bindings at once. Coercing an owned value to a non-owned destination produces a *borrow*: for pointers, a non-owning pointer alias; for value types, a tracked value-alias that the compiler invalidates when the owned source is moved. The only way to obtain a second independent obligation is to construct it explicitly (see [Controlled copying](#controlled-copying)).
 2. Require **explicit consumption** before the value goes out of scope — failing to do so is a compile error.
 
 `owned` can be applied to any type regardless of where the value lives:
@@ -488,11 +488,12 @@ Passing `owned *owned T` to a function taking `*owned T` or `owned *T` — consu
 
 ### Aliasing and ownership
 
-Ownership is unique, but pointer access may alias. The compiler separates these two ideas:
+Ownership is unique, but access may alias. The compiler separates these two ideas:
 
-- **Ownership aliases are not allowed.** An `owned T` value cannot be copied. Passing it to an owned parameter moves it; assigning it to another owned binding moves it; using it afterward is rejected.
-- **Non-owning pointer aliases are allowed.** A value of type `*T`, `*mut T`, `*?T`, etc. may be copied freely, even if it points at storage owned by some other binding.
+- **Ownership aliases are not allowed.** An `owned T` obligation cannot be held by two bindings at once. Passing to an owned parameter moves it; assigning to another owned binding moves it; using it afterward is rejected.
+- **Non-owning aliases are allowed but tracked.** A value of type `*T`, `*mut T`, `*?T`, etc. may be copied freely. A value-typed binding coerced from an owned source (`var t i64 = fd`) may also be created freely. In both cases the alias is recorded in flow state with the source's Origin, and the compiler invalidates it when the source is moved.
 - **Coercing to a non-owned destination strips ownership.** Passing `owned *owned mut node` to a parameter of type `*node` or `*mut node` does not move either obligation: `Accepts` strips owned at the coercion site. The callee receives only an access capability. Coercing to an `owned` destination (e.g. `*owned node`) moves instead.
+- **Value coercion is alias, not copy.** Stripping `owned` from a non-pointer source (e.g. `var t i64 = fd_owned`) duplicates the bit pattern into the destination but records a flow-state alias back to the source. Reading the destination after the source is moved is rejected as "cannot dereference pointer to X: the target was consumed," the same diagnostic a borrowed `*T` would produce. To obtain an independent obligation, construct it explicitly through a copy-returning function (see [Controlled copying](#controlled-copying)).
 
 For example:
 
@@ -566,9 +567,9 @@ Pointer-to-pointer tracking is required for the same reason. A local pointer var
 
 These rules are required by the ownership model:
 
-- `owned` values are not copyable. Copying ownership would create two cleanup obligations for the same resource.
+- The obligation is non-duplicable. Two bindings cannot both hold the same cleanup responsibility; that would mean two `dispose`/`free`/`close` calls for one resource.
 - Passing or assigning to an `owned` destination moves the obligation. The source cannot be used afterward.
-- Coercing to a non-owned destination strips ownership at the coercion site. A borrowed pointer is an access capability, not a cleanup responsibility.
+- Coercing to a non-owned destination strips ownership at the coercion site. The destination receives an *alias*: a non-owning pointer for `*T`-shaped sources, a value-alias bound to the source's Origin for scalar sources. The destination is invalidated when the source's obligation is consumed.
 - Writes that may touch owned storage invalidate facts about that storage unless the compiler can prove the write is unrelated.
 - Unknown pointer state is conservative. If the compiler cannot prove what a mutable pointer aliases, it must assume owned-field facts reachable through that pointer may be stale.
 - Mutable access to an owner slot is rejected. Code must not be able to replace `a` in `var a owned *T` without also consuming the old obligation.
@@ -747,7 +748,7 @@ If the compiler already knows the pointer is non-null, no runtime check is emitt
 
 ### Controlled copying
 
-Non-copyability is the default for owned types. API authors can produce new owned values explicitly, including copies. A copy is simply a new independent obligation:
+Coercion creates an alias, not a duplicate obligation. To produce a second independent obligation, an API author writes an explicit constructor that returns a fresh `owned T`:
 
 ```
 fn copy(x *T) owned T { ... }   // borrows x (no owned), returns a new obligation
@@ -759,6 +760,8 @@ fn main() {
     close(fd2)
 }
 ```
+
+The implicit-coercion path that creates aliases (described in [Aliasing and ownership](#aliasing-and-ownership)) handles the "I want to read this value as a non-owned thing" case. `copy` handles the "I want a second independent obligation" case. The two never collide: aliases are invalidated when the source is moved; constructed copies are fresh obligations the source's lifetime does not constrain.
 
 Note that `copy` takes `*T`, not `*owned T`. It does not need to own the source to read from it. This means `copy` could be called on a value that has already been disposed — it would read freed or uninitialized memory. Preventing that correctly requires a witness mechanism to enforce that the source is still live. That mechanism is not part of the current system and is deferred to a future design.
 
@@ -1760,6 +1763,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Full `owned T` ownership type system: move semantics, `dispose()`, `owned()` promotion, owned struct fields, owned-field move tracking, if/else branch analysis, loop backedge/exit checks, and scope-exit checks
 - Re-initialization of a moved `var owned` binding via assignment (including struct-literal RHS), gated by a pointer-flow check that rejects when a live owned alias still references the binding's storage
 - Address-of of an owned binding (`&x`) preserves owned bits; whether the result borrows or moves is decided by the destination type (`*T` borrows, `*owned T` moves; `*mut`-shaped views of the owner slot remain rejected)
+- Value-alias tracking for owned scalars: declaring `var fd owned i64 = ...` registers a flow-state Origin; coercing to a non-owned destination (`var t i64 = fd`, `thingy(fd)`, etc.) records the destination as an alias of that Origin; `c.Move` on the source invalidates all such aliases, and reading the destination after the move is rejected at the Symbol-use site with the same diagnostic as a borrowed-pointer use-after-move
 - Field-level pointer provenance: per-field pointer facts in flow state catch self-referential struct escapes at return, dispose/free invalidating field-pointer aliases, and out-of-scope local-address extraction through a struct field
 - Interfaces: structural satisfaction at coercion sites, fat-pointer representation (data + vtable, 16 bytes), automatic vtable emission per `(T, I)` pair, indirect dispatch through the vtable, and `owned I` / `I` interface qualifiers
 - Type-block methods: `type T <base> { ... }` declarations carrying instance methods (pointer receiver) and static methods (no receiver), called as `v.method(args)` / `T.method(args)` respectively

@@ -1,0 +1,17 @@
+package main
+
+interface helloer {
+	hello(h *self)
+}
+
+type thingy i64 {
+	hello(t *thingy) {
+	}
+}
+
+fn main() {
+	var i owned i64 = 10
+	var t thingy = thingy(i)
+	dispose(i)
+	var r thingy = t
+}

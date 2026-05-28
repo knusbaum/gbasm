@@ -1,0 +1,19 @@
+package main
+
+import "string"
+
+fn use(fd i64) {
+	string.puti(fd)
+	string.puts("\n")
+}
+
+fn close(fd owned i64) {
+	dispose(fd)
+}
+
+fn main() {
+	var fd owned i64 = 42
+	use(fd)
+	use(fd)
+	close(fd)
+}

@@ -1,0 +1,2 @@
+Compiling tests/value_alias_addr_after_move_err_test.bos
+Fatal: cannot take address of "t": its alias source "i" was consumed

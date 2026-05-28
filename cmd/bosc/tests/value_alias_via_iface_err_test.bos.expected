@@ -1,0 +1,2 @@
+Compiling tests/value_alias_via_iface_err_test.bos
+Fatal: cannot dereference pointer to "i": the target was consumed

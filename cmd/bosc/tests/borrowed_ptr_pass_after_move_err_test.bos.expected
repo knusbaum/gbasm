@@ -1,0 +1,2 @@
+Compiling tests/borrowed_ptr_pass_after_move_err_test.bos
+Fatal: cannot dereference pointer to "i": the target was consumed

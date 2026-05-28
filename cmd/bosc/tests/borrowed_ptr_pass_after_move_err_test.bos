@@ -1,0 +1,15 @@
+package main
+
+fn take(x owned i64) {
+	dispose(x)
+}
+
+fn use_ptr(p *i64) {
+}
+
+fn main() {
+	var i owned i64 = 10
+	var p *i64 = &i
+	take(i)
+	use_ptr(p)
+}
