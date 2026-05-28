@@ -2378,7 +2378,7 @@ func (o *Op2) ASTType(c *Context) ASTType {
 	switch o.Type {
 	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_booland, n_boolor:
 		return boolASTType()
-	case n_add, n_sub, n_mul, n_div:
+	case n_add, n_sub, n_mul, n_div, n_bitand, n_bitor:
 		ft := o.First.ASTType(c)
 		if ft.Same(intlitASTType()) {
 			return o.Second.ASTType(c)
@@ -2415,6 +2415,10 @@ func (o *Op2) Note() string {
 		op = "&&"
 	case n_boolor:
 		op = "||"
+	case n_bitand:
+		op = "&"
+	case n_bitor:
+		op = "|"
 	}
 	return fmt.Sprintf("Op (%s) %s (%s)", o.First.Note(), op, o.Second.Note())
 }
@@ -3072,7 +3076,7 @@ func (n *Node) toASTTop(c *Context) AST {
 			Body: body,
 			p:    n.p,
 		})
-	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_add, n_sub, n_mul, n_div, n_booland, n_boolor:
+	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_add, n_sub, n_mul, n_div, n_booland, n_boolor, n_bitand, n_bitor:
 		return &Op2{
 			Type:   n.t,
 			First:  n.args[0].toASTTop(NewContext()),

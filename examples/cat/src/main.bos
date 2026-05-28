@@ -3,16 +3,42 @@ package main
 import "io"
 import "string"
 
+fn perror(err i64) {
+	string.puts("ERROR: ")
+	string.puti(err)
+	string.puts("\n")
+}
 
 fn main(args byte[][]) {
 	string.puts("Hello, World\n")
 
-	const err = io.copy(&io.STDOUT, &io.STDIN)
-	if(err != 0) {
-		string.puts("ERROR: ")
-		string.puti(err)
-		string.puts("\n")
+	if (len(args) == 1) {
+		const err = io.copy(&io.STDOUT, &io.STDIN)
+		if(err != 0) {
+			perror(err)
+			return
+		}
+		string.puts("Done.\n")
 		return
+	}
+	for(var i i64 = 1; i < len(args); i = i + 1) {
+		const f, err = io.open(args[i], io.O_CREAT | io.O_RDONLY, 0o777)
+		if (err != 0) {
+			string.puts("While opening ")
+			string.puts(args[i])
+			string.puts("\n")
+			perror(err)
+			dispose(f) // Interesting we can't coherently dispose f close(f) feels wrong here.
+			return
+		}
+		err = io.copy(&io.STDOUT, &f)
+		if(err != 0) {
+			perror(err)
+			f.close()
+			return
+		}	
+		f.close()
 	}
 	string.puts("Done.\n")
 }
+

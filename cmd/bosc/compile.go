@@ -3226,6 +3226,10 @@ func EvalConst(c *Context, a AST) (*big.Int, bool) {
 				return nil, false
 			}
 			result.Quo(fv, sv)
+		case n_bitand:
+			result.And(fv, sv)
+		case n_bitor:
+			result.Or(fv, sv)
 		default:
 			return nil, false
 		}
@@ -3412,6 +3416,44 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		// second := compileTop(of, c, o.Second, dest)
 		// fmt.Fprintf(of, "\tsub %s %s\n", first.ref, second.ref)
 		// return first
+	case n_bitand:
+		fst := newSpot(of, c, c.Temp(), o.ASTType(c))
+		first := compileTop(of, c, o.First, fst)
+		var second spot
+		if o.Second.ASTType(c).Same(o.ASTType(c)) {
+			second = compileTop(of, c, o.Second, nullspot)
+		} else {
+			snd := newSpot(of, c, c.Temp(), o.ASTType(c))
+			second = compileTop(of, c, o.Second, snd)
+		}
+		fmt.Fprintf(of, "\tand %s %s\n", first.ref, second.ref)
+		if dest.empty() {
+			dest = first
+		} else {
+			move(of, c, dest, first)
+			first.free(of)
+		}
+		second.free(of)
+		return dest
+	case n_bitor:
+		fst := newSpot(of, c, c.Temp(), o.ASTType(c))
+		first := compileTop(of, c, o.First, fst)
+		var second spot
+		if o.Second.ASTType(c).Same(o.ASTType(c)) {
+			second = compileTop(of, c, o.Second, nullspot)
+		} else {
+			snd := newSpot(of, c, c.Temp(), o.ASTType(c))
+			second = compileTop(of, c, o.Second, snd)
+		}
+		fmt.Fprintf(of, "\tor %s %s\n", first.ref, second.ref)
+		if dest.empty() {
+			dest = first
+		} else {
+			move(of, c, dest, first)
+			first.free(of)
+		}
+		second.free(of)
+		return dest
 	case n_mul:
 		ot := o.ASTType(c)
 		sz := ot.Size(c)

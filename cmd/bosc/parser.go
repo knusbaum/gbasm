@@ -39,6 +39,8 @@ const (
 	n_ge  // Greater or equal
 	n_booland
 	n_boolor
+	n_bitand
+	n_bitor
 	n_if
 	n_for
 	n_block
@@ -123,6 +125,10 @@ func (t nodetype) String() string {
 		return "n_booland"
 	case n_boolor:
 		return "n_boolor"
+	case n_bitand:
+		return "n_bitand"
+	case n_bitor:
+		return "n_bitor"
 	case n_if:
 		return "n_if"
 	case n_for:
@@ -1067,22 +1073,50 @@ func (p *Parser) parseBindingDecl(isConst bool) *Node {
 }
 
 func (p *Parser) parseBoolOp() *Node {
-	v := p.parseCompare()
+	v := p.parseBitOr()
 	for {
 		c := p.current()
 		switch c.t {
 		case tok_booland:
 			p.advance()
-			v2 := p.parseCompare()
+			v2 := p.parseBitOr()
 			v = &Node{t: n_booland, p: c.p, args: []*Node{v, v2}}
 			continue
 		case tok_boolor:
 			p.advance()
-			v2 := p.parseCompare()
+			v2 := p.parseBitOr()
 			v = &Node{t: n_boolor, p: c.p, args: []*Node{v, v2}}
 			continue
 		}
 		break
+	}
+	return v
+}
+
+func (p *Parser) parseBitOr() *Node {
+	v := p.parseBitAnd()
+	for {
+		c := p.current()
+		if c.t != tok_pipe {
+			break
+		}
+		p.advance()
+		v2 := p.parseBitAnd()
+		v = &Node{t: n_bitor, p: c.p, args: []*Node{v, v2}}
+	}
+	return v
+}
+
+func (p *Parser) parseBitAnd() *Node {
+	v := p.parseCompare()
+	for {
+		c := p.current()
+		if c.t != tok_amp {
+			break
+		}
+		p.advance()
+		v2 := p.parseCompare()
+		v = &Node{t: n_bitand, p: c.p, args: []*Node{v, v2}}
 	}
 	return v
 }

@@ -1,0 +1,15 @@
+package main
+
+import "string"
+
+fn main(args byte[][]) {
+	var a i64 = 0b1010
+	string.puti(a)
+	string.puts("\n")
+	var b i64 = 0b11111111
+	string.puti(b)
+	string.puts("\n")
+	var c i64 = 0b0
+	string.puti(c)
+	string.puts("\n")
+}

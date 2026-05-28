@@ -44,6 +44,7 @@ const (
 	tok_ge
 	tok_booland
 	tok_boolor
+	tok_pipe
 
 	// Keywords
 	tok_if
@@ -161,6 +162,8 @@ func (t toktype) String() string {
 		return "tok_booland"
 	case tok_boolor:
 		return "tok_boolor"
+	case tok_pipe:
+		return "tok_pipe"
 	case tok_if:
 		return "tok_if"
 	case tok_else:
@@ -329,7 +332,83 @@ func (l *lexer) consumeLine() {
 	}
 }
 
+func isHexDigit(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+}
+
 func (l *lexer) parseNumber(p position) token {
+	// Prefixed literals: 0x (hex), 0b (binary), 0o (octal).
+	if l.headRune() == '0' {
+		l.nextRune()
+		switch l.headRune() {
+		case 'x', 'X':
+			l.nextRune()
+			var digits []rune
+			for r := l.headRune(); isHexDigit(r); r = l.headRune() {
+				digits = append(digits, r)
+				l.nextRune()
+			}
+			if len(digits) == 0 {
+				panic(&interpreterError{"hex literal has no digits after 0x", p})
+			}
+			n, err := strconv.ParseUint(string(digits), 16, 64)
+			if err != nil {
+				panic(&interpreterError{fmt.Sprintf("parsing hex literal: %v", err), p})
+			}
+			return token{t: tok_number, nval: n, p: p}
+		case 'b', 'B':
+			l.nextRune()
+			var digits []rune
+			for r := l.headRune(); r == '0' || r == '1'; r = l.headRune() {
+				digits = append(digits, r)
+				l.nextRune()
+			}
+			if len(digits) == 0 {
+				panic(&interpreterError{"binary literal has no digits after 0b", p})
+			}
+			n, err := strconv.ParseUint(string(digits), 2, 64)
+			if err != nil {
+				panic(&interpreterError{fmt.Sprintf("parsing binary literal: %v", err), p})
+			}
+			return token{t: tok_number, nval: n, p: p}
+		case 'o', 'O':
+			l.nextRune()
+			var digits []rune
+			for r := l.headRune(); r >= '0' && r <= '7'; r = l.headRune() {
+				digits = append(digits, r)
+				l.nextRune()
+			}
+			if len(digits) == 0 {
+				panic(&interpreterError{"octal literal has no digits after 0o", p})
+			}
+			n, err := strconv.ParseUint(string(digits), 8, 64)
+			if err != nil {
+				panic(&interpreterError{fmt.Sprintf("parsing octal literal: %v", err), p})
+			}
+			return token{t: tok_number, nval: n, p: p}
+		}
+		// Plain decimal starting with 0 (e.g. "0", "07" as decimal ten-ish, "0.5" truncated).
+		var ret []rune
+		ret = append(ret, '0')
+		for r := l.headRune(); strings.ContainsRune(numberset, r); r = l.headRune() {
+			ret = append(ret, r)
+			l.nextRune()
+		}
+		intStr := string(ret)
+		if dot := strings.IndexByte(intStr, '.'); dot >= 0 {
+			intStr = intStr[:dot]
+			if intStr == "" {
+				intStr = "0"
+			}
+		}
+		n, err := strconv.ParseUint(intStr, 10, 64)
+		if err != nil {
+			panic(&interpreterError{fmt.Sprintf("parsing number %q: %v", string(ret), err), p})
+		}
+		return token{t: tok_number, nval: n, p: p}
+	}
+
+	// Standard decimal literal (does not start with 0).
 	var ret []rune
 	for r := l.headRune(); strings.ContainsRune(numberset, r); r = l.headRune() {
 		ret = append(ret, r)
@@ -601,7 +680,7 @@ func (l *lexer) Next() (rt token, re error) {
 			l.nextRune()
 			return token{t: tok_boolor, p: p}, nil
 		}
-		panic(&interpreterError{"Bitwise OR is not supported; use || for logical OR", p})
+		return token{t: tok_pipe, p: p}, nil
 	case '/':
 		l.nextRune()
 		if l.headRune() == '/' {
