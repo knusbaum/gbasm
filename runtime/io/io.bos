@@ -135,3 +135,26 @@ fn open(path byte[], flags i64, mode i64) owned FD, i64 {
 	}
 	return owned(FD(raw)), 0
 }
+
+fn copy(dst writer, src reader) i64 {
+	var b byte[1024]
+	var bs mut byte[]
+	for(;;) {
+		bs = b[:]
+		const n, const err = src.read(bs)
+		if (err != 0) {
+			return err
+		}
+		if(n == 0) {
+			return 0
+		}
+		bs = bs[:n]
+		const wn, err2 = dst.write(bs)
+		if(err2 != 0) {
+			return err2
+		}
+		if(wn != n) {
+			return -1 // this is shit, we will fix this with proper error types.
+		}
+	}
+}

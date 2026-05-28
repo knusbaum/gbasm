@@ -1,0 +1,18 @@
+package main
+
+import "io"
+import "string"
+
+
+fn main(args byte[][]) {
+	string.puts("Hello, World\n")
+
+	const err = io.copy(&io.STDOUT, &io.STDIN)
+	if(err != 0) {
+		string.puts("ERROR: ")
+		string.puti(err)
+		string.puts("\n")
+		return
+	}
+	string.puts("Done.\n")
+}

@@ -1173,6 +1173,23 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		// fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, ast.Name)
 		// return dest
 	case *Dot:
+		// Cross-package variable lvalue: &pkg.varname → lea dest pkg.varname
+		if sym, ok := ast.Val.(*Symbol); ok && c.IsImportedPackage(sym.Name) {
+			vt, ok := c.ImportedVarType(sym.Name, ast.Member)
+			if !ok {
+				CompileErrorF(a, "package %q has no variable %q", sym.Name, ast.Member)
+			}
+			ref := sym.Name + "." + ast.Member
+			vt.Indirection++
+			vt.MutMask = (vt.MutMask << 1) | (1 << 1) // globals are var (mutable)
+			vt.OwnedMask <<= 1
+			vt.NilMask <<= 1
+			if dest.empty() {
+				dest = newSpot(of, c, c.Temp(), vt)
+			}
+			fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, ref)
+			return dest
+		}
 		l := compileLval(of, c, ast.Val, nullspot)
 		orig := l
 		l = materializePointerValue(of, c, l)
@@ -1735,6 +1752,21 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				}
 				return compileCast(of, c, ast.Args[0], destType, dest)
 			}
+		}
+
+		// (expr).method(args) — receiver is an arbitrary expression.
+		// Evaluate it, look up the method by type, and delegate to the
+		// concrete method call path.
+		if ast.ReceiverExpr != nil {
+			rt := ast.ReceiverExpr.ASTType(c)
+			typeName := rt.Name
+			if c.IsInterfaceType(rt) {
+				CompileErrorF(a, "interface method dispatch on expression receiver not yet supported; bind to a variable first")
+			}
+			if method, mok := c.MethodForType(typeName, ast.FName); mok {
+				return compileConcreteMethodCall(of, c, a, ast, rt, typeName, method, dest)
+			}
+			CompileErrorF(a, "no method %q on type %s", ast.FName, typeName)
 		}
 
 		decl, resolvedPkg, ok := c.FuncDeclForCall(ast.Pkg, ast.FName)
@@ -2570,6 +2602,17 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return dest
 	case *Return:
 		retType := c.ReturnType()
+		if ast.Val == nil {
+			// Bare `return` — valid in void functions or as an early exit.
+			if !retType.Same(voidASTType()) {
+				CompileErrorF(a, "bare return in non-void function (return type is %s)", retType)
+			}
+			for _, name := range c.UnconsumedOwnedVisible() {
+				CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
+			}
+			c.Return(of)
+			return nullspot
+		}
 		if sl, ok := ast.Val.(*StructLiteral); ok {
 			fillAnonymousLiteralIfNeeded(sl, retType)
 		}
@@ -3601,7 +3644,12 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 func compileConcreteMethodCall(of io.Writer, c *Context, a AST, callNode *Funcall,
 	receiverType ASTType, typeName string, method *FuncDecl, dest spot) spot {
 	var receiver AST
-	if receiverType.Indirection > 0 {
+	if callNode.ReceiverExpr != nil {
+		if receiverType.Indirection == 0 {
+			CompileErrorF(callNode, "cannot call method on non-addressable expression receiver (type %s)", receiverType)
+		}
+		receiver = callNode.ReceiverExpr
+	} else if receiverType.Indirection > 0 {
 		receiver = &Symbol{Name: callNode.Pkg, p: callNode.p}
 	} else {
 		receiver = &Address{Var: callNode.Pkg, p: callNode.p}

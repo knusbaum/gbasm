@@ -25,7 +25,7 @@ BOSC=${BOSC:-bosc}
 BAS=${BAS:-bas}
 BLD=${BLD:-bld}
 BOSON_HOME=${BOSON_HOME:-$(dirname $(which $BOSC))}
-BDOC=${BDOC:-$BOSON_HOME/bdoc}
+BDOC=${BDOC:-bdoc}
 BOSONPATH=${BOSONPATH:-$BOSON_HOME/runtime:.}
 BDOC_ADDR=${BDOC_ADDR:-:8686}
 
@@ -74,16 +74,52 @@ pkg_import_targets() {
     echo "$out" | sed 's|^|target/|; s|$|.bo|'
 }
 
+# all_pkg_import_targets <srcdir>: BFS over the full transitive import closure
+# starting from srcdir, printing target/<path>.bo for every reachable package.
+# Packages whose source cannot be found in BOSONPATH are skipped (they may be
+# pure-.bs packages with no .bos imports to discover).
+#
+# Uses file-based queue/seen sets to avoid bash associative arrays or array
+# operations not supported by mmk's function-body parser.
+all_pkg_import_targets() {
+    local d="$1"
+    local seen_file queue_file t imp srcdir
+    seen_file=$(mktemp)
+    queue_file=$(mktemp)
+
+    # Seed queue with direct imports.
+    pkg_import_targets "$d" > "$queue_file"
+    cp "$queue_file" "$seen_file"
+
+    # BFS: read from queue_file; appending new entries to it mid-loop causes
+    # bash to deliver them on subsequent reads (fd stays open to the file).
+    while IFS= read -r t; do
+        echo "$t"
+        imp="${t#target/}"
+        imp="${imp%.bo}"
+        srcdir=$(resolve_pkg "$imp") 2>/dev/null || continue
+        while IFS= read -r new_t; do
+            if ! grep -qxF "$new_t" "$seen_file" 2>/dev/null; then
+                echo "$new_t" >> "$seen_file"
+                echo "$new_t" >> "$queue_file"
+            fi
+        done < <(pkg_import_targets "$srcdir")
+    done < "$queue_file"
+
+    rm -f "$seen_file" "$queue_file"
+}
+
 # write_importcfg <out-file> <dep>...: writes pkg=path lines for each dep that
 # matches the target/<path>.bo pattern.
 # pkg_resolve_and_deps <import-path>: resolve to srcdir via BOSONPATH, then
 # print source files and import-targets. Fails if the package is not found.
 # bos_exe_deps <source-dir>: print the deps for a bos_exe target — local
-# source files, target/<path>.bo for each import, plus the runtime init .bo.
+# source files, target/<path>.bo for each import (transitively), plus the
+# runtime init .bo.
 bos_exe_deps() {
     local d=$1
     pkg_sources "$d"
-    pkg_import_targets "$d"
+    all_pkg_import_targets "$d"
     echo "target/_heap.bo"
     echo "target/_init.bo"
 }
@@ -223,6 +259,10 @@ defbody bos_exe : $(bos_exe_deps "$source") {
 defbody bos_exe clean {
     rm -f "target/$target"
     rm -rf "target/_exe_$target.work"
+}
+
+defbody bos_exe run {
+    target/$target
 }
 
 # ---- docs ------------------------------------------------------------------

@@ -1859,10 +1859,11 @@ func (b *Block) Pos() position {
 }
 
 type Funcall struct {
-	Pkg   string // empty for in-package calls; package name for qualified calls
-	FName string
-	Args  []AST
-	p     position
+	Pkg          string // empty for in-package calls; package name for qualified calls
+	FName        string
+	Args         []AST
+	ReceiverExpr AST // non-nil for (expr).method(args) calls; Pkg/FName unused for receiver lookup
+	p            position
 }
 
 // QualifiedName returns "pkg.fname" for qualified calls, just "fname" otherwise.
@@ -1942,6 +1943,17 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 		if t, ok := c.TypeByName(castName); ok {
 			return t
 		}
+	}
+	// (expr).method(args) — receiver is an expression, not a named variable.
+	if f.ReceiverExpr != nil {
+		rt := f.ReceiverExpr.ASTType(c)
+		if method, mok := c.MethodForType(rt.Name, f.FName); mok {
+			return method.Return
+		}
+		panic(&interpreterError{
+			msg: fmt.Sprintf("no method %q on type %s", f.FName, rt.Name),
+			p:   f.p,
+		})
 	}
 	if decl, _, ok := c.FuncDeclForCall(f.Pkg, f.FName); ok {
 		return decl.Return
@@ -2150,6 +2162,19 @@ func (a *Address) ASTType(c *Context) ASTType {
 		return t
 	}
 	if a.Lit != nil {
+		// Cross-package variable: `&pkg.varname` — Dot.ASTType already
+		// resolves the member type correctly. Shift and set mut (globals
+		// are always var) the same way the named-local path does.
+		if dot, ok := a.Lit.(*Dot); ok {
+			if sym, ok2 := dot.Val.(*Symbol); ok2 && c.IsImportedPackage(sym.Name) {
+				t := a.Lit.ASTType(c)
+				t.MutMask = (t.MutMask << 1) | (1 << 1)
+				t.OwnedMask <<= 1
+				t.NilMask <<= 1
+				t.Indirection++
+				return t
+			}
+		}
 		// Address-of-literal: the type is *(literal's type), with no
 		// existing mut/owned bits to shift since the literal is fresh
 		// storage we're synthesizing.
@@ -2921,6 +2946,21 @@ func (n *Node) toASTTop(c *Context) AST {
 				f.Args = append(f.Args, a.toASTTop(NewContext()))
 			}
 			return &f
+		}
+		// (expr).method(args) — left is an arbitrary expression, right is a call.
+		// Use ReceiverExpr so the compile path can evaluate the receiver and look
+		// up the method without needing a variable name.
+		if n.args[1].t == n_funcall {
+			fcall := n.args[1]
+			f := &Funcall{
+				ReceiverExpr: n.args[0].toASTTop(NewContext()),
+				FName:        fcall.sval,
+				p:            n.p,
+			}
+			for _, a := range fcall.args {
+				f.Args = append(f.Args, a.toASTTop(NewContext()))
+			}
+			return f
 		}
 		var d Dot
 		d.Val = n.args[0].toASTTop(NewContext())

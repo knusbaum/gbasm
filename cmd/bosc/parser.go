@@ -833,7 +833,7 @@ func (p *Parser) parseParens() *Node {
 		p.advance()
 		v := p.parseExpression()
 		p.expect(tok_rparen)
-		return v
+		return p.parsePostfix(v)
 	} else if c.t == tok_lcurly {
 		p.advance()
 		// Skip leading semicolons (blank lines, auto-inserted ';' before first statement).
@@ -887,7 +887,7 @@ func (p *Parser) parseParens() *Node {
 		return &Node{t: n_continue, p: c.p}
 	} else if c.t == tok_return {
 		p.advance()
-		if p.current().t == tok_rcurly {
+		if p.current().t == tok_rcurly || p.current().t == tok_semicolon {
 			return &Node{t: n_return, p: c.p, args: []*Node{}}
 		}
 		val := p.parseExpression()
