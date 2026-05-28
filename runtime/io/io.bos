@@ -2,6 +2,10 @@ package io
 
 import "string"
 
+var STDIN  FD = FD(0)
+var STDOUT FD = FD(1)
+var STDERR FD = FD(2)
+
 type FD i64 {
 	read(fd *FD, buf mut byte[]) i64 {
 		return string.read(i64(*fd), buf)

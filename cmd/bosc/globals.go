@@ -129,6 +129,24 @@ func encodeStaticInit(c *Context, dstt ASTType, init AST) ([]byte, []relocSpec, 
 			}
 		}
 		return nil, nil, fmt.Errorf("initializer is not a compile-time constant")
+	case *Funcall:
+		// Type cast of a single constant argument: FD(0) or io.FD(0).
+		// Fold by encoding the inner expression under the underlying type.
+		if len(v.Args) == 1 {
+			castName := v.FName
+			if v.Pkg != "" {
+				castName = v.Pkg + "." + v.FName
+			}
+			if _, ok := c.TypeByName(castName); ok {
+				castType := ASTType{Name: castName}
+				underlying := c.ResolveUnderlying(castType)
+				underlying.MutMask = 0
+				underlying.OwnedMask = 0
+				underlying.NilMask = 0
+				return encodeStaticInit(c, underlying, v.Args[0])
+			}
+		}
+		return nil, nil, fmt.Errorf("initializer is not a compile-time constant")
 	default:
 		return nil, nil, fmt.Errorf("initializer is not a compile-time constant")
 	}
