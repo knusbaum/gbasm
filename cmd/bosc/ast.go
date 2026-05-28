@@ -1072,6 +1072,7 @@ type ASTType struct {
 	NilMask     uint64    // nullable pointer bit per pointer level
 	FuncSig     *FuncSig  // when set: function-pointer type, pointer-sized
 	AnonFields  []Binding // non-nil: anonymous struct type (Name == "", no StructDecl lookup)
+	MultiReturn bool      // true when AnonFields was synthesized from a multi-value return signature
 	p           position  // source position where this type was written; used in error messages
 }
 
@@ -1578,6 +1579,17 @@ func mkTypename(n *Node) ASTType {
 		}
 		return ASTType{AnonFields: fields}
 	}
+	// Multi-value return type sentinel: parseFn builds `<multiretu>` with positional
+	// fields _0, _1, ... Same wire representation as an anonymous struct but
+	// MultiReturn=true so the checker can enforce destructuring at call sites.
+	if n.sval == "<multiretu>" {
+		var fields []Binding
+		for _, fn := range n.args {
+			ft := mkTypename(fn.args[0])
+			fields = append(fields, Binding{Name: fn.sval, Type: ft})
+		}
+		return ASTType{AnonFields: fields, MultiReturn: true}
+	}
 	// Function-pointer type sentinel: parseTypeName packs `fn(...) ret`
 	// into an n_typename with sval="fn", ival=arg-count, and args=
 	// [argType1, ..., argTypeN, returnType]. Recognize and assemble a
@@ -1770,6 +1782,20 @@ func (v *VarDecl) Note() string {
 func (v *VarDecl) Pos() position {
 	return v.p
 }
+
+// MultiBindDecl is the AST node for a multi-value destructuring declaration:
+//   var a T1, const b T2 = expr
+// Bindings holds each individual binding (Type/IsConst set; Init is nil).
+// Init is the shared initializer, which must have a MultiReturn return type.
+type MultiBindDecl struct {
+	Bindings []VarDecl
+	Init     AST
+	p        position
+}
+
+func (*MultiBindDecl) ASTType(*Context) ASTType { return voidASTType() }
+func (m *MultiBindDecl) Note() string           { return "multibind" }
+func (m *MultiBindDecl) Pos() position          { return m.p }
 
 type FuncDecl struct {
 	Name   string
@@ -2795,6 +2821,26 @@ func (n *Node) toASTTop(c *Context) AST {
 			c.prebound[v.Name] = true
 		}
 		return &v
+	case n_multibind:
+		// Multi-bind: args[0..N-2] are n_var binding specs (no initializer),
+		// args[N-1] is the shared initializer expression.
+		var mb MultiBindDecl
+		mb.p = n.p
+		for i := 0; i < len(n.args)-1; i++ {
+			bnode := n.args[i]
+			var v VarDecl
+			v.Name = bnode.sval
+			v.IsConst = bnode.ival != 0
+			v.p = bnode.p
+			if bnode.args[0].sval == "<infer>" {
+				v.Type = ASTType{Name: "<infer>"}
+			} else {
+				v.Type = mkTypename(bnode.args[0])
+			}
+			mb.Bindings = append(mb.Bindings, v)
+		}
+		mb.Init = n.args[len(n.args)-1].toASTTop(NewContext())
+		return &mb
 	case n_fn:
 		var fn FuncDecl
 		fn.Name = n.sval
@@ -2974,6 +3020,24 @@ func (n *Node) toASTTop(c *Context) AST {
 	case n_not:
 		return &Not{Val: n.args[0].toASTTop(NewContext()), p: n.p}
 	case n_return:
+		if len(n.args) == 0 {
+			return &Return{p: n.p}
+		}
+		// Multi-value return: `return e1, e2` — lower to a StructLiteral with
+		// positional fields _0, _1, ... The type is left empty so that
+		// fillAnonymousLiteralIfNeeded in compile.go fills it in from the
+		// function's declared return type (same path as bare `{ field: val }`).
+		if len(n.args) > 1 {
+			var fields []StructField
+			for i, a := range n.args {
+				fields = append(fields, StructField{
+					Name: fmt.Sprintf("_%d", i),
+					Val:  a.toASTTop(NewContext()),
+				})
+			}
+			sl := &StructLiteral{Fields: fields, p: n.p}
+			return &Return{Val: sl, p: n.p}
+		}
 		return &Return{
 			Val: n.args[0].toASTTop(NewContext()),
 			p:   n.p,

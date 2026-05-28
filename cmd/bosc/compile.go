@@ -1460,6 +1460,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			ast.Type = inferred
 		}
+		// Reject single-binding a multi-value return: must use destructuring.
+		if ast.Init != nil && ast.Init.ASTType(c).MultiReturn {
+			CompileErrorF(a, "var %s: cannot bind a multi-value return as a single variable; use destructuring: var a T1, var b T2 = ...", ast.Name)
+		}
 		c.BindVar(a, ast.Name, ast.Type, ast.IsConst)
 		if c.ResolveUnderlying(ast.Type).Indirection > 0 {
 			c.PointerFlow().DeclarePointer(flow.Binding(ast.Name))
@@ -1583,6 +1587,63 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// invalidation in MoveConsume is a no-op.
 			c.MoveConsume(ast.Name)
 		}
+		return nullspot
+	case *MultiBindDecl:
+		// Multi-value destructuring bind: var a T1, const b T2 = expr
+		// The initializer must have a MultiReturn type. Compile the call (which
+		// puts a pointer to the synthetic struct in rax), then copy each field
+		// into its own named binding.
+		initType := ast.Init.ASTType(c)
+		if !initType.MultiReturn {
+			CompileErrorF(a, "multi-bind requires a multi-value return expression on the right-hand side")
+		}
+		if len(ast.Bindings) != len(initType.AnonFields) {
+			CompileErrorF(a, "multi-bind: %d bindings but function returns %d values", len(ast.Bindings), len(initType.AnonFields))
+		}
+		// Compile the initializer into a temporary buffer. For a multi-return
+		// call the existing funcall path allocates `bytes Temp_N size`, copies
+		// the callee's fields into it, and returns the spot. We read each field
+		// out of srcSpot before releasing it.
+		srcSpot := compileTop(of, c, ast.Init, nullspot)
+		initDecl, _ := structDeclForType(c, initType)
+		for i, b := range ast.Bindings {
+			field := initType.AnonFields[i]
+			bindType := b.Type
+			if bindType.Name == "<infer>" {
+				bindType = field.Type
+			}
+			// Reject gaining owned bits without explicit owned().
+			gained := bindType.OwnedMask &^ field.Type.OwnedMask
+			if gained != 0 {
+				CompileErrorF(a, "multi-bind %s: ownership promotion requires explicit owned()", b.Name)
+			}
+			if !bindType.Accepts(field.Type) {
+				CompileErrorF(a, "multi-bind %s: cannot assign %s to %s", b.Name, field.Type, bindType)
+			}
+			c.BindVar(a, b.Name, bindType, b.IsConst)
+			if c.ResolveUnderlying(bindType).Indirection > 0 {
+				c.PointerFlow().DeclarePointer(flow.Binding(b.Name))
+			} else if bindType.HasOwned() {
+				pexpr := c.PointerFlow().NewLocalOrigin(flow.Binding(b.Name))
+				c.PointerFlow().AssignPointer(flow.Binding(b.Name), pexpr)
+			}
+			s := newSpot(of, c, b.Name, bindType)
+			offset, _ := initDecl.ByteOffset(c, field.Name)
+			if s.nameIsAddress {
+				// Memory-backed binding: copy field bytes from srcSpot[offset].
+				tmp := c.Temp()
+				fmt.Fprintf(of, "\tlocal %s 64\n", tmp)
+				sz := bindType.Size(c)
+				for off := 0; off < sz; off += 8 {
+					fmt.Fprintf(of, "\tmov %s [%s+%d]\n", tmp, srcSpot.ref, offset+off)
+					fmt.Fprintf(of, "\tmov [%s+%d] %s\n", b.Name, off, tmp)
+				}
+				fmt.Fprintf(of, "\tforget %s\n", tmp)
+			} else {
+				fmt.Fprintf(of, "\tmov %s [%s+%d]\n", b.Name, srcSpot.ref, offset)
+			}
+		}
+		srcSpot.free(of)
 		return nullspot
 	case *FuncDecl:
 		c := c.SubContext()

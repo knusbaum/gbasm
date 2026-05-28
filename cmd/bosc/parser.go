@@ -56,6 +56,7 @@ const (
 	n_typedecl_with_methods // type TypeName Base { method... }
 	n_interface_decl        // interface Name { sig... }
 	n_interface_method      // method signature (no body)
+	n_multibind             // multi-value destructuring bind: var a T1, const b T2 = expr
 )
 
 func (t nodetype) String() string {
@@ -156,6 +157,8 @@ func (t nodetype) String() string {
 		return "n_interface_decl"
 	case n_interface_method:
 		return "n_interface_method"
+	case n_multibind:
+		return "n_multibind"
 	}
 	return "UNKNOWN"
 }
@@ -784,14 +787,23 @@ func (p *Parser) parseFn() *Node {
 	if p.current().t != tok_lcurly {
 		// This function has a listed return type.
 		rettype = p.parseTypeName()
-		//rettype = &Node{t: n_symbol, sval: p.current().sval}
-		//p.advance()
+		// Multi-value return: `T1, T2, ...` — synthesize a "<multiretu>" struct type.
+		if p.current().t == tok_comma {
+			rettypePos := rettype.p
+			fieldNodes := []*Node{
+				{t: n_stfield, p: rettype.p, sval: "_0", args: []*Node{rettype}},
+			}
+			i := 1
+			for p.current().t == tok_comma {
+				p.advance()
+				tn := p.parseTypeName()
+				fieldNodes = append(fieldNodes, &Node{t: n_stfield, p: tn.p, sval: fmt.Sprintf("_%d", i), args: []*Node{tn}})
+				i++
+			}
+			rettype = &Node{t: n_typename, p: rettypePos, sval: "<multiretu>", args: fieldNodes}
+		}
 	}
 
-	//fmt.Printf("GOT %#v\n", rettype)
-	// 	if rettype.t != n_symbol {
-	// 		panic(&interpreterError{fmt.Sprintf("Expected type name, but found: %v\n", rettype), rettype.p})
-	// 	}
 	args := append(params, rettype)
 	body := p.parseExpression()
 	args = append(args, body)
@@ -862,6 +874,15 @@ func (p *Parser) parseParens() *Node {
 			return &Node{t: n_return, p: c.p, args: []*Node{}}
 		}
 		val := p.parseExpression()
+		// Multi-value return: `return e1, e2, ...` — args holds all values.
+		if p.current().t == tok_comma {
+			vals := []*Node{val}
+			for p.current().t == tok_comma {
+				p.advance()
+				vals = append(vals, p.parseExpression())
+			}
+			return &Node{t: n_return, p: c.p, args: vals}
+		}
 		return &Node{t: n_return, p: c.p, args: []*Node{val}}
 	} else if c.t == tok_fn {
 		return p.parseFn()
@@ -976,6 +997,28 @@ func (p *Parser) parseAddSub() *Node {
 	return v
 }
 
+// parseBindingSpec parses just the name and optional type of a binding, stopping
+// before any `=` initializer. Used inside multi-bind to parse each individual binding.
+func (p *Parser) parseBindingSpec(isConst bool) *Node {
+	if p.current().t != tok_ident {
+		panic(&interpreterError{fmt.Sprintf("Expected an identifier in binding declaration, but found: %s\n", p.current().t), p.current().p})
+	}
+	pos := p.current().p
+	name := p.current().sval
+	p.advance()
+	var typeNode *Node
+	if p.current().t == tok_eq || p.current().t == tok_comma {
+		typeNode = &Node{t: n_typename, p: pos, sval: "<infer>"}
+	} else {
+		typeNode = p.parseTypeName()
+	}
+	constVal := uint64(0)
+	if isConst {
+		constVal = 1
+	}
+	return &Node{t: n_var, p: pos, sval: name, ival: constVal, args: []*Node{typeNode}}
+}
+
 // parseBindingDecl parses a var or const declaration after the keyword has been consumed.
 // Form: `<kw> name TypeName` or `<kw> name TypeName = expr` or `<kw> name = expr` (inferred).
 // isConst is encoded in the node via ival: 0 = var, 1 = const.
@@ -988,7 +1031,7 @@ func (p *Parser) parseBindingDecl(isConst bool) *Node {
 	name := p.current().sval
 	p.advance()
 	var typeNode *Node
-	if p.current().t == tok_eq {
+	if p.current().t == tok_eq || p.current().t == tok_comma {
 		// No explicit type: use sentinel for type inference.
 		typeNode = &Node{t: n_typename, p: pos, sval: "<infer>"}
 	} else {
@@ -1068,15 +1111,54 @@ func (p *Parser) parseCompare() *Node {
 	return v
 }
 
+// parseMultiBind continues parsing a multi-bind declaration after the first
+// binding has been parsed. `first` is the first n_var node (no initializer).
+// Subsequent bindings may be prefixed with `var` or `const`; the shared `= expr`
+// follows the last binding. Returns an n_multibind node whose args are the
+// individual n_var binding nodes followed by the shared initializer.
+func (p *Parser) parseMultiBind(first *Node) *Node {
+	pos := first.p
+	bindings := []*Node{first}
+	for p.current().t == tok_comma {
+		p.advance()
+		isConst := false
+		if p.current().t == tok_var {
+			p.advance()
+		} else if p.current().t == tok_const {
+			p.advance()
+			isConst = true
+		}
+		b := p.parseBindingSpec(isConst)
+		bindings = append(bindings, b)
+	}
+	if p.current().t != tok_eq {
+		panic(&interpreterError{"multi-bind: expected '=' after binding list", p.current().p})
+	}
+	p.advance()
+	init := p.parseExpression()
+	args := append(bindings, init)
+	return &Node{t: n_multibind, p: pos, args: args}
+}
+
 func (p *Parser) parseExpression() (r *Node) {
 	//fmt.Printf("[Start parseExpression] %#v\n", p.current())
 	//defer func() { fmt.Printf("[Finish parseExpression]: %#v\n", r) }()
 	if p.current().t == tok_var {
 		p.advance()
-		return p.parseBindingDecl(false)
+		first := p.parseBindingDecl(false)
+		// Multi-bind: `var a T1, const b T2 = expr` — first binding has no initializer
+		// (args len == 1) and the next token is ','.
+		if len(first.args) == 1 && p.current().t == tok_comma {
+			return p.parseMultiBind(first)
+		}
+		return first
 	} else if p.current().t == tok_const {
 		p.advance()
-		return p.parseBindingDecl(true)
+		first := p.parseBindingDecl(true)
+		if len(first.args) == 1 && p.current().t == tok_comma {
+			return p.parseMultiBind(first)
+		}
+		return first
 	} else if p.current().t == tok_none {
 		p.advance()
 		panic(eofError(0))
@@ -1126,6 +1208,20 @@ func (p *Parser) parseMethodDef() *Node {
 	rettype := &Node{t: n_typename, p: p.current().p, sval: "void"}
 	if p.current().t != tok_lcurly {
 		rettype = p.parseTypeName()
+		if p.current().t == tok_comma {
+			rettypePos := rettype.p
+			fieldNodes := []*Node{
+				{t: n_stfield, p: rettype.p, sval: "_0", args: []*Node{rettype}},
+			}
+			i := 1
+			for p.current().t == tok_comma {
+				p.advance()
+				tn := p.parseTypeName()
+				fieldNodes = append(fieldNodes, &Node{t: n_stfield, p: tn.p, sval: fmt.Sprintf("_%d", i), args: []*Node{tn}})
+				i++
+			}
+			rettype = &Node{t: n_typename, p: rettypePos, sval: "<multiretu>", args: fieldNodes}
+		}
 	}
 	args := append(params, rettype)
 	body := p.parseExpression()
