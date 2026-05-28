@@ -24,3 +24,4 @@ build {
 }
 
 [run all] : build { ./target/interface }
+[clean all] : [clean interface]

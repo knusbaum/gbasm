@@ -1,18 +1,70 @@
+// Package io provides typed file IO primitives on top of the raw Linux
+// syscall surface exposed by _io_sys.
+//
+// The central type is FD — a kernel file descriptor — with read, write,
+// and close methods. open returns an owned FD that the caller is obliged
+// to close exactly once; the three pre-opened standard streams STDIN,
+// STDOUT, and STDERR are exposed as non-owning globals.
+//
+// End-user code should generally prefer this package's typed API over the
+// raw _io_sys wrappers; the latter exist only as the syscall thunks that
+// io is built on top of.
 package io
 
 import "_io_sys"
 
+// STDIN is the standard input file descriptor (fd 0), pre-opened by the
+// kernel at process start. It is borrowed: do not pass it to close.
 var STDIN  FD = FD(0)
+
+// STDOUT is the standard output file descriptor (fd 1), pre-opened by the
+// kernel at process start. It is borrowed: do not pass it to close.
 var STDOUT FD = FD(1)
+
+// STDERR is the standard error file descriptor (fd 2), pre-opened by the
+// kernel at process start. It is borrowed: do not pass it to close.
 var STDERR FD = FD(2)
 
+// FD is a Linux file descriptor. Every kernel-backed handle in this
+// package is represented as one.
+//
+// An owned FD carries the obligation to call close exactly once; the
+// compiler tracks this and will reject paths that leak or double-close.
+// Borrowed FDs — the three standard streams above, or any *FD passed by
+// reference into a function — have no close obligation and must not be
+// closed.
+//
+// FD's underlying representation is i64 so it can be stored directly in
+// struct fields, slice elements, and passed by value into the _io_sys
+// syscall wrappers.
 type FD i64 {
+	// read fills buf with bytes from the descriptor and returns the
+	// number of bytes actually read.
+	//
+	// A return of 0 indicates end-of-file; a return less than len(buf)
+	// is a partial read and may be retried. A negative return value is
+	// the negation of errno from the underlying read(2) syscall.
 	read(fd *FD, buf mut byte[]) i64 {
 		return _io_sys.read(i64(*fd), buf)
 	}
+
+	// write writes the bytes in buf to the descriptor and returns the
+	// number of bytes actually written.
+	//
+	// A return less than len(buf) is a partial write; the caller is
+	// responsible for re-issuing the remainder. A negative return value
+	// is the negation of errno from the underlying write(2) syscall.
 	write(fd *FD, buf byte[]) i64 {
 		return _io_sys.write(i64(*fd), buf)
 	}
+
+	// close releases the descriptor back to the kernel and consumes the
+	// owned FD. After close, the FD value is dead — any subsequent use
+	// is a compile-time error.
+	//
+	// The return is zero on success, or the negation of errno from the
+	// underlying close(2) syscall (some filesystems surface delayed
+	// write errors here).
 	close(fd *owned FD) i64 {
 		const result i64 = _io_sys.close(i64(*fd))
 		dispose(fd)
@@ -20,8 +72,16 @@ type FD i64 {
 	}
 }
 
-// open opens the file at path with the given flags and mode.
-// path must be null-terminated.
+// open opens the file at path with the given open(2) flags and mode,
+// returning an owned FD that the caller is responsible for closing.
+//
+// path must be a null-terminated byte slice — Linux's open(2) expects a
+// C string and does not honour an explicit length. flags is the bitwise
+// OR of the O_* constants (O_RDONLY, O_WRONLY, O_CREAT, …). mode is the
+// permission bits applied when O_CREAT creates a new file.
+//
+// On failure the returned FD wraps the negation of errno. The caller
+// should check for a negative i64(fd) before using the result.
 fn open(path byte[], flags i64, mode i64) owned FD {
 	return owned(FD(_io_sys.open(path, flags, mode)))
 }
