@@ -1,0 +1,22 @@
+package main
+
+type myint i64 {
+	describe(m *myint) byte[] {
+		return "myint"
+	}
+}
+
+interface Describer {
+	describe(d *self) byte[]
+}
+
+fn take(x owned myint) {
+	dispose(x)
+}
+
+fn main() {
+	var x owned myint = 5
+	var d Describer = &x
+	take(x)
+	var s byte[] = d.describe()
+}

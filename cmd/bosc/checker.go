@@ -256,12 +256,27 @@ func (c *Context) InvalidateLocalOriginsForScope() {
 
 // Move marks an owned binding as consumed. Walks the parent chain to find the
 // context that owns the binding so the state is stored in the right checker.
+// Also invalidates any pointer-flow aliases tied to the binding: if the binding
+// is a pointer, its target allocation is treated as freed (TargetDead); if it
+// is not a pointer, aliases like &name become stale (TargetMoved). Keeping the
+// two halves of consumption state in sync at the single call site means every
+// caller of Move (dispose, owned-arg passing, assignment overwrite, condition
+// narrowing, ...) gets correct deref-after-move rejection automatically.
 func (c *Context) Move(name string) {
 	if c == nil {
 		return
 	}
-	if _, ok := c.bindings[name]; ok {
+	if t, ok := c.bindings[name]; ok {
 		c.checker.movedBindings[name] = true
+		pf := c.PointerFlow()
+		if t.Indirection > 0 {
+			ptrExpr := pf.Pointer(flow.Binding(name))
+			if ptrExpr.KnownOrigin {
+				pf.InvalidateOrigin(ptrExpr.Origin, flow.TargetDead)
+			}
+		} else {
+			pf.InvalidateOrigin(flow.Origin(name), flow.TargetMoved)
+		}
 		return
 	}
 	c.parent.Move(name)

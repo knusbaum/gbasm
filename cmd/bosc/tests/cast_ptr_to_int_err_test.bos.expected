@@ -1,0 +1,2 @@
+Compiling tests/cast_ptr_to_int_err_test.bos
+Fatal: Cannot cast between pointer and non-pointer types: *mut owned i64 to thingy

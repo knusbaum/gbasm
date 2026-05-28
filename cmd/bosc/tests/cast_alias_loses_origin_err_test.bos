@@ -1,0 +1,11 @@
+package main
+
+type myptr *i64
+
+fn make() myptr {
+	var i i64 = 5
+	var p myptr = myptr(&i)
+	return p
+}
+
+fn main() {}

@@ -598,7 +598,11 @@ func lvalueIsWritable(c *Context, a AST) (bool, string) {
 }
 
 func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr {
-	if a.ASTType(c).Indirection == 0 {
+	// Resolve through type aliases: `type myptr *T` has Indirection==0 on its
+	// name but is a pointer when followed through. Otherwise a value cast
+	// like `myptr(&i)` would short-circuit to UnknownPointer here and the
+	// destination binding would lose its origin/validity link to the source.
+	if c.ResolveUnderlying(a.ASTType(c)).Indirection == 0 {
 		return c.PointerFlow().UnknownPointer()
 	}
 	switch ast := a.(type) {
@@ -638,6 +642,19 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 	case *OwnedPromotion:
 		return pointerExprForAST(c, ast.Val, assignedName)
 	case *Funcall:
+		// A type-cast Funcall (T(expr) where T is a type name) is structurally
+		// a Funcall but semantically a reinterpretation of expr. compileCast
+		// now rejects category-mismatched casts, so when the destination is a
+		// pointer, the source must also be a pointer. In that case the cast
+		// preserves the underlying address — the destination should inherit
+		// the source's origin and validity, not be treated as an opaque new
+		// pointer. Recurse into the cast argument so escape checks, deref
+		// validity, and alias bookkeeping see the source's PointerExpr.
+		if ast.Pkg == "" && len(ast.Args) == 1 {
+			if _, ok := c.TypeByName(ast.FName); ok {
+				return pointerExprForAST(c, ast.Args[0], assignedName)
+			}
+		}
 		if assignedName != "" {
 			retType := ast.ASTType(c)
 			if retType.Indirection > 0 && retType.OwnedMask&1 != 0 {
@@ -1386,7 +1403,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			ast.Type = inferred
 		}
 		c.BindVar(a, ast.Name, ast.Type, ast.IsConst)
-		if ast.Type.Indirection > 0 {
+		if c.ResolveUnderlying(ast.Type).Indirection > 0 {
 			c.PointerFlow().DeclarePointer(flow.Binding(ast.Name))
 		}
 		s := newSpot(of, c, ast.Name, ast.Type)
@@ -1424,7 +1441,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			checkAddressOfOwnedForDest(c, ast.Init, dstt)
 			// Interface coercion: concrete pointer → interface fat pointer.
 			if c.IsInterfaceType(dstt) && srct.Indirection > 0 {
-				emitInterfaceFatPtr(of, c, a, dstt, srct, ast.Init, s.ref)
+				emitInterfaceFatPtr(of, c, a, dstt, srct, ast.Init, s.ref, ast.Name)
 				if dstt.OwnedMask != 0 {
 					markMovedIfOwnedSource(of, c, dstt, ast.Init)
 				}
@@ -1458,7 +1475,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			markMovedIfOwnedSource(of, c, dstt, ast.Init)
 			updateNullFactForAssignment(c, VarFlowPath(ast.Name), dstt, ast.Init, srct)
-			if dstt.Indirection > 0 {
+			// Type-aliased pointers (`type myptr *T`) have Indirection==0 on the
+			// ASTType for their name; resolve through the alias so they get the
+			// same flow-state registration as a bare *T.
+			if c.ResolveUnderlying(dstt).Indirection > 0 {
 				c.SetBorrowedBinding(ast.Name, initIsBorrowed)
 				c.PointerFlow().AssignPointer(flow.Binding(ast.Name), pointerExprForAST(c, ast.Init, ast.Name))
 			}
@@ -2059,7 +2079,18 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		checkBorrowedPointerAssignment(c, ast, dstt)
 		// Interface coercion at assignment: concrete pointer → fat pointer.
 		if c.IsInterfaceType(dstt) && srct.Indirection > 0 {
-			emitInterfaceFatPtr(of, c, a, dstt, srct, ast.Val, lv.ref)
+			destBinding := ""
+			if targetIsSymbol {
+				destBinding = targetSym.Name
+				// updateFieldPointerFactsForAssignment below clears the
+				// target's field pointers (Indirection==0 path), so we
+				// must register data after that — but the registration
+				// inside emitInterfaceFatPtr runs first. Forget here, the
+				// helper's later Forget call is harmless on the empty
+				// map, and emitInterfaceFatPtr's SetFieldPointer wins.
+				c.PointerFlow().ForgetFieldPointers(flow.Binding(destBinding))
+			}
+			emitInterfaceFatPtr(of, c, a, dstt, srct, ast.Val, lv.ref, destBinding)
 			markMovedIfOwnedSource(of, c, dstt, ast.Val)
 			invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 			if path, ok := FlowPathForExpr(ast.Target); ok {
@@ -2068,7 +2099,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
 			updatePointerFlowForAssignment(c, ast.Target, dstt, ast.Val)
-			updateFieldPointerFactsForAssignment(c, ast.Target, targetIsSymbol, targetSym, dstt, ast.Val)
 			return nullspot
 		}
 		// Struct-literal assignment to a matching destination (modulo owned):
@@ -2361,7 +2391,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fillAnonymousLiteralIfNeeded(sl, retType)
 		}
 		valType := ast.Val.ASTType(c)
-		if retType.Indirection > 0 {
+		// Resolve through type aliases so `type myptr *T` followed by
+		// `return p` runs the same pointer-escape checks as a bare *T return.
+		if c.ResolveUnderlying(retType).Indirection > 0 {
 			checkBorrowedPointerDoesNotEscape(c, ast.Val, "return")
 			checkLocalOriginDoesNotEscape(c, ast.Val, "return")
 		}
@@ -2392,8 +2424,16 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		checkAddressOfOwnedForDest(c, ast.Val, retType)
 		// Interface coercion at return: concrete pointer → fat pointer in rax.
 		if c.IsInterfaceType(retType) && valType.Indirection > 0 {
+			// Borrowed-pointer source returned as a borrowed interface
+			// escapes the caller's frame just like a bare `return &x`.
+			if retType.OwnedMask == 0 {
+				ptr := pointerExprForAST(c, ast.Val, "")
+				if ptr.KnownOrigin && c.PointerFlow().OriginKindOf(ptr.Origin) == flow.OriginLocal {
+					CompileErrorF(ast.Val, "Pointer to local variable %q escapes via interface return", string(ptr.Origin))
+				}
+			}
 			s := newSpotWithReg(of, c, c.Temp(), retType, "rax")
-			emitInterfaceFatPtr(of, c, a, retType, valType, ast.Val, s.ref)
+			emitInterfaceFatPtr(of, c, a, retType, valType, ast.Val, s.ref, "")
 			fmt.Fprintf(of, "\tinreg %s rax\n", s.ref)
 			s.free(of)
 			if retType.HasOwned() {
@@ -2458,14 +2498,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			CompileErrorF(a, "dispose: \"%s\" is statically known to be nil; no obligation to discharge", ast.Var)
 		}
 		c.Move(ast.Var)
-		if declared.Indirection > 0 {
-			ptrExpr := c.PointerFlow().Pointer(flow.Binding(ast.Var))
-			if ptrExpr.KnownOrigin {
-				c.PointerFlow().InvalidateOrigin(ptrExpr.Origin, flow.TargetDead)
-			}
-		} else {
-			c.PointerFlow().InvalidateOrigin(flow.Origin(ast.Var), flow.TargetMoved)
-		}
 		note(of, "\t// dispose %s — obligation satisfied, no runtime effect\n", ast.Var)
 		return nullspot
 	case *Continue:
@@ -2715,9 +2747,13 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		argt := arg.ASTType(c)
 		checkAddressOfOwnedForDest(c, arg, param)
 		// Interface coercion at a call site: concrete pointer → fat pointer.
+		// destBinding is "" because the destination is the callee's parameter
+		// slot, not a binding we can track. Borrow-into-interface at a call
+		// site needs no extra escape check — the same non-escaping-borrow rule
+		// that applies to bare *T parameters covers it.
 		if c.IsInterfaceType(param) && argt.Indirection > 0 {
 			s := newSpot(of, c, c.Temp(), param)
-			emitInterfaceFatPtr(of, c, arg, param, argt, arg, s.ref)
+			emitInterfaceFatPtr(of, c, arg, param, argt, arg, s.ref, "")
 			if param.OwnedMask != 0 {
 				markMovedIfOwnedSource(of, c, param, arg)
 			}
@@ -2938,13 +2974,25 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 		return dest
 	}
 
-	// Compile the source value.
-	srcSpot := compileTop(of, c, src, nullspot)
-
 	srcUnderlying := c.ResolveUnderlying(srcType)
 	dstUnderlying := c.ResolveUnderlying(destType)
 	srcSize := srcUnderlying.Size(c)
 	dstSize := dstUnderlying.Size(c)
+
+	// Reject category-mismatched casts. A same-width `mov` between a pointer
+	// and a non-pointer is bit reinterpretation, not a type conversion: it
+	// launders pointer-ness in either direction, hiding the value from the
+	// alias tracker and ownership tracker. If a meaningful unsafe form is
+	// needed later, it should be syntactically distinct from the regular
+	// T(expr) cast.
+	srcIsPtr := srcUnderlying.Indirection > 0
+	dstIsPtr := dstUnderlying.Indirection > 0
+	if srcIsPtr != dstIsPtr {
+		CompileErrorF(src, "Cannot cast between pointer and non-pointer types: %s to %s", srcType, destType)
+	}
+
+	// Compile the source value.
+	srcSpot := compileTop(of, c, src, nullspot)
 
 	switch {
 	case srcSize == dstSize:
@@ -3406,6 +3454,19 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 	// The interface variable is memory-backed; its name is the base address.
 	ifaceRef := callNode.Pkg
 
+	// Validate the data pointer's flow-state origin before dispatch. If the
+	// interface was constructed by borrowing &x and x has since been moved,
+	// disposed, or fallen out of scope, the data slot aliases storage that
+	// is no longer trustworthy. The field-pointer registered by
+	// emitInterfaceFatPtr carries the source's origin; CheckDerefValidity
+	// rejects the dispatch with the same wording the bare *T deref uses.
+	if !ifaceType.HasOwned() {
+		dataField := c.PointerFlow().GetFieldPointer(flow.Binding(ifaceRef), "data")
+		if ok, reason := c.PointerFlow().CheckDerefValidity(dataField); !ok {
+			CompileErrorF(a, "%s", reason)
+		}
+	}
+
 	// Load data ptr, vtable ptr, and fn ptr into temps BEFORE setting up call
 	// registers, so they are not evicted by arg compilation.
 	dataPtr := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
@@ -3519,7 +3580,22 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 // dstt, registers the vtable, and emits stores to fill the two-word fat pointer at
 // destRef. The caller is responsible for allocating destRef before calling and for
 // handling owned-source marking and flow updates afterwards.
-func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTType, valAST AST, destRef string) {
+//
+// destBinding is the name of the destination interface variable, or "" when the
+// destination has no flow-tracked binding (e.g. a return-value slot or a callee
+// parameter we don't own). When set and the destination is a non-owned (borrow)
+// interface, the source's pointer expression is recorded as a field pointer
+// keyed "<destBinding>.data" so the existing escape, deref-validity, and
+// alias-invalidation machinery sees through the interface's opaque data slot
+// the same way it does through a regular struct field.
+//
+// For owned interface coercions we deliberately skip the field-pointer
+// registration: the source binding's obligation is moved into the interface
+// by markMovedIfOwnedSource at the call site, which already invalidates the
+// source's origin. Registering the data field would then make the destination
+// interface look dead, which is the opposite of what an ownership transfer
+// means.
+func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTType, valAST AST, destRef, destBinding string) {
 	concreteTypeName := srct.StripOwned().Name
 	ifaceDecl, _ := c.InterfaceForName(dstt.Name)
 	if !c.TypeSatisfiesInterface(concreteTypeName, ifaceDecl) {
@@ -3530,6 +3606,9 @@ func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTTy
 	}
 	vtableName := fmt.Sprintf("__vtable_%s_%s", concreteTypeName, dstt.Name)
 	c.NeedVtable(vtableName, concreteTypeName, dstt.Name, c.Pkgname(), ifaceDecl)
+	if destBinding != "" && dstt.OwnedMask == 0 {
+		c.PointerFlow().SetFieldPointer(flow.Binding(destBinding), "data", pointerExprForAST(c, valAST, ""))
+	}
 	val := compileTop(of, c, valAST, nullspot)
 	fmt.Fprintf(of, "\tmov [%s+0] %s\n", destRef, val.ref)
 	val.free(of)

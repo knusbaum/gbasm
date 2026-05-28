@@ -1,0 +1,2 @@
+Compiling tests/cast_alias_loses_origin_err_test.bos
+Fatal: Pointer to local variable "i" escapes via return

@@ -1,0 +1,2 @@
+Compiling tests/borrowed_ptr_use_after_move_err_test.bos
+Fatal: cannot dereference pointer to "y": the target was consumed

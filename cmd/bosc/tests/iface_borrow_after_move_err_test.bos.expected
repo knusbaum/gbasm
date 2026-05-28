@@ -1,0 +1,2 @@
+Compiling tests/iface_borrow_after_move_err_test.bos
+Fatal: cannot dereference pointer to "x": the target was consumed
