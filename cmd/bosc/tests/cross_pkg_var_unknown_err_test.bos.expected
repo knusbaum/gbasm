@@ -1,0 +1,2 @@
+Compiling tests/cross_pkg_var_unknown_err_test.bos
+Fatal: package "io" has no variable "NONEXISTENT"

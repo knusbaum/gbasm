@@ -1747,6 +1747,22 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		rax.free(of)
 		return ret
 	case *Dot:
+		// Cross-package variable read: `pkg.varname`. Emit a load from the
+		// qualified symbol — bas treats `pkg.varname` as an external data
+		// symbol (isIdentifier accepts dotted names) and the linker resolves
+		// the relocation to the producer package's data section.
+		if sym, ok := ast.Val.(*Symbol); ok && c.IsImportedPackage(sym.Name) {
+			vt, vok := c.ImportedVarType(sym.Name, ast.Member)
+			if !vok {
+				CompileErrorF(a, "package %q has no variable %q", sym.Name, ast.Member)
+			}
+			ref := sym.Name + "." + ast.Member
+			if dest.empty() {
+				dest = newSpot(of, c, c.Temp(), vt)
+			}
+			fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, ref)
+			return dest
+		}
 		l := compileTop(of, c, ast.Val, nullspot)
 		orig := l
 		l = materializePointerValue(of, c, l)

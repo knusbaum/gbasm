@@ -1,0 +1,25 @@
+package main
+
+import "io"
+import "string"
+
+// Cross-package variable read. The `io` package defines:
+//   var STDIN  FD = FD(0)
+//   var STDOUT FD = FD(1)
+//   var STDERR FD = FD(2)
+// This test exercises reading those values from a consuming package
+// via the `pkg.var` expression form, both directly and inside a cast.
+fn main() i64 {
+    string.puti(i64(io.STDIN))
+    string.putc('\n')
+    string.puti(i64(io.STDOUT))
+    string.putc('\n')
+    string.puti(i64(io.STDERR))
+    string.putc('\n')
+
+    // Cross-pkg var inside an arithmetic expression.
+    var sum i64 = i64(io.STDIN) + i64(io.STDOUT) + i64(io.STDERR)
+    string.puti(sum)
+    string.putc('\n')
+    return 0
+}

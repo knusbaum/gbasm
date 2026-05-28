@@ -1,0 +1,9 @@
+package main
+
+import "io"
+
+// Negative: referencing a var name that doesn't exist in the imported package
+// should produce a directed diagnostic, not a generic "variable undeclared".
+fn main() i64 {
+    return i64(io.NONEXISTENT)
+}

@@ -68,6 +68,10 @@ type Context struct {
 	funcs map[string]*FuncDecl
 	// maps imported package names to that package's function declarations.
 	imports map[string]map[string]*FuncDecl
+	// maps imported package names to that package's exported variables
+	// (pkg → varname → ASTType). Used to resolve cross-package var reads
+	// like `io.STDIN` at type-check and codegen time.
+	importedVars map[string]map[string]ASTType
 	// maps user-defined type alias names to their underlying types.
 	typeAliases map[string]ASTType
 	// maps interface names to their declarations.
@@ -101,6 +105,7 @@ func NewContext() *Context {
 		structs:        make(map[string]*StructDecl),
 		funcs:          make(map[string]*FuncDecl),
 		imports:        make(map[string]map[string]*FuncDecl),
+		importedVars:   make(map[string]map[string]ASTType),
 		typeAliases:    make(map[string]ASTType),
 		interfaceDecls: make(map[string]*InterfaceDecl),
 		typeMethods:    make(map[string][]*FuncDecl),
@@ -660,6 +665,30 @@ func (c *Context) DefineImportedFunc(pkg, name string, f *FuncDecl) {
 	c.imports[pkg][name] = f
 }
 
+// DefineImportedVar registers a variable from an imported package along
+// with its type as seen from the consumer (i.e., struct/alias names
+// already qualified to the producer's package).
+func (c *Context) DefineImportedVar(pkg, name string, t ASTType) {
+	if c.importedVars[pkg] == nil {
+		c.importedVars[pkg] = make(map[string]ASTType)
+	}
+	c.importedVars[pkg][name] = t
+}
+
+// ImportedVarType returns the type of an imported package's variable,
+// or false if no such var was imported.
+func (c *Context) ImportedVarType(pkg, name string) (ASTType, bool) {
+	if c == nil {
+		return ASTType{}, false
+	}
+	if vs, ok := c.importedVars[pkg]; ok {
+		if t, ok := vs[name]; ok {
+			return t, true
+		}
+	}
+	return c.parent.ImportedVarType(pkg, name)
+}
+
 // IsImportedPackage reports whether the given name refers to an imported package
 // in this context chain. Used to distinguish qualified calls from struct accesses.
 func (c *Context) IsImportedPackage(name string) bool {
@@ -931,6 +960,17 @@ func (c *Context) Import(importKey, path string) error {
 			}
 			c.DefineTypeMethods(qname, fds)
 		}
+	}
+	for _, v := range o.Vars {
+		if v.VType == "" {
+			continue
+		}
+		vt, err := parseTypeString(v.VType)
+		if err != nil {
+			return fmt.Errorf("import %q: var %s: %v", importKey, v.Name, err)
+		}
+		qualifyImportedType(&vt, o.Pkgname, o.Structs, o.TypeAliases)
+		c.DefineImportedVar(o.Pkgname, v.Name, vt)
 	}
 	return nil
 }
@@ -1887,6 +1927,15 @@ type Dot struct {
 }
 
 func (d *Dot) ASTType(c *Context) ASTType {
+	// Cross-package variable read: `pkg.varname` where pkg is an imported
+	// package. Resolve before falling through to struct-field lookup, since
+	// d.Val.ASTType(c) would otherwise panic with "Variable pkg undeclared".
+	if sym, ok := d.Val.(*Symbol); ok && c.IsImportedPackage(sym.Name) {
+		if vt, ok := c.ImportedVarType(sym.Name, d.Member); ok {
+			return vt
+		}
+		CompileErrorF(d, "package %q has no variable %q", sym.Name, d.Member)
+	}
 	t := d.Val.ASTType(c)
 	if t.Indirection != 0 {
 		if t.NilMask&1 != 0 {
