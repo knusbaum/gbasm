@@ -388,8 +388,22 @@ func (l *lexer) parseString() token {
 			switch r {
 			case 'n':
 				ret = append(ret, '\n')
+			case 't':
+				ret = append(ret, '\t')
+			case '\\':
+				ret = append(ret, '\\')
 			case '"':
 				ret = append(ret, '"')
+			case '0':
+				ret = append(ret, 0)
+			case 'x':
+				h1 := l.readRune()
+				h2 := l.readRune()
+				v, err := strconv.ParseUint(string([]rune{h1, h2}), 16, 8)
+				if err != nil {
+					panic(&interpreterError{fmt.Sprintf("invalid \\x escape: \\x%c%c", h1, h2), p})
+				}
+				ret = append(ret, rune(v))
 			default:
 				ret = append(ret, r)
 			}
@@ -410,8 +424,22 @@ func (l *lexer) parseChar() token {
 		switch r {
 		case 'n':
 			ret = '\n'
+		case 't':
+			ret = '\t'
+		case '\\':
+			ret = '\\'
 		case '"':
 			ret = '"'
+		case '0':
+			ret = 0
+		case 'x':
+			h1 := l.readRune()
+			h2 := l.readRune()
+			v, err := strconv.ParseUint(string([]rune{h1, h2}), 16, 8)
+			if err != nil {
+				panic(&interpreterError{fmt.Sprintf("invalid \\x escape: \\x%c%c", h1, h2), p})
+			}
+			ret = rune(v)
 		default:
 			ret = r
 		}
