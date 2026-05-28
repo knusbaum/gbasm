@@ -1,6 +1,6 @@
 package io
 
-import "string"
+import "_io_sys"
 
 var STDIN  FD = FD(0)
 var STDOUT FD = FD(1)
@@ -8,13 +8,13 @@ var STDERR FD = FD(2)
 
 type FD i64 {
 	read(fd *FD, buf mut byte[]) i64 {
-		return string.read(i64(*fd), buf)
+		return _io_sys.read(i64(*fd), buf)
 	}
 	write(fd *FD, buf byte[]) i64 {
-		return string.write(i64(*fd), buf)
+		return _io_sys.write(i64(*fd), buf)
 	}
 	close(fd *owned FD) i64 {
-		const result i64 = string.close(i64(*fd))
+		const result i64 = _io_sys.close(i64(*fd))
 		dispose(fd)
 		return result
 	}
@@ -23,5 +23,5 @@ type FD i64 {
 // open opens the file at path with the given flags and mode.
 // path must be null-terminated.
 fn open(path byte[], flags i64, mode i64) owned FD {
-	return owned(FD(string.open(path, flags, mode)))
+	return owned(FD(_io_sys.open(path, flags, mode)))
 }

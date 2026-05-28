@@ -7,10 +7,14 @@ if [[ $? != 0 ]]; then
 fi
 
 RUNTIME=../../runtime
-rm -f string.bo init.bo heap.bo pair.bo pair.bs io.bo io.bs
+rm -f string.bo init.bo heap.bo pair.bo pair.bs io.bo io.bs io_sys.bo
 ./bas -o string.bo $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs >/dev/null 2>&1
 ./bas -o init.bo $RUNTIME/_init/init_linux.bs >/dev/null 2>&1
 ./bas -o heap.bo $RUNTIME/_heap/heap_linux.bs >/dev/null 2>&1
+
+# Raw file-IO syscall wrappers used by the `io` package and by tests that
+# need a low-level i64-fd API.
+./bas -o io_sys.bo $RUNTIME/_io_sys/io_sys_linux.bs >/dev/null 2>&1
 
 # Compile the Boson-source `pair` test runtime package so cross-package
 # struct tests have something to import. importcfg is empty for it
@@ -21,7 +25,7 @@ rm -f string.bo init.bo heap.bo pair.bo pair.bs io.bo io.bs
 # Compile the Boson-source `io` runtime package so cross-package type-alias
 # tests have something to import.
 cat > io.importcfg <<EOF
-string=string.bo
+_io_sys=io_sys.bo
 EOF
 ./bosc -importcfg=io.importcfg -o io.bs $RUNTIME/io/io.bos >/dev/null 2>&1
 ./bas -o io.bo io.bs >/dev/null 2>&1
@@ -32,6 +36,7 @@ cat > test.importcfg <<EOF
 string=string.bo
 pair=pair.bo
 io=io.bo
+_io_sys=io_sys.bo
 EOF
 
 #set -e
@@ -97,7 +102,10 @@ for t in `ls tests/*_test.bos`; do
         extra_bo="$extra_bo pair.bo"
     fi
     if grep -q '^import "io"' "$t"; then
-        extra_bo="$extra_bo io.bo"
+        extra_bo="$extra_bo io.bo io_sys.bo"
+    fi
+    if grep -q '^import "_io_sys"' "$t"; then
+        case "$extra_bo" in *io_sys.bo*) ;; *) extra_bo="$extra_bo io_sys.bo";; esac
     fi
     ./bld -o ${t}.o ${t}.bo string.bo init.bo heap.bo $extra_bo >${t}.bld.out 2>&1
     if [[ $? != 0 ]]; then
@@ -144,6 +152,6 @@ if [[ $fail != '' ]]; then
 fi
 
 rm tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout
-rm bosc bas bld string.bo init.bo heap.bo pair.bo pair.bs io.bo io.bs test.importcfg
+rm bosc bas bld string.bo init.bo heap.bo pair.bo pair.bs io.bo io.bs io_sys.bo test.importcfg
 echo "SUITE PASSED"
 exit 0

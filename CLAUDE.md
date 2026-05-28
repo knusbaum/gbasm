@@ -114,10 +114,12 @@ Every linked program pulls in some subset of these.
 
 | Package | Files | Purpose |
 |---------|-------|---------|
-| `_init`  | `init_linux.bs` | Process entry (`_init.start`). Builds `byte[][]` argv on stack, calls `main.main(args byte[][])` (or `main.main()`), exits with main's rax. Also defines `index_oob` (bounds-check trap) and `nil_assert`. |
-| `_heap`  | `heap_linux.bs` | `_heap.alloc(i64) *mut byte` and `_heap.free(*mut byte)`. One mmap mapping per allocation; small size header; `free` calls munmap. Minimal, no pooling. |
-| `string` | `string.bs`, `puts_linux.bs` | IO + string utilities: `puts`, `puti`, `putb`, `putc`, `lenb`, `lenn`, `lenbb`, `read`, `write`, `open`, `close`, `exit`. Internal: `strlen`, `itoa`, `uitoa`, `ucountdigits`. |
-| `pair`   | `pair.bos` | A tiny exported struct used only by the cross-package-struct tests under `cmd/bosc/tests/`. Exists so the import path for Boson-source packages is exercised end-to-end. |
+| `_init`    | `init_linux.bs` | Process entry (`_init.start`). Builds `byte[][]` argv on stack, calls `main.main(args byte[][])` (or `main.main()`), exits with main's rax. Also defines `index_oob` (bounds-check trap) and `nil_assert`. |
+| `_heap`    | `heap_linux.bs` | `_heap.alloc(i64) *mut byte` and `_heap.free(*mut byte)`. One mmap mapping per allocation; small size header; `free` calls munmap. Minimal, no pooling. |
+| `_io_sys`  | `io_sys_linux.bs` | Raw Linux file-IO syscall wrappers: `_io_sys.read/write/open/close`. The low-level primitives that `io` is built on; end-user code should prefer `io`'s typed FD API. |
+| `string`   | `string.bs`, `puts_linux.bs` | String formatting and stdout output: `puts`, `puti`, `putb`, `putc`, `lenb`, `lenn`, `lenbb`, `exit`. Internal: `strlen`, `itoa`, `uitoa`, `ucountdigits`. File-IO syscalls live in `_io_sys`; the `io` package wraps them with a typed FD. |
+| `io`       | `io.bos` | Typed file IO: `type FD i64` with `read`/`write`/`close` methods, `fn open(path, flags, mode) owned FD`, and `STDIN`/`STDOUT`/`STDERR` globals. Wraps the raw `_io_sys` syscalls. |
+| `pair`     | `pair.bos` | A tiny exported struct used only by the cross-package-struct tests under `cmd/bosc/tests/`. Exists so the import path for Boson-source packages is exercised end-to-end. |
 
 ### `examples/` — runnable example projects
 

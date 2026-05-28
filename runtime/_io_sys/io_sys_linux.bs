@@ -1,0 +1,78 @@
+package _io_sys
+
+// Raw Linux syscall wrappers for file IO. These are the low-level
+// primitives that `io` builds its typed FD API on top of. End-user
+// code should prefer the `io` package's FD methods (read/write/close)
+// and `io.open(...) owned FD` rather than calling these directly.
+//
+// x86-64 Linux syscall convention:
+//   syscall #  → rax
+//   args       → rdi, rsi, rdx, r10, r8, r9
+//   return     → rax
+//   clobbers   → rcx, r11
+//
+// All four wrappers below take Boson-level slice headers ({ptr, len})
+// when applicable, unpack them into the syscall's pointer+length args,
+// and return the syscall's raw rax (negative errno on failure).
+
+// SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
+// call number: 0
+function read
+	// fd, buf
+	type fn(i64, mut byte[]) i64
+	prologue
+
+	mov rdx [rsi+8]
+	mov rsi [rsi]
+
+	mov rax 0x0
+	syscall
+
+	epilogue
+	ret
+
+// SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf, size_t, count)
+// call number: 1
+function write
+	// fd, buf
+	type fn(i64, byte[]) i64
+	prologue
+
+	mov rdx [rsi+8]
+	mov rsi [rsi]
+
+	mov rax 0x1
+	syscall
+
+	epilogue
+	ret
+
+// SYSCALL_DEFINE3(open, const char __user *, filename, int, flags, umode_t, mode)
+// call number: 2
+// path must be a null-terminated byte slice.
+function open
+	// path, flags, mode
+	type fn(byte[], i64, i64) i64
+	prologue
+
+	// Extract the data pointer from the slice header; pass it to the syscall.
+	mov rdi [rdi]
+
+	mov rax 0x2
+	syscall
+
+	epilogue
+	ret
+
+// SYSCALL_DEFINE1(close, unsigned int, fd)
+// call number: 3
+function close
+	// fd
+	type fn(i64) i64
+	prologue
+
+	mov rax 0x3
+	syscall
+
+	epilogue
+	ret

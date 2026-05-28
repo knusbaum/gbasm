@@ -1,6 +1,7 @@
 package main
 
 import "string"
+import "_io_sys"
 
 // #define O_RDONLY	00000000
 // #define O_WRONLY	00000001
@@ -9,7 +10,7 @@ import "string"
 
 fn main() i64 {
 	var fd i64
-	fd = string.open("./tests/io_test.bos", 0, 0)
+	fd = _io_sys.open("./tests/io_test.bos", 0, 0)
 	if (fd < 0) {
 		string.puts("Failed to open io_test.bos: ")
 		string.puti(fd)
@@ -23,14 +24,14 @@ fn main() i64 {
 	// create a slice to refer to the buffer.
 	var bs mut byte[]
 	bs = buf[:]
-	
+
 	var n i64
-	n = string.read(fd, bs)
+	n = _io_sys.read(fd, bs)
 	// extra security. This should not be necessary
-	// with 
+	// with
 	bs[10] = 'a'
 
 	// write stdout
-	n = string.write(1, bs[:n])
+	n = _io_sys.write(1, bs[:n])
 	return 0
 }

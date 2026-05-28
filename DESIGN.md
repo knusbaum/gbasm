@@ -242,11 +242,26 @@ Built-ins are not part of the language proper — they live in runtime packages 
 | `string.lenb` | `(byte[]) i64` | Return the length of a byte slice |
 | `string.lenn` | `(i64[]) i64` | Return the length of an i64 slice |
 | `string.lenbb` | `(byte[][]) i64` | Return the length of a byte-slice slice (e.g. argv) |
-| `string.read` | `(i64 fd, byte[] buf) i64` | Read up to len(buf) bytes; returns count or -errno. (Should be `mut byte[]` once the runtime is updated.) |
-| `string.write` | `(i64 fd, byte[] buf) i64` | Write buf to fd; returns count or -errno |
-| `string.open` | `(byte[] path, i64 flags, i64 mode) i64` | Open a file (path must be null-terminated in memory) |
-| `string.close` | `(i64 fd) i64` | Close a file descriptor |
 | `string.exit` | `(i64 code) void` | Exit the process with the given code |
+
+File IO lives in the `io` and `_io_sys` packages. The typed FD API in `io`:
+
+| Function/Method | Signature | Description |
+|------|------|------|
+| `io.open` | `(byte[] path, i64 flags, i64 mode) owned FD` | Open a file (path must be null-terminated); returns an owned FD |
+| `io.FD.read` | `(*FD, mut byte[] buf) i64` | Read up to len(buf) bytes; returns count or -errno |
+| `io.FD.write` | `(*FD, byte[] buf) i64` | Write buf to fd; returns count or -errno |
+| `io.FD.close` | `(*owned FD) i64` | Close the fd and consume the owned obligation |
+| `io.STDIN`/`STDOUT`/`STDERR` | `FD` | Standard file descriptors (0, 1, 2) |
+
+The raw syscall wrappers, taking i64 fd values directly, live in `_io_sys`:
+
+| Function | Signature | Description |
+|------|------|------|
+| `_io_sys.read` | `(i64 fd, mut byte[] buf) i64` | Raw `read(2)` syscall |
+| `_io_sys.write` | `(i64 fd, byte[] buf) i64` | Raw `write(2)` syscall |
+| `_io_sys.open` | `(byte[] path, i64 flags, i64 mode) i64` | Raw `open(2)` syscall |
+| `_io_sys.close` | `(i64 fd) i64` | Raw `close(2)` syscall |
 
 The `_init` package provides `_init.start` (the ELF entry point) and `_init.index_oob` (called by bounds checks).
 

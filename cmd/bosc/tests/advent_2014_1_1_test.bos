@@ -1,6 +1,7 @@
 package main
 
 import "string"
+import "_io_sys"
 
 type state struct {
 	one i64
@@ -162,7 +163,7 @@ fn partition(ns mut i64[]) i64 {
 
 fn main() i64 {
 	var fd i64
-	fd = string.open("tests/advent_2014_1.txt", 0, 0)
+	fd = _io_sys.open("tests/advent_2014_1.txt", 0, 0)
 	if (fd < 0) {
 		string.puts("Failed to open io_test.bos: ")
 		string.puti(fd)
@@ -181,7 +182,7 @@ fn main() i64 {
 	remaining = 0
 	for(0; 1 == 1 ; 0) {
 		var n i64
-		n = string.read(fd, bs)
+		n = _io_sys.read(fd, bs)
 		bs = buf[:n+remaining]
 		if(n <= 0) {
 			string.puts("Completed reading.\n")
