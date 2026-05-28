@@ -1404,6 +1404,18 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, "\t%s %s\n", f.Name, f.Type)
 		}
 		fmt.Fprintf(of, "}\n")
+		if methods, ok := c.TypeMethodsFor(ast.TName); ok {
+			for _, m := range methods {
+				qualified := &FuncDecl{
+					Name:   ast.TName + "." + m.Name,
+					Args:   m.Args,
+					Return: m.Return,
+					Body:   m.Body,
+					p:      m.p,
+				}
+				compileTop(of, c, qualified, nullspot)
+			}
+		}
 		return nullspot
 	case *VarDecl:
 		if c.prebound[ast.Name] {

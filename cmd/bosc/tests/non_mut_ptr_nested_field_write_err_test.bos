@@ -1,7 +1,7 @@
 package main
 
-struct inner { z i64 }
-struct outer { in inner }
+type inner struct { z i64 }
+type outer struct { in inner }
 
 fn main() {
 	var o outer = outer{in: inner{z: 1}}

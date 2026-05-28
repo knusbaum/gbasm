@@ -1,6 +1,6 @@
 package main
 
-struct Foo {
+type Foo struct {
 	x  i64
 	xp *?i64
 }

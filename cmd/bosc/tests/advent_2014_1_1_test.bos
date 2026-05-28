@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-struct state {
+type state struct {
 	one i64
 	two i64
 	remaining mut byte[]
@@ -264,7 +264,7 @@ fn similarity(left i64[], right i64[]) i64 {
 	return sim
 }
 
-struct nret {
+type nret struct {
 	i i64
 	err bool
 }

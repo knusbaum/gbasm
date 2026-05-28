@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-struct box {
+type box struct {
 	x owned i64
 	y i64
 }

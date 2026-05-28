@@ -520,62 +520,31 @@
 
 (defvar boson--font-lock-keywords
   (append
-   `(;; ;; Builtins (prefixed with @)
-     ;; (,(concat "@" boson-re-identifier) . font-lock-builtin-face)
-
-     ;; Keywords, constants and types
+   `(;; Keywords
      (,(rx symbol-start
            (|
-            ;; namespace
-            "package" "import"
-
-			;; Declarations
-			"struct" "var" "fn"
-
-            ;; Statement
-            "break" "return" "continue"
-
-            ;; Conditional
-            "if" "else"
-
-            ;; Loop
-            "for")
+            ;; Declarations
+            "fn" "var" "const" "type" "struct" "interface"
+            ;; Qualifiers
+            "mut" "owned" "dispose"
+            ;; Control flow
+            "if" "else" "for" "break" "continue" "return"
+            ;; Imports
+            "import")
            symbol-end)
       . font-lock-keyword-face)
 
+     ;; Constants
      (,(rx symbol-start
-           (|
-            ;; Boolean
-            "true" "false"
-
-            ;; ;; Other constants
-            ;; "null" "undefined")
-			)
+           (| "true" "false" "nil")
            symbol-end)
       . font-lock-constant-face)
 
+     ;; Built-in scalar types
      (,(rx symbol-start
-           (|
-            ;; ;; Integer types
-            ;; (: (any ?i ?u) (| ?0 (: (any (?1 . ?9)) (* digit))))
-            ;; "isize" "usize"
-
-            ;; ;; Floating types
-            ;; "f16" "f32" "f64" "f80" "f128"
-
-            ;; ;; C types
-            ;; "c_char" "c_short" "c_ushort" "c_int" "c_uint" "c_long" "c_ulong"
-            ;; "c_longlong" "c_ulonglong" "c_longdouble"
-
-            ;; ;; Comptime types
-            ;; "comptime_int" "comptime_float"
-
-            ;; ;; Other types
-            ;; "bool" "void" "noreturn" "type" "anyerror" "anyframe" "anytype"
-            ;; "anyopaque")
-			"num" "str" "void" "bool"
-
-			)
+           (| "i8" "i16" "i32" "i64"
+              "u8" "u16" "u32" "u64"
+              "byte" "bool" "void")
            symbol-end)
       . font-lock-type-face)
 	 

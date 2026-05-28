@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-struct wrap { p *mut i64 }
+type wrap struct { p *mut i64 }
 
 fn poke(var w wrap) {
 	*w.p = 99

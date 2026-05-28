@@ -6,16 +6,16 @@ import "string"
 // holding the literal's bytes and a pointer to it in the holder.
 // Composable: nested `&literal` chains add one anonymous per level.
 
-struct inner {
+type inner struct {
 	v i64
 }
 
-struct middle {
+type middle struct {
 	tag i64
 	in  *inner
 }
 
-struct outer {
+type outer struct {
 	name byte[]
 	mid  *middle
 }

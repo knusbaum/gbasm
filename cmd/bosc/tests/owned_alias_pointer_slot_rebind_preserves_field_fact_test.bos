@@ -1,10 +1,10 @@
 package main
 
-struct leaf {
+type leaf struct {
 	val i64
 }
 
-struct box {
+type box struct {
 	val i64
 	child owned *?owned mut leaf
 }

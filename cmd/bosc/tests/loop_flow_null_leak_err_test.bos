@@ -1,6 +1,6 @@
 package main
 
-struct node { val i64 }
+type node struct { val i64 }
 
 fn main() {
 	var p *?node = nil

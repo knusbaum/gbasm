@@ -29,7 +29,7 @@ fn pick(which i64) fn(i64, i64) i64 {
 
 // Struct field holding a function pointer. Exercises field-offset
 // encoding for FuncSig types and `obj.field(args)` indirect calls.
-struct dispatch {
+type dispatch struct {
 	op fn(i64, i64) i64
 }
 

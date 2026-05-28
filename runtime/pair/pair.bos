@@ -4,7 +4,7 @@ package pair
 // tests under cmd/bosc/tests. The whole point of this package is
 // to exercise the path where one .bo's struct definitions get
 // imported into another bosc compilation.
-struct pair {
+type pair struct {
 	a i64
 	b i64
 }

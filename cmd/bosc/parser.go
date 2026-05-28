@@ -1100,38 +1100,6 @@ func (p *Parser) parseExpression() (r *Node) {
 	return v
 }
 
-func (p *Parser) parseStruct() *Node {
-	structpos := p.current().p
-	p.expect(tok_struct)
-	name := p.parseTok()
-	if name.t != n_symbol {
-		panic(&interpreterError{fmt.Sprintf("Expected type name, but found %#v\n", name), name.p})
-	}
-	p.expect(tok_lcurly)
-
-	var ret []*Node
-	for p.current().t != tok_rcurly {
-		// Skip ';' between fields (auto-inserted by the lexer on
-		// newlines after a statement-ending token — the typename's
-		// closing ']' or trailing identifier, etc.)
-		if p.current().t == tok_semicolon {
-			p.advance()
-			continue
-		}
-		fieldpos := p.current().p
-		v := p.parseTok()
-		if v.t != n_symbol {
-			panic(&interpreterError{fmt.Sprintf("Expected field name, but found %#v\n", v), v.p})
-		}
-		v2 := p.parseTypeName()
-		if v2.t != n_typename {
-			panic(&interpreterError{fmt.Sprintf("Expected type name, but found %#v\n", v2), v2.p})
-		}
-		ret = append(ret, &Node{t: n_stfield, p: fieldpos, sval: v.sval, args: []*Node{v2}})
-	}
-	p.expect(tok_rcurly)
-	return &Node{t: n_struct, p: structpos, sval: name.sval, args: ret}
-}
 
 func (p *Parser) parseImport() *Node {
 	importpos := p.current().p
@@ -1237,9 +1205,7 @@ func (p *Parser) parseTypeDecl() *Node {
 }
 
 func (p *Parser) parseTopLevel() *Node {
-	if p.current().t == tok_struct {
-		return p.parseStruct()
-	} else if p.current().t == tok_import {
+	if p.current().t == tok_import {
 		return p.parseImport()
 	} else if p.current().t == tok_type {
 		return p.parseTypeDecl()

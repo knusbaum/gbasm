@@ -12,7 +12,7 @@ import "string"
 // on a new statement can be eaten as binary multiplication by the
 // previous statement.
 
-struct point {
+type point struct {
 	x i64
 	y i64
 }

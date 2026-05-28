@@ -2,8 +2,8 @@ package main
 
 import "string"
 
-struct inner { z i64 }
-struct outer { x i64; in inner }
+type inner struct { z i64 }
+type outer struct { x i64; in inner }
 
 fn modify(var o outer) {
 	o.x = 999

@@ -8,7 +8,7 @@ import "string"
 var counter i64 = 42
 var pcounter *i64 = &counter
 
-struct config {
+type config struct {
 	threshold i64
 	current   *i64    // pointer field, hand-wired to point at counter
 	greeting  byte[]  // slice field, init from string literal

@@ -5,7 +5,7 @@ package main
 // the runtime codegen rejects it cleanly rather than silently doing
 // something weird.
 
-struct point { x i64 }
+type point struct { x i64 }
 
 fn main() {
 	var p *point = &point{x: 1}

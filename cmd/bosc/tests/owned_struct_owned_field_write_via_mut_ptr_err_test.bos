@@ -1,6 +1,6 @@
 package main
 
-struct foo {
+type foo struct {
 	x i64
 	y owned i64
 }

@@ -1,6 +1,6 @@
 package main
 
-struct node {
+type node struct {
 	val i64
 }
 

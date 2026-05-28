@@ -7,7 +7,7 @@ import "string"
 // zero-pads the rest of the array — no relocation needed since
 // nothing points anywhere.
 
-struct phrases {
+type phrases struct {
 	greeting byte[16]
 	farewell byte[16]
 }

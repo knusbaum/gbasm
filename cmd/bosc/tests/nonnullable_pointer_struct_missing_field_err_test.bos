@@ -1,6 +1,6 @@
 package main
 
-struct cursor {
+type cursor struct {
 	value i64
 	current *mut i64
 }

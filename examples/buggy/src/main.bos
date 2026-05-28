@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-struct SelfRef {
+type SelfRef struct {
 	x i64
 	xp *i64
 }

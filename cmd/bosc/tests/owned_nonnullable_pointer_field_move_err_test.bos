@@ -1,6 +1,6 @@
 package main
 
-struct box {
+type box struct {
 	next owned *mut i64
 }
 

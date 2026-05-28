@@ -1,6 +1,6 @@
 package main
 
-struct node { val i64 }
+type node struct { val i64 }
 
 fn use_nonnull(n *node) i64 {
 	return n.val

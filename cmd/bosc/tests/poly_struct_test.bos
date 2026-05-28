@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-struct poly {
+type poly struct {
 	x i64
 	y i64
 	bs byte[]

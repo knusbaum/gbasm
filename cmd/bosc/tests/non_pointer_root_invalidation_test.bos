@@ -1,7 +1,7 @@
 package main
 
-struct leaf { val i64 }
-struct box {
+type leaf struct { val i64 }
+type box struct {
 	val i64
 	child owned *?owned mut leaf
 }

@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-struct node {
+type node struct {
 	val i64
 	next owned *?owned mut node
 }

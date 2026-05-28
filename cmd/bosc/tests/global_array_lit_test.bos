@@ -11,7 +11,7 @@ var nums i64[4] = [10, 20, 30, 40]
 var bs byte[3] = [65, 66, 67]                   // 'A' 'B' 'C'
 var slice i64[] = [100, 200, 300]
 
-struct config {
+type config struct {
 	id      i64
 	weights i64[3]
 }

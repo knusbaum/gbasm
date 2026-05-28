@@ -2,10 +2,10 @@ package main
 
 import "string"
 
-struct inner { z i64 }
-struct mid { z i64; w i64 }
-struct outer1 { x i64; in inner }
-struct outer2 { x i64; in mid }
+type inner struct { z i64 }
+type mid struct { z i64; w i64 }
+type outer1 struct { x i64; in inner }
+type outer2 struct { x i64; in mid }
 
 fn main() {
 	var a outer1 = outer1{x: 1, in: inner{z: 2}}

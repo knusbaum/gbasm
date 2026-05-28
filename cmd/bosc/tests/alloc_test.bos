@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-struct pair {
+type pair struct {
 	x i64
 	y i64
 }

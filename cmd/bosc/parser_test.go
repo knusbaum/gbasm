@@ -325,13 +325,15 @@ func TestParser(t *testing.T) {
 			}},
 		},
 		{
-			in: "struct rect { x num y num w num h num in *screen}",
-			out: &Node{t: n_struct, sval: "rect", args: []*Node{
-				&Node{t: n_stfield, sval: "x", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-				&Node{t: n_stfield, sval: "y", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-				&Node{t: n_stfield, sval: "w", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-				&Node{t: n_stfield, sval: "h", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-				&Node{t: n_stfield, sval: "in", args: []*Node{&Node{t: n_typename, sval: "screen", ival: 1}}},
+			in: "type rect struct { x num y num w num h num in *screen}",
+			out: &Node{t: n_typedecl, sval: "rect", args: []*Node{
+				&Node{t: n_typename, sval: "<struct>", args: []*Node{
+					&Node{t: n_stfield, sval: "x", args: []*Node{&Node{t: n_typename, sval: "num"}}},
+					&Node{t: n_stfield, sval: "y", args: []*Node{&Node{t: n_typename, sval: "num"}}},
+					&Node{t: n_stfield, sval: "w", args: []*Node{&Node{t: n_typename, sval: "num"}}},
+					&Node{t: n_stfield, sval: "h", args: []*Node{&Node{t: n_typename, sval: "num"}}},
+					&Node{t: n_stfield, sval: "in", args: []*Node{&Node{t: n_typename, sval: "screen", ival: 1}}},
+				}},
 			}},
 		},
 		{

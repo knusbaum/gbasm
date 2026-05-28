@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-struct Res {
+type Res struct {
 	val i64
 }
 

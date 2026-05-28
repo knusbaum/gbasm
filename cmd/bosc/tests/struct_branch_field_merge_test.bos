@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-struct Foo {
+type Foo struct {
 	x  i64
 	xp *?i64
 }

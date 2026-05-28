@@ -7,7 +7,7 @@ import "string"
 // base for the subsequent register-scaled index. The base reaching
 // the Index codegen is no longer the bare global symbol — it's an
 // already-leaded address from the *Dot small-struct path.
-struct buffer {
+type buffer struct {
 	bytes byte[10]
 	count i64
 }

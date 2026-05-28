@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-struct nret {
+type nret struct {
 	i i64
 	err bool
 }

@@ -1,6 +1,6 @@
 package main
 
-struct holder {
+type holder struct {
 	next owned *mut i64
 }
 

@@ -14,6 +14,16 @@ type thingy i64 {
 	}
 }
 
+type other_thingy struct{ x i64, y i64} {
+	hello(o *other_thingy) {
+		string.puts("hello, other thingy. x: ")
+		string.puti(o.x)
+		string.puts(", y: ")
+		string.puti(o.y)
+		string.puts("\n")
+	}
+}
+
 fn do_helloer(h helloer) {
 	h.hello()
 }
@@ -23,4 +33,7 @@ fn main(args byte[][]) {
 	do_helloer(&t)
 	t = 20
 	do_helloer(&t)
+	var z other_thingy
+	z = {x: 10, y: 20}
+	do_helloer(&z)
 }

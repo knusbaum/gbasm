@@ -1,10 +1,10 @@
 package main
 
-struct node {
+type node struct {
 	val i64
 }
 
-struct holder {
+type holder struct {
 	n *node
 }
 

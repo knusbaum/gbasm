@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-struct big { a i64; b i64 }
+type big struct { a i64; b i64 }
 
 fn add_to_a(var p big) big {
 	p.a = p.a + 10

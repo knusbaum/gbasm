@@ -1,6 +1,6 @@
 package main
 
-struct Res {
+type Res struct {
 	val i64
 }
 

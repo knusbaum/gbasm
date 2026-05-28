@@ -1,10 +1,10 @@
 package main
 
-struct child {
+type child struct {
 	val i64
 }
 
-struct box {
+type box struct {
 	child owned child
 }
 

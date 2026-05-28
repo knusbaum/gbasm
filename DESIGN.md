@@ -48,11 +48,11 @@ Boson is a statically typed, imperative language. It is intentionally small: no 
 | `*?T` | Nullable pointer to T |
 | `T[]` | Slice (fat pointer: data pointer + length, 16 bytes) |
 | `T[N]` | Fixed-size array |
-| `struct Name { ... }` | Named record type (file scope) |
+| `type Name struct { ... }` | Named record type (file scope) |
 | `struct { ... }` | Anonymous struct type (usable as a parameter, return, or var type) |
 | `fn(args) ret` | Function-pointer type (pointer-sized) |
 
-Anonymous struct types appear in parameter, return, and var-declaration positions just like named ones; two anonymous types are compatible when their field lists agree on both name and type, field-by-field. They are otherwise identical to named structs in layout and semantics.
+Named struct types are declared with `type Name struct { ... }` (see [Type aliases with methods](#type-aliases-with-methods)); the struct body is pure data — no methods inside. Anonymous struct types appear in parameter, return, and var-declaration positions. Two anonymous struct types are compatible when their field lists agree on both name and type, field-by-field. They are otherwise identical to named structs in layout and semantics.
 
 ```
 fn divide(a i64, b i64) struct { quot i64, rem i64 } {
@@ -267,7 +267,7 @@ The compiler also provides allocator built-ins:
 ### Struct Literals
 
 ```
-struct point { x i64, y i64, z i64 }
+type point struct { x i64, y i64, z i64 }
 
 var p point = point{ x: 10, y: 20, z: 30 }
 ```
@@ -509,7 +509,7 @@ free(n)          // consumes n's allocation obligation
 This is intentionally not Rust-style exclusive mutable borrowing. Multiple non-owning aliases to the same object may exist at the same time. The price is conservative flow invalidation: if a write through one alias may affect an owned field, facts learned through another alias are no longer trusted.
 
 ```
-struct box {
+type box struct {
     val i64
     child owned *?owned mut node
 }
@@ -618,7 +618,7 @@ The model still has important limits:
 `owned` on a struct field is conditional on the ownership of the containing value:
 
 ```
-struct box {
+type box struct {
     x owned i64
     y i64
 }
@@ -655,7 +655,7 @@ b.x = 1           // COMPILE ERROR
 Owned nullable pointer fields may be moved out of an owned aggregate. Moving such a field copies the pointer to the destination, writes `nil` back into the original field, and records that the field's ownership obligation has been consumed:
 
 ```
-struct node {
+type node struct {
     val i64
     next owned *?owned mut node
 }
@@ -826,7 +826,7 @@ fn bad_global(n *node) {
     saved = n               // COMPILE ERROR: borrowed pointer escapes
 }
 
-struct holder {
+type holder struct {
     n *?node
 }
 
@@ -934,7 +934,7 @@ var y *mut i16      // CAN rebind y, CAN write through y
 For struct fields, the binding mutability of the *struct instance* determines whether fields can be directly written. Pointer fields carry their own write-through permission independently:
 
 ```
-struct foo {
+type foo struct {
     x i16
     y *mut i16    // y points to a mutable i16
 }
@@ -1041,7 +1041,7 @@ fn pick(which i64) fn(i64, i64) i64 {
 }
 var chosen fn(i64, i64) i64 = pick(0)
 
-struct dispatch { op fn(i64, i64) i64 }
+type dispatch struct { op fn(i64, i64) i64 }
 var d dispatch = dispatch{op: &add}
 d.op(7, 8)                            // struct-field indirect call
 d.op = &sub                            // field reassignment
@@ -1088,7 +1088,7 @@ Interfaces provide structural polymorphism over types that share a common set of
 
 ### Type aliases with methods
 
-The existing `type Name Underlying` form is extended to optionally include a method block:
+`type Name Underlying` declares a distinct named type. The underlying type may be any type expression — a scalar, a pointer, a function-pointer type, or a `struct { ... }` body. An optional method block follows:
 
 ```
 type foo bar {
@@ -1100,6 +1100,22 @@ type foo bar {
     }
 }
 ```
+
+`struct { ... }` as the underlying type is the standard way to define a named record with fields. The struct body is **pure data** — method definitions belong in the type block, not in the struct body:
+
+```
+type point struct {
+    x i64
+    y i64
+} {
+    scale(self *point, n i64) {
+        self.x = self.x * n
+        self.y = self.y * n
+    }
+}
+```
+
+Field separators inside a struct body may be `,`, a newline (the lexer inserts `;` automatically), or both; a trailing separator before `}` is allowed.
 
 - Instance methods take a pointer receiver as their first parameter. The parameter name is arbitrary; `self` is conventional. **Value receivers are not allowed.**
 - The receiver may carry ownership qualifiers: `*T` (borrow), `*mut T` (mutable borrow), `owned *owned T` (consuming — takes ownership of the pointed-to value).
@@ -1285,7 +1301,7 @@ Anything else (function calls, runtime expressions, type mismatches, length mism
 **Pointer fields in static structures** work naturally because the encoder is recursive and `Var.Relocs` is per-var:
 
 ```
-struct config {
+type config struct {
     threshold i64
     current   *i64       // pointer field
     greeting  byte[]     // slice field
@@ -1766,7 +1782,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Value-alias tracking for owned scalars: declaring `var fd owned i64 = ...` registers a flow-state Origin; coercing to a non-owned destination (`var t i64 = fd`, `thingy(fd)`, etc.) records the destination as an alias of that Origin; `c.Move` on the source invalidates all such aliases, and reading the destination after the move is rejected at the Symbol-use site with the same diagnostic as a borrowed-pointer use-after-move
 - Field-level pointer provenance: per-field pointer facts in flow state catch self-referential struct escapes at return, dispose/free invalidating field-pointer aliases, and out-of-scope local-address extraction through a struct field
 - Interfaces: structural satisfaction at coercion sites, fat-pointer representation (data + vtable, 16 bytes), automatic vtable emission per `(T, I)` pair, indirect dispatch through the vtable, and `owned I` / `I` interface qualifiers
-- Type-block methods: `type T <base> { ... }` declarations carrying instance methods (pointer receiver) and static methods (no receiver), called as `v.method(args)` / `T.method(args)` respectively
+- Type-block methods: `type T <base> { ... }` declarations carrying instance methods (pointer receiver) and static methods (no receiver), called as `v.method(args)` / `T.method(args)` respectively; `struct { ... }` is a valid base (fields in the struct body, methods in the type block)
 - Non-escaping borrowed pointer parameters by default, including local alias provenance and escape rejection for returns, globals, fields, and struct literals
 - Compiler built-ins `alloc(T)`, `new(expr)`, and `free(p)` backed by the `_heap` runtime package; `alloc(T)` and `new(expr)` return owned mutable pointers
 - `for` lowering to block + loop control flow; `continue` runs the lowered step expression

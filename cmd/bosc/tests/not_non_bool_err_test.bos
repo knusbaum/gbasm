@@ -1,6 +1,6 @@
 package main
 
-struct point { x i64 }
+type point struct { x i64 }
 
 fn main() {
 	var p point = point{x: 1}

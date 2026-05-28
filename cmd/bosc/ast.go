@@ -2637,28 +2637,31 @@ func (n *Node) ToAST(c *Context) (a AST, e error) {
 // proper AST, doing some basic checks along the way.
 //
 // Note, when we call toASTTop recursively, we always pass
+// buildStructDecl constructs a StructDecl from an n_typename node with sval="<struct>".
+func buildStructDecl(name string, structNode *Node, p position) *StructDecl {
+	var sd StructDecl
+	sd.TName = name
+	sd.p = p
+	for _, a := range structNode.args {
+		if a.t != n_stfield {
+			ParseErrorF(a, "Expected a struct field, but found %s", a.t)
+		}
+		sd.Fields = append(sd.Fields, Binding{
+			Name: a.sval,
+			Type: mkTypename(a.args[0]),
+		})
+	}
+	return &sd
+}
+
 // a new context. We only want to define globals. This also
 // means the context is write-only, since we cannot rely on it
 // to have complete information at any point during AST construction.
 func (n *Node) toASTTop(c *Context) AST {
 	switch n.t {
 	case n_struct:
-		var sd StructDecl
-		sd.TName = n.sval
-		sd.p = n.p
-		for _, a := range n.args {
-			if a.t != n_stfield {
-				ParseErrorF(a, "Expected a struct field, but found %s", a.t)
-			}
-			fieldName := a.sval
-			fieldType := mkTypename(a.args[0])
-			sd.Fields = append(sd.Fields, Binding{
-				Name: fieldName,
-				Type: fieldType,
-			})
-		}
-		c.DefineStruct(sd.TName, &sd)
-		return &sd
+		ParseErrorF(n, "named struct declarations are not allowed; use `type %s struct { ... }` instead", n.sval)
+		return nil
 	case n_var:
 		var v VarDecl
 		v.Name = n.sval
@@ -2891,6 +2894,11 @@ func (n *Node) toASTTop(c *Context) AST {
 		}
 		return &al
 	case n_typedecl:
+		if n.args[0].sval == "<struct>" {
+			sd := buildStructDecl(n.sval, n.args[0], n.p)
+			c.DefineStruct(sd.TName, sd)
+			return sd
+		}
 		underlying := mkTypename(n.args[0])
 		// Propagate Signed from base type if it's a built-in.
 		switch underlying.Name {
@@ -2900,6 +2908,47 @@ func (n *Node) toASTTop(c *Context) AST {
 		c.DefineTypeAlias(n.p, n.sval, underlying)
 		return &TypeAliasDecl{Name: n.sval, Underlying: underlying, p: n.p}
 	case n_typedecl_with_methods:
+		if n.args[0].sval == "<struct>" {
+			sd := buildStructDecl(n.sval, n.args[0], n.p)
+			c.DefineStruct(sd.TName, sd)
+			var methods []*FuncDecl
+			for _, mn := range n.args[1:] {
+				if mn.t != n_fn {
+					ParseErrorF(mn, "Expected method definition in type block, got %v", mn.t)
+				}
+				var fn FuncDecl
+				fn.Name = mn.sval
+				fn.p = mn.p
+				nargs := int(mn.ival)
+				margs := mn.args
+				for i := 0; i < nargs; i++ {
+					a := margs[0]
+					fn.Args = append(fn.Args, Binding{
+						Name:    a.sval,
+						Type:    mkTypename(a.args[0]),
+						IsConst: a.ival == 0,
+					})
+					margs = margs[1:]
+				}
+				fn.Return = mkTypename(margs[0])
+				body := margs[1]
+				if body.t != n_block {
+					ParseErrorF(body, "Expected a block for method body, got %v", body.t)
+				}
+				fn.Body = body.toASTTop(NewContext()).(*Block)
+				qualName := n.sval + "." + fn.Name
+				c.DefineFunc(qualName, &FuncDecl{
+					Name:   qualName,
+					Args:   fn.Args,
+					Return: fn.Return,
+					Body:   fn.Body,
+					p:      fn.p,
+				})
+				methods = append(methods, &fn)
+			}
+			c.DefineTypeMethods(n.sval, methods)
+			return sd
+		}
 		underlying := mkTypename(n.args[0])
 		switch underlying.Name {
 		case "i8", "i16", "i32", "i64":

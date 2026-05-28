@@ -13,10 +13,10 @@ import "string"
 // that register's value as a pointer on the next step. Both the
 // parser and codegen sides are exercised here.
 
-struct point { x i64 }       // 8 bytes — triggers the small-struct path
-struct line  { a point }     // 8 bytes — single-field struct of struct
+type point struct { x i64 }       // 8 bytes — triggers the small-struct path
+type line struct { a point }     // 8 bytes — single-field struct of struct
 
-struct phrases {
+type phrases struct {
 	greeting byte[16]
 	farewell byte[16]
 }
