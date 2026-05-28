@@ -918,9 +918,9 @@ func (c *Context) Import(importKey, path string) error {
 				return err
 			}
 			for i := range t.Args {
-				qualifyImportedType(&t.Args[i].Type, o.Pkgname, o.Structs, o.TypeAliases)
+				qualifyImportedType(&t.Args[i].Type, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces)
 			}
-			qualifyImportedType(&t.Return, o.Pkgname, o.Structs, o.TypeAliases)
+			qualifyImportedType(&t.Return, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces)
 			t.Name = fn.Name
 			c.DefineImportedFunc(o.Pkgname, fn.Name, &t)
 		}
@@ -932,7 +932,7 @@ func (c *Context) Import(importKey, path string) error {
 			if err != nil {
 				return fmt.Errorf("import %q: struct %s field %s: %v", importKey, sh.Name, fs.Name, err)
 			}
-			qualifyImportedType(&ft, o.Pkgname, o.Structs, o.TypeAliases)
+			qualifyImportedType(&ft, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces)
 			fields = append(fields, Binding{Name: fs.Name, Type: ft})
 		}
 		qname := o.Pkgname + "." + sh.Name
@@ -969,7 +969,7 @@ func (c *Context) Import(importKey, path string) error {
 		if err != nil {
 			return fmt.Errorf("import %q: var %s: %v", importKey, v.Name, err)
 		}
-		qualifyImportedType(&vt, o.Pkgname, o.Structs, o.TypeAliases)
+		qualifyImportedType(&vt, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces)
 		c.DefineImportedVar(o.Pkgname, v.Name, vt)
 	}
 	for _, ifc := range o.Interfaces {
@@ -983,7 +983,7 @@ func (c *Context) Import(importKey, path string) error {
 					return fmt.Errorf("import %q: interface %s method %s param %s: %v",
 						importKey, ifc.Name, m.Name, p.Name, err)
 				}
-				qualifyImportedType(&pt, o.Pkgname, o.Structs, o.TypeAliases)
+				qualifyImportedType(&pt, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces)
 				sig.Params = append(sig.Params, Binding{Name: p.Name, Type: pt, IsConst: true})
 			}
 			rt, err := parseTypeString(m.Return)
@@ -991,7 +991,7 @@ func (c *Context) Import(importKey, path string) error {
 				return fmt.Errorf("import %q: interface %s method %s return: %v",
 					importKey, ifc.Name, m.Name, err)
 			}
-			qualifyImportedType(&rt, o.Pkgname, o.Structs, o.TypeAliases)
+			qualifyImportedType(&rt, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces)
 			sig.Return = rt
 			decl.Methods = append(decl.Methods, sig)
 		}
@@ -1004,22 +1004,22 @@ func (c *Context) Import(importKey, path string) error {
 // matches a struct or type alias defined in the producer .bo, rewrites
 // it as "pkgname.LeafName". Built-in names and already-qualified names
 // (containing a dot) are left alone.
-func qualifyImportedType(t *ASTType, pkgname string, structs map[string]*gbasm.StructShape, aliases map[string]*gbasm.TypeAliasShape) {
+func qualifyImportedType(t *ASTType, pkgname string, structs map[string]*gbasm.StructShape, aliases map[string]*gbasm.TypeAliasShape, ifaces map[string]*gbasm.InterfaceShape) {
 	if t.Element != nil {
-		qualifyImportedType(t.Element, pkgname, structs, aliases)
+		qualifyImportedType(t.Element, pkgname, structs, aliases, ifaces)
 		return
 	}
 	if t.AnonFields != nil {
 		for i := range t.AnonFields {
-			qualifyImportedType(&t.AnonFields[i].Type, pkgname, structs, aliases)
+			qualifyImportedType(&t.AnonFields[i].Type, pkgname, structs, aliases, ifaces)
 		}
 		return
 	}
 	if t.FuncSig != nil {
 		for i := range t.FuncSig.Args {
-			qualifyImportedType(&t.FuncSig.Args[i], pkgname, structs, aliases)
+			qualifyImportedType(&t.FuncSig.Args[i], pkgname, structs, aliases, ifaces)
 		}
-		qualifyImportedType(&t.FuncSig.Return, pkgname, structs, aliases)
+		qualifyImportedType(&t.FuncSig.Return, pkgname, structs, aliases, ifaces)
 		return
 	}
 	if _, ok := structs[t.Name]; ok {
@@ -1027,6 +1027,10 @@ func qualifyImportedType(t *ASTType, pkgname string, structs map[string]*gbasm.S
 		return
 	}
 	if _, ok := aliases[t.Name]; ok {
+		t.Name = pkgname + "." + t.Name
+		return
+	}
+	if _, ok := ifaces[t.Name]; ok {
 		t.Name = pkgname + "." + t.Name
 	}
 }
