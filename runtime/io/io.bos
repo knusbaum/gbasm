@@ -6,6 +6,11 @@
 // to close exactly once; the three pre-opened standard streams STDIN,
 // STDOUT, and STDERR are exposed as non-owning globals.
 //
+// All fallible operations return a (value, err) pair where err is 0 on
+// success and a positive errno value on failure. On read and write errors
+// the returned byte count is 0; on open errors the returned FD is invalid
+// and must be disposed rather than closed.
+//
 // End-user code should generally prefer this package's typed API over the
 // raw _io_sys wrappers; the latter exist only as the syscall thunks that
 // io is built on top of.
@@ -39,60 +44,66 @@ var STDERR FD = FD(2)
 // struct fields, slice elements, and passed by value into the _io_sys
 // syscall wrappers.
 type FD i64 {
-	// read fills buf with bytes from the descriptor and returns the
-	// number of bytes actually read.
+	// read fills buf with bytes from the descriptor.
 	//
-	// A return of 0 indicates end-of-file; a return less than len(buf)
-	// is a partial read and may be retried. A negative return value is
-	// the negation of errno from the underlying read(2) syscall.
-	read(fd *FD, buf mut byte[]) i64 {
-		return _io_sys.read(i64(*fd), buf)
+	// Returns (n, err): n is the number of bytes read (0 = EOF) and err
+	// is 0 on success or a positive errno value on failure.
+	// A partial read (n < len(buf), err == 0) may be retried.
+	read(fd *FD, buf mut byte[]) i64, i64 {
+		const raw i64 = _io_sys.read(i64(*fd), buf)
+		if (raw < 0) {
+			return 0, -raw
+		}
+		return raw, 0
 	}
 
-	// write writes the bytes in buf to the descriptor and returns the
-	// number of bytes actually written.
+	// write writes buf to the descriptor.
 	//
-	// A return less than len(buf) is a partial write; the caller is
-	// responsible for re-issuing the remainder. A negative return value
-	// is the negation of errno from the underlying write(2) syscall.
-	write(fd *FD, buf byte[]) i64 {
-		return _io_sys.write(i64(*fd), buf)
+	// Returns (n, err): n is the number of bytes written and err is 0 on
+	// success or a positive errno value on failure.
+	// A short write (n < len(buf), err == 0) is not an error; the caller
+	// is responsible for re-issuing the remainder.
+	write(fd *FD, buf byte[]) i64, i64 {
+		const raw i64 = _io_sys.write(i64(*fd), buf)
+		if (raw < 0) {
+			return 0, -raw
+		}
+		return raw, 0
 	}
 
 	// close releases the descriptor back to the kernel and consumes the
 	// owned FD. After close, the FD value is dead — any subsequent use
 	// is a compile-time error.
 	//
-	// The return is zero on success, or the negation of errno from the
-	// underlying close(2) syscall (some filesystems surface delayed
-	// write errors here).
+	// Returns 0 on success or a positive errno value on failure. Some
+	// filesystems surface delayed write errors through close.
 	close(fd *owned FD) i64 {
-		const result i64 = _io_sys.close(i64(*fd))
+		const raw i64 = _io_sys.close(i64(*fd))
 		dispose(fd)
-		return result
+		if (raw < 0) {
+			return -raw
+		}
+		return 0
 	}
 }
 
 // reader is the interface satisfied by any value with a read method of
-// the appropriate shape. Mirrors Go's io.Reader: read fills buf with up
-// to len(buf) bytes and returns the count actually read, 0 for EOF, or
-// a negative value for an error (the negation of errno on FD-backed
-// implementations).
+// the appropriate shape. read fills buf with up to len(buf) bytes and
+// returns (n, err): n bytes read (0 = EOF), err = 0 on success or a
+// positive errno on failure.
 interface reader {
-	read(r *self, buf mut byte[]) i64
+	read(r *self, buf mut byte[]) i64, i64
 }
 
 // writer is the interface satisfied by any value with a write method of
-// the appropriate shape. Mirrors Go's io.Writer: write attempts to
-// write all of buf and returns the count actually written. A return
-// less than len(buf) is a short write that the caller is responsible
-// for retrying; a negative value is an error.
+// the appropriate shape. write attempts to write buf and returns (n, err):
+// n bytes written, err = 0 on success or a positive errno on failure.
+// A short write (n < len(buf), err == 0) must be retried by the caller.
 interface writer {
-	write(w *self, buf byte[]) i64
+	write(w *self, buf byte[]) i64, i64
 }
 
-// open opens the file at path with the given open(2) flags and mode,
-// returning an owned FD that the caller is responsible for closing.
+// open opens the file at path with the given open(2) flags and mode.
 //
 // path is an ordinary Boson byte slice — open copies it into an internal
 // buffer and appends the NUL terminator that the underlying open(2)
@@ -103,20 +114,24 @@ interface writer {
 // O_CREAT, …). mode is the permission bits applied when O_CREAT creates
 // a new file.
 //
-// Paths longer than 4095 bytes — one short of Linux's PATH_MAX, leaving
-// room for the NUL — return an owned FD wrapping -ENAMETOOLONG (-36).
-// All other failures surface as the negation of errno from open(2); the
-// caller should check for a negative i64(fd) before using the result.
-fn open(path byte[], flags i64, mode i64) owned FD {
+// Returns (fd, err): on success err is 0 and fd is the opened descriptor.
+// On failure err is a positive errno value and fd is invalid — the caller
+// must dispose it rather than close it.
+// Paths longer than 4095 bytes return err = 36 (ENAMETOOLONG).
+fn open(path byte[], flags i64, mode i64) owned FD, i64 {
 	var buf byte[4096]
 	const n i64 = string.lenb(path)
 	if (n >= 4096) {
-		return owned(FD(-36))
+		return owned(FD(-1)), 36
 	}
 	var i i64
 	for (i = 0; i < n; i = i + 1) {
 		buf[i] = path[i]
 	}
 	buf[n] = 0
-	return owned(FD(_io_sys.open(buf[:n+1], flags, mode)))
+	const raw i64 = _io_sys.open(buf[:n+1], flags, mode)
+	if (raw < 0) {
+		return owned(FD(-1)), -raw
+	}
+	return owned(FD(raw)), 0
 }

@@ -389,7 +389,11 @@ func (p *Parser) parseTypeName() *Node {
 	// Anonymous struct type: `struct { field Type, ... }`.
 	// Packed into an n_typename with sval="<struct>" and args = n_stfield nodes,
 	// recognized by mkTypename to assemble an ASTType with AnonFields.
-	if c.t == tok_struct {
+	// Also handles `multiretu{...}` — the serialized form of a multi-value return
+	// type (ASTType.String() emits this when MultiReturn=true) — producing a
+	// "<multiretu>" sentinel instead so mkTypename sets MultiReturn=true on reload.
+	if c.t == tok_struct || (c.t == tok_ident && c.sval == "multiretu") {
+		isMultiRetu := c.t == tok_ident && c.sval == "multiretu"
 		structpos := c.p
 		p.advance()
 		p.expect(tok_lcurly)
@@ -404,14 +408,23 @@ func (p *Parser) parseTypeName() *Node {
 			if fname.t != n_symbol {
 				panic(&interpreterError{fmt.Sprintf("Expected field name, but found: %v", fname), fname.p})
 			}
+			// Accept an optional ':' between name and type (emitted by
+			// ASTType.String() in the .bo type annotation round-trip).
+			if p.current().t == tok_colon {
+				p.advance()
+			}
 			ftypeNode := p.parseTypeName()
 			fieldNodes = append(fieldNodes, &Node{t: n_stfield, p: fieldpos, sval: fname.sval, args: []*Node{ftypeNode}})
 		}
 		p.expect(tok_rcurly)
+		sval := "<struct>"
+		if isMultiRetu {
+			sval = "<multiretu>"
+		}
 		return &Node{
 			t:         n_typename,
 			p:         structpos,
-			sval:      "<struct>",
+			sval:      sval,
 			mutmask:   mutmask,
 			ownedmask: ownedmask,
 			nilmask:   nilmask,
@@ -1243,6 +1256,20 @@ func (p *Parser) parseInterfaceMethodSig() *Node {
 	var rettype *Node
 	if isTypeStart(p.current().t) {
 		rettype = p.parseTypeName()
+		if p.current().t == tok_comma {
+			rettypePos := rettype.p
+			fieldNodes := []*Node{
+				{t: n_stfield, p: rettype.p, sval: "_0", args: []*Node{rettype}},
+			}
+			i := 1
+			for p.current().t == tok_comma {
+				p.advance()
+				tn := p.parseTypeName()
+				fieldNodes = append(fieldNodes, &Node{t: n_stfield, p: tn.p, sval: fmt.Sprintf("_%d", i), args: []*Node{tn}})
+				i++
+			}
+			rettype = &Node{t: n_typename, p: rettypePos, sval: "<multiretu>", args: fieldNodes}
+		}
 	} else {
 		rettype = &Node{t: n_typename, p: p.current().p, sval: "void"}
 	}

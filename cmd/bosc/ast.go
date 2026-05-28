@@ -1009,6 +1009,19 @@ func qualifyImportedType(t *ASTType, pkgname string, structs map[string]*gbasm.S
 		qualifyImportedType(t.Element, pkgname, structs, aliases)
 		return
 	}
+	if t.AnonFields != nil {
+		for i := range t.AnonFields {
+			qualifyImportedType(&t.AnonFields[i].Type, pkgname, structs, aliases)
+		}
+		return
+	}
+	if t.FuncSig != nil {
+		for i := range t.FuncSig.Args {
+			qualifyImportedType(&t.FuncSig.Args[i], pkgname, structs, aliases)
+		}
+		qualifyImportedType(&t.FuncSig.Return, pkgname, structs, aliases)
+		return
+	}
 	if _, ok := structs[t.Name]; ok {
 		t.Name = pkgname + "." + t.Name
 		return
@@ -1549,7 +1562,11 @@ func (t ASTType) String() string {
 			sb.WriteString(t.FuncSig.Return.String())
 		}
 	} else if t.AnonFields != nil {
-		sb.WriteString("struct{")
+		if t.MultiReturn {
+			sb.WriteString("multiretu{")
+		} else {
+			sb.WriteString("struct{")
+		}
 		for i, f := range t.AnonFields {
 			if i > 0 {
 				sb.WriteString(",")
