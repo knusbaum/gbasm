@@ -470,7 +470,15 @@ func unparseString(s string) string {
 }
 
 func NewLexer(fname string, r io.Reader) *lexer {
-	return &lexer{r: bufio.NewReader(r), p: position{fname: fname, lineoff: 2, linecharoff: 1}}
+	return NewLexerAt(fname, r, 2)
+}
+
+// NewLexerAt creates a lexer whose first token reports line startLine.
+// Use this when the caller has already consumed lines from the reader
+// (e.g. the `package` preamble in main.go) so that error positions
+// reflect actual line numbers in the source file.
+func NewLexerAt(fname string, r io.Reader, startLine uint) *lexer {
+	return &lexer{r: bufio.NewReader(r), p: position{fname: fname, lineoff: startLine, linecharoff: 1}}
 }
 
 // This is a variable that controls the setting of position values in tokens.

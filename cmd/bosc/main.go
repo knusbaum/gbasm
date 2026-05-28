@@ -88,7 +88,15 @@ func runListImports() {
 		// discovery here, even though body content is irrelevant to imports.
 		// Imports must precede every other top-level form, so once we see a
 		// non-import token we know there are no more imports to find.
-		for p.current().t == tok_import {
+		// Skip semicolons before each check: the lexer auto-inserts ';' after
+		// each import string literal, so p.current() is ';' between imports.
+		for {
+			for p.current().t == tok_semicolon {
+				p.advance()
+			}
+			if p.current().t != tok_import {
+				break
+			}
 			n, err := p.Next()
 			if err != nil {
 				fatalCtx("%s: parse error: %v", fname, err)
@@ -164,7 +172,12 @@ func main() {
 		reader := bufio.NewReader(file)
 
 		var ln []byte
-		for ln, _, err = reader.ReadLine(); err == nil; ln, _, err = reader.ReadLine() {
+		var linesConsumed uint
+		var isPrefix bool
+		for ln, isPrefix, err = reader.ReadLine(); err == nil; ln, isPrefix, err = reader.ReadLine() {
+			if !isPrefix {
+				linesConsumed++
+			}
 			//fmt.Printf("LINE: %s\n", ln)
 			line := strings.TrimSpace(string(ln))
 			if line == "" {
@@ -199,7 +212,7 @@ func main() {
 		if !wrotePkg {
 			fmt.Fprintf(of, "package %s\n\n", pkgname)
 		}
-		p := NewParser(flag.Arg(fi), reader)
+		p := NewParserAt(flag.Arg(fi), reader, linesConsumed+1)
 		//c := NewVContext()
 		//ctx := NewCompileContext()
 		var bs bytes.Buffer

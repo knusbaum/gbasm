@@ -186,6 +186,10 @@ func NewParser(fname string, r io.Reader) *Parser {
 	return &Parser{l: NewLexer(fname, r), fname: fname}
 }
 
+func NewParserAt(fname string, r io.Reader, startLine uint) *Parser {
+	return &Parser{l: NewLexerAt(fname, r, startLine), fname: fname}
+}
+
 func (p *Parser) ParseFunctype() (FuncDecl, error) {
 	p.expect(tok_fn)
 	p.expect(tok_lparen)
