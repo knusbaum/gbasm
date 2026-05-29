@@ -1,0 +1,2 @@
+Compiling tests/static_init_call_not_const_err_test.bos
+Fatal: initializer is not a compile-time constant

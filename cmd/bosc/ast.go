@@ -2177,9 +2177,15 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 		return numASTType()
 	}
 	// Cast expression: type name used as a function. Works for both
-	// unqualified (FD(x)) and qualified (io.FD(x)) forms.
+	// unqualified (FD(x)) and qualified (io.FD(x)) forms. When a
+	// function of the same name exists, the call form wins so that
+	// `pair(41)` for a `type pair struct ...` plus `fn pair ...`
+	// collision resolves as the call's return type instead of the
+	// struct cast's type. See compileTop's parallel guard.
 	if t, ok := c.TypeByName(f.QualifiedName()); ok {
-		return t
+		if _, _, hasFn := c.FuncDeclForCall(pkg, name); !hasFn {
+			return t
+		}
 	}
 	// (expr).method(args) — receiver is an expression, not a named variable.
 	if recv := f.ReceiverExpr(); recv != nil {

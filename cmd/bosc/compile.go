@@ -1946,13 +1946,26 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		// Cast expression: type name used as a single-argument function.
 		// Works for unqualified names (FD(x)) and qualified names (io.FD(x)).
+		//
+		// When a function of the same bare name exists, the call form
+		// wins. The proposal's package-level namespace rule wants only
+		// one declaration per name, but checkPackageNameCollision
+		// currently scopes the rejection to type-shaped decls (struct,
+		// typealias, interface, values). A user who declares both a
+		// `type pair struct {...}` and a `fn pair(n) i64` gets two
+		// entries, and Stage 4's TypeByName(struct) recognition would
+		// otherwise silently steer every `pair(x)` site into the cast
+		// path — even when assignment context (`var n i64 = pair(x)`)
+		// makes it unambiguous that the call was meant.
 		{
 			castName := ast.QualifiedName()
 			if destType, ok := c.TypeByName(castName); ok {
-				if len(ast.Args) != 1 {
-					CompileErrorF(a, "Type cast %s() requires exactly one argument", castName)
+				if _, _, hasFn := c.FuncDeclForCall(pkg, fname); !hasFn {
+					if len(ast.Args) != 1 {
+						CompileErrorF(a, "Type cast %s() requires exactly one argument", castName)
+					}
+					return compileCast(of, c, ast.Args[0], destType, dest)
 				}
-				return compileCast(of, c, ast.Args[0], destType, dest)
 			}
 		}
 
@@ -3456,6 +3469,22 @@ func projectionTypeKey(t ASTType) string {
 	}
 	if t.IsArray() && t.Element != nil {
 		return fmt.Sprintf("%s_array_%d", projectionTypeKey(*t.Element), t.ArraySize)
+	}
+	if t.FuncSig != nil {
+		// fn(a, b) ret → "fn_<arg1>_<arg2>_ret_<ret>". Two distinct
+		// function-pointer projections with different signatures need
+		// distinct table symbols; without this the empty-arg `fn() i64`
+		// case strips down to just "fn_ret_i64" and collides only if
+		// another sig also has zero args and i64 return.
+		var sb strings.Builder
+		sb.WriteString("fn_")
+		for _, at := range t.FuncSig.Args {
+			sb.WriteString(projectionTypeKey(at))
+			sb.WriteByte('_')
+		}
+		sb.WriteString("ret_")
+		sb.WriteString(projectionTypeKey(t.FuncSig.Return))
+		return sb.String()
 	}
 	var sb strings.Builder
 	if t.OwnedMask&1 != 0 {

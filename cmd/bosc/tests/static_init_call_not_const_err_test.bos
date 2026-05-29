@@ -1,0 +1,18 @@
+package main
+
+import "string"
+
+type pair struct {
+	a i64
+}
+
+fn pair(n i64) i64 {
+	return n + 1
+}
+
+var result i64 = pair(41)
+
+fn main() {
+	string.puti(result)
+	string.puts("\n")
+}

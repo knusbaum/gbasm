@@ -132,15 +132,23 @@ func encodeStaticInit(c *Context, dstt ASTType, init AST) ([]byte, []relocSpec, 
 	case *Funcall:
 		// Type cast of a single constant argument: FD(0) or io.FD(0).
 		// Fold by encoding the inner expression under the underlying type.
+		// When a function of the same bare name exists the call form
+		// wins, mirroring the runtime path in Funcall.ASTType and
+		// compileTop. Static init can't actually execute the call, so we
+		// fall through to the "not a compile-time constant" diagnostic
+		// rather than producing a fake constant from the struct cast.
 		if len(v.Args) == 1 {
+			pkg, name := v.PkgAndName()
 			castName := v.QualifiedName()
 			if _, ok := c.TypeByName(castName); ok {
-				castType := ASTType{Name: castName}
-				underlying := c.ResolveUnderlying(castType)
-				underlying.MutMask = 0
-				underlying.OwnedMask = 0
-				underlying.NilMask = 0
-				return encodeStaticInit(c, underlying, v.Args[0])
+				if _, _, hasFn := c.FuncDeclForCall(pkg, name); !hasFn {
+					castType := ASTType{Name: castName}
+					underlying := c.ResolveUnderlying(castType)
+					underlying.MutMask = 0
+					underlying.OwnedMask = 0
+					underlying.NilMask = 0
+					return encodeStaticInit(c, underlying, v.Args[0])
+				}
 			}
 		}
 		return nil, nil, fmt.Errorf("initializer is not a compile-time constant")

@@ -1,0 +1,13 @@
+package main
+
+type pair struct {
+	a i64
+}
+
+fn pair(n i64) i64 {
+	return n + 1
+}
+
+fn main() {
+	var n i64 = pair(41)
+}

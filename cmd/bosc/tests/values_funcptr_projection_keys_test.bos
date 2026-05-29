@@ -1,0 +1,20 @@
+package main
+
+fn one() i64 {
+	return 1
+}
+
+fn add_one(n i64) i64 {
+	return n + 1
+}
+
+// Regression: projection keys must include function-pointer signatures.
+// Otherwise both projections below collapse to __projection_v__ and bas
+// rejects the duplicate symbol during assembly.
+type v values (fn() i64, fn(i64) i64) {
+	A: &one, &add_one
+}
+
+fn main() {
+	var e v = v.A
+}
