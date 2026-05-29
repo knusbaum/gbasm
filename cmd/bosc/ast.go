@@ -338,6 +338,8 @@ func (c *Context) DefineInterface(p position, name string, decl *InterfaceDecl) 
 }
 
 // InterfaceForName looks up an interface declaration by name, searching the root context.
+// If the bare name is not found, it falls back to "builtin.<name>" so that
+// builtin-package interfaces (e.g. error) are accessible without a prefix.
 func (c *Context) InterfaceForName(name string) (*InterfaceDecl, bool) {
 	if c == nil {
 		return nil, false
@@ -346,7 +348,10 @@ func (c *Context) InterfaceForName(name string) (*InterfaceDecl, bool) {
 	for root.parent != nil {
 		root = root.parent
 	}
-	d, ok := root.interfaceDecls[name]
+	if d, ok := root.interfaceDecls[name]; ok {
+		return d, true
+	}
+	d, ok := root.interfaceDecls["builtin."+name]
 	return d, ok
 }
 

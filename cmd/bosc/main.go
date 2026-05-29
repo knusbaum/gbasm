@@ -54,9 +54,14 @@ func loadImportcfg(path string) (map[string]string, error) {
 // runListImports prints the import paths declared in each input file, one per
 // line, deduplicated across all inputs. Used by the build system to determine
 // the dependency set of a package without compiling it.
+//
+// "builtin" is always emitted first (before any source-declared imports) unless
+// the input files themselves belong to the builtin package — that would create
+// a circular dependency.
 func runListImports() {
 	seen := make(map[string]bool)
 	var order []string
+	isBuiltinPkg := false
 	for fi := 0; fi < flag.NArg(); fi++ {
 		fname := flag.Arg(fi)
 		file, err := os.Open(fname)
@@ -75,6 +80,10 @@ func runListImports() {
 				continue
 			}
 			if strings.HasPrefix(line, "package") {
+				pkgname := strings.TrimSpace(strings.TrimPrefix(line, "package"))
+				if pkgname == "builtin" {
+					isBuiltinPkg = true
+				}
 				break
 			}
 			log.Fatalf("%s: must start with a package name, but found %s\n", fname, line)
@@ -110,6 +119,11 @@ func runListImports() {
 			}
 		}
 		file.Close()
+	}
+	// Emit "builtin" first so the build system always depends on it, unless
+	// we are compiling builtin itself (which would create a cycle).
+	if !isBuiltinPkg {
+		fmt.Println("builtin")
 	}
 	for _, p := range order {
 		fmt.Println(p)
@@ -219,6 +233,16 @@ func main() {
 		var asts []AST
 		actx := NewContext()
 		actx.SetPkgname(pkgname)
+		// Auto-import builtin into every package except builtin itself.
+		// This makes builtin's symbols (e.g. the error interface) available
+		// without an explicit import statement.
+		if pkgname != "builtin" {
+			if builtinPath, ok := imports["builtin"]; ok {
+				if err := actx.Import("builtin", builtinPath); err != nil {
+					log.Fatalf("auto-import builtin: %v\n", err)
+				}
+			}
+		}
 		for {
 			n, err := p.Next()
 			if err != nil {

@@ -1,0 +1,17 @@
+package builtin
+
+// error is the interface implemented by types that represent error conditions.
+interface error {
+    message(e *self) byte[]
+}
+
+// len returns the length of a slice or the number of elements in a fixed array.
+// It is a compiler intrinsic and cannot be passed as a value.
+//
+//   fn len(T[]) i64      - dynamic: runtime load of slice fat-pointer length field
+//   fn len(T[N]) i64     - static: compile-time constant N
+
+// alloc allocates a zeroed heap value of type T and returns an owned pointer to it.
+// It is a compiler intrinsic backed by _heap.alloc.
+//
+//   fn alloc(T) *owned mut T

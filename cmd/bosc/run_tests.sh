@@ -7,7 +7,7 @@ if [[ $? != 0 ]]; then
 fi
 
 RUNTIME=../../runtime
-rm -f string.bo init.bo heap.bo pair.bo pair.bs io.bo io.bs io_sys.bo
+rm -f string.bo init.bo heap.bo pair.bo pair.bs io.bo io.bs io_sys.bo builtin.bo builtin.bs
 ./bas -o string.bo $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs >/dev/null 2>&1
 ./bas -o init.bo $RUNTIME/_init/init_linux.bs >/dev/null 2>&1
 ./bas -o heap.bo $RUNTIME/_heap/heap_linux.bs >/dev/null 2>&1
@@ -16,15 +16,25 @@ rm -f string.bo init.bo heap.bo pair.bo pair.bs io.bo io.bs io_sys.bo
 # need a low-level i64-fd API.
 ./bas -o io_sys.bo $RUNTIME/_io_sys/io_sys_linux.bs >/dev/null 2>&1
 
+# Compile the Boson-source `builtin` package. It imports nothing, so it
+# gets an empty importcfg. Must be compiled before pair/io since those
+# may transitively depend on it.
+./bosc -importcfg=/dev/null -o builtin.bs $RUNTIME/builtin/builtin.bos >/dev/null 2>&1
+./bas -o builtin.bo builtin.bs >/dev/null 2>&1
+
 # Compile the Boson-source `pair` test runtime package so cross-package
-# struct tests have something to import. importcfg is empty for it
-# because pair imports nothing.
-./bosc -importcfg=/dev/null -o pair.bs $RUNTIME/pair/pair.bos >/dev/null 2>&1
+# struct tests have something to import.
+cat > pair.importcfg <<EOF
+builtin=builtin.bo
+EOF
+./bosc -importcfg=pair.importcfg -o pair.bs $RUNTIME/pair/pair.bos >/dev/null 2>&1
 ./bas -o pair.bo pair.bs >/dev/null 2>&1
+rm -f pair.importcfg
 
 # Compile the Boson-source `io` runtime package so cross-package type-alias
 # tests have something to import.
 cat > io.importcfg <<EOF
+builtin=builtin.bo
 _io_sys=io_sys.bo
 string=string.bo
 EOF
@@ -34,6 +44,7 @@ rm -f io.importcfg
 
 # Generate a project-wide importcfg.
 cat > test.importcfg <<EOF
+builtin=builtin.bo
 string=string.bo
 pair=pair.bo
 io=io.bo
@@ -108,7 +119,7 @@ for t in `ls tests/*_test.bos`; do
     if grep -q '^import "_io_sys"' "$t"; then
         case "$extra_bo" in *io_sys.bo*) ;; *) extra_bo="$extra_bo io_sys.bo";; esac
     fi
-    ./bld -o ${t}.o ${t}.bo string.bo init.bo heap.bo $extra_bo >${t}.bld.out 2>&1
+    ./bld -o ${t}.o ${t}.bo builtin.bo string.bo init.bo heap.bo $extra_bo >${t}.bld.out 2>&1
     if [[ $? != 0 ]]; then
 		echo linker failed for ${t}:
 		cat ${t}.bld.out
@@ -153,6 +164,6 @@ if [[ $fail != '' ]]; then
 fi
 
 rm tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout
-rm bosc bas bld string.bo init.bo heap.bo pair.bo pair.bs io.bo io.bs io_sys.bo test.importcfg
+rm bosc bas bld string.bo init.bo heap.bo builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo test.importcfg
 echo "SUITE PASSED"
 exit 0

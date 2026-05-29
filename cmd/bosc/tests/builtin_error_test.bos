@@ -1,0 +1,20 @@
+package main
+
+import "string"
+
+// myError implements the builtin error interface.
+type myError i64 {
+    message(e *myError) byte[] {
+        return "something went wrong"
+    }
+}
+
+fn showError(err error) {
+    string.puts(err.message())
+    string.puts("\n")
+}
+
+fn main(args byte[][]) {
+    var e myError = 0
+    showError(&e)
+}
