@@ -630,6 +630,17 @@ func (c *Context) TypeByName(name string) (ASTType, bool) {
 	if _, ok := c.ValuesDeclForName(name); ok {
 		return ASTType{Name: name}, true
 	}
+	// Slice-type expressions in cast position: `byte[](e)` arrives here
+	// as the name `"byte[]"`. Peel the suffix and recursively resolve
+	// the inner type to build a proper slice ASTType. Projection casts
+	// in particular need this so the parser's `byte[](e)` cast lands on
+	// a known slice type the cast path can match against.
+	if strings.HasSuffix(name, "[]") {
+		inner := strings.TrimSuffix(name, "[]")
+		if it, ok := c.TypeByName(inner); ok {
+			return ASTType{Element: &it}, true
+		}
+	}
 	return ASTType{}, false
 }
 

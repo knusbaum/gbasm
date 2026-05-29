@@ -1,0 +1,2 @@
+Compiling tests/values_no_projection_err_test.bos
+Fatal: Cannot cast io_error to byte[]: io_error has no byte[] projection

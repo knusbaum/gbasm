@@ -1,0 +1,11 @@
+package main
+
+type io_error values (i64) {
+	NOT_FOUND: 404
+	BUSY: 503
+}
+
+fn main() {
+	var e io_error = io_error.NOT_FOUND
+	var s byte[] = byte[](e)
+}

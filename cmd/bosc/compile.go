@@ -1543,10 +1543,38 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		fmt.Fprintf(of, "}\n")
 		return nullspot
 	case *ValuesDecl:
-		// Stage 2: emit the value-receiver methods as TypeName.method,
-		// reusing the same path TypeWithMethodsDecl uses. Cross-package
-		// metadata (a `values` .bs directive) lands in Stage 5; for now
-		// the values type is local to the producer package.
+		// One static projection table per declared projection. Each
+		// table is a fixed array indexed by the case's compiler-private
+		// tag, so a projection cast can lower to a single indexed load
+		// at runtime. The encoder we use here is the same one that
+		// drives ordinary `var t T[N] = [...]` declarations, so
+		// arbitrary projection element types (integers, byte[], struct
+		// values, &literal) compose without bespoke per-shape encoding.
+		for projIdx, projType := range ast.Projections {
+			n := len(ast.Cases)
+			elements := make([]AST, n)
+			for i := range ast.Cases {
+				elements[i] = ast.Cases[i].Expr[projIdx]
+			}
+			arrType := ASTType{Element: &projType, ArraySize: n}
+			synthLit := &ArrayLiteral{Elements: elements, p: ast.p}
+			data, relocs, err := encodeStaticInit(c, arrType, synthLit)
+			if err != nil {
+				CompileErrorF(ast, "values type %s: cannot encode projection %s table: %v", ast.Name, projType, err)
+			}
+			symName := projectionSymbolName(ast.Name, projType)
+			c.MarkAddress(symName)
+			emitVarBlock(of, symName, arrType.String(), data, relocs)
+			for _, ag := range c.DrainAnonGlobals() {
+				c.MarkAddress(ag.Name)
+				emitVarBlock(of, ag.Name, ag.Type, ag.Bytes, ag.Relocs)
+			}
+		}
+		// Value-receiver methods land alongside the projection tables,
+		// using the same emission path TypeWithMethodsDecl uses.
+		// Cross-package metadata (a `values` .bs directive) lands in
+		// Stage 5; for now the values type is local to the producer
+		// package.
 		for _, m := range ast.Methods {
 			qualified := &FuncDecl{
 				Name:   ast.Name + "." + m.Name,
@@ -3408,6 +3436,128 @@ func EvalConst(c *Context, a AST) (*big.Int, bool) {
 
 // compileCast compiles a type cast expression: destType(srcExpr).
 // Handles integer literal coercion, same-size reinterpretation, widening, and narrowing.
+// projectionTypeKey turns an ASTType into a stable identifier safe to
+// embed in a bas symbol name (no dots, brackets, or spaces). The
+// convention follows the vtable naming at compile.go's interface
+// dispatch sites: dotted package qualifiers become underscores, slices
+// become a "_slice" suffix, and fixed arrays carry their length.
+func projectionTypeKey(t ASTType) string {
+	if t.IsSlice() && t.Element != nil {
+		return projectionTypeKey(*t.Element) + "_slice"
+	}
+	if t.IsArray() && t.Element != nil {
+		return fmt.Sprintf("%s_array_%d", projectionTypeKey(*t.Element), t.ArraySize)
+	}
+	return strings.ReplaceAll(t.Name, ".", "_")
+}
+
+// projectionSymbolName returns the bas-level symbol for a values type's
+// projection table: __projection_<typename-with-dots-as-underscores>__<projection-type-key>.
+// The assembler will prepend the producer's package qualifier so the
+// emitted symbol the linker sees is pkg.__projection_X__Y.
+func projectionSymbolName(typeName string, projType ASTType) string {
+	return fmt.Sprintf("__projection_%s__%s",
+		strings.ReplaceAll(typeName, ".", "_"),
+		projectionTypeKey(projType))
+}
+
+// compileProjectionCast lowers `T(e)` where `e` has values type srcType
+// and `T` is a declared projection of srcType. The runtime shape is an
+// indexed load from the projection table the values decl emitted, but
+// bas's [base+index*scale] addressing requires a register base — it
+// rejects `[symbol + reg*scale]` because x86-64 RIP-relative addressing
+// takes a disp32 only. So we first lea the table's address into a
+// register, then index off that:
+//
+//	mov tag, <src expression>
+//	lea base, <projection-table-symbol>
+//	(elemSize in {1, 2, 4, 8})
+//	  scalar  : mov dest, [base + tag*scale]
+//	  memory  : lea slot, [base + tag*scale]; spot_memcpy dest, slot, sz
+//	(elemSize > 8 — slice headers, structs)
+//	  precompute offset = tag * elemSize (imul), then index with scale 1
+//
+// x86-64 SIB only encodes scales 1, 2, 4, 8, so anything else (a
+// 16-byte slice-header element, for example) needs an explicit
+// multiply.
+func compileProjectionCast(of io.Writer, c *Context, src AST, srcType, projType ASTType, dest spot) spot {
+	symName := projectionSymbolName(srcType.Name, projType)
+	tagSpot := compileTop(of, c, src, nullspot)
+	base := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	fmt.Fprintf(of, "\tlea %s %s\n", base.ref, symName)
+	elemSize := projType.Size(c)
+
+	// idxRef is the index expression to put in the SIB index slot. It
+	// either points at tagSpot directly (when the SIB scale can encode
+	// the element size) or at a temp holding tag*elemSize (when it
+	// can't). idxScale is the SIB scale to emit.
+	idxRef := tagSpot.ref
+	idxScale := elemSize
+	var offTmp spot
+	if !sibScaleOK(elemSize) {
+		// SIB can't scale; precompute the byte offset. For power-of-2
+		// sizes (the common case — byte[] is 16 bytes, struct values
+		// tend to align to 8/16/32), a single shl avoids loading the
+		// constant. Otherwise stage the size in a scratch register and
+		// imul, since bas's IMUL encoding only matches the
+		// two-register form.
+		offTmp = newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+		fmt.Fprintf(of, "\tmov %s %s\n", offTmp.ref, tagSpot.ref)
+		if shift, ok := log2PowerOf2(elemSize); ok {
+			fmt.Fprintf(of, "\tshl %s %d\n", offTmp.ref, shift)
+		} else {
+			scratch := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+			fmt.Fprintf(of, "\tmov %s %d\n", scratch.ref, elemSize)
+			fmt.Fprintf(of, "\timul %s %s\n", offTmp.ref, scratch.ref)
+			scratch.free(of)
+		}
+		idxRef = offTmp.ref
+		idxScale = 1
+	}
+
+	if typeIsMemoryBacked(c, projType) {
+		// Memory-backed projection (slice headers, structs, fixed
+		// arrays). lea the slot address, then memcpy into dest's
+		// storage. dest must be address-style for spot_memcpy to land
+		// in the right place.
+		slot := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+		fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", slot.ref, base.ref, idxRef, idxScale)
+		spot_memcpy(of, c, dest, slot, elemSize)
+		slot.free(of)
+	} else {
+		// Scalar projection: single indexed load straight into the
+		// destination register.
+		fmt.Fprintf(of, "\tmov %s [%s+%s*%d]\n", dest.ref, base.ref, idxRef, idxScale)
+	}
+
+	if !offTmp.empty() {
+		offTmp.free(of)
+	}
+	base.free(of)
+	tagSpot.free(of)
+	return dest
+}
+
+// sibScaleOK reports whether n is one of x86-64's SIB scale values.
+func sibScaleOK(n int) bool {
+	return n == 1 || n == 2 || n == 4 || n == 8
+}
+
+// log2PowerOf2 returns the shift count for n when n > 0 is a power of
+// two, and false otherwise. Lets the projection-cast index calculation
+// pick `shl k` over `imul scratch` for the common byte[]/struct sizes.
+func log2PowerOf2(n int) (int, bool) {
+	if n <= 0 || n&(n-1) != 0 {
+		return 0, false
+	}
+	s := 0
+	for n > 1 {
+		n >>= 1
+		s++
+	}
+	return s, true
+}
+
 func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot) spot {
 	if dest.empty() {
 		dest = newSpot(of, c, c.Temp(), destType)
@@ -3429,11 +3579,23 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 		CompileErrorF(src, "Cannot cast %s to %s: values cases must be constructed from declared cases", srcType, destType)
 	}
 	// Values-to-other-type cast is a projection cast (proposal §583–596).
-	// Stage 4 wires up the declared projection signature and table lookup;
-	// for Stage 3 every such cast is rejected so the tag bits cannot leak
-	// out as an integer via the existing same-size mov.
-	if _, srcIsValues := c.ValuesDeclForName(srcType.Name); srcIsValues && srcType.Name != destType.Name {
-		CompileErrorF(src, "Cannot cast %s to %s: %s has no %s projection", srcType, destType, srcType, destType)
+	// The source's values declaration knows which target types it carries
+	// projections for; matching destinations lower to an indexed load
+	// from the corresponding static table (emitted at values-decl
+	// compile time). Anything else is rejected with the
+	// no-such-projection diagnostic.
+	if vd, srcIsValues := c.ValuesDeclForName(srcType.Name); srcIsValues && srcType.Name != destType.Name {
+		projIdx := -1
+		for i, pt := range vd.Projections {
+			if pt.Same(destType) {
+				projIdx = i
+				break
+			}
+		}
+		if projIdx < 0 {
+			CompileErrorF(src, "Cannot cast %s to %s: %s has no %s projection", srcType, destType, srcType, destType)
+		}
+		return compileProjectionCast(of, c, src, srcType, vd.Projections[projIdx], dest)
 	}
 
 	// Integer literal: compile directly into the destination type.
@@ -3465,6 +3627,22 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 	dstIsPtr := dstUnderlying.Indirection > 0
 	if srcIsPtr != dstIsPtr {
 		CompileErrorF(src, "Cannot cast between pointer and non-pointer types: %s to %s", srcType, destType)
+	}
+	// Slice and array shapes carry their indirection on Element, not
+	// Indirection, so the pointer-vs-scalar guard above misses
+	// `byte[](n)` where n is i64. A 16-byte slice-header destination
+	// against an 8-byte scalar source would otherwise fall through to
+	// movsx/movzx and surface as a confusing bas-level "no encoding"
+	// failure. Reject the cross-shape cast here with a clear bosc
+	// diagnostic; the parser now exposes the `T[](e)` syntax for
+	// projection casts so this category of mistake is easier to write
+	// than before.
+	srcIsSlice := srcUnderlying.IsSlice()
+	dstIsSlice := dstUnderlying.IsSlice()
+	srcIsArray := srcUnderlying.IsArray()
+	dstIsArray := dstUnderlying.IsArray()
+	if srcIsSlice != dstIsSlice || srcIsArray != dstIsArray {
+		CompileErrorF(src, "Cannot cast between scalar and slice/array types: %s to %s", srcType, destType)
 	}
 
 	// Compile the source value.

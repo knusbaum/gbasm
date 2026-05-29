@@ -1,2 +1,0 @@
-Compiling tests/values_projection_unimplemented_err_test.bos
-Fatal: Cannot cast color to i64: color has no i64 projection

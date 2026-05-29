@@ -1,0 +1,21 @@
+package main
+
+import "string"
+
+type io_error values (byte[]) {
+	NOT_FOUND: "not found"
+	PERMISSION_DENIED: "permission denied"
+	BUSY: "busy"
+}
+
+fn main() {
+	var e io_error = io_error.NOT_FOUND
+	string.puts(byte[](e))
+	string.puts("\n")
+	e = io_error.PERMISSION_DENIED
+	string.puts(byte[](e))
+	string.puts("\n")
+	e = io_error.BUSY
+	string.puts(byte[](e))
+	string.puts("\n")
+}

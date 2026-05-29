@@ -1,0 +1,2 @@
+Compiling tests/scalar_to_slice_cast_err_test.bos
+Fatal: Cannot cast between scalar and slice/array types: i64 to byte[]

@@ -1,0 +1,39 @@
+package main
+
+import "string"
+
+interface error_val {
+	message(e self) byte[]
+}
+
+type io_error values (byte[]) {
+	NOT_FOUND: "not found"
+	PERMISSION_DENIED: "permission denied"
+	BUSY: "busy"
+} {
+	message(e io_error) byte[] {
+		return byte[](e)
+	}
+}
+
+fn open_for(kind i64) error_val {
+	if (kind == 1) {
+		return io_error.PERMISSION_DENIED
+	}
+	if (kind == 2) {
+		return io_error.NOT_FOUND
+	}
+	return io_error.BUSY
+}
+
+fn main() {
+	var e1 error_val = open_for(2)
+	string.puts(e1.message())
+	string.puts("\n")
+	var e2 error_val = open_for(1)
+	string.puts(e2.message())
+	string.puts("\n")
+	var e3 error_val = open_for(0)
+	string.puts(e3.message())
+	string.puts("\n")
+}

@@ -644,6 +644,34 @@ func (p *Parser) parsePostfix(v *Node) *Node {
 			v = &Node{t: n_dot, p: c.p, args: []*Node{v, v2}}
 		case tok_lsquare:
 			p.advance()
+			// `T[](e)` cast: a slice-type expression in call position.
+			// The proposal's projection-cast syntax (`byte[](err)`) needs
+			// this; without it the parser would push the empty brackets
+			// into parseIndexOrSlice which then expects an index
+			// expression. We only fold the form when v is a bare symbol
+			// or pkg.Type — anything else (`x[](...)` on a value) keeps
+			// today's "no index expression" error.
+			if p.current().t == tok_rsquare {
+				p.advance() // consume `]`
+				if p.current().t == tok_lparen {
+					var typeName string
+					switch {
+					case v.t == n_symbol:
+						typeName = v.sval
+					case v.t == n_dot && len(v.args) == 2 &&
+						v.args[0].t == n_symbol && v.args[1].t == n_symbol:
+						typeName = v.args[0].sval + "." + v.args[1].sval
+					default:
+						panic(&interpreterError{"`[]` in expression position requires a bare type identifier (e.g. `byte[](e)`)", c.p})
+					}
+					p.advance() // consume `(`
+					args := p.parseArgs()
+					p.expect(tok_rparen)
+					v = &Node{t: n_funcall, p: v.p, sval: typeName + "[]", args: args}
+					continue
+				}
+				panic(&interpreterError{"`[]` not allowed in expression position; bare type expressions are only valid as casts (`T[](e)`)", c.p})
+			}
 			v = p.parseIndexOrSlice(v, c.p)
 		case tok_lparen:
 			// Function-call form: direct `name(args)` or qualified

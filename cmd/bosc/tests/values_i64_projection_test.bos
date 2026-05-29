@@ -1,0 +1,21 @@
+package main
+
+import "string"
+
+type io_error values (i64) {
+	NOT_FOUND: 404
+	PERMISSION_DENIED: 403
+	BUSY: 503
+}
+
+fn main() {
+	var e io_error = io_error.NOT_FOUND
+	string.puti(i64(e))
+	string.puts("\n")
+	e = io_error.PERMISSION_DENIED
+	string.puti(i64(e))
+	string.puts("\n")
+	e = io_error.BUSY
+	string.puti(i64(e))
+	string.puts("\n")
+}
