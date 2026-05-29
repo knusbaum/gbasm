@@ -1028,9 +1028,9 @@ func (c *Context) Import(importKey, path string) error {
 				return err
 			}
 			for i := range t.Args {
-				qualifyImportedType(&t.Args[i].Type, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces)
+				qualifyImportedTypeFull(&t.Args[i].Type, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces, o.Values)
 			}
-			qualifyImportedType(&t.Return, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces)
+			qualifyImportedTypeFull(&t.Return, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces, o.Values)
 			t.Name = fn.Name
 			c.DefineImportedFunc(o.Pkgname, fn.Name, &t)
 		}
@@ -1042,7 +1042,7 @@ func (c *Context) Import(importKey, path string) error {
 			if err != nil {
 				return fmt.Errorf("import %q: struct %s field %s: %v", importKey, sh.Name, fs.Name, err)
 			}
-			qualifyImportedType(&ft, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces)
+			qualifyImportedTypeFull(&ft, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces, o.Values)
 			fields = append(fields, Binding{Name: fs.Name, Type: ft})
 		}
 		qname := o.Pkgname + "." + sh.Name
@@ -1079,7 +1079,7 @@ func (c *Context) Import(importKey, path string) error {
 		if err != nil {
 			return fmt.Errorf("import %q: var %s: %v", importKey, v.Name, err)
 		}
-		qualifyImportedType(&vt, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces)
+		qualifyImportedTypeFull(&vt, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces, o.Values)
 		c.DefineImportedVar(o.Pkgname, v.Name, vt)
 	}
 	for _, ifc := range o.Interfaces {
@@ -1093,7 +1093,7 @@ func (c *Context) Import(importKey, path string) error {
 					return fmt.Errorf("import %q: interface %s method %s param %s: %v",
 						importKey, ifc.Name, m.Name, p.Name, err)
 				}
-				qualifyImportedType(&pt, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces)
+				qualifyImportedTypeFull(&pt, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces, o.Values)
 				sig.Params = append(sig.Params, Binding{Name: p.Name, Type: pt, IsConst: true})
 			}
 			rt, err := parseTypeString(m.Return)
@@ -1101,35 +1101,74 @@ func (c *Context) Import(importKey, path string) error {
 				return fmt.Errorf("import %q: interface %s method %s return: %v",
 					importKey, ifc.Name, m.Name, err)
 			}
-			qualifyImportedType(&rt, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces)
+			qualifyImportedTypeFull(&rt, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces, o.Values)
 			sig.Return = rt
 			decl.Methods = append(decl.Methods, sig)
 		}
 		c.DefineInterface(position{}, qname, decl)
 	}
+	for _, vs := range o.Values {
+		qname := o.Pkgname + "." + vs.Name
+		tagType, err := parseTypeString(vs.TagType)
+		if err != nil {
+			return fmt.Errorf("import %q: values %s tag: %v", importKey, vs.Name, err)
+		}
+		decl := &ValuesDecl{Name: qname, TagType: tagType}
+		for _, vc := range vs.Cases {
+			decl.Cases = append(decl.Cases, ValuesCase{Name: vc.Name, Tag: vc.Tag})
+		}
+		for _, pj := range vs.Projections {
+			pt, err := parseTypeString(pj.TargetType)
+			if err != nil {
+				return fmt.Errorf("import %q: values %s projection %s: %v",
+					importKey, vs.Name, pj.TargetType, err)
+			}
+			qualifyImportedTypeFull(&pt, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces, o.Values)
+			decl.Projections = append(decl.Projections, pt)
+		}
+		c.DefineValuesType(position{}, qname, decl)
+		// Reconstruct the method FuncDecls from the already-imported
+		// function table, mirroring the typealias path. Method symbols
+		// land in the importer's funcs map under their qualified key
+		// `pkg.TypeName.method`; we lift them off and clone with bare
+		// names so MethodForType matches on the leaf.
+		if len(vs.MethodNames) > 0 {
+			pkgFuncs := c.imports[o.Pkgname]
+			fds := make([]*FuncDecl, 0, len(vs.MethodNames))
+			for _, mn := range vs.MethodNames {
+				key := vs.Name + "." + mn
+				if fd, ok := pkgFuncs[key]; ok {
+					clone := *fd
+					clone.Name = mn
+					fds = append(fds, &clone)
+				}
+			}
+			c.DefineTypeMethods(qname, fds)
+		}
+	}
 	return nil
 }
 
-// qualifyImportedType walks t's element chain and, when the leaf name
-// matches a struct or type alias defined in the producer .bo, rewrites
-// it as "pkgname.LeafName". Built-in names and already-qualified names
-// (containing a dot) are left alone.
-func qualifyImportedType(t *ASTType, pkgname string, structs map[string]*gbasm.StructShape, aliases map[string]*gbasm.TypeAliasShape, ifaces map[string]*gbasm.InterfaceShape) {
+// qualifyImportedTypeFull walks t's element chain and, when the leaf
+// name matches a struct, type alias, interface, or values type defined
+// in the producer .bo, rewrites it as "pkgname.LeafName". Built-in
+// names and already-qualified names (containing a dot) are left alone.
+func qualifyImportedTypeFull(t *ASTType, pkgname string, structs map[string]*gbasm.StructShape, aliases map[string]*gbasm.TypeAliasShape, ifaces map[string]*gbasm.InterfaceShape, values map[string]*gbasm.ValuesShape) {
 	if t.Element != nil {
-		qualifyImportedType(t.Element, pkgname, structs, aliases, ifaces)
+		qualifyImportedTypeFull(t.Element, pkgname, structs, aliases, ifaces, values)
 		return
 	}
 	if t.AnonFields != nil {
 		for i := range t.AnonFields {
-			qualifyImportedType(&t.AnonFields[i].Type, pkgname, structs, aliases, ifaces)
+			qualifyImportedTypeFull(&t.AnonFields[i].Type, pkgname, structs, aliases, ifaces, values)
 		}
 		return
 	}
 	if t.FuncSig != nil {
 		for i := range t.FuncSig.Args {
-			qualifyImportedType(&t.FuncSig.Args[i], pkgname, structs, aliases, ifaces)
+			qualifyImportedTypeFull(&t.FuncSig.Args[i], pkgname, structs, aliases, ifaces, values)
 		}
-		qualifyImportedType(&t.FuncSig.Return, pkgname, structs, aliases, ifaces)
+		qualifyImportedTypeFull(&t.FuncSig.Return, pkgname, structs, aliases, ifaces, values)
 		return
 	}
 	if _, ok := structs[t.Name]; ok {
@@ -1141,6 +1180,10 @@ func qualifyImportedType(t *ASTType, pkgname string, structs map[string]*gbasm.S
 		return
 	}
 	if _, ok := ifaces[t.Name]; ok {
+		t.Name = pkgname + "." + t.Name
+		return
+	}
+	if _, ok := values[t.Name]; ok {
 		t.Name = pkgname + "." + t.Name
 	}
 }

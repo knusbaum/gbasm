@@ -1,0 +1,2 @@
+Compiling tests/cross_pkg_values_intcast_err_test.bos
+Fatal: Cannot cast <intlit> to errors.io_error: values cases must be constructed from declared cases

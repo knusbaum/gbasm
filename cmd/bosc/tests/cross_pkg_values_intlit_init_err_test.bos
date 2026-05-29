@@ -1,0 +1,7 @@
+package main
+
+import "errors"
+
+fn main() {
+	var e errors.io_error = 0
+}

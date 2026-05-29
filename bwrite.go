@@ -527,6 +527,10 @@ func writeOFile(w io.Writer, o *OFile) error {
 	if err != nil {
 		return err
 	}
+	err = writeValues(w, o.Values)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -567,6 +571,10 @@ func readOFile(r io.Reader) (*OFile, error) {
 	if err != nil {
 		return nil, err
 	}
+	values, err := readValues(r)
+	if err != nil {
+		return nil, err
+	}
 	return &OFile{
 		Pkgname:     pkgname,
 		ExeFormat:   exeformat,
@@ -577,6 +585,7 @@ func readOFile(r io.Reader) (*OFile, error) {
 		Structs:     structs,
 		TypeAliases: typeAliases,
 		Interfaces:  interfaces,
+		Values:      values,
 	}, nil
 }
 
@@ -787,6 +796,120 @@ func readInterfaces(r io.Reader) (map[string]*InterfaceShape, error) {
 			methods[j] = InterfaceMethodShape{Name: mname, Params: params, Return: ret}
 		}
 		m[name] = &InterfaceShape{Name: name, Methods: methods}
+	}
+	return m, nil
+}
+
+func writeValues(w io.Writer, vs map[string]*ValuesShape) error {
+	names := make([]string, 0, len(vs))
+	for n := range vs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	if err := writeSize(w, len(names)); err != nil {
+		return err
+	}
+	for _, name := range names {
+		v := vs[name]
+		if err := writeString(w, v.Name); err != nil {
+			return err
+		}
+		if err := writeString(w, v.TagType); err != nil {
+			return err
+		}
+		if err := writeSize(w, len(v.Cases)); err != nil {
+			return err
+		}
+		for _, vc := range v.Cases {
+			if err := writeString(w, vc.Name); err != nil {
+				return err
+			}
+			if err := binary.Write(w, binary.LittleEndian, vc.Tag); err != nil {
+				return err
+			}
+		}
+		if err := writeSize(w, len(v.Projections)); err != nil {
+			return err
+		}
+		for _, pj := range v.Projections {
+			if err := writeString(w, pj.TargetType); err != nil {
+				return err
+			}
+		}
+		if err := writeSize(w, len(v.MethodNames)); err != nil {
+			return err
+		}
+		for _, mn := range v.MethodNames {
+			if err := writeString(w, mn); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func readValues(r io.Reader) (map[string]*ValuesShape, error) {
+	n, err := readSize(r)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]*ValuesShape, n)
+	for i := 0; i < n; i++ {
+		name, err := readString(r)
+		if err != nil {
+			return nil, err
+		}
+		tagType, err := readString(r)
+		if err != nil {
+			return nil, err
+		}
+		nCases, err := readSize(r)
+		if err != nil {
+			return nil, err
+		}
+		cases := make([]ValuesCaseShape, nCases)
+		for j := range cases {
+			cname, err := readString(r)
+			if err != nil {
+				return nil, err
+			}
+			var tag int64
+			if err := binary.Read(r, binary.LittleEndian, &tag); err != nil {
+				return nil, err
+			}
+			cases[j] = ValuesCaseShape{Name: cname, Tag: tag}
+		}
+		nProj, err := readSize(r)
+		if err != nil {
+			return nil, err
+		}
+		projs := make([]ProjectionShape, nProj)
+		for j := range projs {
+			tt, err := readString(r)
+			if err != nil {
+				return nil, err
+			}
+			projs[j] = ProjectionShape{TargetType: tt}
+		}
+		nMethods, err := readSize(r)
+		if err != nil {
+			return nil, err
+		}
+		methods := make([]string, nMethods)
+		for j := range methods {
+			mn, err := readString(r)
+			if err != nil {
+				return nil, err
+			}
+			methods[j] = mn
+		}
+		m[name] = &ValuesShape{
+			Name:        name,
+			TagType:     tagType,
+			Cases:       cases,
+			Projections: projs,
+			MethodNames: methods,
+		}
 	}
 	return m, nil
 }

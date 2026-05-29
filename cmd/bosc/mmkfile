@@ -62,6 +62,23 @@ file pair.bo : bas pair.bs {
 #rm -f pair.importcfg
 
 
+# Compile the Boson-source `errors` runtime package so the
+# cross-package values tests under cmd/bosc/tests have a values type
+# to import.
+file errors.importcfg : builtin.bo {
+    cat > errors.importcfg <<EOF
+builtin=builtin.bo
+EOF
+}
+
+file errors.bs : bosc errors.importcfg $RUNTIME/errors/errors.bos {
+    ./bosc -importcfg=errors.importcfg -o errors.bs $RUNTIME/errors/errors.bos >/dev/null 2>&1
+}
+
+file errors.bo : bas errors.bs {
+    ./bas -o errors.bo errors.bs >/dev/null 2>&1
+}
+
 # Compile the Boson-source `io` runtime package so cross-package type-alias
 # tests have something to import.
 file io.importcfg : builtin.bo io_sys.bo string.bo {
@@ -82,19 +99,20 @@ file io.bo : bas io.bs {
 #rm -f io.importcfg
 
 # Generate a project-wide importcfg.
-file test.importcfg : builtin.bo string.bo pair.bo io.bo io_sys.bo {
+file test.importcfg : builtin.bo string.bo pair.bo io.bo io_sys.bo errors.bo {
     cat > test.importcfg <<EOF
 builtin=builtin.bo
 string=string.bo
 pair=pair.bo
 io=io.bo
 _io_sys=io_sys.bo
+errors=errors.bo
 EOF
 }
 
 clean : {
     rm -f tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout *.importcfg
-    rm -f bosc bas bld string.bo init.bo heap.bo builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo test.importcfg
+    rm -f bosc bas bld string.bo init.bo heap.bo builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo errors.bo errors.bs test.importcfg
 }
 
 go_tests {
@@ -169,6 +187,9 @@ test: go_tests bosc_tests {
     fi
     if grep -q '^import "_io_sys"' "$target"; then
         case "$extra_bo" in *io_sys.bo*) ;; *) extra_bo="$extra_bo io_sys.bo";; esac
+    fi
+    if grep -q '^import "errors"' "$target"; then
+        extra_bo="$extra_bo errors.bo"
     fi
     ./bld -o ${target}.o ${target}.bo builtin.bo string.bo init.bo heap.bo $extra_bo >${target}.bld.out 2>&1
     if [[ $? != 0 ]]; then

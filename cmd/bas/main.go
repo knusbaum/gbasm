@@ -481,6 +481,98 @@ func main() {
 				}
 				continue
 			}
+			if strings.HasPrefix(line, "values ") {
+				// Multi-line directive:
+				//   values <Name> {
+				//     tag <tag-type>
+				//     case <case-name> <tag-int>
+				//     projection <target-type-string>
+				//     method <bare-method-name>
+				//     ...
+				//   }
+				// Cases and projections are recorded in the source order
+				// the producer emitted, which matches their declaration
+				// order in the bosc-side ValuesDecl. The projection
+				// table symbol is derived from (pkg, type-name, index)
+				// on the importer side, so no symbol name needs to flow
+				// through the directive.
+				rest := strings.TrimSpace(strings.TrimPrefix(line, "values"))
+				openIdx := strings.IndexByte(rest, '{')
+				if openIdx < 0 {
+					fmt.Printf("Fatal: values directive: missing '{' on the same line, got: %q\n", line)
+					os.Exit(1)
+				}
+				vname := strings.TrimSpace(rest[:openIdx])
+				if vname == "" {
+					fmt.Printf("Fatal: values directive: missing name before '{'\n")
+					os.Exit(1)
+				}
+				var tagType string
+				var cases []gbasm.ValuesCaseShape
+				var projections []gbasm.ProjectionShape
+				var methodNames []string
+				for {
+					if !scanner.Scan() {
+						fmt.Printf("Fatal: values %s: unexpected EOF before '}'\n", vname)
+						os.Exit(1)
+					}
+					ln++
+					body := strings.TrimSpace(scanner.Text())
+					if body == "" || strings.HasPrefix(body, "//") {
+						continue
+					}
+					if body == "}" {
+						break
+					}
+					if strings.HasPrefix(body, "tag ") {
+						tagType = strings.TrimSpace(strings.TrimPrefix(body, "tag"))
+						continue
+					}
+					if strings.HasPrefix(body, "case ") {
+						parts := strings.Fields(strings.TrimPrefix(body, "case "))
+						if len(parts) != 2 {
+							fmt.Printf("Fatal: values %s: case line %q expected `case <name> <tag>`\n", vname, body)
+							os.Exit(1)
+						}
+						tag, err := strconv.ParseInt(parts[1], 10, 64)
+						if err != nil {
+							fmt.Printf("Fatal: values %s: case %s tag %q: %s\n", vname, parts[0], parts[1], err)
+							os.Exit(1)
+						}
+						cases = append(cases, gbasm.ValuesCaseShape{Name: parts[0], Tag: tag})
+						continue
+					}
+					if strings.HasPrefix(body, "projection ") {
+						pt := strings.TrimSpace(strings.TrimPrefix(body, "projection"))
+						if pt == "" {
+							fmt.Printf("Fatal: values %s: projection line %q has empty target type\n", vname, body)
+							os.Exit(1)
+						}
+						projections = append(projections, gbasm.ProjectionShape{TargetType: pt})
+						continue
+					}
+					if strings.HasPrefix(body, "method ") {
+						mn := strings.TrimSpace(strings.TrimPrefix(body, "method"))
+						if mn == "" {
+							fmt.Printf("Fatal: values %s: method line %q has empty name\n", vname, body)
+							os.Exit(1)
+						}
+						methodNames = append(methodNames, mn)
+						continue
+					}
+					fmt.Printf("Fatal: values %s: unknown line %q\n", vname, body)
+					os.Exit(1)
+				}
+				if tagType == "" {
+					fmt.Printf("Fatal: values %s: missing 'tag <type>' line\n", vname)
+					os.Exit(1)
+				}
+				if err := o.AddValues(vname, tagType, cases, projections, methodNames); err != nil {
+					fmt.Printf("Fatal: values %s: %s\n", vname, err)
+					os.Exit(1)
+				}
+				continue
+			}
 			if strings.HasPrefix(line, "struct") {
 				// Multi-line directive:
 				//   struct Name {

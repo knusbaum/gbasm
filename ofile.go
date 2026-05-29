@@ -118,6 +118,14 @@ type OFile struct {
 	// the qualified interface type.
 	Interfaces map[string]*InterfaceShape
 
+	// Values is the exported values-type declarations defined in this
+	// package (e.g. `type io_error values (i64, byte[]) { ... }`). bas
+	// populates this via the `values` directive; bosc reads it during
+	// Context.Import to register the values type so cross-package code
+	// can reference cases (io.io_error.NOT_FOUND) and projection casts
+	// (i64(err), byte[](err)).
+	Values map[string]*ValuesShape
+
 	// Not written
 	a *Asm
 }
@@ -165,6 +173,40 @@ type InterfaceMethodShape struct {
 	Return string
 }
 
+// ValuesShape is the wire-level description of a Boson values type.
+// TagType records the private tag's representation (v1 is always
+// "i64"). Cases lists symbolic names in declaration order with their
+// compiler-private dense tag values, so importers can resolve
+// `pkg.io_error.NOT_FOUND` to the right tag without re-running the
+// producer's ToAST. Projections lists the projection-target types in
+// the declared signature order; the projection table symbol an
+// importer constructs from the index, mirroring the producer's
+// projectionSymbolName scheme (pkg.__projection_<type>__<index>).
+// MethodNames lists the bare method names so the importer can
+// reconstitute the method table from the already-imported function
+// signatures (same pattern as TypeAliasShape).
+type ValuesShape struct {
+	Name        string
+	TagType     string
+	Cases       []ValuesCaseShape
+	Projections []ProjectionShape
+	MethodNames []string
+}
+
+// ValuesCaseShape is one entry in a values type's case list.
+type ValuesCaseShape struct {
+	Name string
+	Tag  int64
+}
+
+// ProjectionShape is one entry in a values type's projection
+// signature. TargetType is the declared destination type (ASTType.String()
+// form, reparsed on import). The table symbol is derived from
+// (pkg, values-type-name, index) at use time.
+type ProjectionShape struct {
+	TargetType string
+}
+
 func NewOFile(name string, pkgname string) (*OFile, error) {
 	a, err := LoadAsm(AMD64)
 	if err != nil {
@@ -180,8 +222,27 @@ func NewOFile(name string, pkgname string) (*OFile, error) {
 		Structs:     make(map[string]*StructShape),
 		TypeAliases: make(map[string]*TypeAliasShape),
 		Interfaces:  make(map[string]*InterfaceShape),
+		Values:      make(map[string]*ValuesShape),
 		a:           a, // TODO: Hard coded for now. This should be a parameter and written to the ofile.
 	}, nil
+}
+
+// AddValues registers a Boson values type for export.
+func (o *OFile) AddValues(name, tagType string, cases []ValuesCaseShape, projections []ProjectionShape, methodNames []string) error {
+	if o.Values[name] != nil {
+		return fmt.Errorf("Values type %s already declared.", name)
+	}
+	if o.Structs[name] != nil || o.TypeAliases[name] != nil || o.Interfaces[name] != nil {
+		return fmt.Errorf("Name %s already declared.", name)
+	}
+	o.Values[name] = &ValuesShape{
+		Name:        name,
+		TagType:     tagType,
+		Cases:       cases,
+		Projections: projections,
+		MethodNames: methodNames,
+	}
+	return nil
 }
 
 // AddStruct registers a Boson struct definition for export. Returns

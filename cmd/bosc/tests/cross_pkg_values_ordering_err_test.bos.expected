@@ -1,0 +1,2 @@
+Compiling tests/cross_pkg_values_ordering_err_test.bos
+Fatal: Cannot order values of types errors.io_error and errors.io_error; values types are closed symbolic sets, not numeric

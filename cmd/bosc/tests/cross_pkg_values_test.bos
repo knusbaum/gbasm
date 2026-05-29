@@ -1,0 +1,39 @@
+package main
+
+import "string"
+import "errors"
+
+fn main() {
+	// Case reference: errors.io_error.NOT_FOUND must reach the
+	// imported values type's case through the resolver.
+	var e errors.io_error = errors.io_error.NOT_FOUND
+	string.puti(i64(e))
+	string.puts(" ")
+	string.puts(byte[](e))
+	string.puts("\n")
+
+	e = errors.io_error.PERMISSION_DENIED
+	string.puti(i64(e))
+	string.puts(" ")
+	string.puts(byte[](e))
+	string.puts("\n")
+
+	// Method dispatch on the imported values type.
+	string.puts(e.message())
+	string.puts("\n")
+
+	// Value-backed interface returned from the producer package: the
+	// values tag flows through the fat-pointer data slot, the
+	// vtable points at the producer's pkg.io_error.message symbol.
+	var ev errors.error_val = errors.open_for(2)
+	string.puts(ev.message())
+	string.puts("\n")
+
+	// Consumer-side construction of the interface: building the fat
+	// pointer happens here, NeedVtable on the importer's Context
+	// registers the cross-package vtable, the data word carries the
+	// case tag.
+	var ev2 errors.error_val = errors.io_error.BUSY
+	string.puts(ev2.message())
+	string.puts("\n")
+}

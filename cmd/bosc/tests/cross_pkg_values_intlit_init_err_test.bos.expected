@@ -1,0 +1,2 @@
+Compiling tests/cross_pkg_values_intlit_init_err_test.bos
+Fatal: Cannot construct errors.io_error from <intlit>: values cases must be constructed from declared cases

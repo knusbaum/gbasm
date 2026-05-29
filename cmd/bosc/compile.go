@@ -1543,6 +1543,29 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		fmt.Fprintf(of, "}\n")
 		return nullspot
 	case *ValuesDecl:
+		// Cross-package metadata directive: bas parses this into a
+		// ValuesShape on the producer's .bo so the importing bosc can
+		// register the values type, its cases, projection signature,
+		// and method names. Format mirrors the block-form `interface`
+		// directive:
+		//   values <Name> {
+		//     tag <tag-type>
+		//     case <case-name> <tag>
+		//     projection <target-type>
+		//     method <bare-method-name>
+		//   }
+		fmt.Fprintf(of, "values %s {\n", ast.Name)
+		fmt.Fprintf(of, "\ttag %s\n", ast.TagType.String())
+		for _, vc := range ast.Cases {
+			fmt.Fprintf(of, "\tcase %s %d\n", vc.Name, vc.Tag)
+		}
+		for _, pt := range ast.Projections {
+			fmt.Fprintf(of, "\tprojection %s\n", pt.String())
+		}
+		for _, m := range ast.Methods {
+			fmt.Fprintf(of, "\tmethod %s\n", m.Name)
+		}
+		fmt.Fprintf(of, "}\n")
 		// One static projection table per declared projection. Each
 		// table is a fixed array indexed by the case's compiler-private
 		// tag, so a projection cast can lower to a single indexed load
@@ -1572,9 +1595,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		// Value-receiver methods land alongside the projection tables,
 		// using the same emission path TypeWithMethodsDecl uses.
-		// Cross-package metadata (a `values` .bs directive) lands in
-		// Stage 5; for now the values type is local to the producer
-		// package.
 		for _, m := range ast.Methods {
 			qualified := &FuncDecl{
 				Name:   ast.Name + "." + m.Name,
@@ -3447,6 +3467,18 @@ func EvalConst(c *Context, a AST) (*big.Int, bool) {
 	return nil, false
 }
 
+// splitQualifiedName splits a "pkg.leaf" identifier into its parts. For
+// an unqualified name (no dot), pkg is empty and leaf is the input.
+// Used by the projection cast path to construct cross-package symbol
+// references (`pkg.__projection_leaf__index`) without re-qualifying
+// local references.
+func splitQualifiedName(name string) (pkg, leaf string) {
+	if dot := strings.LastIndex(name, "."); dot >= 0 {
+		return name[:dot], name[dot+1:]
+	}
+	return "", name
+}
+
 // projectionSymbolName returns the bas-level symbol for a values type's
 // projection table. The form is
 // __projection_<typename-with-dots-as-underscores>__<index>, where
@@ -3493,7 +3525,18 @@ func projectionSymbolName(typeName string, projIndex int) string {
 // 16-byte slice-header element, for example) needs an explicit
 // multiply.
 func compileProjectionCast(of io.Writer, c *Context, src AST, srcType ASTType, projIdx int, projType ASTType, dest spot) spot {
-	symName := projectionSymbolName(srcType.Name, projIdx)
+	// Cross-package values: srcType.Name is "pkg.typename" (the
+	// importer qualified it during Context.Import). The producer
+	// emitted the projection table under the unqualified key
+	// __projection_typename__index, and bas auto-qualified that
+	// with the producer's package name. The consumer references the
+	// already-qualified symbol explicitly so bas does not prepend
+	// the consumer's package qualifier.
+	pkg, leaf := splitQualifiedName(srcType.Name)
+	symName := projectionSymbolName(leaf, projIdx)
+	if pkg != "" {
+		symName = pkg + "." + symName
+	}
 	tagSpot := compileTop(of, c, src, nullspot)
 	base := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
 	fmt.Fprintf(of, "\tlea %s %s\n", base.ref, symName)
