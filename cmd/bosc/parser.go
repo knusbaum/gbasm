@@ -185,7 +185,14 @@ type Node struct {
 	//fval float64 // we'll add floats later.
 	sval string
 	args []*Node
-	p    position
+	// typeIdent is the raw type-identifier node for n_stlit when the
+	// literal was written with a leading type (`Name{...}` or
+	// `pkg.Type{...}`). ToAST routes it through the shared selector
+	// resolver to determine the literal's type. Nil for anonymous
+	// `{ field: val, ... }` literals whose type is inferred from
+	// context.
+	typeIdent *Node
+	p         position
 }
 
 func NewParser(fname string, r io.Reader) *Parser {
@@ -636,8 +643,8 @@ func (p *Parser) parsePostfix(v *Node) *Node {
 			// Function-call form: direct `name(args)` or qualified
 			// `pkg.name(args)`. The qualified shape stays as
 			// Dot(symbol_pkg, funcall_fn) — that's what n_dot's ToAST
-			// handler already recognizes and lowers to a Funcall with
-			// f.Pkg set.
+			// handler recognizes and lowers to a Funcall whose Callee is
+			// a Dot selector.
 			switch {
 			case v.t == n_symbol:
 				p.advance()
@@ -655,9 +662,15 @@ func (p *Parser) parsePostfix(v *Node) *Node {
 			}
 		case tok_lcurly:
 			// Struct-literal form: either bare 'Name{...}' or qualified
-			// 'pkg.Name{...}'. The latter shows up as Dot(symbol_pkg,
-			// symbol_type); flatten to an n_stlit whose sval is the
-			// qualified key the importer registered the struct under.
+			// 'pkg.Name{...}'. The leading type identifier (v) is kept
+			// verbatim on the n_stlit node as typeIdent so that ToAST
+			// can route it through the shared selector resolver. The
+			// flat sval below preserves the historical key format that
+			// the importer uses for cross-package structs (StructDecl
+			// names are registered as "pkg.Type") and that codegen
+			// consults at compile.go's struct lookup sites; ToAST may
+			// rewrite sval after resolving if a future selector kind
+			// needs a different identity.
 			var typeName string
 			var typePos position
 			switch {
@@ -671,10 +684,11 @@ func (p *Parser) parsePostfix(v *Node) *Node {
 			default:
 				return v
 			}
+			typeIdent := v
 			p.advance()
 			fields := p.parseStructLiteral()
 			p.expect(tok_rcurly)
-			v = &Node{t: n_stlit, p: typePos, sval: typeName, args: fields}
+			v = &Node{t: n_stlit, p: typePos, sval: typeName, args: fields, typeIdent: typeIdent}
 		case tok_question:
 			p.advance()
 			v = &Node{t: n_nonnull, p: c.p, args: []*Node{v}}

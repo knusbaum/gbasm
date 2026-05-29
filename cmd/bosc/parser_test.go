@@ -121,7 +121,7 @@ func TestParser(t *testing.T) {
 		},
 		{
 			in: "foo{ field: \"somestring\", field2: 1234.5, field3: bar(), field4: baz(1, 2, 3), field5: quux }",
-			out: &Node{t: n_stlit, sval: "foo", args: []*Node{
+			out: &Node{t: n_stlit, sval: "foo", typeIdent: &Node{t: n_symbol, sval: "foo"}, args: []*Node{
 				&Node{t: n_stfield, sval: "field", args: []*Node{&Node{t: n_str, sval: "somestring"}}},
 				&Node{t: n_stfield, sval: "field2", args: []*Node{&Node{t: n_number, ival: 1234}}},
 				&Node{t: n_stfield, sval: "field3", args: []*Node{&Node{t: n_funcall, sval: "bar"}}},

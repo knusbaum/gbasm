@@ -734,8 +734,9 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 		// the source's origin and validity, not be treated as an opaque new
 		// pointer. Recurse into the cast argument so escape checks, deref
 		// validity, and alias bookkeeping see the source's PointerExpr.
-		if ast.Pkg == "" && len(ast.Args) == 1 {
-			if _, ok := c.TypeByName(ast.FName); ok {
+		pkg, name := ast.PkgAndName()
+		if pkg == "" && len(ast.Args) == 1 {
+			if _, ok := c.TypeByName(name); ok {
 				return pointerExprForAST(c, ast.Args[0], assignedName)
 			}
 		}
@@ -1034,7 +1035,8 @@ func compileAllocBuiltin(of io.Writer, c *Context, a AST, ast *Funcall, dest spo
 }
 
 func newBuiltinTypeForDest(c *Context, ast *Funcall, dst ASTType) (ASTType, bool) {
-	if ast.Pkg != "" || ast.FName != "new" || len(ast.Args) != 1 || dst.Indirection == 0 {
+	pkg, name := ast.PkgAndName()
+	if pkg != "" || name != "new" || len(ast.Args) != 1 || dst.Indirection == 0 {
 		return ASTType{}, false
 	}
 	exprType := ast.Args[0].ASTType(c)
@@ -1831,16 +1833,17 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		sc.FreeLocalVars(of)
 		return nullspot
 	case *Funcall:
-		if ast.Pkg == "" && ast.FName == "alloc" {
+		pkg, fname := ast.PkgAndName()
+		if pkg == "" && fname == "alloc" {
 			return compileAllocBuiltin(of, c, a, ast, dest)
 		}
-		if ast.Pkg == "" && ast.FName == "new" {
+		if pkg == "" && fname == "new" {
 			return compileNewBuiltin(of, c, a, ast, dest)
 		}
-		if ast.Pkg == "" && ast.FName == "free" {
+		if pkg == "" && fname == "free" {
 			return compileFreeBuiltin(of, c, a, ast)
 		}
-		if ast.Pkg == "" && ast.FName == "len" {
+		if pkg == "" && fname == "len" {
 			if len(ast.Args) != 1 {
 				CompileErrorF(a, "len() requires exactly one argument")
 			}
@@ -1862,10 +1865,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// Cast expression: type name used as a single-argument function.
 		// Works for unqualified names (FD(x)) and qualified names (io.FD(x)).
 		{
-			castName := ast.FName
-			if ast.Pkg != "" {
-				castName = ast.Pkg + "." + ast.FName
-			}
+			castName := ast.QualifiedName()
 			if destType, ok := c.TypeByName(castName); ok {
 				if len(ast.Args) != 1 {
 					CompileErrorF(a, "Type cast %s() requires exactly one argument", castName)
@@ -1877,35 +1877,35 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// (expr).method(args) — receiver is an arbitrary expression.
 		// Evaluate it, look up the method by type, and delegate to the
 		// concrete method call path.
-		if ast.ReceiverExpr != nil {
-			rt := ast.ReceiverExpr.ASTType(c)
+		if recv := ast.ReceiverExpr(); recv != nil {
+			rt := recv.ASTType(c)
 			typeName := rt.Name
 			if c.IsInterfaceType(rt) {
 				CompileErrorF(a, "interface method dispatch on expression receiver not yet supported; bind to a variable first")
 			}
-			if method, mok := c.MethodForType(typeName, ast.FName); mok {
+			if method, mok := c.MethodForType(typeName, fname); mok {
 				return compileConcreteMethodCall(of, c, a, ast, rt, typeName, method, dest)
 			}
-			CompileErrorF(a, "no method %q on type %s", ast.FName, typeName)
+			CompileErrorF(a, "no method %q on type %s", fname, typeName)
 		}
 
-		decl, resolvedPkg, ok := c.FuncDeclForCall(ast.Pkg, ast.FName)
+		decl, resolvedPkg, ok := c.FuncDeclForCall(pkg, fname)
 		if !ok {
 			// Fall back to an indirect call through a function-pointer
 			// value. Two shapes:
 			//
-			//   foo(args)    — ast.Pkg == "", call through a fn-typed
+			//   foo(args)    — pkg == "", call through a fn-typed
 			//                  local/global named `foo`
-			//   d.f(args)    — ast.Pkg == "d" (parser packs Dot-of-call
+			//   d.f(args)    — pkg == "d" (parser packs Dot-of-call
 			//                  this way regardless of whether `d` is a
 			//                  package or a struct-valued variable);
 			//                  call through field `f` of struct `d`
-			if ast.Pkg == "" {
-				if vt, vok := c.TypeForVar(ast.FName); vok && vt.FuncSig != nil {
-					return compileIndirectCall(of, c, a, ast, ast.FName, vt.FuncSig, dest)
+			if pkg == "" {
+				if vt, vok := c.TypeForVar(fname); vok && vt.FuncSig != nil {
+					return compileIndirectCall(of, c, a, ast, fname, vt.FuncSig, dest)
 				}
 			} else {
-				if vt, vok := c.TypeForVar(ast.Pkg); vok {
+				if vt, vok := c.TypeForVar(pkg); vok {
 					// Interface method dispatch: v.method(args) where v is an interface type.
 					if c.IsInterfaceType(vt) {
 						ifaceDecl, _ := c.InterfaceForName(vt.Name)
@@ -1913,18 +1913,18 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 					}
 					// Concrete method call: v.method(args) → TypeName.method(receiver, args).
 					typeName := vt.Name // leaf type name regardless of pointer depth
-					if method, mok := c.MethodForType(typeName, ast.FName); mok {
+					if method, mok := c.MethodForType(typeName, fname); mok {
 						if len(method.Args) == 0 {
 							CompileErrorF(a, "%s.%s is a static method (no receiver); call as %s.%s(...), not %s.%s(...)",
-								typeName, ast.FName, typeName, ast.FName, ast.Pkg, ast.FName)
+								typeName, fname, typeName, fname, pkg, fname)
 						}
 						return compileConcreteMethodCall(of, c, a, ast, vt, typeName, method, dest)
 					}
 					// Struct function-pointer field call.
 					if sdecl, sok := structDeclForType(c, vt); sok {
-						off, mtype := sdecl.ByteOffset(c, ast.FName)
+						off, mtype := sdecl.ByteOffset(c, fname)
 						if mtype.FuncSig != nil {
-							baseAddr := compileTop(of, c, &Symbol{Name: ast.Pkg}, nullspot)
+							baseAddr := compileTop(of, c, &Symbol{Name: pkg}, nullspot)
 							srcRef := fmt.Sprintf("[%s+%d]", baseAddr.ref, off)
 							ret := compileIndirectCall(of, c, a, ast, srcRef, mtype.FuncSig, dest)
 							baseAddr.free(of)
@@ -1973,21 +1973,30 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		rax.free(of)
 		return ret
 	case *Dot:
-		// Cross-package variable read: `pkg.varname`. Emit a load from the
-		// qualified symbol — bas treats `pkg.varname` as an external data
-		// symbol (isIdentifier accepts dotted names) and the linker resolves
-		// the relocation to the producer package's data section.
-		if sym, ok := ast.Val.(*Symbol); ok && c.IsImportedPackage(sym.Name) {
-			vt, vok := c.ImportedVarType(sym.Name, ast.Member)
-			if !vok {
-				CompileErrorF(a, "package %q has no variable %q", sym.Name, ast.Member)
+		// Route the selector through the shared resolver. Cross-package
+		// variable reads land as ResolvedRuntimeValue with Pkg set; struct
+		// field access lands as ResolvedStructField; everything else
+		// (qualified call-position selectors, etc.) is handled by other
+		// compileTop cases and never reaches here.
+		{
+			r := ResolveSelector(c, ast)
+			if r.Kind == ResolvedRuntimeValue && r.Pkg != "" {
+				// Cross-package variable read: bas treats `pkg.varname`
+				// as an external data symbol (isIdentifier accepts
+				// dotted names) and the linker resolves the relocation
+				// to the producer package's data section.
+				ref := r.Name
+				if dest.empty() {
+					dest = newSpot(of, c, c.Temp(), r.Type)
+				}
+				fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, ref)
+				return dest
 			}
-			ref := sym.Name + "." + ast.Member
-			if dest.empty() {
-				dest = newSpot(of, c, c.Temp(), vt)
+			if r.Kind == ResolvedUnknown {
+				if sym, ok := ast.Val.(*Symbol); ok && c.IsImportedPackage(sym.Name) {
+					CompileErrorF(a, "package %q has no variable %q", sym.Name, ast.Member)
+				}
 			}
-			fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, ref)
-			return dest
 		}
 		l := compileTop(of, c, ast.Val, nullspot)
 		orig := l
@@ -3828,57 +3837,67 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 func compileConcreteMethodCall(of io.Writer, c *Context, a AST, callNode *Funcall,
 	receiverType ASTType, typeName string, method *FuncDecl, dest spot) spot {
 	var receiver AST
-	if callNode.ReceiverExpr != nil {
+	if recv := callNode.ReceiverExpr(); recv != nil {
 		if receiverType.Indirection == 0 {
 			CompileErrorF(callNode, "cannot call method on non-addressable expression receiver (type %s)", receiverType)
 		}
-		receiver = callNode.ReceiverExpr
+		receiver = recv
 	} else if receiverType.Indirection > 0 {
-		receiver = &Symbol{Name: callNode.Pkg, p: callNode.p}
+		receiver = &Symbol{Name: callNode.PkgName(), p: callNode.p}
 	} else {
-		receiver = &Address{Var: callNode.Pkg, p: callNode.p}
+		receiver = &Address{Var: callNode.PkgName(), p: callNode.p}
 	}
 	allArgs := make([]AST, 0, 1+len(callNode.Args))
 	allArgs = append(allArgs, receiver)
 	allArgs = append(allArgs, callNode.Args...)
 	// If typeName is qualified (e.g. "io.FD"), split so the Funcall routes
 	// through c.imports["io"]["FD.method"] rather than c.funcs["io.FD.method"].
+	mname := callNode.FName()
 	synthPkg := ""
-	synthName := typeName + "." + callNode.FName
+	synthName := typeName + "." + mname
 	if dot := strings.LastIndex(typeName, "."); dot >= 0 {
 		synthPkg = typeName[:dot]
-		synthName = typeName[dot+1:] + "." + callNode.FName
+		synthName = typeName[dot+1:] + "." + mname
+	}
+	var callee AST
+	if synthPkg != "" {
+		callee = &Dot{
+			Val:    &Symbol{Name: synthPkg, p: callNode.p},
+			Member: synthName,
+		}
+	} else {
+		callee = &Symbol{Name: synthName, p: callNode.p}
 	}
 	synthCall := &Funcall{
-		Pkg:   synthPkg,
-		FName: synthName,
-		Args:  allArgs,
-		p:     callNode.p,
+		Callee: callee,
+		Args:   allArgs,
+		p:      callNode.p,
 	}
 	return compileTop(of, c, synthCall, dest)
 }
 
 // compileInterfaceMethodCall emits a vtable-dispatch call for an interface method.
-// The interface variable (named callNode.Pkg) is a memory-backed 16-byte fat pointer:
-// [var+0] = data word, [var+8] = vtable pointer. For pointer-backed interfaces
-// the data word is a pointer; for value-backed interfaces it is the concrete
-// value bits. The data word is passed as the first argument (rdi); user-supplied
-// args follow (rsi, rdx, ...).
+// The interface variable (named by callNode.PkgName()) is a memory-backed
+// 16-byte fat pointer: [var+0] = data word, [var+8] = vtable pointer. For
+// pointer-backed interfaces the data word is a pointer; for value-backed
+// interfaces it is the concrete value bits. The data word is passed as the
+// first argument (rdi); user-supplied args follow (rsi, rdx, ...).
 func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funcall,
 	ifaceType ASTType, ifaceDecl *InterfaceDecl, dest spot) spot {
 
+	mname := callNode.FName()
 	// Locate the method and its index in the interface.
 	methodIdx := -1
 	var isig InterfaceMethodSig
 	for i, m := range ifaceDecl.Methods {
-		if m.Name == callNode.FName {
+		if m.Name == mname {
 			methodIdx = i
 			isig = m
 			break
 		}
 	}
 	if methodIdx < 0 {
-		CompileErrorF(a, "Interface %s has no method %s", ifaceDecl.Name, callNode.FName)
+		CompileErrorF(a, "Interface %s has no method %s", ifaceDecl.Name, mname)
 	}
 
 	// Params[0] is the receiver; user provides Params[1:].
@@ -3886,14 +3905,14 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 	userParams := isig.Params[1:]
 	if len(callNode.Args) != len(userParams) {
 		CompileErrorF(a, "Method %s.%s expected %d arguments, but called with %d",
-			ifaceDecl.Name, callNode.FName, len(userParams), len(callNode.Args))
+			ifaceDecl.Name, mname, len(userParams), len(callNode.Args))
 	}
 
 	// The interface variable is memory-backed; its name is the base address.
-	ifaceRef := callNode.Pkg
+	ifaceRef := callNode.PkgName()
 	if receiverParam.HasOwned() {
 		if !ifaceType.HasOwned() {
-			CompileErrorF(a, "Cannot call consuming method %s.%s on non-owned %s", ifaceDecl.Name, callNode.FName, ifaceType)
+			CompileErrorF(a, "Cannot call consuming method %s.%s on non-owned %s", ifaceDecl.Name, mname, ifaceType)
 		}
 		if c.IsMoved(ifaceRef) {
 			CompileErrorF(a, "Cannot move \"%s\": it was already moved", ifaceRef)

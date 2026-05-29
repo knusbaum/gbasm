@@ -1863,20 +1863,77 @@ func (b *Block) Pos() position {
 	return b.p
 }
 
+// Funcall represents a call expression. Callee names the function being
+// called and is one of:
+//   - *Symbol            — bare call: `fn(args)` (built-in or local function)
+//   - *Dot{Symbol, name} — qualified call: `pkg.fn(args)`,
+//                          method on a named variable `v.method(args)`,
+//                          or static method `Type.method(args)`.
+//                          The call site asks the resolver which meaning applies.
+//   - *Dot{<expr>, name} — method on an arbitrary expression: `(expr).method(args)`.
+//
+// Helper methods FName, PkgName, ReceiverExpr, PkgAndName, and QualifiedName
+// destructure the Callee for readers that previously consulted separate Pkg
+// and FName fields.
 type Funcall struct {
-	Pkg          string // empty for in-package calls; package name for qualified calls
-	FName        string
-	Args         []AST
-	ReceiverExpr AST // non-nil for (expr).method(args) calls; Pkg/FName unused for receiver lookup
-	p            position
+	Callee AST
+	Args   []AST
+	p      position
 }
 
-// QualifiedName returns "pkg.fname" for qualified calls, just "fname" otherwise.
-func (f *Funcall) QualifiedName() string {
-	if f.Pkg != "" {
-		return f.Pkg + "." + f.FName
+// FName returns the leaf function or method name.
+func (f *Funcall) FName() string {
+	switch c := f.Callee.(type) {
+	case *Symbol:
+		return c.Name
+	case *Dot:
+		return c.Member
 	}
-	return f.FName
+	return ""
+}
+
+// PkgName returns the qualifier when the callee is `Symbol.member` shape.
+// In today's code that string is overloaded to mean an imported package
+// name, a receiver variable name, or a (static-method-bearing) type name;
+// the call-site dispatch in ASTType / compileTop chooses among them.
+// Returns empty for bare calls and for receiver-expression calls (use
+// ReceiverExpr for the latter).
+func (f *Funcall) PkgName() string {
+	if d, ok := f.Callee.(*Dot); ok {
+		if s, ok := d.Val.(*Symbol); ok {
+			return s.Name
+		}
+	}
+	return ""
+}
+
+// PkgAndName returns (PkgName, FName) in one call to keep call sites tidy.
+func (f *Funcall) PkgAndName() (string, string) {
+	return f.PkgName(), f.FName()
+}
+
+// ReceiverExpr returns the receiver expression for `(expr).method(args)`
+// calls where the receiver is an arbitrary expression rather than a bare
+// symbol. Returns nil for bare calls and for `pkg.fn(args)` / `v.method(args)`
+// / `Type.method(args)` forms (those go through PkgName).
+func (f *Funcall) ReceiverExpr() AST {
+	if d, ok := f.Callee.(*Dot); ok {
+		if _, ok := d.Val.(*Symbol); !ok {
+			return d.Val
+		}
+	}
+	return nil
+}
+
+// QualifiedName returns "pkg.fname" / "(...).fname" / "fname" for diagnostics.
+func (f *Funcall) QualifiedName() string {
+	if pkg := f.PkgName(); pkg != "" {
+		return pkg + "." + f.FName()
+	}
+	if f.ReceiverExpr() != nil {
+		return "(...)." + f.FName()
+	}
+	return f.FName()
 }
 
 func typeExprFromAST(c *Context, a AST) (ASTType, bool) {
@@ -1903,7 +1960,8 @@ func typeExprFromAST(c *Context, a AST) (ASTType, bool) {
 }
 
 func (f *Funcall) ASTType(c *Context) ASTType {
-	if f.Pkg == "" && f.FName == "alloc" {
+	pkg, name := f.PkgAndName()
+	if pkg == "" && name == "alloc" {
 		if len(f.Args) != 1 {
 			CompileErrorF(f, "alloc(T) requires exactly one type argument")
 		}
@@ -1919,7 +1977,7 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 		t.MutMask |= 1 << 1
 		return t
 	}
-	if f.Pkg == "" && f.FName == "new" {
+	if pkg == "" && name == "new" {
 		if len(f.Args) != 1 {
 			CompileErrorF(f, "new(expr) requires exactly one argument")
 		}
@@ -1935,10 +1993,10 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 		t.MutMask |= 1 << 1
 		return t
 	}
-	if f.Pkg == "" && f.FName == "free" {
+	if pkg == "" && name == "free" {
 		return voidASTType()
 	}
-	if f.Pkg == "" && f.FName == "len" {
+	if pkg == "" && name == "len" {
 		if len(f.Args) != 1 {
 			CompileErrorF(f, "len() requires exactly one argument")
 		}
@@ -1946,27 +2004,21 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 	}
 	// Cast expression: type name used as a function. Works for both
 	// unqualified (FD(x)) and qualified (io.FD(x)) forms.
-	{
-		castName := f.FName
-		if f.Pkg != "" {
-			castName = f.Pkg + "." + f.FName
-		}
-		if t, ok := c.TypeByName(castName); ok {
-			return t
-		}
+	if t, ok := c.TypeByName(f.QualifiedName()); ok {
+		return t
 	}
 	// (expr).method(args) — receiver is an expression, not a named variable.
-	if f.ReceiverExpr != nil {
-		rt := f.ReceiverExpr.ASTType(c)
-		if method, mok := c.MethodForType(rt.Name, f.FName); mok {
+	if recv := f.ReceiverExpr(); recv != nil {
+		rt := recv.ASTType(c)
+		if method, mok := c.MethodForType(rt.Name, name); mok {
 			return method.Return
 		}
 		panic(&interpreterError{
-			msg: fmt.Sprintf("no method %q on type %s", f.FName, rt.Name),
+			msg: fmt.Sprintf("no method %q on type %s", name, rt.Name),
 			p:   f.p,
 		})
 	}
-	if decl, _, ok := c.FuncDeclForCall(f.Pkg, f.FName); ok {
+	if decl, _, ok := c.FuncDeclForCall(pkg, name); ok {
 		return decl.Return
 	}
 	// Fall back to an indirect call through a function-pointer
@@ -1974,28 +2026,28 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 	//   foo(...)   — bare name resolves to a fn-typed local/global
 	//   d.f(...)   — when no package 'd' exists, treat 'd' as a
 	//                struct-valued variable and look up field 'f'
-	if f.Pkg == "" {
-		if vt, ok := c.TypeForVar(f.FName); ok && vt.FuncSig != nil {
+	if pkg == "" {
+		if vt, ok := c.TypeForVar(name); ok && vt.FuncSig != nil {
 			return vt.FuncSig.Return
 		}
 	} else {
-		if vt, ok := c.TypeForVar(f.Pkg); ok {
+		if vt, ok := c.TypeForVar(pkg); ok {
 			// Interface method dispatch: return the method's declared return type.
 			if c.IsInterfaceType(vt) {
 				if ifaceDecl, iok := c.InterfaceForName(vt.Name); iok {
 					for _, isig := range ifaceDecl.Methods {
-						if isig.Name == f.FName {
+						if isig.Name == name {
 							return isig.Return
 						}
 					}
 				}
 			}
 			// Concrete type method call: look up by qualified name.
-			if method, mok := c.MethodForType(vt.Name, f.FName); mok {
+			if method, mok := c.MethodForType(vt.Name, name); mok {
 				return method.Return
 			}
 			if sdecl, sok := c.StructDeclForName(vt.Name); sok {
-				_, mtype := sdecl.ByteOffset(c, f.FName)
+				_, mtype := sdecl.ByteOffset(c, name)
 				if mtype.FuncSig != nil {
 					return mtype.FuncSig.Return
 				}
@@ -2022,37 +2074,24 @@ type Dot struct {
 }
 
 func (d *Dot) ASTType(c *Context) ASTType {
-	// Cross-package variable read: `pkg.varname` where pkg is an imported
-	// package. Resolve before falling through to struct-field lookup, since
-	// d.Val.ASTType(c) would otherwise panic with "Variable pkg undeclared".
-	if sym, ok := d.Val.(*Symbol); ok && c.IsImportedPackage(sym.Name) {
-		if vt, ok := c.ImportedVarType(sym.Name, d.Member); ok {
-			return vt
+	r := ResolveSelector(c, d)
+	switch r.Kind {
+	case ResolvedRuntimeValue, ResolvedStructField:
+		return r.Type
+	case ResolvedUnknown:
+		// Reproduce the pre-resolver diagnostics: distinguish the
+		// "package has no such var" case (left was a known imported
+		// package) from the "no such struct" / "no such member" cases.
+		if sym, ok := d.Val.(*Symbol); ok && c.IsImportedPackage(sym.Name) {
+			CompileErrorF(d, "package %q has no variable %q", sym.Name, d.Member)
 		}
-		CompileErrorF(d, "package %q has no variable %q", sym.Name, d.Member)
-	}
-	t := d.Val.ASTType(c)
-	if t.Indirection != 0 {
-		if t.NilMask&1 != 0 {
-			CompileErrorF(d.Val, "Cannot access field %s through nullable pointer type %s", d.Member, t)
+		t := d.Val.ASTType(c)
+		if decl, ok := structDeclForType(c, t); ok {
+			CompileErrorF(d, "No such struct member \"%s\" in struct \"%s\"", d.Member, decl.TName)
 		}
-	}
-	decl, ok := structDeclForType(c, t)
-	if !ok {
 		CompileErrorF(d, "No such struct \"%s\"", t)
 	}
-	for _, f := range decl.Fields {
-		if f.Name == d.Member {
-			ft := fieldTypeForBase(t, f.Type)
-			if ft.Indirection > 0 && ft.NilMask&1 != 0 {
-				if path, ok := FlowPathForExpr(d); ok && c.NullFact(path) == NullKnownNonNull {
-					ft.NilMask &^= 1
-				}
-			}
-			return ft
-		}
-	}
-	CompileErrorF(d, "No such struct member \"%s\" in struct \"%s\"", d.Member, t)
+	CompileErrorF(d, "%s.%s does not name a value", d.Val.Note(), d.Member)
 	return voidASTType()
 }
 
@@ -2774,14 +2813,14 @@ type Symbol struct {
 }
 
 func (s *Symbol) ASTType(c *Context) ASTType {
-	t, ok := c.TypeForVar(s.Name)
-	if !ok {
-		panic(&interpreterError{
-			msg: fmt.Sprintf("Variable \"%s\" undeclared.", s.Name),
-			p:   s.p,
-		})
+	r := ResolveSelector(c, s)
+	if r.Kind == ResolvedRuntimeValue {
+		return r.Type
 	}
-	return t
+	panic(&interpreterError{
+		msg: fmt.Sprintf("Variable \"%s\" undeclared.", s.Name),
+		p:   s.p,
+	})
 }
 
 func (s *Symbol) Note() string {
@@ -2937,7 +2976,7 @@ func (n *Node) toASTTop(c *Context) AST {
 		return &b
 	case n_funcall:
 		var f Funcall
-		f.FName = n.sval
+		f.Callee = &Symbol{Name: n.sval, p: n.p}
 		f.p = n.p
 		for _, a := range n.args {
 			f.Args = append(f.Args, a.toASTTop(NewContext()))
@@ -2949,13 +2988,16 @@ func (n *Node) toASTTop(c *Context) AST {
 		return &Literal{Val: n.sval, p: n.p}
 	case n_dot:
 		// pkg.fn(args) — left is a bare symbol, right is a function call.
-		// Construct a qualified Funcall. The parser produces this shape because
-		// parseSubexpr handles dot then parseValue which may yield a Funcall.
+		// Construct a qualified Funcall whose Callee is Dot{Symbol(pkg), fn}.
+		// The resolver and call-site dispatch tease this apart into
+		// imported-package call, method on variable, or static-method-on-type.
 		if n.args[0].t == n_symbol && n.args[1].t == n_funcall {
 			fcall := n.args[1]
 			var f Funcall
-			f.Pkg = n.args[0].sval
-			f.FName = fcall.sval
+			f.Callee = &Dot{
+				Val:    &Symbol{Name: n.args[0].sval, p: n.args[0].p},
+				Member: fcall.sval,
+			}
 			f.p = n.p
 			for _, a := range fcall.args {
 				f.Args = append(f.Args, a.toASTTop(NewContext()))
@@ -2963,14 +3005,16 @@ func (n *Node) toASTTop(c *Context) AST {
 			return &f
 		}
 		// (expr).method(args) — left is an arbitrary expression, right is a call.
-		// Use ReceiverExpr so the compile path can evaluate the receiver and look
-		// up the method without needing a variable name.
+		// Callee carries the receiver as the Val side of the Dot so the call
+		// site can evaluate it and look up the method by the receiver's type.
 		if n.args[1].t == n_funcall {
 			fcall := n.args[1]
 			f := &Funcall{
-				ReceiverExpr: n.args[0].toASTTop(NewContext()),
-				FName:        fcall.sval,
-				p:            n.p,
+				Callee: &Dot{
+					Val:    n.args[0].toASTTop(NewContext()),
+					Member: fcall.sval,
+				},
+				p: n.p,
 			}
 			for _, a := range fcall.args {
 				f.Args = append(f.Args, a.toASTTop(NewContext()))
@@ -3004,8 +3048,23 @@ func (n *Node) toASTTop(c *Context) AST {
 		return &Literal{Val: byte(n.ival), p: n.p}
 	case n_stlit:
 		var s StructLiteral
-		s.Type = ASTType{Name: n.sval}
 		s.p = n.p
+		// Resolve the leading type identifier through the shared
+		// selector resolver. For Stage 1 this is structural unification
+		// with no observable change: the resolver returns the same
+		// struct identity the legacy lookup found via sval. Stage 2
+		// will route values types through this same step.
+		if n.typeIdent != nil {
+			ident := n.typeIdent.toASTTop(NewContext())
+			r := ResolveSelector(c, ident)
+			if r.Kind == ResolvedType {
+				s.Type = r.Type
+			} else {
+				s.Type = ASTType{Name: n.sval}
+			}
+		} else {
+			s.Type = ASTType{Name: n.sval}
+		}
 		for _, f := range n.args {
 			if f.t != n_stfield {
 				ParseErrorF(f, "Expected struct field, but got %v", f.t)

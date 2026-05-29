@@ -133,10 +133,7 @@ func encodeStaticInit(c *Context, dstt ASTType, init AST) ([]byte, []relocSpec, 
 		// Type cast of a single constant argument: FD(0) or io.FD(0).
 		// Fold by encoding the inner expression under the underlying type.
 		if len(v.Args) == 1 {
-			castName := v.FName
-			if v.Pkg != "" {
-				castName = v.Pkg + "." + v.FName
-			}
+			castName := v.QualifiedName()
 			if _, ok := c.TypeByName(castName); ok {
 				castType := ASTType{Name: castName}
 				underlying := c.ResolveUnderlying(castType)
