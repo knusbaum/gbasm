@@ -1,0 +1,2 @@
+Compiling tests/values_cross_type_eq_err_test.bos
+Fatal: Cannot compare values of types color and tag

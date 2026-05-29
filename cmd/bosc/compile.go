@@ -3379,6 +3379,26 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 
 	srcType := src.ASTType(c)
 
+	// Values types are closed symbolic sets (proposal §215–222): the only
+	// way to land a values-typed value is through a declared case. Reject
+	// any cast that targets a values type from a source that isn't the
+	// same values type — including integer literals, integer-typed
+	// runtime values, and other values types.
+	if _, dstIsValues := c.ValuesDeclForName(destType.Name); dstIsValues {
+		if _, srcIsValues := c.ValuesDeclForName(srcType.Name); srcIsValues && srcType.Name == destType.Name {
+			fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, compileTop(of, c, src, nullspot).ref)
+			return dest
+		}
+		CompileErrorF(src, "Cannot cast %s to %s: values cases must be constructed from declared cases", srcType, destType)
+	}
+	// Values-to-other-type cast is a projection cast (proposal §583–596).
+	// Stage 4 wires up the declared projection signature and table lookup;
+	// for Stage 3 every such cast is rejected so the tag bits cannot leak
+	// out as an integer via the existing same-size mov.
+	if _, srcIsValues := c.ValuesDeclForName(srcType.Name); srcIsValues && srcType.Name != destType.Name {
+		CompileErrorF(src, "Cannot cast %s to %s: %s has no %s projection", srcType, destType, srcType, destType)
+	}
+
 	// Integer literal: compile directly into the destination type.
 	if srcType.Same(intlitASTType()) {
 		val, ok := EvalConst(c, src)
@@ -3470,6 +3490,35 @@ func litFitsIn(val *big.Int, t ASTType) bool {
 // resolveOperandType returns the concrete type for a binary operator's operands.
 // If one side is <intlit> and the other is concrete, the concrete type wins.
 // If both are <intlit>, defaults to i64.
+// checkValuesComparisonCompat enforces proposal §722–733 on the closed
+// symbolic set:
+//   - For equality (==/!=), values types compare only with the *same*
+//     values type; cross-type compare is rejected.
+//   - For ordering (</>/<=/>=), any values type involvement is rejected,
+//     because the tag order is a compiler-private encoding the
+//     proposal explicitly keeps unreachable.
+//
+// Ordinary integer aliases (e.g. `type FD i64` / `type Pid i64`) keep
+// their underlying-i64 compatibility — the rejection here is scoped to
+// values types specifically, not generalized to all named numeric
+// aliases.
+func checkValuesComparisonCompat(c *Context, o *Op2, isOrdering bool) {
+	ft := o.First.ASTType(c)
+	st := o.Second.ASTType(c)
+	_, fIsValues := c.ValuesDeclForName(ft.Name)
+	_, sIsValues := c.ValuesDeclForName(st.Name)
+	if !fIsValues && !sIsValues {
+		return
+	}
+	if isOrdering {
+		CompileErrorF(o.First, "Cannot order values of types %s and %s; values types are closed symbolic sets, not numeric", ft, st)
+	}
+	if fIsValues && sIsValues && ft.Name == st.Name {
+		return
+	}
+	CompileErrorF(o.First, "Cannot compare values of types %s and %s", ft, st)
+}
+
 func resolveOperandType(ft, st ASTType) ASTType {
 	intlit := intlitASTType()
 	if !ft.Same(intlit) {
@@ -3693,6 +3742,7 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		return tmp
 	case n_lt:
+		checkValuesComparisonCompat(c, o, true)
 		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
 		fst := newSpot(of, c, c.Temp(), ft)
 		first := compileTop(of, c, o.First, fst)
@@ -3714,6 +3764,7 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		return dest
 	case n_le:
+		checkValuesComparisonCompat(c, o, true)
 		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
 		fst := newSpot(of, c, c.Temp(), ft)
 		first := compileTop(of, c, o.First, fst)
@@ -3735,6 +3786,7 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		return dest
 	case n_gt:
+		checkValuesComparisonCompat(c, o, true)
 		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
 		fst := newSpot(of, c, c.Temp(), ft)
 		first := compileTop(of, c, o.First, fst)
@@ -3756,6 +3808,7 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		return dest
 	case n_ge:
+		checkValuesComparisonCompat(c, o, true)
 		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
 		fst := newSpot(of, c, c.Temp(), ft)
 		first := compileTop(of, c, o.First, fst)
@@ -3777,6 +3830,7 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		return dest
 	case n_deq:
+		checkValuesComparisonCompat(c, o, false)
 		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
 		fst := newSpot(of, c, c.Temp(), ft)
 		first := compileTop(of, c, o.First, fst)
@@ -3795,6 +3849,7 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		fmt.Fprintf(of, "\tsete %s\n", dest.ref)
 		return dest
 	case n_neq:
+		checkValuesComparisonCompat(c, o, false)
 		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
 		fst := newSpot(of, c, c.Temp(), ft)
 		first := compileTop(of, c, o.First, fst)

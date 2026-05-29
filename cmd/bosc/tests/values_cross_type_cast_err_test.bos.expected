@@ -1,0 +1,2 @@
+Compiling tests/values_cross_type_cast_err_test.bos
+Fatal: Cannot cast color to tag: values cases must be constructed from declared cases

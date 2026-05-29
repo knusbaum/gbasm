@@ -622,6 +622,14 @@ func (c *Context) TypeByName(name string) (ASTType, bool) {
 	if t, ok := c.TypeAliasFor(name); ok {
 		return ASTType{Name: name, Signed: t.Signed}, true
 	}
+	// Values types are named types too: they need to surface here so
+	// cast detection in compileTop's *Funcall case (and compileCast)
+	// sees `io_error(...)` as a cast against a known type instead of
+	// falling through to "No such function". The cast path then
+	// applies the closed-symbolic-set rejection.
+	if _, ok := c.ValuesDeclForName(name); ok {
+		return ASTType{Name: name}, true
+	}
 	return ASTType{}, false
 }
 

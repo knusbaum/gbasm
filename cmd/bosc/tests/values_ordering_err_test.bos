@@ -1,0 +1,13 @@
+package main
+
+type color values {
+	RED
+	GREEN
+}
+
+fn main() {
+	var a color = color.RED
+	var b color = color.GREEN
+	if (a < b) {
+	}
+}

@@ -1,0 +1,16 @@
+package main
+
+type color values {
+	RED
+	GREEN
+}
+
+type tag values {
+	A
+	B
+}
+
+fn main() {
+	var c color = color.RED
+	var t tag = tag(c)
+}

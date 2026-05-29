@@ -1,0 +1,2 @@
+Compiling tests/values_integer_cast_err_test.bos
+Fatal: Cannot cast <intlit> to color: values cases must be constructed from declared cases
