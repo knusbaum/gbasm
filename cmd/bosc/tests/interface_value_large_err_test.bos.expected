@@ -1,0 +1,2 @@
+Compiling tests/interface_value_large_err_test.bos
+Fatal: Cannot convert value of type big to interface error_val: value is 16 bytes; value interfaces can store at most 8 bytes inline. Use a pointer instead.

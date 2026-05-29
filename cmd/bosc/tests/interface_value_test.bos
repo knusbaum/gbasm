@@ -1,0 +1,30 @@
+package main
+
+import "string"
+
+type my_err i64 {
+	message(e my_err) byte[] {
+		if (e == my_err(7)) {
+			return "whatever"
+		}
+		return "unknown"
+	}
+}
+
+interface error_val {
+	message(e self) byte[]
+}
+
+fn make_error() error_val {
+	return my_err(7)
+}
+
+fn show(e error_val) {
+	string.puts(e.message())
+	string.puts("\n")
+}
+
+fn main(args byte[][]) {
+	var e error_val = make_error()
+	show(e)
+}

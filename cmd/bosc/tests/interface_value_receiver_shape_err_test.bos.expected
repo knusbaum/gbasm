@@ -1,0 +1,2 @@
+Compiling tests/interface_value_receiver_shape_err_test.bos
+Fatal: Type my_err does not implement interface error_val: method message receiver has type *my_err, expected my_err

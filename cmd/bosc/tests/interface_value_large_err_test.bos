@@ -1,0 +1,19 @@
+package main
+
+type big struct {
+	a i64
+	b i64
+} {
+	message(b big) byte[] {
+		return "big"
+	}
+}
+
+interface error_val {
+	message(e self) byte[]
+}
+
+fn main(args byte[][]) {
+	var b big = big{a: 1, b: 2}
+	var e error_val = b
+}

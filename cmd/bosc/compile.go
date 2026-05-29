@@ -186,6 +186,81 @@ func sameIgnoringOwned(a, b ASTType) bool {
 	return a.StripOwned().Same(b.StripOwned())
 }
 
+func interfaceConcreteTypeName(t ASTType) string {
+	return t.StripOwned().Name
+}
+
+func validateInterfaceCoercion(c *Context, errNode AST, dstt, srct ASTType) (valueBacked bool) {
+	concreteTypeName := interfaceConcreteTypeName(srct)
+	ifaceDecl, _ := c.InterfaceForName(dstt.Name)
+	if !c.TypeSatisfiesInterface(concreteTypeName, ifaceDecl) {
+		CompileErrorF(errNode, "%s", interfaceSatisfactionError(c, concreteTypeName, dstt.Name, ifaceDecl))
+	}
+	if dstt.OwnedMask != 0 && srct.OwnedMask == 0 {
+		CompileErrorF(errNode, "Cannot use non-owned %s where owned %s is required", srct, dstt.Name)
+	}
+	if srct.Indirection > 0 {
+		return false
+	}
+	if srct.IsSliceOrArray() || srct.FuncSig != nil {
+		CompileErrorF(errNode, "Cannot convert value of type %s to interface %s; use a pointer instead", srct, dstt.Name)
+	}
+	for _, m := range ifaceDecl.Methods {
+		if len(m.Params) == 0 {
+			continue
+		}
+		receiver := substituteReceiver(m.Params[0].Type, concreteTypeName)
+		if receiver.Indirection > 0 {
+			CompileErrorF(errNode, "Cannot convert value of type %s to interface %s: method %s expects pointer receiver %s. Use a pointer instead.", srct, dstt.Name, m.Name, receiver)
+		}
+	}
+	size := srct.Size(c)
+	if size > PTR_SIZE {
+		CompileErrorF(errNode, "Cannot convert value of type %s to interface %s: value is %d bytes; value interfaces can store at most 8 bytes inline. Use a pointer instead.", srct, dstt.Name, size)
+	}
+	return true
+}
+
+func shouldCoerceToInterface(c *Context, dstt, srct ASTType) bool {
+	return c.IsInterfaceType(dstt) &&
+		!c.IsInterfaceType(srct) &&
+		(srct.Indirection > 0 || !srct.Same(intlitASTType()))
+}
+
+func interfaceSatisfactionError(c *Context, typeName, ifaceName string, iface *InterfaceDecl) string {
+	methods, ok := c.TypeMethodsFor(typeName)
+	if !ok {
+		return fmt.Sprintf("Type %s does not implement interface %s", typeName, ifaceName)
+	}
+	for _, isig := range iface.Methods {
+		for _, m := range methods {
+			if m.Name != isig.Name {
+				continue
+			}
+			if len(m.Args) == 0 || len(isig.Params) == 0 {
+				return fmt.Sprintf("Type %s does not implement interface %s: method %s has no receiver", typeName, ifaceName, isig.Name)
+			}
+			expectedReceiver := substituteReceiver(isig.Params[0].Type, typeName)
+			if !m.Args[0].Type.Same(expectedReceiver) {
+				return fmt.Sprintf("Type %s does not implement interface %s: method %s receiver has type %s, expected %s", typeName, ifaceName, isig.Name, m.Args[0].Type, expectedReceiver)
+			}
+			if len(m.Args) != len(isig.Params) {
+				return fmt.Sprintf("Type %s does not implement interface %s: method %s has %d parameters, expected %d", typeName, ifaceName, isig.Name, len(m.Args), len(isig.Params))
+			}
+			for i := 1; i < len(isig.Params); i++ {
+				if !m.Args[i].Type.Same(isig.Params[i].Type) {
+					return fmt.Sprintf("Type %s does not implement interface %s: method %s parameter %d has type %s, expected %s", typeName, ifaceName, isig.Name, i, m.Args[i].Type, isig.Params[i].Type)
+				}
+			}
+			if !m.Return.Same(isig.Return) {
+				return fmt.Sprintf("Type %s does not implement interface %s: method %s returns %s, expected %s", typeName, ifaceName, isig.Name, m.Return, isig.Return)
+			}
+		}
+		return fmt.Sprintf("Type %s does not implement interface %s", typeName, ifaceName)
+	}
+	return fmt.Sprintf("Type %s does not implement interface %s", typeName, ifaceName)
+}
+
 // fillAnonymousLiteralIfNeeded fills in the type of a bare struct literal
 // (one whose Type has Name=="" and AnonFields==nil) from the expected context
 // type. Call this at every site where a StructLiteral may appear with an
@@ -1529,8 +1604,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				}
 			}
 			checkAddressOfOwnedForDest(c, ast.Init, dstt)
-			// Interface coercion: concrete pointer → interface fat pointer.
-			if c.IsInterfaceType(dstt) && srct.Indirection > 0 {
+			// Interface coercion: concrete pointer or small concrete value → interface fat pointer.
+			if shouldCoerceToInterface(c, dstt, srct) {
 				emitInterfaceFatPtr(of, c, a, dstt, srct, ast.Init, s.ref, ast.Name)
 				if dstt.OwnedMask != 0 {
 					markMovedIfOwnedSource(of, c, dstt, ast.Init)
@@ -2337,8 +2412,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		srct := ast.Val.ASTType(c)
 		checkBorrowedPointerAssignment(c, ast, dstt)
-		// Interface coercion at assignment: concrete pointer → fat pointer.
-		if c.IsInterfaceType(dstt) && srct.Indirection > 0 {
+		// Interface coercion at assignment: concrete pointer or small concrete value → fat pointer.
+		if shouldCoerceToInterface(c, dstt, srct) {
 			destBinding := ""
 			if targetIsSymbol {
 				destBinding = targetSym.Name
@@ -2697,7 +2772,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		checkAddressOfOwnedForDest(c, ast.Val, retType)
 		// Interface coercion at return: concrete pointer → fat pointer in rax.
-		if c.IsInterfaceType(retType) && valType.Indirection > 0 {
+		if shouldCoerceToInterface(c, retType, valType) && valType.Indirection > 0 {
 			// Borrowed-pointer source returned as a borrowed interface
 			// escapes the caller's frame just like a bare `return &x`.
 			if retType.OwnedMask == 0 {
@@ -2706,6 +2781,20 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 					CompileErrorF(ast.Val, "Pointer to local variable %q escapes via interface return", string(ptr.Origin))
 				}
 			}
+			s := newSpotWithReg(of, c, c.Temp(), retType, "rax")
+			emitInterfaceFatPtr(of, c, a, retType, valType, ast.Val, s.ref, "")
+			fmt.Fprintf(of, "\tinreg %s rax\n", s.ref)
+			s.free(of)
+			if retType.HasOwned() {
+				markMovedIfOwnedSource(of, c, retType, ast.Val)
+			}
+			for _, name := range c.UnconsumedOwnedVisible() {
+				CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
+			}
+			c.Return(of)
+			return nullspot
+		}
+		if shouldCoerceToInterface(c, retType, valType) {
 			s := newSpotWithReg(of, c, c.Temp(), retType, "rax")
 			emitInterfaceFatPtr(of, c, a, retType, valType, ast.Val, s.ref, "")
 			fmt.Fprintf(of, "\tinreg %s rax\n", s.ref)
@@ -3037,12 +3126,12 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		}
 		argt := arg.ASTType(c)
 		checkAddressOfOwnedForDest(c, arg, param)
-		// Interface coercion at a call site: concrete pointer → fat pointer.
+		// Interface coercion at a call site: concrete pointer or small concrete value → fat pointer.
 		// destBinding is "" because the destination is the callee's parameter
 		// slot, not a binding we can track. Borrow-into-interface at a call
 		// site needs no extra escape check — the same non-escaping-borrow rule
 		// that applies to bare *T parameters covers it.
-		if c.IsInterfaceType(param) && argt.Indirection > 0 {
+		if shouldCoerceToInterface(c, param, argt) {
 			s := newSpot(of, c, c.Temp(), param)
 			emitInterfaceFatPtr(of, c, arg, param, argt, arg, s.ref, "")
 			if param.OwnedMask != 0 {
@@ -3771,8 +3860,10 @@ func compileConcreteMethodCall(of io.Writer, c *Context, a AST, callNode *Funcal
 
 // compileInterfaceMethodCall emits a vtable-dispatch call for an interface method.
 // The interface variable (named callNode.Pkg) is a memory-backed 16-byte fat pointer:
-// [var+0] = data pointer, [var+8] = vtable pointer. The data pointer is passed as
-// the first argument (rdi); user-supplied args follow (rsi, rdx, ...).
+// [var+0] = data word, [var+8] = vtable pointer. For pointer-backed interfaces
+// the data word is a pointer; for value-backed interfaces it is the concrete
+// value bits. The data word is passed as the first argument (rdi); user-supplied
+// args follow (rsi, rdx, ...).
 func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funcall,
 	ifaceType ASTType, ifaceDecl *InterfaceDecl, dest spot) spot {
 
@@ -3934,10 +4025,11 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 	return ret
 }
 
-// emitInterfaceFatPtr validates that srct (a concrete pointer) satisfies the interface
-// dstt, registers the vtable, and emits stores to fill the two-word fat pointer at
-// destRef. The caller is responsible for allocating destRef before calling and for
-// handling owned-source marking and flow updates afterwards.
+// emitInterfaceFatPtr validates that srct satisfies the interface dstt, registers
+// the vtable, and emits stores to fill the two-word fat pointer at destRef. srct
+// may be a concrete pointer or a non-pointer concrete value that fits in the
+// 8-byte data word. The caller is responsible for allocating destRef before
+// calling and for handling owned-source marking and flow updates afterwards.
 //
 // destBinding is the name of the destination interface variable, or "" when the
 // destination has no flow-tracked binding (e.g. a return-value slot or a callee
@@ -3954,14 +4046,9 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 // interface look dead, which is the opposite of what an ownership transfer
 // means.
 func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTType, valAST AST, destRef, destBinding string) {
-	concreteTypeName := srct.StripOwned().Name
+	concreteTypeName := interfaceConcreteTypeName(srct)
+	valueBacked := validateInterfaceCoercion(c, errNode, dstt, srct)
 	ifaceDecl, _ := c.InterfaceForName(dstt.Name)
-	if !c.TypeSatisfiesInterface(concreteTypeName, ifaceDecl) {
-		CompileErrorF(errNode, "Type %s does not implement interface %s", concreteTypeName, dstt.Name)
-	}
-	if dstt.OwnedMask != 0 && srct.OwnedMask == 0 {
-		CompileErrorF(errNode, "Cannot use non-owned %s where owned %s is required", srct, dstt.Name)
-	}
 	// Split qualified type names (e.g. "io.FD") so the vtable's method
 	// relocations target the correct owning package, and so the vtable
 	// global's own name itself doesn't contain dots — bas treats '.' as
@@ -3977,11 +4064,22 @@ func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTTy
 		strings.ReplaceAll(concreteTypeName, ".", "_"),
 		strings.ReplaceAll(dstt.Name, ".", "_"))
 	c.NeedVtable(vtableName, bareType, dstt.Name, typePkg, ifaceDecl)
-	if destBinding != "" && dstt.OwnedMask == 0 {
+	if destBinding != "" && dstt.OwnedMask == 0 && !valueBacked {
 		c.PointerFlow().SetFieldPointer(flow.Binding(destBinding), "data", pointerExprForAST(c, valAST, ""))
 	}
 	val := compileTop(of, c, valAST, nullspot)
-	fmt.Fprintf(of, "\tmov [%s+0] %s\n", destRef, val.ref)
+	if valueBacked && val.t.Size(c) < PTR_SIZE {
+		tmp := newSpot(of, c, c.Temp(), ASTType{Name: "i64", Signed: val.t.Signed})
+		if val.t.Signed {
+			fmt.Fprintf(of, "\tmovsx %s %s\n", tmp.ref, val.ref)
+		} else {
+			fmt.Fprintf(of, "\tmovzx %s %s\n", tmp.ref, val.ref)
+		}
+		fmt.Fprintf(of, "\tmov [%s+0] %s\n", destRef, tmp.ref)
+		tmp.free(of)
+	} else {
+		fmt.Fprintf(of, "\tmov [%s+0] %s\n", destRef, val.ref)
+	}
 	val.free(of)
 	vtmp := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
 	fmt.Fprintf(of, "\tlea %s %s\n", vtmp.ref, vtableName)
