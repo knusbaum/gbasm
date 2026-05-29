@@ -1,0 +1,209 @@
+all: bosc
+
+file bosc {
+    make bosc
+}
+
+file bas {
+    make bas
+}
+
+file bld {
+    make bld
+}
+
+
+RUNTIME=../../runtime
+
+file string.bo : bas $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs {
+    ./bas -o string.bo $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs >/dev/null 2>&1
+}
+
+file init.bo : bas $RUNTIME/_init/init_linux.bs {
+    ./bas -o init.bo $RUNTIME/_init/init_linux.bs >/dev/null 2>&1
+}
+
+file heap.bo : bas $RUNTIME/_heap/heap_linux.bs {
+    ./bas -o heap.bo $RUNTIME/_heap/heap_linux.bs >/dev/null 2>&1
+}
+
+# Raw file-IO syscall wrappers used by the `io` package and by tests that
+# need a low-level i64-fd API.
+file io_sys.bo : bas $RUNTIME/_io_sys/io_sys_linux.bs {
+    ./bas -o io_sys.bo $RUNTIME/_io_sys/io_sys_linux.bs >/dev/null 2>&1
+}
+
+# Compile the Boson-source `builtin` package. It imports nothing, so it
+# gets an empty importcfg. Must be compiled before pair/io since those
+# may transitively depend on it.
+file builtin.bs : bosc $RUNTIME/builtin/builtin.bos {
+    ./bosc -importcfg=/dev/null -o builtin.bs $RUNTIME/builtin/builtin.bos >/dev/null 2>&1
+}
+
+file builtin.bo : bas builtin.bs {
+    ./bas -o builtin.bo builtin.bs >/dev/null 2>&1
+}
+
+# Compile the Boson-source `pair` test runtime package so cross-package
+# struct tests have something to import.
+file pair.importcfg : builtin.bo {
+    cat > pair.importcfg <<EOF
+builtin=builtin.bo
+EOF
+}
+
+file pair.bs : bosc pair.importcfg $RUNTIME/pair/pair.bos {
+    ./bosc -importcfg=pair.importcfg -o pair.bs $RUNTIME/pair/pair.bos >/dev/null 2>&1
+}
+
+file pair.bo : bas pair.bs {
+    ./bas -o pair.bo pair.bs >/dev/null 2>&1
+}
+#rm -f pair.importcfg
+
+
+# Compile the Boson-source `io` runtime package so cross-package type-alias
+# tests have something to import.
+file io.importcfg : builtin.bo io_sys.bo string.bo {
+    cat > io.importcfg <<EOF
+builtin=builtin.bo
+_io_sys=io_sys.bo
+string=string.bo
+EOF
+}
+
+file io.bs : bosc io.importcfg $RUNTIME/io/io.bos {
+    ./bosc -importcfg=io.importcfg -o io.bs $RUNTIME/io/io.bos >/dev/null 2>&1
+}
+
+file io.bo : bas io.bs {
+    ./bas -o io.bo io.bs >/dev/null 2>&1
+}
+#rm -f io.importcfg
+
+# Generate a project-wide importcfg.
+file test.importcfg : builtin.bo string.bo pair.bo io.bo io_sys.bo {
+    cat > test.importcfg <<EOF
+builtin=builtin.bo
+string=string.bo
+pair=pair.bo
+io=io.bo
+_io_sys=io_sys.bo
+EOF
+}
+
+clean : {
+    rm -f tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout
+    rm -f bosc bas bld string.bo init.bo heap.bo builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo test.importcfg
+}
+
+go_tests {
+    go test ./...
+}
+
+bosc_tests : $(ls tests/*_test.bos)
+
+test: go_tests bosc_tests {
+    mmk clean
+}
+    
+
+'tests/(.*)_test.bos' : bosc bas bld init.bo heap.bo test.importcfg {
+    #    set -x
+    #echo -e "\n\n############################ $target ############################"
+    if [[ $target == *_err_test.bos ]]; then
+        # Error test: compiler must reject this input.
+        ./bosc -importcfg=test.importcfg -o /dev/null $target >${target}.bosc.out 2>&1
+        if [[ $? == 0 ]]; then
+            echo "Expected compiler to fail but it succeeded:"
+            cat ${target}.bosc.out
+            echo ${target} FAIL
+            fail=$(echo -e "$fail\n${target} FAIL")
+            exit 1
+        fi
+        if [[ -f "${target}.expected" ]]; then
+            # Normalize bosc's stderr for comparison: keep only the lines
+            # bosc itself originates ("Compiling …", "Fatal: …", "Parse
+            # Error: …", "Failed to parse: …", "<file>: parse error: …"),
+            # dropping the source-context snippet appended after each
+            # diagnostic. Then strip "at file:line:col: " position prefixes.
+            grep -E '^(Compiling |Fatal:|Parse Error:|Failed to parse:|[^ ]+: parse error:)' ${target}.bosc.out \
+                | sed 's/at [^:]*:[0-9]*:[0-9]*: //' \
+                > ${target}.bosc.stripped.out
+            diff -u "${target}.expected" "${target}.bosc.stripped.out"
+            if [[ $? != 0 ]]; then
+                echo ${target} FAIL
+                fail=$(echo -e "$fail\n${target} FAIL")
+                exit 1
+            fi
+        fi
+        echo ${target} PASS
+	exit 0
+    fi
+
+    ./bosc -importcfg=test.importcfg -o ${target}.bs $target >${target}.bosc.out 2>&1
+    if [[ $? != 0 ]]; then
+		echo compiler failed for ${target}:
+		cat ${target}.bosc.out
+		echo ${target} FAIL
+		fail=$(echo -e "$fail\n${target} FAIL")
+		exit 1
+    fi
+    ./bas -o ${target}.bo ${target}.bs >${target}.bas.out 2>&1
+    if [[ $? != 0 ]]; then
+		echo assembler failed for ${target}:
+		cat ${target}.bas.out
+		echo ${target} FAIL
+		fail=$(echo -e "$fail\n${target} FAIL")
+		exit 1
+    fi
+    # cat ${target}.bas.out
+    # Link in extra packages only when the test actually imports them.
+    # Stale references would otherwise pull in unused symbols.
+    extra_bo=""
+    if grep -q '^import "pair"' "$target"; then
+        extra_bo="$extra_bo pair.bo"
+    fi
+    if grep -q '^import "io"' "$target"; then
+        extra_bo="$extra_bo io.bo io_sys.bo"
+    fi
+    if grep -q '^import "_io_sys"' "$target"; then
+        case "$extra_bo" in *io_sys.bo*) ;; *) extra_bo="$extra_bo io_sys.bo";; esac
+    fi
+    ./bld -o ${target}.o ${target}.bo builtin.bo string.bo init.bo heap.bo $extra_bo >${target}.bld.out 2>&1
+    if [[ $? != 0 ]]; then
+		echo linker failed for ${target}:
+		cat ${target}.bld.out
+		echo ${target} FAIL
+		fail=$(echo -e "$fail\n${target} FAIL")
+		exit 1
+    fi
+    # If the test has a matching .args file, pass its contents as
+    # process arguments. Otherwise invoke with no arguments.
+    if [[ -f "${target}.args" ]]; then
+        # shellcheck disable=SC2046 — intentional word splitting on argv tokens.
+        ${target}.o $(cat ${target}.args) > ${target}.stdout
+    else
+        ${target}.o > ${target}.stdout
+    fi
+    ecode="$?"
+    if [[ "$ecode" != "0" ]]; then
+		echo $target exited with $ecode
+		echo -e 'stdout:\n```'
+		cat ${target}.stdout
+		echo '```'
+		echo ${target} FAIL
+		fail=$(echo -e "$fail\n${target} FAIL")
+		exit 1
+    fi
+    if [[ -f "${target}.expected" ]]; then
+		#echo "Comparing output."
+		diff -u "${target}.expected" "${target}.stdout"
+		if [[ $? != 0 ]]; then
+			echo ${target} FAIL
+			fail=$(echo -e "$fail\n${target} FAIL")
+			exit 1
+		fi
+    fi
+    echo ${target} PASS
+}

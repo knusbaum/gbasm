@@ -1,0 +1,97 @@
+all: bas
+
+bld {
+    go build ../bld
+}
+
+bas {
+    go build
+}
+
+clean {
+    rm -f *.o *.bo bas bld
+    rm -f tests/*.bs.o tests/*.bs.bo tests/*.out tests/*.stdout
+}
+
+bas_tests : $(ls tests/*_test.bs)
+go_tests {
+    go test ./...
+}
+
+## test runs the go tests and the assembly tests
+test: go_tests bas_tests {
+    mmk clean
+}
+
+RUNTIME=../../runtime
+
+file string.bo : bas $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs {
+    ./bas -o string.bo $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs >/dev/null 2>&1
+}
+
+file init.bo : bas $RUNTIME/_init/init_linux.bs {
+    ./bas -o init.bo $RUNTIME/_init/init_linux.bs >/dev/null 2>&1
+}
+
+'tests/(.*)_test.bs' : bas bld init.bo string.bo {
+    
+    if [[ $target == *_err_test.bs ]]; then
+        # Error test: assembler must reject this input.
+        ./bas -o ${target}.bs.bo $target >${target}.bas.out 2>&1
+        if [[ $? == 0 ]]; then
+            echo "Expected assembler to fail but it succeeded:"
+            cat ${target}.bas.out
+            echo ${target} FAIL
+            fail=$(echo -e "$fail\n${target} FAIL")
+            exit 1
+        fi
+        if [[ -f "${target}.expected" ]]; then
+            diff -u "${target}.expected" "${target}.bas.out"
+            if [[ $? != 0 ]]; then
+                echo ${target} FAIL
+                fail=$(echo -e "$fail\n${target} FAIL")
+                exit 1
+            fi
+        fi
+        echo ${target} PASS
+        exit 0
+    fi
+
+    ./bas -o ${target}.bs.bo $target >${target}.bas.out 2>&1
+    if [[ $? != 0 ]]; then
+		echo assembler failed for ${target}:
+		cat ${target}.bas.out
+		echo ${target} FAIL
+		fail=$(echo -e "$fail\n${target} FAIL")
+		exit 1
+    fi
+    # cat ${target}.bas.out
+    ./bld -o ${target}.o ${target}.bs.bo string.bo init.bo >${target}.bld.out 2>&1
+    if [[ $? != 0 ]]; then
+		echo linker failed for ${target}:
+		cat ${target}.bld.out
+		echo ${target} FAIL
+		fail=$(echo -e "$fail\n${target} FAIL")
+		exit 1
+    fi
+    ${target}.o > ${target}.stdout
+    ecode="$?"
+    if [[ "$ecode" != "0" ]]; then
+		echo $target exited with $ecode
+		echo -e 'stdout:\n```'
+		cat ${target}.stdout
+		echo '```'
+		echo ${target} FAIL
+		fail=$(echo -e "$fail\n${target} FAIL")
+		exit 1
+    fi
+    if [[ -f "${target}.expected" ]]; then
+		diff -u "${target}.expected" "${target}.stdout"
+		if [[ $? != 0 ]]; then
+			echo ${target} FAIL
+			fail=$(echo -e "$fail\n${target} FAIL")
+			exit 1
+		fi
+    fi
+    echo ${target} PASS
+}
