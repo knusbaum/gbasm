@@ -1,0 +1,19 @@
+package main
+
+import "string"
+
+var pi64 i64 = 42
+
+// Regression: pre-fix projectionTypeKey ignored Indirection, so both
+// projections collided on the symbol name __projection_v__i64 and bas
+// refused the duplicate declaration. Declaring both is the bug's
+// trigger; we only need to use one to confirm the file links.
+type v values (i64, *i64) {
+	A: 1, &pi64
+}
+
+fn main() {
+	var e v = v.A
+	string.puti(i64(e))
+	string.puts("\n")
+}

@@ -1,0 +1,2 @@
+Compiling tests/struct_identity_cast_err_test.bos
+Fatal: Cannot cast pair to itself; assign directly instead of using a cast

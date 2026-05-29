@@ -1,0 +1,35 @@
+package main
+
+import "string"
+
+type pair struct {
+	a i64
+	b i64
+}
+
+type v values (pair) {
+	A: pair{a: 1, b: 2}
+	B: pair{a: 10, b: 20}
+	C: pair{a: 100, b: 200}
+}
+
+fn main() {
+	var e v = v.A
+	var p pair = pair(e)
+	string.puti(p.a)
+	string.puts(" ")
+	string.puti(p.b)
+	string.puts("\n")
+	e = v.B
+	p = pair(e)
+	string.puti(p.a)
+	string.puts(" ")
+	string.puti(p.b)
+	string.puts("\n")
+	e = v.C
+	p = pair(e)
+	string.puti(p.a)
+	string.puts(" ")
+	string.puti(p.b)
+	string.puts("\n")
+}

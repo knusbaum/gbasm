@@ -3437,10 +3437,19 @@ func EvalConst(c *Context, a AST) (*big.Int, bool) {
 // compileCast compiles a type cast expression: destType(srcExpr).
 // Handles integer literal coercion, same-size reinterpretation, widening, and narrowing.
 // projectionTypeKey turns an ASTType into a stable identifier safe to
-// embed in a bas symbol name (no dots, brackets, or spaces). The
-// convention follows the vtable naming at compile.go's interface
-// dispatch sites: dotted package qualifiers become underscores, slices
-// become a "_slice" suffix, and fixed arrays carry their length.
+// embed in a bas symbol name (no dots, brackets, or spaces). The key
+// has to distinguish every shape ASTType.Same() distinguishes, or two
+// declared projections (e.g. `i64` and `*i64` on the same values type)
+// would emit colliding table symbols and bas would reject the duplicate
+// declaration.
+//
+// Encoded components, in order, so the key reads left-to-right like the
+// surface syntax:
+//   - leading `owned` qualifier on the value itself
+//   - per-indirection `nullable_` / `mut_` / `owned_` / `ptr_` chain
+//   - `_slice` / `_array_N` suffixes for slice and fixed-array shapes
+//   - the base type name, with dots → underscores (mirrors the vtable
+//     naming convention at compile.go's interface dispatch sites)
 func projectionTypeKey(t ASTType) string {
 	if t.IsSlice() && t.Element != nil {
 		return projectionTypeKey(*t.Element) + "_slice"
@@ -3448,7 +3457,24 @@ func projectionTypeKey(t ASTType) string {
 	if t.IsArray() && t.Element != nil {
 		return fmt.Sprintf("%s_array_%d", projectionTypeKey(*t.Element), t.ArraySize)
 	}
-	return strings.ReplaceAll(t.Name, ".", "_")
+	var sb strings.Builder
+	if t.OwnedMask&1 != 0 {
+		sb.WriteString("owned_")
+	}
+	for i := 0; i < t.Indirection; i++ {
+		if t.NilMask&(1<<uint(i)) != 0 {
+			sb.WriteString("nullable_")
+		}
+		if t.MutMask&(1<<uint(i+1)) != 0 {
+			sb.WriteString("mut_")
+		}
+		if t.OwnedMask&(1<<uint(i+1)) != 0 {
+			sb.WriteString("owned_")
+		}
+		sb.WriteString("ptr_")
+	}
+	sb.WriteString(strings.ReplaceAll(t.Name, ".", "_"))
+	return sb.String()
 }
 
 // projectionSymbolName returns the bas-level symbol for a values type's
@@ -3643,6 +3669,31 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 	dstIsArray := dstUnderlying.IsArray()
 	if srcIsSlice != dstIsSlice || srcIsArray != dstIsArray {
 		CompileErrorF(src, "Cannot cast between scalar and slice/array types: %s to %s", srcType, destType)
+	}
+	// Struct destinations are only reachable as a cast target through
+	// a values projection (handled above) or as an identity copy. Any
+	// other cross-kind cast — `pair(42)`, `pair(some_i64)`, or
+	// `pair(other_struct)` — has no meaningful encoding; the fallthrough
+	// to a same-size mov would memcpy bytes from a differently-shaped
+	// source and produce garbage. Reject here with a clear bosc
+	// diagnostic so the user sees the actual problem instead of a
+	// downstream bas size mismatch.
+	_, srcIsStruct := c.StructDeclForName(srcType.Name)
+	_, dstIsStruct := c.StructDeclForName(destType.Name)
+	if srcIsStruct != dstIsStruct {
+		CompileErrorF(src, "Cannot cast between struct and non-struct types: %s to %s", srcType, destType)
+	}
+	if dstIsStruct && srcType.Name != destType.Name {
+		CompileErrorF(src, "Cannot cast between distinct struct types: %s to %s", srcType, destType)
+	}
+	// Same-struct identity cast (`pair(p)` where p is also pair) is
+	// rejected because the size-equal fallthrough below would emit a
+	// scalar `mov dest src` against memory-backed slots and copy only
+	// the first 8 bytes. Direct assignment (`var q pair = p`) is the
+	// way to copy a struct value; there is no use for a values-style
+	// cast of a struct onto itself.
+	if dstIsStruct && srcType.Name == destType.Name {
+		CompileErrorF(src, "Cannot cast %s to itself; assign directly instead of using a cast", srcType)
 	}
 
 	// Compile the source value.

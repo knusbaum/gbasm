@@ -1,0 +1,2 @@
+Compiling tests/struct_to_scalar_cast_err_test.bos
+Fatal: Cannot cast between struct and non-struct types: pair to i64

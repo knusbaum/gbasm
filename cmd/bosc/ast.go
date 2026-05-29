@@ -630,6 +630,13 @@ func (c *Context) TypeByName(name string) (ASTType, bool) {
 	if _, ok := c.ValuesDeclForName(name); ok {
 		return ASTType{Name: name}, true
 	}
+	// Struct types: `pair(v.A)` for a values projection of pair must
+	// reach the cast path so compileCast can match it against the
+	// declared projection list. Casts where neither side is a values
+	// type are caught by the struct-shape guard in compileCast.
+	if _, ok := c.StructDeclForName(name); ok {
+		return ASTType{Name: name}, true
+	}
 	// Slice-type expressions in cast position: `byte[](e)` arrives here
 	// as the name `"byte[]"`. Peel the suffix and recursively resolve
 	// the inner type to build a proper slice ASTType. Projection casts
