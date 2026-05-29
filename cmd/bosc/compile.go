@@ -2692,6 +2692,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if sl, ok := ast.Val.(*StructLiteral); ok && sameIgnoringOwned(retType, sl.Type) {
 			valType = retType
 		}
+		if valType.HasOwned() && !retType.HasOwned() {
+			CompileErrorF(a, "Cannot return %s as non-owned %s; ownership would be dropped", valType, retType)
+		}
 		checkAddressOfOwnedForDest(c, ast.Val, retType)
 		// Interface coercion at return: concrete pointer → fat pointer in rax.
 		if c.IsInterfaceType(retType) && valType.Indirection > 0 {
@@ -2715,6 +2718,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			c.Return(of)
 			return nullspot
+		}
+		retCompat := c.ResolveUnderlying(retType)
+		valCompat := c.ResolveUnderlying(valType)
+		if !retCompat.Accepts(valCompat) && !sameIgnoringOwned(retCompat, valCompat) {
+			CompileErrorF(a, "Cannot return %s from value of type %s", retType, valType)
 		}
 		if valType.Same(intlitASTType()) {
 			valType = numASTType()
@@ -3783,6 +3791,7 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 	}
 
 	// Params[0] is the receiver; user provides Params[1:].
+	receiverParam := isig.Params[0].Type
 	userParams := isig.Params[1:]
 	if len(callNode.Args) != len(userParams) {
 		CompileErrorF(a, "Method %s.%s expected %d arguments, but called with %d",
@@ -3791,6 +3800,14 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 
 	// The interface variable is memory-backed; its name is the base address.
 	ifaceRef := callNode.Pkg
+	if receiverParam.HasOwned() {
+		if !ifaceType.HasOwned() {
+			CompileErrorF(a, "Cannot call consuming method %s.%s on non-owned %s", ifaceDecl.Name, callNode.FName, ifaceType)
+		}
+		if c.IsMoved(ifaceRef) {
+			CompileErrorF(a, "Cannot move \"%s\": it was already moved", ifaceRef)
+		}
+	}
 
 	// Validate the data pointer's flow-state origin before dispatch. If the
 	// interface was constructed by borrowing &x and x has since been moved,
@@ -3859,6 +3876,9 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 		if userParams[i].Type.HasOwned() {
 			markMovedIfOwnedSource(of, c, userParams[i].Type, arg)
 		}
+	}
+	if receiverParam.HasOwned() {
+		c.MoveConsume(ifaceRef)
 	}
 
 	// Move user args into rsi, rdx, ...

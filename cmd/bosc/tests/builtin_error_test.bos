@@ -7,6 +7,9 @@ type myError i64 {
     message(e *myError) byte[] {
         return "something went wrong"
     }
+    destroy(e owned *myError) {
+        dispose(e)
+    }
 }
 
 fn showError(err error) {

@@ -1,0 +1,2 @@
+Compiling tests/interface_return_value_err_test.bos
+Fatal: Cannot return Error from value of type myError

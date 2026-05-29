@@ -1,0 +1,22 @@
+package main
+
+type myError i64 {
+	message(e *myError) byte[] {
+		return "bad"
+	}
+	destroy(e owned *myError) {
+		free(e)
+	}
+}
+
+interface Error {
+	message(e *self) byte[]
+	destroy(e owned *self)
+}
+
+fn makeError() Error {
+	return new(myError(1))
+}
+
+fn main(args byte[][]) {
+}

@@ -1,0 +1,17 @@
+package main
+
+type myError i64 {
+	destroy(e owned *myError) {
+		dispose(e)
+	}
+}
+
+interface Error {
+	destroy(e owned *self)
+}
+
+fn main(args byte[][]) {
+	var m myError = 1
+	var e Error = &m
+	e.destroy()
+}

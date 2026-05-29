@@ -23,5 +23,5 @@ build {
     mmk buggy
 }
 
-[run all] : build { ./buggy }
+[run all] : build { ./target/buggy }
 [clean build] : [clean buggy]

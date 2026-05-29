@@ -1,0 +1,2 @@
+Compiling tests/interface_consuming_method_borrowed_err_test.bos
+Fatal: Cannot call consuming method Error.destroy on non-owned Error

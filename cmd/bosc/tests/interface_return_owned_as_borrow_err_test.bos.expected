@@ -1,0 +1,2 @@
+Compiling tests/interface_return_owned_as_borrow_err_test.bos
+Fatal: Cannot return owned *mut myError as non-owned Error; ownership would be dropped
