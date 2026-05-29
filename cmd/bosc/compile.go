@@ -25,6 +25,24 @@ func CompileErrorF(a AST, f string, args ...any) {
 	})
 }
 
+// reportCoerceFailure picks the diagnostic for a non-OK coerceType result.
+// The closed-symbolic-set rejection has one fixed wording across every
+// coercion site; the generic Accepts-style mismatch keeps whatever
+// site-specific wording the caller provides. Callers pass the
+// user-visible dst and src for the values message (typically the
+// declared, pre-ResolveUnderlying types).
+//
+// Both branches end in CompileErrorF, which panics with an
+// interpreterError. The first branch does not return on the values
+// path, so the fall-through to the generic CompileErrorF is unreachable
+// when reason == coerceValuesFromIntLit.
+func reportCoerceFailure(a AST, displayDst, displaySrc ASTType, reason coerceReason, generic string, args ...any) {
+	if reason == coerceValuesFromIntLit {
+		CompileErrorF(a, "Cannot construct %s from %s: values cases must be constructed from declared cases", displayDst, displaySrc)
+	}
+	CompileErrorF(a, generic, args...)
+}
+
 func Compile(of io.Writer, c *Context, a AST) (e error) {
 	defer func() {
 		if err := recover(); err != nil {
@@ -134,6 +152,15 @@ func compileArrayLiteralInto(of io.Writer, c *Context, a AST, dest spot, lit *Ar
 	elemT := *dest.t.Element
 	elemSize := elemT.Size(c)
 	for i, e := range lit.Elements {
+		// Every element flows into a slot of type elemT. Route through
+		// coerceType so the closed-symbolic-set rule covers array
+		// initializers — pre-unification this site had no check at all,
+		// so `var cs color[2] = [0, color.GREEN]` happily compiled and
+		// constructed a tag-0 color without going through color.RED.
+		if _, reason := coerceType(c, elemT, e.ASTType(c)); reason != coerceOK {
+			reportCoerceFailure(e, elemT, e.ASTType(c), reason,
+				"Array element %d: expected type %v but got %v", i, elemT, e.ASTType(c))
+		}
 		off := i * elemSize
 		if typeIsMemoryBacked(c, elemT) {
 			// Multi-word element (struct value, fixed array, etc.):
@@ -950,11 +977,18 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 		srcType := f.Val.ASTType(c)
 		checkBorrowedPointerDoesNotEscape(c, f.Val, fmt.Sprintf("field %v.%s", lit.Type, f.Name))
 		checkAddressOfOwnedForDest(c, f.Val, fieldType)
+		if _, reason := coerceType(c, fieldType, srcType); reason != coerceOK {
+			reportCoerceFailure(f.Val, fieldType, srcType, reason,
+				"For field %v.%s, expected type %v but got %v",
+				lit.Type, f.Name, fieldType, srcType)
+		}
+		// Only the intlit rewrite is safe here; the downstream codegen
+		// distinguishes `srcType.Same(fieldType)` (nullspot path,
+		// suitable for intlit) from the typed-temp path (required for
+		// nil — compileTop's nil handler needs a typed dest), and
+		// rewriting nil → fieldType would route nil into the wrong path.
 		if srcType.Same(intlitASTType()) {
 			srcType = fieldType
-		} else if !acceptsCtx(c, fieldType, srcType) {
-			CompileErrorF(f.Val, "For field %v.%s, expected type %v but got %v",
-				lit.Type, f.Name, fieldType, srcType)
 		}
 
 		// Memory-backed field (nested struct, array, anything > 8 bytes
@@ -1057,13 +1091,13 @@ func compileValueIntoAddress(of io.Writer, c *Context, a AST, val AST, addr spot
 		return
 	}
 	srcType := val.ASTType(c)
-	if srcType.Same(intlitASTType()) || srcType.Name == "<nil>" {
-		srcType = pointee
-	}
 	checkAddressOfOwnedForDest(c, val, pointee)
-	if !acceptsCtx(c, pointee, srcType) {
-		CompileErrorF(val, "Cannot initialize allocated %s with value of type %s", pointee, val.ASTType(c))
+	if _, reason := coerceType(c, pointee, srcType); reason != coerceOK {
+		reportCoerceFailure(val, pointee, srcType, reason,
+			"Cannot initialize allocated %s with value of type %s", pointee, val.ASTType(c))
 	}
+	// No effective rewrite needed here: the downstream temp is typed
+	// `pointee` and compileTop drives off that, not srcType.
 	tmp := newSpot(of, c, c.Temp(), pointee)
 	v := compileTop(of, c, val, tmp)
 	dst := spot{ref: addr.ref, t: pointee, nameIsAddress: true}
@@ -1417,8 +1451,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				// type the context demands.
 				return
 			}
-			if !dest.empty() && acceptsCtx(c, actual, expect) {
-				return
+			if !dest.empty() {
+				if _, reason := coerceType(c, actual, expect); reason == coerceOK {
+					return
+				}
 			}
 			if !dest.empty() && actual.SameRepr(expect) {
 				return
@@ -1640,11 +1676,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				}
 			}
 			// Type compatibility check.
-			if !acceptsCtx(c, dstt, srct) {
-				if _, isValues := c.ValuesDeclForName(dstt.Name); isValues && srct.Same(intlitASTType()) {
-					CompileErrorF(a, "Cannot construct %s from %s: values cases must be constructed from declared cases", dstt, srct)
-				}
-				CompileErrorF(a, "Cannot initialize %s with value of type %s", dstt, srct)
+			if _, reason := coerceType(c, dstt, srct); reason != coerceOK {
+				reportCoerceFailure(a, dstt, srct, reason,
+					"Cannot initialize %s with value of type %s", dstt, srct)
 			}
 			// Compile the initializer. Same-type / intlit go directly into s;
 			// coerced cases go via a temp.
@@ -1730,8 +1764,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if gained != 0 {
 				CompileErrorF(a, "multi-bind %s: ownership promotion requires explicit owned()", b.Name)
 			}
-			if !acceptsCtx(c, bindType, field.Type) {
-				CompileErrorF(a, "multi-bind %s: cannot assign %s to %s", b.Name, field.Type, bindType)
+			if _, reason := coerceType(c, bindType, field.Type); reason != coerceOK {
+				reportCoerceFailure(a, bindType, field.Type, reason,
+					"multi-bind %s: cannot assign %s to %s", b.Name, field.Type, bindType)
 			}
 			_, rebind := c.bindings[b.Name]
 			if rebind {
@@ -2495,11 +2530,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			return nullspot
 		}
 		if !srct.Same(dstt) {
-			if !acceptsCtx(c, dstt, srct) {
-				if _, isValues := c.ValuesDeclForName(dstt.Name); isValues && srct.Same(intlitASTType()) {
-					CompileErrorF(a, "Cannot construct %s from %s: values cases must be constructed from declared cases", dstt, srct)
-				}
-				CompileErrorF(a, "Cannot assign different types %s = %s", dstt, srct)
+			if _, reason := coerceType(c, dstt, srct); reason != coerceOK {
+				reportCoerceFailure(a, dstt, srct, reason,
+					"Cannot assign different types %s = %s", dstt, srct)
 			}
 			// intlit: compileTop shortcut handles range checking and code gen
 			dest := newSpot(of, c, c.Temp(), dstt)
@@ -2851,13 +2884,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		retCompat := c.ResolveUnderlying(retType)
 		valCompat := c.ResolveUnderlying(valType)
-		if !acceptsCtx(c, retCompat, valCompat) && !sameIgnoringOwned(retCompat, valCompat) {
-			// Values destinations want a directed diagnostic that points at
-			// the closed-symbolic-set rule, not the generic Accepts wording.
-			if _, isValues := c.ValuesDeclForName(retType.Name); isValues && valCompat.Same(intlitASTType()) {
-				CompileErrorF(a, "Cannot construct %s from %s: values cases must be constructed from declared cases", retType, valType)
-			}
-			CompileErrorF(a, "Cannot return %s from value of type %s", retType, valType)
+		if _, reason := coerceType(c, retCompat, valCompat); reason != coerceOK && !sameIgnoringOwned(retCompat, valCompat) {
+			reportCoerceFailure(a, retType, valType, reason,
+				"Cannot return %s from value of type %s", retType, valType)
 		}
 		if valType.Same(intlitASTType()) {
 			valType = numASTType()
@@ -3186,19 +3215,12 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 			argspots = append(argspots, s)
 			continue
 		}
-		if argt.Same(intlitASTType()) {
-			if _, isValues := c.ValuesDeclForName(param.Name); isValues {
-				CompileErrorF(arg, "Cannot construct %s from %s: values cases must be constructed from declared cases", param, argt)
-			}
-			argt = param
-		} else if argt.Name == "<nil>" && acceptsCtx(c, param, argt) {
-			// nil literal takes the parameter's nullable-pointer type
-			// rather than carrying its synthetic <nil> through codegen.
-			argt = param
-		} else if !acceptsCtx(c, param, argt) {
-			CompileErrorF(arg, "For argument %d, expected type %v but got %v",
-				i, param, argt)
+		effective, reason := coerceType(c, param, argt)
+		if reason != coerceOK {
+			reportCoerceFailure(arg, param, argt, reason,
+				"For argument %d, expected type %v but got %v", i, param, argt)
 		}
+		argt = effective
 		// If the parameter has owned, this is a move. Check for double-move now,
 		// but defer the actual marking until after the argument is compiled.
 		if param.HasOwned() {
@@ -4054,16 +4076,12 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 	for i, arg := range callNode.Args {
 		param := userParams[i].Type
 		argt := arg.ASTType(c)
-		if argt.Same(intlitASTType()) {
-			if _, isValues := c.ValuesDeclForName(param.Name); isValues {
-				CompileErrorF(arg, "Cannot construct %s from %s: values cases must be constructed from declared cases", param, argt)
-			}
-			argt = param
-		} else if argt.Name == "<nil>" && acceptsCtx(c, param, argt) {
-			argt = param
-		} else if !acceptsCtx(c, param, argt) {
-			CompileErrorF(arg, "For argument %d, expected type %v but got %v", i, param, argt)
+		effective, reason := coerceType(c, param, argt)
+		if reason != coerceOK {
+			reportCoerceFailure(arg, param, argt, reason,
+				"For argument %d, expected type %v but got %v", i, param, argt)
 		}
+		argt = effective
 		if param.HasOwned() {
 			checkOwnedSourceAvailable(c, arg)
 		}

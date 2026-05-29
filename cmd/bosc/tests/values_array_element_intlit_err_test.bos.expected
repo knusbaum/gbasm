@@ -1,0 +1,2 @@
+Compiling tests/values_array_element_intlit_err_test.bos
+Fatal: Cannot construct color from <intlit>: values cases must be constructed from declared cases

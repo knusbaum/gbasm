@@ -1601,24 +1601,68 @@ func (dst ASTType) Accepts(src ASTType) bool {
 	return dst.SameOwned(src) && dst.MutCompatible(src) && dst.NilCompatible(src)
 }
 
-// acceptsCtx is Accepts plus the closed-symbolic-set rule: an integer
-// literal cannot land in a values-typed destination (proposal §215–222).
-// Accepts itself has no Context and treats <intlit> as universally
-// coercible into integer-shaped destinations, which would let
-// `return 0` from a `fn () color` silently construct a tag-0 color
-// without going through `color.RED`. acceptsCtx tightens that rule
-// only for values destinations and otherwise defers to Accepts.
+// coerceReason classifies the outcome of coerceType so callers can produce
+// directed diagnostics without re-deriving WHY the coercion failed.
+type coerceReason int
+
+const (
+	coerceOK coerceReason = iota
+	// coerceValuesFromIntLit: <intlit> cannot construct a values value;
+	// proposal §215–222's closed-symbolic-set rule.
+	coerceValuesFromIntLit
+	// coerceTypeMismatch: ownership/mut/nil/shape disagreement.
+	coerceTypeMismatch
+)
+
+// coerceType is the single place every value-coercion site (var init,
+// assignment, return, call argument, struct-literal field, array-literal
+// element, pointer-deref store) consults to ask "can src flow into dst,
+// and if so what type does the value take on?"
 //
-// Call this from any site where a value of a wider type is being
-// coerced into an annotated destination (var/const init, assignment,
-// argument passing, return, field assignment).
-func acceptsCtx(c *Context, dst, src ASTType) bool {
-	if c != nil && src.Same(intlitASTType()) {
-		if _, ok := c.ValuesDeclForName(dst.Name); ok {
-			return false
+// The two halves of the answer let callers stay uniform:
+//
+//   - reason discriminates OK, the closed-symbolic-set rejection, and the
+//     generic Accepts-style mismatch, so each site can pick its own
+//     wording for the generic case while everyone shares the values
+//     message.
+//
+//   - effective is the type the value carries after the language's
+//     implicit coercions:
+//
+//     <intlit> → dst (when dst is a normal integer-shaped type)
+//     <nil>    → dst (when dst is a nullable pointer)
+//     anything else → src
+//
+// Callers that previously rewrote argt=param after an intlit/nil check
+// should use the returned effective. Callers that key downstream codegen
+// off the original src.Same(intlitASTType()) shape can ignore effective
+// and use reason as a pass/fail.
+//
+// Before coerceType existed, each site rolled its own ladder of
+// intlit-rewrite + acceptsCtx + nil-rewrite + Accepts, and the
+// fragmentation was the root cause of the values-construction bypasses
+// at struct literals and array elements: the intlit rewrite happened
+// before the values check could see it. Centralizing the rule here
+// closes the family of bypasses by construction.
+func coerceType(c *Context, dst, src ASTType) (effective ASTType, reason coerceReason) {
+	if src.Same(intlitASTType()) {
+		if c != nil {
+			if _, ok := c.ValuesDeclForName(dst.Name); ok {
+				return ASTType{}, coerceValuesFromIntLit
+			}
 		}
+		return dst, coerceOK
 	}
-	return dst.Accepts(src)
+	if src.Name == "<nil>" {
+		if dst.Indirection > 0 && dst.NilMask&1 != 0 {
+			return dst, coerceOK
+		}
+		return ASTType{}, coerceTypeMismatch
+	}
+	if dst.Accepts(src) {
+		return src, coerceOK
+	}
+	return ASTType{}, coerceTypeMismatch
 }
 
 func (t ASTType) String() string {

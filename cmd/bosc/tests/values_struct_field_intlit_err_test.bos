@@ -1,0 +1,14 @@
+package main
+
+type color values {
+	RED
+	GREEN
+}
+
+type box struct {
+	c color
+}
+
+fn main() {
+	var b box = box{c: 0}
+}

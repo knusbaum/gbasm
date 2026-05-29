@@ -1,0 +1,10 @@
+package main
+
+type color values {
+	RED
+	GREEN
+}
+
+fn main() {
+	var cs color[2] = [0, color.GREEN]
+}
