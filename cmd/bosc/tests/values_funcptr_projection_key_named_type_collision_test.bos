@@ -1,0 +1,18 @@
+package main
+
+fn one() i64 {
+	return 1
+}
+
+type fn_ret_i64 i64
+
+// Regression: projection keys need tagged components. The function-pointer
+// projection `fn() i64` used to produce the same key as the user type
+// `fn_ret_i64`, causing bas to reject duplicate projection table symbols.
+type v values (fn() i64, fn_ret_i64) {
+	A: &one, fn_ret_i64(7)
+}
+
+fn main() {
+	var e v = v.A
+}

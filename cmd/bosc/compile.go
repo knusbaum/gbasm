@@ -1562,7 +1562,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if err != nil {
 				CompileErrorF(ast, "values type %s: cannot encode projection %s table: %v", ast.Name, projType, err)
 			}
-			symName := projectionSymbolName(ast.Name, projType)
+			symName := projectionSymbolName(ast.Name, projIdx)
 			c.MarkAddress(symName)
 			emitVarBlock(of, symName, arrType.String(), data, relocs)
 			for _, ag := range c.DrainAnonGlobals() {
@@ -3447,74 +3447,31 @@ func EvalConst(c *Context, a AST) (*big.Int, bool) {
 	return nil, false
 }
 
-// compileCast compiles a type cast expression: destType(srcExpr).
-// Handles integer literal coercion, same-size reinterpretation, widening, and narrowing.
-// projectionTypeKey turns an ASTType into a stable identifier safe to
-// embed in a bas symbol name (no dots, brackets, or spaces). The key
-// has to distinguish every shape ASTType.Same() distinguishes, or two
-// declared projections (e.g. `i64` and `*i64` on the same values type)
-// would emit colliding table symbols and bas would reject the duplicate
-// declaration.
+// projectionSymbolName returns the bas-level symbol for a values type's
+// projection table. The form is
+// __projection_<typename-with-dots-as-underscores>__<index>, where
+// index is the 0-based position in the values decl's projection
+// signature.
 //
-// Encoded components, in order, so the key reads left-to-right like the
-// surface syntax:
-//   - leading `owned` qualifier on the value itself
-//   - per-indirection `nullable_` / `mut_` / `owned_` / `ptr_` chain
-//   - `_slice` / `_array_N` suffixes for slice and fixed-array shapes
-//   - the base type name, with dots → underscores (mirrors the vtable
-//     naming convention at compile.go's interface dispatch sites)
-func projectionTypeKey(t ASTType) string {
-	if t.IsSlice() && t.Element != nil {
-		return projectionTypeKey(*t.Element) + "_slice"
-	}
-	if t.IsArray() && t.Element != nil {
-		return fmt.Sprintf("%s_array_%d", projectionTypeKey(*t.Element), t.ArraySize)
-	}
-	if t.FuncSig != nil {
-		// fn(a, b) ret → "fn_<arg1>_<arg2>_ret_<ret>". Two distinct
-		// function-pointer projections with different signatures need
-		// distinct table symbols; without this the empty-arg `fn() i64`
-		// case strips down to just "fn_ret_i64" and collides only if
-		// another sig also has zero args and i64 return.
-		var sb strings.Builder
-		sb.WriteString("fn_")
-		for _, at := range t.FuncSig.Args {
-			sb.WriteString(projectionTypeKey(at))
-			sb.WriteByte('_')
-		}
-		sb.WriteString("ret_")
-		sb.WriteString(projectionTypeKey(t.FuncSig.Return))
-		return sb.String()
-	}
-	var sb strings.Builder
-	if t.OwnedMask&1 != 0 {
-		sb.WriteString("owned_")
-	}
-	for i := 0; i < t.Indirection; i++ {
-		if t.NilMask&(1<<uint(i)) != 0 {
-			sb.WriteString("nullable_")
-		}
-		if t.MutMask&(1<<uint(i+1)) != 0 {
-			sb.WriteString("mut_")
-		}
-		if t.OwnedMask&(1<<uint(i+1)) != 0 {
-			sb.WriteString("owned_")
-		}
-		sb.WriteString("ptr_")
-	}
-	sb.WriteString(strings.ReplaceAll(t.Name, ".", "_"))
-	return sb.String()
+// Earlier revisions encoded the projection type's structure
+// (indirection, mut/owned/nullable, slice/array, function signatures)
+// into the key. Every such scheme is collidable: any flat
+// string-encoded shape can be matched by a user-chosen type or alias
+// name. (A user-declared `type fn_ret_i64 i64` collided with the
+// FuncSig key for `fn() i64`, and an explicit `type ptr_i64 i64`
+// would collide with `*i64`.) Indices are scoped to a single values
+// decl, which already enforces uniqueness via the duplicate-projection
+// check at ToAST time, so they can never collide. The cast site already
+// knows the index — it walks vd.Projections to find a matching
+// destination — so the rename is a pure naming change.
+func projectionSymbolName(typeName string, projIndex int) string {
+	return fmt.Sprintf("__projection_%s__%d",
+		strings.ReplaceAll(typeName, ".", "_"),
+		projIndex)
 }
 
-// projectionSymbolName returns the bas-level symbol for a values type's
-// projection table: __projection_<typename-with-dots-as-underscores>__<projection-type-key>.
-// The assembler will prepend the producer's package qualifier so the
-// emitted symbol the linker sees is pkg.__projection_X__Y.
-func projectionSymbolName(typeName string, projType ASTType) string {
-	return fmt.Sprintf("__projection_%s__%s",
-		strings.ReplaceAll(typeName, ".", "_"),
-		projectionTypeKey(projType))
-}
+// compileCast compiles a type cast expression: destType(srcExpr).
+// Handles integer literal coercion, same-size reinterpretation, widening, and narrowing.
 
 // compileProjectionCast lowers `T(e)` where `e` has values type srcType
 // and `T` is a declared projection of srcType. The runtime shape is an
@@ -3535,8 +3492,8 @@ func projectionSymbolName(typeName string, projType ASTType) string {
 // x86-64 SIB only encodes scales 1, 2, 4, 8, so anything else (a
 // 16-byte slice-header element, for example) needs an explicit
 // multiply.
-func compileProjectionCast(of io.Writer, c *Context, src AST, srcType, projType ASTType, dest spot) spot {
-	symName := projectionSymbolName(srcType.Name, projType)
+func compileProjectionCast(of io.Writer, c *Context, src AST, srcType ASTType, projIdx int, projType ASTType, dest spot) spot {
+	symName := projectionSymbolName(srcType.Name, projIdx)
 	tagSpot := compileTop(of, c, src, nullspot)
 	base := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
 	fmt.Fprintf(of, "\tlea %s %s\n", base.ref, symName)
@@ -3650,7 +3607,7 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 		if projIdx < 0 {
 			CompileErrorF(src, "Cannot cast %s to %s: %s has no %s projection", srcType, destType, srcType, destType)
 		}
-		return compileProjectionCast(of, c, src, srcType, vd.Projections[projIdx], dest)
+		return compileProjectionCast(of, c, src, srcType, projIdx, vd.Projections[projIdx], dest)
 	}
 
 	// Integer literal: compile directly into the destination type.
