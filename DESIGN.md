@@ -40,6 +40,17 @@ Boson is a statically typed, imperative language. It is intentionally small: no 
 
 `<intlit>` is the type of an integer literal `42` before it is assigned somewhere. Constant expressions over `<intlit>` (e.g. `4 * 1024`) are evaluated at compile time using arbitrary-precision arithmetic and range-checked against the destination type at the point of assignment.
 
+Integer literals can be written in four bases:
+
+| Form | Example | Description |
+|------|---------|-------------|
+| Decimal | `42`, `1024` | Default base |
+| Hexadecimal | `0xFF`, `0xDEADBEEF` | `0x` prefix, hex digits (case-insensitive) |
+| Octal | `0o755`, `0o644` | `0o` prefix |
+| Binary | `0b1010`, `0b11000011` | `0b` prefix |
+
+Character literals (`'A'`, `'\n'`) produce a `byte`. See [Strings](#strings) for the escape-sequence table that both character literals and string literals accept.
+
 **Reference and composite types:**
 
 | Type | Description |
@@ -103,7 +114,9 @@ Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`. Signed and unsigned comparisons se
 
 Logical: `&&`, `||`.
 
-Unary: `-` (negation), `*` (dereference), `&` (address-of). Precedence: unary prefix > `.`/`[]` > `*`,`/` > `+`,`-` > comparisons > assignment.
+Bitwise: `&` (AND), `|` (OR). Operate on integer types of any width. Operand widths must match; integer literals coerce to the other operand's type. `&` binds tighter than `|`, both bind tighter than comparison.
+
+Unary: `-` (negation), `*` (dereference), `&` (address-of). Precedence: unary prefix > `.`/`[]` > `*`,`/` > `+`,`-` > `&`,`|` > comparisons > assignment.
 
 Struct field access uses `.` for both direct structs and pointer-to-struct (`p.x` auto-dereferences when needed).
 
@@ -141,9 +154,37 @@ for (init; cond; step) { ... }
 
 break
 continue
-return expr
+return expr               // return a value
+return                    // bare return (only valid in void functions or as an early exit)
+return a, b               // multi-value return
 dispose(x)                // consume an owned binding (see Ownership)
 ```
+
+**Multi-value return and destructuring bind.** A function may return more than one value by listing the return types comma-separated:
+
+```
+fn divide(a i64, b i64) i64, i64 {
+    var q i64 = a / b
+    return q, a - q * b
+}
+```
+
+The call site binds all returned values in a single declaration. Each bind position is independent — names may be inferred or typed, and individual binds may be `var` or `const`:
+
+```
+var q, rem = divide(17, 5)                          // both inferred i64
+var q2 i64, const rem2 i64 = divide(100, 7)         // explicit types, mixed const/var
+```
+
+A name in the bind list may already exist in the enclosing scope — the existing binding is reused (re-assigned). This is how the `(value, err)` pattern composes across calls without forcing fresh names every time:
+
+```
+var f, err = io.open(path1, io.O_RDONLY, 0)
+if (err != 0) { ... }
+f, err = io.open(path2, io.O_RDONLY, 0)             // err re-binds the existing variable
+```
+
+A single-name bind to a multi-return function is rejected — the count of binds must match the count of returns.
 
 **Type inference for `var`/`const`.** When the type slot is omitted, the binding's type is inferred from the initializer. Untyped integer literals infer as `i64`; expressions whose type cannot be expressed as a value (a `void` call, the `nil` literal) are rejected with a directed error.
 
@@ -182,9 +223,11 @@ fn close(fd owned i64) {          // owned parameter — moves the obligation
 
 Pointer parameters without `owned` are non-escaping borrows by default. The callee may read or write through the pointer according to the pointer's `mut` bits, and may forward it to other non-owning calls, but may not return it or store it somewhere that outlives the call. See [Borrowing](#borrowing).
 
-Arguments follow the System V AMD64 ABI: the first six integer/pointer arguments go in RDI, RSI, RDX, RCX, R8, R9; additional arguments go on the stack. The return value goes in RAX.
+Arguments follow the System V AMD64 ABI: the first six integer/pointer arguments go in RDI, RSI, RDX, RCX, R8, R9; additional arguments go on the stack. The single-value return goes in RAX.
 
 Sub-64-bit return values are sign- or zero-extended into RAX as required by the ABI.
+
+**Multi-value return.** A function may declare a comma-separated return-type list (`fn divide(a i64, b i64) i64, i64`). The compiler lowers a multi-value return to a synthetic anonymous struct (`{_0: e0, _1: e1, …}`) marked `MultiReturn=true`. The function returns that struct through the standard indirect-struct-return path: the caller allocates a `bytes` slot for the return values, the callee fills its fields, and `rax` points to the slot on return. The destructuring-bind form at the call site copies each field out into its own named binding (see [Statements](#statements)). Because the wire representation is a struct, multi-return crosses package boundaries the same way struct return types do.
 
 ### Packages and Imports
 
@@ -231,9 +274,50 @@ The `.bs` carries Boson struct shapes via the `struct Name { … }` directive (s
 
 **Cross-package interfaces.** Interface declarations export the same way structs and type aliases do. The producer's `.bs` carries each `interface Name { method ... }` declaration via the `interface` directive; the `.bo` stores it as an `InterfaceShape` (method name, ordered params with names and ASTType-rendered type strings, plus the return-type string). On import, bosc reparses the types, qualifies any leaf names that match the producer's structs or aliases, and registers the interface under the qualified name (e.g. `io.reader`). Caller code can then write `fn use(r io.reader) { ... }` and coerce a borrowed `*io.FD` into it; the vtable is emitted in the *consumer's* `.bo` and its method-pointer relocations target the type's owning package (`io.FD.read`).
 
+**Cross-package type aliases.** `type Name Base` declarations export the same way structs do, with their attached method tables. On import, the type is registered under the qualified name (`io.FD`); the method set is reconstructed from the already-imported function set using a method-name list carried in the `typealias` directive. Qualified casts (`io.FD(3)`) work in expression contexts and in file-scope static initializers.
+
+**Cross-package variable access.** File-scope `var`/`const` declarations are exported from a `.bo` along with functions and struct types. Source code reads them through the qualified form `pkg.name`:
+
+```
+import "io"
+
+fn main() {
+    string.puts("hello\n")
+    var f = io.STDIN          // read a cross-package var
+}
+```
+
+Cross-package vars are read-only from the consumer's side. Writing through a foreign-package name is rejected; mutation must go through a function exported by the owning package.
+
+**The `builtin` package.** A single package, `builtin`, is auto-imported into every compilation unit (except `builtin` itself). It contains the `error` interface and serves as the home for declarations that need to be visible without an explicit `import`. The `-listimports` driver always emits `builtin` first, so the build system pulls in `target/builtin.bo` automatically. Bare references to `error` resolve to `builtin.error` the same way an explicitly imported package's interface would, but without requiring `import "builtin"` at the top of every file.
+
 ### Built-in Functions
 
-Built-ins are not part of the language proper — they live in runtime packages that any program imports. The standard library currently provides one package, `string`, that bundles both string utilities and basic IO:
+Built-ins are split into two groups: **compiler intrinsics** (lowered by bosc itself, not callable through a function pointer) and **runtime packages** (ordinary Boson packages that any program imports). The runtime packages are `string`, `io`, `_io_sys`, `_init`, `_heap`, `pair`, and `builtin`.
+
+**Compiler intrinsics:**
+
+| Built-in | Type | Description |
+|----------|------|-------------|
+| `len(s)` | `(T[]) i64` or `(T[N]) i64` | Length of a slice (runtime load of the fat-pointer length word) or fixed array (compile-time constant `N`). |
+| `alloc(T)` | `owned *mut T` | Allocate writable storage for one `T`; consumes a type expression, not a runtime value. |
+| `new(expr)` | `owned *mut T` | Allocate writable storage for the expression's type, initialize with `expr`, return an owned pointer. |
+| `free(p)` | `void` | Free an `owned *T` / `owned *mut T` pointer and consume that pointer's obligation. |
+| `dispose(x)` | `void` | Consume an `owned` binding with no runtime effect (see [Ownership](#ownership)). |
+| `owned(expr)` | `owned T` | Unsafe ownership promotion (see [Bring-your-own-memory](#bring-your-own-memory-byom)). |
+| `T(expr)` | `T` | Type cast (for any type `T`, including primitives and user-defined aliases). |
+
+`alloc`, `new`, and `free` lower to `_heap.alloc(size i64)` and `_heap.free(p *mut byte)`. `len` lowers inline — slice length is a `[ref+8]` load, fixed-array length is a literal. None of these are callable through a function-pointer value: passing `len` or `alloc` as a value is a compile error.
+
+The `builtin` package is special: bosc auto-imports it into every package (except `builtin` itself) and the `-listimports` driver always emits `builtin` first, so the build system pulls in `target/builtin.bo` automatically. The package currently exposes:
+
+| Name | Form | Description |
+|------|------|-------------|
+| `error` | `interface { message(e *self) byte[]; destroy(e owned *self) }` | The standard error-condition interface. Concrete types satisfy it by providing both methods; see [Example: the error interface](#example-the-error-interface). |
+
+Bare references to `error` resolve to `builtin.error` without needing an explicit `import "builtin"`.
+
+**`string` package** — string formatting and stdout primitives:
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -241,22 +325,21 @@ Built-ins are not part of the language proper — they live in runtime packages 
 | `string.puti` | `(i64) void` | Print a signed integer to stdout |
 | `string.putb` | `(byte) void` | Print a byte value as a decimal integer |
 | `string.putc` | `(byte) void` | Print a single byte as a character |
-| `string.lenb` | `(byte[]) i64` | Return the length of a byte slice |
-| `string.lenn` | `(i64[]) i64` | Return the length of an i64 slice |
-| `string.lenbb` | `(byte[][]) i64` | Return the length of a byte-slice slice (e.g. argv) |
 | `string.exit` | `(i64 code) void` | Exit the process with the given code |
 
 File IO lives in the `io` and `_io_sys` packages. The typed FD API in `io`:
 
 | Function/Method | Signature | Description |
 |------|------|------|
-| `io.open` | `(byte[] path, i64 flags, i64 mode) owned FD` | Open a file; path is a normal byte slice (NUL-termination is handled internally). Returns an owned FD or one wrapping -errno on failure |
-| `io.FD.read` | `(*FD, mut byte[] buf) i64` | Read up to len(buf) bytes; returns count or -errno |
-| `io.FD.write` | `(*FD, byte[] buf) i64` | Write buf to fd; returns count or -errno |
-| `io.FD.close` | `(*owned FD) i64` | Close the fd and consume the owned obligation |
-| `io.STDIN`/`STDOUT`/`STDERR` | `FD` | Standard file descriptors (0, 1, 2) |
-| `io.reader` | `interface { read(*self, mut byte[]) i64 }` | Anything readable; `FD` satisfies it |
-| `io.writer` | `interface { write(*self, byte[]) i64 }` | Anything writable; `FD` satisfies it |
+| `io.O_RDONLY`, `O_WRONLY`, `O_RDWR`, `O_CREAT`, `O_EXCL`, `O_TRUNC`, `O_APPEND`, `O_NONBLOCK`, `O_CLOEXEC` | `i64` | File-mode flag constants matching Linux `<fcntl.h>`. Combine with bitwise `|`. |
+| `io.open` | `(path byte[], flags i64, mode i64) owned FD, i64` | Open a file. Returns `(fd, err)` where `err` is `0` on success or a positive errno on failure. On failure the returned `FD` is invalid and must be `dispose`d rather than `close`d. |
+| `io.FD.read` | `(fd *FD, buf mut byte[]) i64, i64` | Read up to `len(buf)` bytes. Returns `(n, err)` — `n=0` on EOF; partial reads with `err=0` may be retried. |
+| `io.FD.write` | `(fd *FD, buf byte[]) i64, i64` | Write `buf`. Returns `(n, err)`; short writes with `err=0` are not errors. |
+| `io.FD.close` | `(fd *owned FD) i64` | Close the fd and consume the owned obligation. Returns `0` on success or a positive errno. |
+| `io.STDIN`/`STDOUT`/`STDERR` | `FD` | Standard file descriptors (0, 1, 2). Borrowed — must not be `close`d. |
+| `io.reader` | `interface { read(r *self, buf mut byte[]) i64, i64 }` | Anything readable; `FD` satisfies it. |
+| `io.writer` | `interface { write(w *self, buf byte[]) i64, i64 }` | Anything writable; `FD` satisfies it. |
+| `io.copy` | `(dst writer, src reader) i64` | Copy bytes from `src` to `dst` until EOF; returns total bytes copied (or a negative errno on a read/write error). |
 
 The raw syscall wrappers, taking i64 fd values directly, live in `_io_sys`:
 
@@ -267,17 +350,7 @@ The raw syscall wrappers, taking i64 fd values directly, live in `_io_sys`:
 | `_io_sys.open` | `(byte[] path, i64 flags, i64 mode) i64` | Raw `open(2)` syscall |
 | `_io_sys.close` | `(i64 fd) i64` | Raw `close(2)` syscall |
 
-The `_init` package provides `_init.start` (the ELF entry point) and `_init.index_oob` (called by bounds checks).
-
-The compiler also provides allocator built-ins:
-
-| Built-in | Type | Description |
-|----------|------|-------------|
-| `alloc(T)` | `owned *mut T` | Allocate writable storage for one `T`; consumes a type expression, not a runtime value |
-| `new(expr)` | `owned *mut T` | Allocate writable storage for the expression's type, initialize it with `expr`, and return an owned pointer |
-| `free(p)` | `void` | Free an `owned *T` / `owned *mut T` pointer and consume that pointer obligation |
-
-`alloc`, `new`, and `free` lower to `_heap.alloc(size i64)` and `_heap.free(p *mut byte)` in the runtime. The bootstrap allocator is mmap-backed: each allocation is one mapping with a small size header, and `free` calls `munmap`.
+The `_init` package provides `_init.start` (the ELF entry point) and `_init.index_oob` (called by bounds checks). The `_heap` package provides the bootstrap allocator (mmap-backed: each allocation is one mapping with a small size header, `free` calls `munmap`). The `pair` package exists as a minimal cross-package struct used by tests.
 
 `alloc(T)` is only valid for zero-initializable types. Types containing non-null pointers are not zero-initializable, so they must be constructed with `new(expr)` or some other initialized storage path.
 
@@ -304,12 +377,6 @@ fn divide(a i64, b i64) struct { quot i64, rem i64 } {
 var r struct { quot i64, rem i64 } = { quot: 1, rem: 0 }
 r = { quot: 99, rem: 1 }                   // shape from lvalue
 ```
-
-### Built-in operations
-
-- `dispose(x)` — consume an `owned T` binding with no other effect. See [Ownership](#ownership).
-- `owned(expr)` — unsafe ownership promotion. Used for BYOM patterns. See [Ownership](#bring-your-own-memory-byom).
-- `T(expr)` — type cast (for any type `T`, including primitives and user-defined aliases).
 
 ---
 
@@ -1095,6 +1162,19 @@ A mutable byte buffer has type `mut byte[]`. String literals cannot be coerced t
 
 String literals are emitted by the compiler with both the slice data and a trailing null byte, so they can be passed to APIs that require null-terminated strings (like the `open` syscall) even though the null is outside the slice's stated length.
 
+**Escape sequences** in string and character literals:
+
+| Escape | Byte |
+|--------|------|
+| `\n` | LF (0x0a) |
+| `\r` | CR (0x0d) |
+| `\t` | TAB (0x09) |
+| `\0` | NUL (0x00) |
+| `\\` | Backslash |
+| `\"` | Quote |
+| `\'` | Single quote (in character literals) |
+| `\xHH` | Arbitrary byte; exactly two hex digits |
+
 ### Future: unused-mutability warning
 
 The compiler could warn when a `var` binding is never directly reassigned and no mutable reference to it (`&x`) is ever taken: "var x i16 never mutated — use const instead." Taking `&x` (which yields `*mut T` for a `var` binding) counts as a potential mutation even if the callee only reads through the pointer, to avoid false positives. The check fires at the end of each scope and at function exit for `var` parameters. Not yet implemented.
@@ -1146,6 +1226,7 @@ Field separators inside a struct body may be `,`, a newline (the lexer inserts `
 
 - `v.method(args...)` where `v` has type `T` → `T.method(&v, args...)` (address taken automatically for the pointer receiver).
 - `p.method(args...)` where `p` has type `*T` or `*mut T` → `T.method(p, args...)` (passed directly, no extra indirection).
+- `(expr).method(args...)` where `expr` is an arbitrary expression of concrete type `T` → the expression is evaluated, its type looked up, and dispatched the same way. Interface-typed expression receivers are not yet supported; bind the value to a named variable first.
 - `T.method(args...)` where `T` is a type with a zero-receiver static method → direct call to `pkg.T.method(args...)` with no implicit receiver.
 - Ownership qualifiers on the receiver are checked at the call site: calling a method with `owned *owned T` receiver on a non-owned binding is a compile error.
 - Calling a static method through an instance (`v.method(...)` where `T.method` has no receiver) is rejected with a directed error suggesting the `T.method(...)` form.
@@ -1159,12 +1240,12 @@ interface Writer {
 
 interface error {
     message(self *self) byte[]
-    destroy(self owned *owned self)
+    destroy(self owned *self)
 }
 ```
 
 - `self` is a reserved type placeholder in interface method signatures. It substitutes for the concrete implementing type at satisfaction-check time.
-- Method signatures use the same ownership qualifiers as regular function parameters. The placeholder type `self` can appear at any pointer level: `*self`, `*mut self`, `owned *owned self`.
+- Method signatures use the same ownership qualifiers as regular function parameters. The placeholder type `self` can appear at any pointer level: `*self`, `*mut self`, `owned *self`, `*owned self`, `owned *owned self`.
 - The parameter name before the receiver type (e.g. `self` in `self *self`) is arbitrary and ignored by the compiler; only the type matters for satisfaction checking.
 - The interface name becomes a type usable in parameter positions, return types, and variable declarations.
 
@@ -1208,57 +1289,56 @@ Each entry is an 8-byte function pointer to the concrete method. Entries appear 
 Interface types carry an optional `owned` qualifier:
 
 - `I` (no qualifier): the interface value **borrows** the underlying data.
-  - Only methods with `*self` or `*mut self` receivers are callable.
-  - Calling a method with an `owned *owned self` receiver is a compile error.
+  - Only methods with non-owned receivers (`*self`, `*mut self`) are callable.
+  - Calling a method whose receiver carries any `owned` bit is a compile error: "Cannot call consuming method I.m on non-owned I".
 - `owned I`: the interface value **owns** the underlying data.
   - Methods with any receiver qualifier are callable.
-  - Calling a method with an `owned *owned self` receiver consumes the interface binding (same as any other owned-parameter call).
+  - Calling a method whose receiver carries any `owned` bit consumes the interface binding. After the call, the interface variable is dead — any further use is a compile error.
 
 Both representations are identical at runtime (16 bytes). The ownership qualifier is compile-time-only, consistent with how `owned *T` differs from `*T` elsewhere in the type system.
+
+The "consuming" check is keyed on `HasOwned()` of the receiver parameter — `owned *self`, `*owned self`, and `owned *owned self` all count. The canonical form for a method that takes the heap pointer and frees it is `owned *self` (the pointer itself is owned; passing it to `free` discharges the obligation).
 
 **Coercion from a concrete owned pointer to `owned I`:**
 
 ```
-var e owned *owned myerror = alloc(myerror)
-// ... initialize ...
-const err owned error = e   // moves ownership into the interface value; e is consumed
-err.message()               // ok — borrows from owned interface
-err.destroy()               // ok — consumes err (owned *owned self receiver)
+const e owned *mut myerror = new(myerror(42))   // owned *mut myerror
+const err owned error = e                       // moves ownership into the interface value; e is consumed
+err.message()                                   // ok — borrows from owned interface
+err.destroy()                                   // ok — consumes err (owned-receiver method)
 // err is no longer usable after destroy()
 ```
 
-Stack-allocated values can only coerce to a non-owned interface (borrow). An `owned I` value requires an `owned *owned T` source.
+Stack-allocated values can only coerce to a non-owned interface (borrow). An `owned I` value requires a source whose pointer level carries an `owned` bit.
 
 **Calling a consuming method on an owned interface:**
 
-1. Load the vtable pointer from the interface binding.
-2. Load the function pointer at the method's vtable slot.
-3. Call it, passing the `data` pointer as `owned *owned T`.
-4. The interface binding is marked consumed — it cannot be used after this call.
+1. Load the data pointer and the function pointer (`vtable[methodIdx]`) from the interface binding into registers.
+2. Compile and place user arguments into the user-arg registers (`rsi`, `rdx`, …).
+3. Mark the interface binding consumed (`MoveConsume`) before the call — the data pointer is already captured in a register at this point.
+4. Move the data pointer into `rdi` and emit the indirect `call`.
 
-The concrete method (e.g. `destroy(self owned *owned myerror)`) receives ownership and is responsible for calling `free` or `dispose` as appropriate.
+The concrete method (e.g. `destroy(self owned *myerror)`) receives the pointer as `owned *myerror` and is responsible for calling `free` (or `dispose`, for non-heap-backed concrete types) to discharge it.
 
 ### Example: the error interface
 
 ```
 interface error {
     message(self *self) byte[]
-    destroy(self owned *owned self)
+    destroy(self owned *self)
 }
 
 type myerror i64 {
     message(self *myerror) byte[] {
         return "an error occurred\n"
     }
-    destroy(self owned *owned myerror) {
+    destroy(self owned *myerror) {
         free(self)
     }
 }
 
 fn make_error() owned error {
-    const e owned *owned myerror = alloc(myerror)
-    *e = myerror(42)
-    return e    // coerces owned *owned myerror → owned error
+    return new(myerror(42))   // coerces owned *mut myerror → owned error
 }
 
 fn handle(err owned error) {
@@ -1314,6 +1394,7 @@ The supported forms compose recursively:
 - `&someGlobal` — 8-byte pointer slot with a relocation to the named global.
 - `&SomeStruct{...}` — recursively encodes the inner struct into a fresh anonymous global (`__static_0`, `__static_1`, …) and emits a pointer slot relocated to it.
 - `&someGlobalArr[N]` for compile-time-constant N — a single relocation to the array's symbol with `Addend = N * elementSize`. Pointer-into-array without any auxiliary storage.
+- Type-alias casts of a literal integer — `var fd FD = FD(3)` (or the qualified form `io.FD(3)`). The encoder evaluates the inner literal at compile time and writes the resulting bytes into the alias's slot.
 
 Anything else (function calls, runtime expressions, type mismatches, length mismatches) produces a specific diagnostic at compile time.
 
@@ -1352,7 +1433,7 @@ At link time, the linker walks each placed var's `Relocs` and applies them. Reac
 
 ### Lexer (`lexer.go`)
 
-Produces a flat token stream from Boson source. Recognizes keywords (`fn`, `var`, `const`, `mut`, `owned`, `dispose`, `type`, `struct`, `if`, `else`, `for`, `return`, `break`, `continue`, `import`, `package`), identifiers, integer literals, string literals, byte literals, and all operators.
+Produces a flat token stream from Boson source. Recognizes keywords (`fn`, `var`, `const`, `mut`, `owned`, `dispose`, `type`, `struct`, `interface`, `if`, `else`, `for`, `return`, `break`, `continue`, `import`, `package`), identifiers, integer literals (decimal, `0x`, `0o`, `0b`), string and character literals (with `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, `\'`, `\xHH` escapes), and all operators.
 
 Integer literals are parsed as `uint64` for full-precision representation; downstream stages decide the final type. Decimal-point syntax is accepted but the fractional part is truncated (no float support yet).
 
@@ -1676,7 +1757,7 @@ ELF64 file format implementation. Builds the ELF header, section headers (`.text
 
 ### `ofile.go` / `bwrite.go`
 
-Custom binary object file format (`.bo`). Stores encoded instructions, symbol names and offsets, relocation entries, type descriptors, the package name, per-var data relocations (`DataReloc{Offset, Symbol, Addend}`), and Boson struct shapes (`StructShape{Name, Fields}` where each field carries a name and a rendered type string). `bwrite.go` provides serialization/deserialization. `ReadOFile` populates `Function.Pkgname` from the .bo's package field so the linker can use it.
+Custom binary object file format (`.bo`). Stores encoded instructions, symbol names and offsets, relocation entries, type descriptors, the package name, per-var data relocations (`DataReloc{Offset, Symbol, Addend}`), Boson struct shapes (`StructShape{Name, Fields}` where each field carries a name and a rendered type string), Boson type-alias shapes (`TypeAliasShape{Name, Base, Methods}`), and Boson interface shapes (`InterfaceShape{Name, Methods}` where each method is `{Name, Params, Return}` with params/return as rendered type strings). `bwrite.go` provides serialization/deserialization. `ReadOFile` populates `Function.Pkgname` from the .bo's package field so the linker can use it.
 
 ### `linker.go`
 
@@ -1699,6 +1780,8 @@ The custom `.bo` format stores:
 | Data (`Data`) | Immutable global blocks (e.g. string constants). Each carries its bytes and an optional list of per-block `DataReloc` entries. |
 | Vars (`Vars`) | Writable global blocks. Same shape as Data — bytes plus per-block relocations. |
 | Structs | Boson struct shapes (name + ordered list of {field name, rendered type string}) for cross-package struct types. |
+| Type aliases | Boson `type Name Base` shapes (name + base type + method-name list) for cross-package alias-with-methods types. |
+| Interfaces | Boson interface shapes (name + ordered list of methods, each with ordered params and a rendered return-type string) for cross-package interface types. |
 
 The format is simpler than ELF to make assembler output straightforward. The linker translates `.bo` → ELF64 as its final step.
 
@@ -1749,9 +1832,13 @@ The runtime lives at `runtime/<pkg>/*.bs` under `BOSON_HOME` and is shared by ev
 
 | Package | Files | Purpose |
 |---------|-------|---------|
-| `_init`  | `init_linux.bs` | Process entry (`start`) calling `main.main`. Bounds-check trap (`index_oob`). |
-| `_heap`  | `heap_linux.bs` | mmap-backed allocation and deallocation for `alloc`, `new`, and `free`. |
-| `string` | `string.bs`, `puts_linux.bs` | IO and string utilities: `puts`, `puti`, `putb`, `putc`, `lenb`, `lenn`, `read`, `write`, `open`, `close`, `exit`, plus internal `strlen`, `itoa`, `uitoa`. |
+| `_init`    | `init_linux.bs` | Process entry (`start`) calling `main.main`. Bounds-check trap (`index_oob`). |
+| `_heap`    | `heap_linux.bs` | mmap-backed allocation and deallocation for `alloc`, `new`, and `free`. |
+| `_io_sys`  | `io_sys_linux.bs` | Raw Linux file-IO syscall wrappers (`read`, `write`, `open`, `close`) taking i64 fds. |
+| `string`   | `string.bs`, `puts_linux.bs` | String formatting and stdout primitives: `puts`, `puti`, `putb`, `putc`, `exit`, plus internal `strlen`, `itoa`, `uitoa`. File IO is no longer here; see `_io_sys` and `io`. |
+| `io`       | `io.bos` | Typed file IO: `type FD i64` with `read`/`write`/`close` methods; `fn open(byte[], i64, i64) owned FD, i64`; `STDIN`/`STDOUT`/`STDERR` globals; `reader`/`writer` interfaces; `fn copy(writer, reader) i64`. Wraps `_io_sys`. |
+| `pair`     | `pair.bos` | Minimal cross-package struct used only by tests. |
+| `builtin`  | `builtin.bos` | Auto-imported into every package. Currently holds the `error` interface and acts as the home for documentation of compiler intrinsics. |
 
 These files encode Linux-specific behavior directly. There is a `macho/` directory in the core library suggesting macOS support was planned but not yet implemented.
 
@@ -1821,6 +1908,19 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - mmk-driven build with auto-discovery via `bosc -listimports`; build failures halt the chain cleanly (set -e in defbody scripts, proper exit-code propagation through `pkg_import_targets`)
 - bas synthetic instructions: `volatile`, `name:N` partials, size-qualified indirects, `movzx r64, r/m32`
 - bas struct directive (carries Boson struct shape into .bo); bas var block form with embedded `reloc` lines for data-section relocations; bas string escapes include `\xHH`, `\r`, `\t`
+- bas `typealias` and `interface` directives for cross-package export of type aliases (with method tables) and interfaces
+- Cross-package variable read access: `pkg.name` qualified reads against a foreign-package `var`/`const`
+- Built-in `len(s)` intrinsic for slice (runtime length load) and fixed-array (compile-time constant) operands
+- `builtin` package auto-imported into every compilation; currently provides the `error` interface
+- `owned error` ownership semantics: consuming-receiver methods (any owned bit on the receiver) require an owned interface, mark the interface variable consumed after the call, and forbid being called on a non-owned interface; return-statement checks reject silently dropping ownership (`valType.HasOwned() && !retType.HasOwned()`) and validate general return-type compatibility via `ResolveUnderlying + Accepts` with a `sameIgnoringOwned` escape so owned↔non-owned variants of the same underlying type still pass
+- Multi-value return (`fn f() i64, i64`) and destructuring bind (`var a, b = f()`), including mixed `var`/`const` per-bind qualifiers, per-bind type annotations, and re-binding when a name already exists in scope
+- Integer literal bases: decimal, hexadecimal (`0xFF`), octal (`0o755`), and binary (`0b1010`)
+- Bitwise `&` and `|` operators on integer operands
+- Bare `return` (no value) in `void` functions or as an early exit
+- `(expr).method(...)` dispatch for arbitrary concrete-type expression receivers (interface-typed receivers still require binding first)
+- Boson source string and character literal escapes: `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, `\'`, `\xHH`
+- Type-alias casts as file-scope static initializers (`var fd FD = FD(3)`, qualified form `io.FD(3)`)
+- Position tracking through a leading file-level doc comment preamble (errors point at the correct source line even when the file begins with comments)
 
 **Known limitations / future direction:**
 
