@@ -22,7 +22,7 @@ fn main(args byte[][]) {
 		return
 	}
 	for(var i i64 = 1; i < len(args); i = i + 1) {
-		const f, err = io.open(args[i], io.O_CREAT | io.O_RDONLY, 0o777)
+		const f, err = io.open(args[i], io.O_CREAT | io.O_RDONLY, 0o660)
 		if (err != 0) {
 			string.puts("While opening ")
 			string.puts(args[i])
