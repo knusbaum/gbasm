@@ -1,0 +1,13 @@
+package main
+
+type color values {
+	RED
+	GREEN
+}
+
+fn take(c color) {
+}
+
+fn main() {
+	take(0)
+}

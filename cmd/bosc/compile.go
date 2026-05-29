@@ -952,7 +952,7 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 		checkAddressOfOwnedForDest(c, f.Val, fieldType)
 		if srcType.Same(intlitASTType()) {
 			srcType = fieldType
-		} else if !fieldType.Accepts(srcType) {
+		} else if !acceptsCtx(c, fieldType, srcType) {
 			CompileErrorF(f.Val, "For field %v.%s, expected type %v but got %v",
 				lit.Type, f.Name, fieldType, srcType)
 		}
@@ -1061,7 +1061,7 @@ func compileValueIntoAddress(of io.Writer, c *Context, a AST, val AST, addr spot
 		srcType = pointee
 	}
 	checkAddressOfOwnedForDest(c, val, pointee)
-	if !pointee.Accepts(srcType) {
+	if !acceptsCtx(c, pointee, srcType) {
 		CompileErrorF(val, "Cannot initialize allocated %s with value of type %s", pointee, val.ASTType(c))
 	}
 	tmp := newSpot(of, c, c.Temp(), pointee)
@@ -1417,7 +1417,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				// type the context demands.
 				return
 			}
-			if !dest.empty() && actual.Accepts(expect) {
+			if !dest.empty() && acceptsCtx(c, actual, expect) {
 				return
 			}
 			if !dest.empty() && actual.SameRepr(expect) {
@@ -1640,7 +1640,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				}
 			}
 			// Type compatibility check.
-			if !dstt.Accepts(srct) {
+			if !acceptsCtx(c, dstt, srct) {
+				if _, isValues := c.ValuesDeclForName(dstt.Name); isValues && srct.Same(intlitASTType()) {
+					CompileErrorF(a, "Cannot construct %s from %s: values cases must be constructed from declared cases", dstt, srct)
+				}
 				CompileErrorF(a, "Cannot initialize %s with value of type %s", dstt, srct)
 			}
 			// Compile the initializer. Same-type / intlit go directly into s;
@@ -1727,7 +1730,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if gained != 0 {
 				CompileErrorF(a, "multi-bind %s: ownership promotion requires explicit owned()", b.Name)
 			}
-			if !bindType.Accepts(field.Type) {
+			if !acceptsCtx(c, bindType, field.Type) {
 				CompileErrorF(a, "multi-bind %s: cannot assign %s to %s", b.Name, field.Type, bindType)
 			}
 			_, rebind := c.bindings[b.Name]
@@ -2492,7 +2495,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			return nullspot
 		}
 		if !srct.Same(dstt) {
-			if !dstt.Accepts(srct) {
+			if !acceptsCtx(c, dstt, srct) {
+				if _, isValues := c.ValuesDeclForName(dstt.Name); isValues && srct.Same(intlitASTType()) {
+					CompileErrorF(a, "Cannot construct %s from %s: values cases must be constructed from declared cases", dstt, srct)
+				}
 				CompileErrorF(a, "Cannot assign different types %s = %s", dstt, srct)
 			}
 			// intlit: compileTop shortcut handles range checking and code gen
@@ -2845,7 +2851,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		retCompat := c.ResolveUnderlying(retType)
 		valCompat := c.ResolveUnderlying(valType)
-		if !retCompat.Accepts(valCompat) && !sameIgnoringOwned(retCompat, valCompat) {
+		if !acceptsCtx(c, retCompat, valCompat) && !sameIgnoringOwned(retCompat, valCompat) {
+			// Values destinations want a directed diagnostic that points at
+			// the closed-symbolic-set rule, not the generic Accepts wording.
+			if _, isValues := c.ValuesDeclForName(retType.Name); isValues && valCompat.Same(intlitASTType()) {
+				CompileErrorF(a, "Cannot construct %s from %s: values cases must be constructed from declared cases", retType, valType)
+			}
 			CompileErrorF(a, "Cannot return %s from value of type %s", retType, valType)
 		}
 		if valType.Same(intlitASTType()) {
@@ -3176,12 +3187,15 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 			continue
 		}
 		if argt.Same(intlitASTType()) {
+			if _, isValues := c.ValuesDeclForName(param.Name); isValues {
+				CompileErrorF(arg, "Cannot construct %s from %s: values cases must be constructed from declared cases", param, argt)
+			}
 			argt = param
-		} else if argt.Name == "<nil>" && param.Accepts(argt) {
+		} else if argt.Name == "<nil>" && acceptsCtx(c, param, argt) {
 			// nil literal takes the parameter's nullable-pointer type
 			// rather than carrying its synthetic <nil> through codegen.
 			argt = param
-		} else if !param.Accepts(argt) {
+		} else if !acceptsCtx(c, param, argt) {
 			CompileErrorF(arg, "For argument %d, expected type %v but got %v",
 				i, param, argt)
 		}
@@ -3386,8 +3400,9 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 	// runtime values, and other values types.
 	if _, dstIsValues := c.ValuesDeclForName(destType.Name); dstIsValues {
 		if _, srcIsValues := c.ValuesDeclForName(srcType.Name); srcIsValues && srcType.Name == destType.Name {
-			fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, compileTop(of, c, src, nullspot).ref)
-			return dest
+			// Identity cast: compile straight into dest so we don't end
+			// up with an un-forgetted temp from compileTop(..., nullspot).
+			return compileTop(of, c, src, dest)
 		}
 		CompileErrorF(src, "Cannot cast %s to %s: values cases must be constructed from declared cases", srcType, destType)
 	}
@@ -4040,10 +4055,13 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 		param := userParams[i].Type
 		argt := arg.ASTType(c)
 		if argt.Same(intlitASTType()) {
+			if _, isValues := c.ValuesDeclForName(param.Name); isValues {
+				CompileErrorF(arg, "Cannot construct %s from %s: values cases must be constructed from declared cases", param, argt)
+			}
 			argt = param
-		} else if argt.Name == "<nil>" && param.Accepts(argt) {
+		} else if argt.Name == "<nil>" && acceptsCtx(c, param, argt) {
 			argt = param
-		} else if !param.Accepts(argt) {
+		} else if !acceptsCtx(c, param, argt) {
 			CompileErrorF(arg, "For argument %d, expected type %v but got %v", i, param, argt)
 		}
 		if param.HasOwned() {

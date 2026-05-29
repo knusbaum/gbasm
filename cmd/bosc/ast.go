@@ -1601,6 +1601,26 @@ func (dst ASTType) Accepts(src ASTType) bool {
 	return dst.SameOwned(src) && dst.MutCompatible(src) && dst.NilCompatible(src)
 }
 
+// acceptsCtx is Accepts plus the closed-symbolic-set rule: an integer
+// literal cannot land in a values-typed destination (proposal §215–222).
+// Accepts itself has no Context and treats <intlit> as universally
+// coercible into integer-shaped destinations, which would let
+// `return 0` from a `fn () color` silently construct a tag-0 color
+// without going through `color.RED`. acceptsCtx tightens that rule
+// only for values destinations and otherwise defers to Accepts.
+//
+// Call this from any site where a value of a wider type is being
+// coerced into an annotated destination (var/const init, assignment,
+// argument passing, return, field assignment).
+func acceptsCtx(c *Context, dst, src ASTType) bool {
+	if c != nil && src.Same(intlitASTType()) {
+		if _, ok := c.ValuesDeclForName(dst.Name); ok {
+			return false
+		}
+	}
+	return dst.Accepts(src)
+}
+
 func (t ASTType) String() string {
 	// Outer pointer qualifiers (if any) wrap the rest of the type.
 	var sb strings.Builder

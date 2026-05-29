@@ -1,0 +1,13 @@
+package main
+
+type color values {
+	RED
+	GREEN
+}
+
+fn f() color {
+	return 0
+}
+
+fn main() {
+}
