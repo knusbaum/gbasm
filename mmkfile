@@ -1,5 +1,7 @@
 all: bld bas bosc bdoc
 
+[clean all] :+ [clean cmd/bas] [clean cmd/bosc]
+
 file bld {
     go build ./cmd/bld
 }  

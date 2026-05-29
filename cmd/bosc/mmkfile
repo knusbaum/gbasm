@@ -1,15 +1,15 @@
 all: bosc
 
 file bosc {
-    make bosc
+    go build .
 }
 
 file bas {
-    make bas
+    go build ../bas
 }
 
 file bld {
-    make bld
+    go build ../bld
 }
 
 
@@ -93,7 +93,7 @@ EOF
 }
 
 clean : {
-    rm -f tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout
+    rm -f tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout *.importcfg
     rm -f bosc bas bld string.bo init.bo heap.bo builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo test.importcfg
 }
 
