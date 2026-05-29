@@ -3858,8 +3858,9 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 }
 
 // compileConcreteMethodCall desugars v.method(args) into TypeName.method(receiver, args)
-// and delegates to compileTop. The receiver is &v when v is a value type, or v itself
-// when v is already a pointer type (since methods always take pointer receivers).
+// and delegates to compileTop. The receiver is passed by address when the method
+// declares a pointer receiver and by value when the method declares a value
+// receiver; see the inline comment for the dispatch rule.
 func compileConcreteMethodCall(of io.Writer, c *Context, a AST, callNode *Funcall,
 	receiverType ASTType, typeName string, method *FuncDecl, dest spot) spot {
 	// A method's declared first-arg type chooses whether we pass the

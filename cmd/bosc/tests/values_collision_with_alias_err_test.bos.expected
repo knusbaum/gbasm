@@ -1,0 +1,2 @@
+Compiling tests/values_collision_with_alias_err_test.bos
+Failed to parse: values type "color" conflicts with existing type alias of the same name

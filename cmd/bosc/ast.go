@@ -283,12 +283,54 @@ func (c *Context) SetPkgname(name string) {
 	c.pkgname = name
 }
 
+// checkPackageNameCollision panics with a directed diagnostic when `name`
+// is already declared at the package level under a kind other than
+// excludeKind. The excludeKind argument is the kind owned by the caller
+// (e.g. "values type") and is skipped so callers can keep their own
+// within-kind idempotence handling.
+//
+// Stage 2 turned this on for the type-shaped decls (struct, type alias,
+// interface, values type) so that two `type X ...` forms cannot silently
+// coexist as different kinds and confuse the selector resolver. Free
+// function names are intentionally not cross-checked here: methods
+// register as `TypeName.method` (a dotted key that never collides with a
+// bare type name), and bare function names sharing a type's bare name is
+// a separate audit.
+func (c *Context) checkPackageNameCollision(p position, name, excludeKind string) {
+	root := c
+	for root.parent != nil {
+		root = root.parent
+	}
+	if excludeKind != "struct" {
+		if _, ok := root.structs[name]; ok {
+			panic(&interpreterError{msg: fmt.Sprintf("%s %q conflicts with existing struct of the same name", excludeKind, name), p: p})
+		}
+	}
+	if excludeKind != "type alias" {
+		if _, ok := root.typeAliases[name]; ok {
+			panic(&interpreterError{msg: fmt.Sprintf("%s %q conflicts with existing type alias of the same name", excludeKind, name), p: p})
+		}
+	}
+	if excludeKind != "interface" {
+		if _, ok := root.interfaceDecls[name]; ok {
+			panic(&interpreterError{msg: fmt.Sprintf("%s %q conflicts with existing interface of the same name", excludeKind, name), p: p})
+		}
+	}
+	if excludeKind != "values type" {
+		if _, ok := root.valuesDecls[name]; ok {
+			panic(&interpreterError{msg: fmt.Sprintf("%s %q conflicts with existing values type of the same name", excludeKind, name), p: p})
+		}
+	}
+}
+
 func (c *Context) DefineStruct(name string, s *StructDecl) {
 	if es, ok := c.structs[name]; ok {
 		if es != s {
 			panic(&interpreterError{msg: fmt.Sprintf("Struct %q already defined", name), p: s.p})
 		}
+		return
 	}
+	c.checkPackageNameCollision(s.p, name, "struct")
 	c.structs[name] = s
 }
 
@@ -331,6 +373,7 @@ func (c *Context) DefineTypeAlias(p position, name string, underlying ASTType) {
 	if _, ok := c.typeAliases[name]; ok {
 		panic(&interpreterError{fmt.Sprintf("Type \"%s\" already declared", name), p})
 	}
+	c.checkPackageNameCollision(p, name, "type alias")
 	c.typeAliases[name] = underlying
 }
 
@@ -343,6 +386,7 @@ func (c *Context) DefineInterface(p position, name string, decl *InterfaceDecl) 
 	if _, ok := root.interfaceDecls[name]; ok {
 		panic(&interpreterError{fmt.Sprintf("Interface %q already defined", name), p})
 	}
+	root.checkPackageNameCollision(p, name, "interface")
 	root.interfaceDecls[name] = decl
 }
 
@@ -355,6 +399,7 @@ func (c *Context) DefineValuesType(p position, name string, decl *ValuesDecl) {
 	if _, ok := root.valuesDecls[name]; ok {
 		panic(&interpreterError{fmt.Sprintf("Values type %q already defined", name), p})
 	}
+	root.checkPackageNameCollision(p, name, "values type")
 	root.valuesDecls[name] = decl
 }
 

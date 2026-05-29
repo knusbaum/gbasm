@@ -1,0 +1,11 @@
+package main
+
+type color i64
+
+type color values {
+	RED
+	GREEN
+}
+
+fn main() {
+}
