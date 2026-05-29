@@ -1,0 +1,28 @@
+package main
+
+import "string"
+
+type color values {
+	RED
+	GREEN
+	BLUE
+} {
+	name(c color) byte[] {
+		if (c == color.RED) {
+			return "red"
+		}
+		if (c == color.GREEN) {
+			return "green"
+		}
+		return "blue"
+	}
+}
+
+fn main() {
+	var c color = color.GREEN
+	string.puts(c.name())
+	string.puts("\n")
+	c = color.BLUE
+	string.puts(c.name())
+	string.puts("\n")
+}

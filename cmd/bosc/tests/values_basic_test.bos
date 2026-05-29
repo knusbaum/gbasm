@@ -1,0 +1,23 @@
+package main
+
+import "string"
+
+type color values {
+	RED
+	GREEN
+	BLUE
+}
+
+fn main() {
+	var c color = color.RED
+	if (c == color.RED) {
+		string.puts("red\n")
+	}
+	c = color.GREEN
+	if (c == color.GREEN) {
+		string.puts("green\n")
+	}
+	if (c != color.RED) {
+		string.puts("not red\n")
+	}
+}

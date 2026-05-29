@@ -63,6 +63,7 @@ const (
 	tok_dispose
 	tok_type
 	tok_interface
+	tok_values
 )
 
 var keywords map[string]toktype = map[string]toktype{
@@ -82,6 +83,7 @@ var keywords map[string]toktype = map[string]toktype{
 	"dispose":   tok_dispose,
 	"type":      tok_type,
 	"interface": tok_interface,
+	"values":    tok_values,
 }
 
 const (
@@ -194,6 +196,8 @@ func (t toktype) String() string {
 		return "tok_type"
 	case tok_interface:
 		return "tok_interface"
+	case tok_values:
+		return "tok_values"
 	}
 	return "UNKNOWN"
 }

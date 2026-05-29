@@ -88,6 +88,13 @@ type ResolvedObject struct {
 	// StructDecl points at the StructDecl for ResolvedType when the type
 	// is a struct, or for the owner of a ResolvedStructField.
 	StructDecl *StructDecl
+
+	// Values is non-nil for ResolvedValuesType and ResolvedValuesCase
+	// and points at the owning values declaration.
+	Values *ValuesDecl
+	// Case is non-nil for ResolvedValuesCase and points at the specific
+	// case within Values.
+	Case *ValuesCase
 }
 
 // ResolveSelector resolves an AST that may be a Symbol, a Dot chain, or
@@ -143,6 +150,14 @@ func resolveRoot(c *Context, name string, sym *Symbol) ResolvedObject {
 		return ResolvedObject{
 			Kind: ResolvedPackage,
 			Name: name,
+		}
+	}
+	if d, ok := c.ValuesDeclForName(name); ok {
+		return ResolvedObject{
+			Kind:   ResolvedValuesType,
+			Name:   name,
+			Type:   ASTType{Name: name},
+			Values: d,
 		}
 	}
 	if d, ok := c.StructDeclForName(name); ok {
@@ -215,11 +230,20 @@ func stepSelector(c *Context, prev ResolvedObject, member string, dotExpr AST) R
 				}
 			}
 		}
-		// Imported struct/typealias/interface: register the type
+		// Imported struct/typealias/interface/values: register the type
 		// identity with the package qualifier. The qualified key is the
-		// one StructDeclForName / TypeAliasFor / InterfaceForName
-		// already index by.
+		// one StructDeclForName / TypeAliasFor / InterfaceForName /
+		// ValuesDeclForName already index by.
 		qualified := prev.Name + "." + member
+		if d, ok := c.ValuesDeclForName(qualified); ok {
+			return ResolvedObject{
+				Kind:   ResolvedValuesType,
+				Name:   qualified,
+				Pkg:    prev.Name,
+				Type:   ASTType{Name: qualified},
+				Values: d,
+			}
+		}
 		if d, ok := c.StructDeclForName(qualified); ok {
 			return ResolvedObject{
 				Kind:       ResolvedType,
@@ -257,6 +281,23 @@ func stepSelector(c *Context, prev ResolvedObject, member string, dotExpr AST) R
 		// every step. Pointer-through-nil is checked here so callers
 		// do not have to duplicate the check.
 		t := prev.Type
+		// Case-on-instance rejection (proposal §418/§781): if the
+		// runtime value's type is a values type and `member` matches
+		// a declared case name, refuse and tell the user to use the
+		// type-prefixed form instead.
+		if vd, ok := c.ValuesDeclForName(t.Name); ok {
+			for _, vc := range vd.Cases {
+				if vc.Name == member {
+					recvLabel := prev.Name
+					if recvLabel == "" {
+						recvLabel = "expression"
+					}
+					CompileErrorF(dotExpr,
+						"Cannot access case %s through values value %s; reference as %s.%s",
+						member, recvLabel, t.Name, member)
+				}
+			}
+		}
 		if t.Indirection != 0 && t.NilMask&1 != 0 {
 			CompileErrorF(dotExpr, "Cannot access field %s through nullable pointer type %s", member, t)
 		}
@@ -302,6 +343,28 @@ func stepSelector(c *Context, prev ResolvedObject, member string, dotExpr AST) R
 			Kind: ResolvedUnknown,
 			Name: prev.Name + "." + member,
 		}
+
+	case ResolvedValuesType:
+		// T.CASE — declared values case. Codegen emits the case's
+		// private tag as a value of the values type.
+		for i := range prev.Values.Cases {
+			vc := &prev.Values.Cases[i]
+			if vc.Name == member {
+				return ResolvedObject{
+					Kind:   ResolvedValuesCase,
+					Name:   prev.Name + "." + member,
+					Pkg:    prev.Pkg,
+					Type:   ASTType{Name: prev.Name},
+					Values: prev.Values,
+					Case:   vc,
+				}
+			}
+		}
+		CompileErrorF(dotExpr, "Values type %s has no case %s", prev.Name, member)
+
+	case ResolvedValuesCase:
+		// io_error.NOT_FOUND.foo — cases have no members in v1.
+		CompileErrorF(dotExpr, "Values case %s has no member %s", prev.Name, member)
 	}
 	return ResolvedObject{Kind: ResolvedUnknown}
 }

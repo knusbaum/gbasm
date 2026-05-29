@@ -1,0 +1,2 @@
+Compiling tests/values_projection_arity_err_test.bos
+Failed to parse: Value PERMISSION_DENIED has 1 projection initializer(s) but io_error declares 2 projection(s)

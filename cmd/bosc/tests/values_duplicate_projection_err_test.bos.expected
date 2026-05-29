@@ -1,0 +1,2 @@
+Compiling tests/values_duplicate_projection_err_test.bos
+Failed to parse: Values type io_error declares projection i64 more than once

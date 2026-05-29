@@ -1,0 +1,8 @@
+package main
+
+type io_error values (i64, i64) {
+	NOT_FOUND: 404, 1
+}
+
+fn main() {
+}

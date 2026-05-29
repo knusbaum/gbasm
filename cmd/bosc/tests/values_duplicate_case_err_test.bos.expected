@@ -1,0 +1,2 @@
+Compiling tests/values_duplicate_case_err_test.bos
+Failed to parse: Duplicate value name RED in values type color

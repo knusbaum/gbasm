@@ -76,6 +76,8 @@ type Context struct {
 	typeAliases map[string]ASTType
 	// maps interface names to their declarations.
 	interfaceDecls map[string]*InterfaceDecl
+	// maps values type names to their declarations.
+	valuesDecls map[string]*ValuesDecl
 	// maps type alias names to their attached methods.
 	typeMethods map[string][]*FuncDecl
 	// vtables collects (vtableName → spec) for emission at end of compilation.
@@ -108,6 +110,7 @@ func NewContext() *Context {
 		importedVars:   make(map[string]map[string]ASTType),
 		typeAliases:    make(map[string]ASTType),
 		interfaceDecls: make(map[string]*InterfaceDecl),
+		valuesDecls:    make(map[string]*ValuesDecl),
 		typeMethods:    make(map[string][]*FuncDecl),
 		vtables:        make(map[string]vtableSpec),
 		strngs:         make(map[string]string),
@@ -145,6 +148,12 @@ func typeIsMemoryBacked(c *Context, t ASTType) bool {
 	if c != nil {
 		if _, ok := c.InterfaceForName(t.Name); ok {
 			return true
+		}
+		// Values types are register-resident in v1 (private i64 tag).
+		// Make the choice explicit here so future representations
+		// (e.g. payload variants) can change it in one place.
+		if _, ok := c.ValuesDeclForName(t.Name); ok {
+			return false
 		}
 	}
 	if _, isStruct := c.StructDeclForName(t.Name); isStruct {
@@ -335,6 +344,31 @@ func (c *Context) DefineInterface(p position, name string, decl *InterfaceDecl) 
 		panic(&interpreterError{fmt.Sprintf("Interface %q already defined", name), p})
 	}
 	root.interfaceDecls[name] = decl
+}
+
+// DefineValuesType registers a values declaration on the root context.
+func (c *Context) DefineValuesType(p position, name string, decl *ValuesDecl) {
+	root := c
+	for root.parent != nil {
+		root = root.parent
+	}
+	if _, ok := root.valuesDecls[name]; ok {
+		panic(&interpreterError{fmt.Sprintf("Values type %q already defined", name), p})
+	}
+	root.valuesDecls[name] = decl
+}
+
+// ValuesDeclForName looks up a values declaration by name, walking the
+// context chain to the root. Both unqualified and "pkg.Name" qualified
+// keys are supported, matching the existing struct lookup convention.
+func (c *Context) ValuesDeclForName(name string) (*ValuesDecl, bool) {
+	if c == nil {
+		return nil, false
+	}
+	if d, ok := c.valuesDecls[name]; ok {
+		return d, true
+	}
+	return c.parent.ValuesDeclForName(name)
 }
 
 // InterfaceForName looks up an interface declaration by name, searching the root context.
@@ -1183,6 +1217,11 @@ func (t *ASTType) Size(c *Context) int {
 	if c != nil {
 		if _, ok := c.InterfaceForName(t.Name); ok {
 			return 16
+		}
+		// Values type: storage is the private tag type. v1 is always
+		// i64, so the size lookup defers to the declared tag type.
+		if vd, ok := c.ValuesDeclForName(t.Name); ok {
+			return vd.TagType.Size(c)
 		}
 	}
 	// Anonymous struct: sum of field sizes.
@@ -2076,7 +2115,7 @@ type Dot struct {
 func (d *Dot) ASTType(c *Context) ASTType {
 	r := ResolveSelector(c, d)
 	switch r.Kind {
-	case ResolvedRuntimeValue, ResolvedStructField:
+	case ResolvedRuntimeValue, ResolvedStructField, ResolvedValuesCase:
 		return r.Type
 	case ResolvedUnknown:
 		// Reproduce the pre-resolver diagnostics: distinguish the
@@ -2653,6 +2692,35 @@ func (d *TypeWithMethodsDecl) Note() string {
 	return fmt.Sprintf("type %s %s { ... }", d.Name, d.Underlying)
 }
 func (d *TypeWithMethodsDecl) Pos() position { return d.p }
+
+// ValuesCase is one case in a values declaration: a symbolic name with an
+// optional list of statically-evaluated projection initializers. Tag is a
+// compiler-private dense index assigned at ToAST time and is never visible
+// in user-level code.
+type ValuesCase struct {
+	Name string
+	Tag  int64
+	Expr []AST
+	p    position
+}
+
+// ValuesDecl is the AST node for `type Name values [(projections)] { cases } [{ methods }]`.
+// Projections names the target types (ordered) for each case's static
+// initializer list; the per-case Expr slices match Projections positionally.
+// Cases without projection initializers are valid only when the type has
+// no projection signature (`type Name values { CASE_A; CASE_B }`).
+type ValuesDecl struct {
+	Name        string
+	TagType     ASTType // v1: always i64
+	Projections []ASTType
+	Cases       []ValuesCase
+	Methods     []*FuncDecl
+	p           position
+}
+
+func (*ValuesDecl) ASTType(*Context) ASTType { return voidASTType() }
+func (d *ValuesDecl) Note() string           { return fmt.Sprintf("type %s values { ... }", d.Name) }
+func (d *ValuesDecl) Pos() position          { return d.p }
 
 // vtableSpec records one vtable entry to be emitted.
 type vtableSpec struct {
@@ -3296,6 +3364,109 @@ func (n *Node) toASTTop(c *Context) AST {
 		}
 		c.DefineTypeMethods(n.sval, methods)
 		return &TypeWithMethodsDecl{Name: n.sval, Underlying: underlying, Methods: methods, p: n.p}
+	case n_valuesdecl:
+		nProj := int(n.ival)
+		projNodes := n.args[:nProj]
+		rest := n.args[nProj:]
+		// Cases come first in `rest`, then methods. Both are tagged by
+		// node type so we walk linearly until we hit the first non-case.
+		var caseNodes []*Node
+		for len(rest) > 0 && rest[0].t == n_valuescase {
+			caseNodes = append(caseNodes, rest[0])
+			rest = rest[1:]
+		}
+		methodNodes := rest
+
+		decl := &ValuesDecl{
+			Name:    n.sval,
+			TagType: ASTType{Name: "i64", Signed: true},
+			p:       n.p,
+		}
+		// Projections: validate that no projection type is repeated in
+		// the header.
+		seenProj := make(map[string]bool, nProj)
+		for _, pn := range projNodes {
+			pt := mkTypename(pn)
+			key := pt.String()
+			if seenProj[key] {
+				ParseErrorF(pn, "Values type %s declares projection %s more than once", n.sval, pt)
+			}
+			seenProj[key] = true
+			decl.Projections = append(decl.Projections, pt)
+		}
+		// Cases: dense tags from 0, duplicate-name check, arity check
+		// against the projection signature.
+		seenCase := make(map[string]bool, len(caseNodes))
+		for i, cn := range caseNodes {
+			if seenCase[cn.sval] {
+				ParseErrorF(cn, "Duplicate value name %s in values type %s", cn.sval, n.sval)
+			}
+			seenCase[cn.sval] = true
+			if nProj > 0 && len(cn.args) != nProj {
+				ParseErrorF(cn,
+					"Value %s has %d projection initializer(s) but %s declares %d projection(s)",
+					cn.sval, len(cn.args), n.sval, nProj)
+			}
+			if nProj == 0 && len(cn.args) > 0 {
+				ParseErrorF(cn,
+					"Value %s has projection initializer(s) but %s declares no projections",
+					cn.sval, n.sval)
+			}
+			vc := ValuesCase{
+				Name: cn.sval,
+				Tag:  int64(i),
+				p:    cn.p,
+			}
+			for _, e := range cn.args {
+				vc.Expr = append(vc.Expr, e.toASTTop(NewContext()))
+			}
+			decl.Cases = append(decl.Cases, vc)
+		}
+		// Register the values type before processing methods so that
+		// methods can reference the receiver type by name.
+		c.DefineValuesType(n.p, n.sval, decl)
+		// Methods: same lowering as type-with-methods. Methods register
+		// under `Name.method` in funcs and on the type's method table.
+		var methods []*FuncDecl
+		for _, mn := range methodNodes {
+			if mn.t != n_fn {
+				ParseErrorF(mn, "Expected method definition in values block, got %v", mn.t)
+			}
+			var fn FuncDecl
+			fn.Name = mn.sval
+			fn.p = mn.p
+			nargs := int(mn.ival)
+			margs := mn.args
+			for i := 0; i < nargs; i++ {
+				a := margs[0]
+				fn.Args = append(fn.Args, Binding{
+					Name:    a.sval,
+					Type:    mkTypename(a.args[0]),
+					IsConst: a.ival == 0,
+				})
+				margs = margs[1:]
+			}
+			fn.Return = mkTypename(margs[0])
+			body := margs[1]
+			if body.t != n_block {
+				ParseErrorF(body, "Expected a block for method body, got %v", body.t)
+			}
+			fn.Body = body.toASTTop(NewContext()).(*Block)
+			qualName := n.sval + "." + fn.Name
+			c.DefineFunc(qualName, &FuncDecl{
+				Name:   qualName,
+				Args:   fn.Args,
+				Return: fn.Return,
+				Body:   fn.Body,
+				p:      fn.p,
+			})
+			methods = append(methods, &fn)
+		}
+		decl.Methods = methods
+		if len(methods) > 0 {
+			c.DefineTypeMethods(n.sval, methods)
+		}
+		return decl
 	case n_interface_decl:
 		var decl InterfaceDecl
 		decl.Name = n.sval

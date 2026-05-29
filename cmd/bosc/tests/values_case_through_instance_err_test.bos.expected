@@ -1,0 +1,2 @@
+Compiling tests/values_case_through_instance_err_test.bos
+Fatal: Cannot access case RED through values value c; reference as color.RED

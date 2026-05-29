@@ -1,0 +1,10 @@
+package main
+
+type color values {
+	RED
+	GREEN
+	RED
+}
+
+fn main() {
+}

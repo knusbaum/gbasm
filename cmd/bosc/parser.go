@@ -59,6 +59,8 @@ const (
 	n_interface_decl        // interface Name { sig... }
 	n_interface_method      // method signature (no body)
 	n_multibind             // multi-value destructuring bind: var a T1, const b T2 = expr
+	n_valuesdecl            // type TypeName values [(projections)] { cases } [{ methods }]
+	n_valuescase            // single case in a values decl: NAME[: e1, e2, ...]
 )
 
 func (t nodetype) String() string {
@@ -165,6 +167,10 @@ func (t nodetype) String() string {
 		return "n_interface_method"
 	case n_multibind:
 		return "n_multibind"
+	case n_valuesdecl:
+		return "n_valuesdecl"
+	case n_valuescase:
+		return "n_valuescase"
 	}
 	return "UNKNOWN"
 }
@@ -1359,6 +1365,9 @@ func (p *Parser) parseTypeDecl() *Node {
 	if name.t != n_symbol {
 		panic(&interpreterError{fmt.Sprintf("Expected type name, but found: %v\n", name), name.p})
 	}
+	if p.current().t == tok_values {
+		return p.parseValuesDecl(pos, name)
+	}
 	base := p.parseTypeName()
 	if p.current().t == tok_lcurly {
 		p.advance() // consume '{'
@@ -1377,6 +1386,99 @@ func (p *Parser) parseTypeDecl() *Node {
 		return &Node{t: n_typedecl_with_methods, p: pos, sval: name.sval, args: args}
 	}
 	return &Node{t: n_typedecl, p: pos, sval: name.sval, args: []*Node{base}}
+}
+
+// parseValuesDecl parses the body of `type Name values ...`:
+//
+//	type Name values { CASE_A; CASE_B }
+//	type Name values { CASE_A; CASE_B } { methods... }
+//	type Name values (T1, T2) { CASE_A: e1, e2; CASE_B: e3, e4 }
+//	type Name values (T1, T2) { CASE_A: e1, e2; CASE_B: e3, e4 } { methods... }
+//
+// Returns an n_valuesdecl node:
+//   - sval: type name
+//   - ival: number of projection types (so ToAST can slice args)
+//   - args: [projection-typename × ival, case × N, method × M] in this order
+//
+// `pos` is the position of the leading `type` keyword and `name` is the
+// already-parsed type-name token.
+func (p *Parser) parseValuesDecl(pos position, name *Node) *Node {
+	p.expect(tok_values)
+	var projections []*Node
+	if p.current().t == tok_lparen {
+		p.advance()
+		for p.current().t != tok_rparen {
+			projections = append(projections, p.parseTypeName())
+			if p.current().t == tok_comma {
+				p.advance()
+			}
+		}
+		p.expect(tok_rparen)
+	}
+	hasProjections := len(projections) > 0
+	p.expect(tok_lcurly)
+	var cases []*Node
+	for p.current().t != tok_rcurly {
+		if p.current().t == tok_semicolon {
+			p.advance()
+			continue
+		}
+		if p.current().t == tok_rcurly {
+			break
+		}
+		caseTok := p.current()
+		if caseTok.t != tok_ident {
+			panic(&interpreterError{fmt.Sprintf("Expected a case name, but found: %s", caseTok.t), caseTok.p})
+		}
+		p.advance()
+		caseNode := &Node{t: n_valuescase, p: caseTok.p, sval: caseTok.sval}
+		if p.current().t == tok_colon {
+			p.advance()
+			caseNode.args = append(caseNode.args, p.parseExpression())
+			for p.current().t == tok_comma {
+				p.advance()
+				caseNode.args = append(caseNode.args, p.parseExpression())
+			}
+		} else if hasProjections {
+			panic(&interpreterError{
+				fmt.Sprintf("Case %s missing projection initializers; type %s declares %d projection(s)",
+					caseTok.sval, name.sval, len(projections)),
+				caseTok.p,
+			})
+		}
+		cases = append(cases, caseNode)
+		if p.current().t != tok_semicolon && p.current().t != tok_comma {
+			break
+		}
+		p.advance()
+	}
+	p.expect(tok_rcurly)
+	var methods []*Node
+	if p.current().t == tok_lcurly {
+		p.advance()
+		for p.current().t != tok_rcurly {
+			if p.current().t == tok_semicolon {
+				p.advance()
+				continue
+			}
+			if p.current().t == tok_rcurly {
+				break
+			}
+			methods = append(methods, p.parseMethodDef())
+		}
+		p.expect(tok_rcurly)
+	}
+	args := make([]*Node, 0, len(projections)+len(cases)+len(methods))
+	args = append(args, projections...)
+	args = append(args, cases...)
+	args = append(args, methods...)
+	return &Node{
+		t:    n_valuesdecl,
+		p:    pos,
+		sval: name.sval,
+		ival: uint64(len(projections)),
+		args: args,
+	}
 }
 
 func (p *Parser) parseTopLevel() *Node {

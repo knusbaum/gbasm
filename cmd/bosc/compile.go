@@ -1506,6 +1506,22 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		fmt.Fprintf(of, "}\n")
 		return nullspot
+	case *ValuesDecl:
+		// Stage 2: emit the value-receiver methods as TypeName.method,
+		// reusing the same path TypeWithMethodsDecl uses. Cross-package
+		// metadata (a `values` .bs directive) lands in Stage 5; for now
+		// the values type is local to the producer package.
+		for _, m := range ast.Methods {
+			qualified := &FuncDecl{
+				Name:   ast.Name + "." + m.Name,
+				Args:   m.Args,
+				Return: m.Return,
+				Body:   m.Body,
+				p:      m.p,
+			}
+			compileTop(of, c, qualified, nullspot)
+		}
+		return nullspot
 	case *StructDecl:
 		c.DefineStruct(ast.TName, ast)
 		// Emit the struct shape so bas can carry it into the .bo for
@@ -1975,11 +1991,21 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	case *Dot:
 		// Route the selector through the shared resolver. Cross-package
 		// variable reads land as ResolvedRuntimeValue with Pkg set; struct
-		// field access lands as ResolvedStructField; everything else
-		// (qualified call-position selectors, etc.) is handled by other
-		// compileTop cases and never reaches here.
+		// field access lands as ResolvedStructField; values case references
+		// land as ResolvedValuesCase. Everything else (qualified
+		// call-position selectors, etc.) is handled by other compileTop
+		// cases and never reaches here.
 		{
 			r := ResolveSelector(c, ast)
+			if r.Kind == ResolvedValuesCase {
+				// Emit the case's private tag as a value of the values
+				// type. The tag is an i64 in v1.
+				if dest.empty() {
+					dest = newSpot(of, c, c.Temp(), r.Type)
+				}
+				fmt.Fprintf(of, "\tmov %s %d\n", dest.ref, r.Case.Tag)
+				return dest
+			}
 			if r.Kind == ResolvedRuntimeValue && r.Pkg != "" {
 				// Cross-package variable read: bas treats `pkg.varname`
 				// as an external data symbol (isIdentifier accepts
@@ -3836,13 +3862,20 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 // when v is already a pointer type (since methods always take pointer receivers).
 func compileConcreteMethodCall(of io.Writer, c *Context, a AST, callNode *Funcall,
 	receiverType ASTType, typeName string, method *FuncDecl, dest spot) spot {
+	// A method's declared first-arg type chooses whether we pass the
+	// receiver by value or by address. `type FD i64 { read(fd *FD, ...) }`
+	// wants a pointer, so `f.read(...)` becomes `read(&f, ...)`. A
+	// values-type value-receiver method like `name(c color) byte[]` wants
+	// the value itself, and taking `&c` would mismatch the parameter type
+	// (and force a non-addressable register-resident value to memory).
+	wantsPointerReceiver := len(method.Args) > 0 && method.Args[0].Type.Indirection > 0
 	var receiver AST
 	if recv := callNode.ReceiverExpr(); recv != nil {
-		if receiverType.Indirection == 0 {
+		if wantsPointerReceiver && receiverType.Indirection == 0 {
 			CompileErrorF(callNode, "cannot call method on non-addressable expression receiver (type %s)", receiverType)
 		}
 		receiver = recv
-	} else if receiverType.Indirection > 0 {
+	} else if receiverType.Indirection > 0 || !wantsPointerReceiver {
 		receiver = &Symbol{Name: callNode.PkgName(), p: callNode.p}
 	} else {
 		receiver = &Address{Var: callNode.PkgName(), p: callNode.p}
