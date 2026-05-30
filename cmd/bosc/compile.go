@@ -1885,11 +1885,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			sig.WriteString(a.Type.String())
 		}
-		sig.WriteString(")")
-		if !ast.Return.Same(voidASTType()) {
-			sig.WriteString(" ")
-			sig.WriteString(ast.Return.String())
-		}
+		sig.WriteString(") ")
+		sig.WriteString(ast.Return.String())
 		fmt.Fprintf(of, "\ttype %s\n", sig.String())
 		for i, a := range ast.Args {
 			fmt.Fprintf(of, "\targi %s %d %d\n", a.Name, i, a.Type.Size(c)*8)

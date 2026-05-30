@@ -223,7 +223,7 @@ func (p *Parser) ParseFunctype() (FuncDecl, error) {
 	}
 	p.expect(tok_rparen)
 	rettype := voidASTType()
-	if p.current().t != tok_lcurly {
+	if p.current().t != tok_lcurly && p.current().t != tok_none {
 		rettype = mkTypename(p.parseTypeName())
 	}
 	return FuncDecl{
