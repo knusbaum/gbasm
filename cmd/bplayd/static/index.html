@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Boson Playground</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <h1>Boson Playground</h1>
+        <span id="toolchain" class="chip">toolchain</span>
+      </div>
+      <div class="actions">
+        <button id="reset" type="button" class="secondary">Reset</button>
+        <button id="run" type="button">Run</button>
+      </div>
+    </header>
+
+    <section class="workspace" aria-label="Playground workspace">
+      <div class="editor-pane">
+        <textarea id="source" spellcheck="false" aria-label="Boson source editor"></textarea>
+      </div>
+
+      <div class="result-pane">
+        <div id="status" class="status idle">Ready</div>
+        <div class="tabs" role="tablist" aria-label="Run result views">
+          <button id="tab-output" class="tab active" type="button" role="tab" aria-selected="true" data-panel="output">Output</button>
+          <button id="tab-assembly" class="tab" type="button" role="tab" aria-selected="false" data-panel="assembly">Assembly</button>
+          <button id="tab-steps" class="tab" type="button" role="tab" aria-selected="false" data-panel="steps">Steps</button>
+        </div>
+        <pre id="output" class="panel active" role="tabpanel" aria-labelledby="tab-output"></pre>
+        <pre id="assembly" class="panel" role="tabpanel" aria-labelledby="tab-assembly"></pre>
+        <pre id="steps" class="panel" role="tabpanel" aria-labelledby="tab-steps"></pre>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

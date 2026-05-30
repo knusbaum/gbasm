@@ -1,0 +1,245 @@
+:root {
+  color-scheme: light dark;
+  --bg: #f6f5f2;
+  --text: #171717;
+  --muted: #65615b;
+  --line: #d8d2c7;
+  --panel: #ffffff;
+  --panel-alt: #f0ede7;
+  --accent: #136f63;
+  --accent-strong: #0d5148;
+  --danger: #a53a2a;
+  --focus: #2f80ed;
+  --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #171615;
+    --text: #eeeeea;
+    --muted: #aaa39a;
+    --line: #3b3833;
+    --panel: #22201d;
+    --panel-alt: #2b2824;
+    --accent: #45b7a8;
+    --accent-strong: #75d2c6;
+    --danger: #e0715f;
+    --focus: #78aefb;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+}
+
+button,
+textarea {
+  font: inherit;
+}
+
+button:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.shell {
+  min-height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.topbar {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+h1 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.2;
+  font-weight: 650;
+}
+
+.chip {
+  max-width: 28ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  min-height: 36px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 0 14px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 620;
+}
+
+button:hover {
+  background: var(--accent-strong);
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+button.secondary,
+button.tab {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--line);
+}
+
+button.secondary:hover,
+button.tab:hover,
+button.tab.active {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.workspace {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(360px, 1.1fr) minmax(360px, 0.9fr);
+}
+
+.editor-pane,
+.result-pane {
+  min-width: 0;
+  min-height: 0;
+}
+
+.editor-pane {
+  border-right: 1px solid var(--line);
+}
+
+#source {
+  width: 100%;
+  height: 100%;
+  min-height: calc(100vh - 57px);
+  display: block;
+  resize: none;
+  border: 0;
+  padding: 18px;
+  background: var(--panel);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.55;
+  tab-size: 4;
+}
+
+.result-pane {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  background: var(--panel-alt);
+}
+
+.status {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.status.ok {
+  color: var(--accent-strong);
+}
+
+.status.error {
+  color: var(--danger);
+}
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+button.tab {
+  min-height: 32px;
+  padding: 0 12px;
+}
+
+.panel {
+  margin: 0;
+  display: none;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.panel.active {
+  display: block;
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(320px, 48vh) minmax(320px, 1fr);
+  }
+
+  .editor-pane {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  #source {
+    min-height: 320px;
+  }
+}

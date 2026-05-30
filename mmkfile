@@ -1,3 +1,12 @@
+BOSON_HOME=${BOSON_HOME:-.}
+BOSC=${BOSC:-./bosc}
+BAS=${BAS:-./bas}
+BLD=${BLD:-./bld}
+BDOC=${BDOC:-./bdoc}
+BOSONPATH=${BOSONPATH:-$BOSON_HOME/runtime:.}
+PLAYGROUND_BUNDLE=${PLAYGROUND_BUNDLE:-target/playground}
+PLAYGROUND_BUNDLE_PREFIX=${PLAYGROUND_BUNDLE_PREFIX:-$(pwd)/$PLAYGROUND_BUNDLE}
+
 all: bld bas bosc bdoc
 
 # Toolchain binaries: untyped (phony) so mmk always invokes `go build`,
@@ -11,13 +20,37 @@ bld  { go build ./cmd/bld }
 bas  { go build ./cmd/bas }
 bosc { go build ./cmd/bosc }
 bdoc { go build ./cmd/bdoc }
+bplayd { go build ./cmd/bplayd }
+bplay-runner { go build ./cmd/bplay-runner }
 
 [clean bld]  { rm -f bld }
 [clean bas]  { rm -f bas }
 [clean bosc] { rm -f bosc }
 [clean bdoc] { rm -f bdoc }
+[clean bplayd] { rm -f bplayd }
+[clean bplay-runner] { rm -f bplay-runner }
 
 [clean all] :+ [clean cmd/bas] [clean cmd/bosc]
+
+include ./boson.mmk
+
+playground-runtime : target/builtin.bo target/string.bo target/io.bo target/_io_sys.bo target/_heap.bo target/_init.bo {
+    set -e
+    mkdir -p "$PLAYGROUND_BUNDLE/objects"
+    cp target/builtin.bo "$PLAYGROUND_BUNDLE/objects/builtin.bo"
+    cp target/string.bo "$PLAYGROUND_BUNDLE/objects/string.bo"
+    cp target/io.bo "$PLAYGROUND_BUNDLE/objects/io.bo"
+    cp target/_io_sys.bo "$PLAYGROUND_BUNDLE/objects/_io_sys.bo"
+    cp target/_heap.bo "$PLAYGROUND_BUNDLE/objects/_heap.bo"
+    cp target/_init.bo "$PLAYGROUND_BUNDLE/objects/_init.bo"
+    cat > "$PLAYGROUND_BUNDLE/importcfg" <<EOF
+builtin=$PLAYGROUND_BUNDLE_PREFIX/objects/builtin.bo
+string=$PLAYGROUND_BUNDLE_PREFIX/objects/string.bo
+io=$PLAYGROUND_BUNDLE_PREFIX/objects/io.bo
+EOF
+}
+
+playground: bplayd bplay-runner playground-runtime
 
 test: go_test cmd/bas/test cmd/bosc/test
 
@@ -27,6 +60,8 @@ go_test {
 
 subproject cmd/bas
 subproject cmd/bosc
+
+subproject examples/buggy
 
 sloc {
     echo "Source Lines of Code:"
