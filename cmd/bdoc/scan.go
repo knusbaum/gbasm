@@ -292,6 +292,22 @@ func parseBosType(s *bufio.Scanner, head string, lineno *int, srcfile string, st
 		return d, true
 	}
 
+	// Detect a values underlying. Shape:
+	//   type Name values [(proj1, proj2, ...)] { cases } [{ methods }]
+	// consumeStructBody tracks brace depth and ignores parens, so the
+	// projection signature in parens passes through cleanly. The cases
+	// block becomes Body; methods, if any, follow as a sibling brace
+	// block.
+	if afterName == "values" || strings.HasPrefix(afterName, "values ") || strings.HasPrefix(afterName, "values(") {
+		body, methodOpen := consumeStructBody(s, afterName, lineno)
+		d.Body = body
+		d.Signature = "type " + name + " " + collapseBody(body)
+		if methodOpen {
+			d.Methods = parseBosMethodList(s, lineno, srcfile)
+		}
+		return d, true
+	}
+
 	// Non-struct underlying. The underlying text runs up to the first '{' or
 	// end of line. Anything after that '{' is the method block opener.
 	var underlying string
@@ -408,13 +424,30 @@ func consumeStructBody(s *bufio.Scanner, headRest string, lineno *int) (body str
 	return strings.TrimSpace(body), false
 }
 
-// collapseBody renders a multi-line struct body as a single-line summary for
-// the signature header. Multi-line bodies are summarised as `struct { ... }`.
+// collapseBody renders a multi-line type body as a single-line summary
+// for the signature header. The summary preserves the leading keyword
+// (struct or values, possibly with a projection signature) so the
+// rendered signature reads like the surface syntax. Multi-line bodies
+// that don't begin with a recognized keyword fall back to
+// `struct { ... }` for backwards-compatibility.
 func collapseBody(body string) string {
-	if strings.Contains(body, "\n") {
-		return "struct { ... }"
+	if !strings.Contains(body, "\n") {
+		return body
 	}
-	return body
+	trimmed := strings.TrimLeft(body, " \t")
+	switch {
+	case strings.HasPrefix(trimmed, "struct"):
+		return "struct { ... }"
+	case strings.HasPrefix(trimmed, "values"):
+		// Keep the projection-signature parens (if any); collapse the
+		// case body to `{ ... }`.
+		head := trimmed
+		if brace := strings.IndexByte(head, '{'); brace >= 0 {
+			head = strings.TrimSpace(head[:brace])
+		}
+		return head + " { ... }"
+	}
+	return "struct { ... }"
 }
 
 // parseBosMethodList reads method definitions inside a `type Name X { ... }`

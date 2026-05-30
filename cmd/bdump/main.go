@@ -58,6 +58,26 @@ func main() {
 				fmt.Printf("\t\t\tWARNING: Data name [%s] does not match variable name [%s].\n", d, v.Name)
 			}
 		}
+		fmt.Printf("\tValues:\n")
+		for _, vs := range o.Values {
+			fmt.Printf("\t\t%s (tag %s)\n", vs.Name, vs.TagType)
+			fmt.Printf("\t\t\tCases:\n")
+			for _, c := range vs.Cases {
+				fmt.Printf("\t\t\t\t%s = %d\n", c.Name, c.Tag)
+			}
+			if len(vs.Projections) > 0 {
+				fmt.Printf("\t\t\tProjections:\n")
+				for i, p := range vs.Projections {
+					fmt.Printf("\t\t\t\t[%d] %s\n", i, p.TargetType)
+				}
+			}
+			if len(vs.MethodNames) > 0 {
+				fmt.Printf("\t\t\tMethods:\n")
+				for _, mn := range vs.MethodNames {
+					fmt.Printf("\t\t\t\t%s\n", mn)
+				}
+			}
+		}
 		fmt.Printf("\tFunctions:\n")
 		for f, v := range o.Funcs {
 			fmt.Printf("\t\t%s\n", f)
