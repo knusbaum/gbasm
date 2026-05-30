@@ -106,6 +106,8 @@ var t  Tag = Tag(n)       // i64 → Tag (truncating)
 
 Integer literals coerce naturally. Widening (signed source → larger type) uses sign-extension; widening (unsigned source → larger type) uses zero-extension; same-size cast is a reinterpretation; narrowing truncates.
 
+A second `type Name <kind> { ... }` form, `type Name values { ... }`, declares a closed symbolic value type whose user-visible cases are scoped names rather than integer literals. See [Values Types](#values-types).
+
 ### Expressions
 
 Arithmetic: `+`, `-`, `*`, `/`. Multiplication and division dispatch to signed (`imul`/`idiv`) or unsigned (`mul`/`div`) instructions based on the operand types.
@@ -1216,7 +1218,7 @@ type point struct {
 
 Field separators inside a struct body may be `,`, a newline (the lexer inserts `;` automatically), or both; a trailing separator before `}` is allowed.
 
-- Instance methods take a pointer receiver as their first parameter. The parameter name is arbitrary; `self` is conventional. **Value receivers are not allowed.**
+- Instance methods take their receiver as the first parameter. The parameter name is arbitrary; `self` is conventional. Most methods use a pointer receiver (`*T`, `*mut T`, `owned *owned T`); small register-resident types — including `values` types and `i64`-sized type aliases that want value-backed interface satisfaction — may instead use a **value receiver** (`name(e T)`). The call-site dispatch rule (below) consults the declared receiver shape and either takes the address or copies the value.
 - The receiver may carry ownership qualifiers: `*T` (borrow), `*mut T` (mutable borrow), `owned *owned T` (consuming — takes ownership of the pointed-to value).
 - **Static methods** take *no* receiver. They are namespaced under the type and called as `T.method(args)`. A static method has the same symbol shape (`pkg.T.method`) as an instance method; the only difference is that no receiver is implicit at the call site.
 - Methods are emitted as regular functions with three-part symbol names: `pkg.TypeName.method_name` (e.g. `mypkg.foo.compute`).
@@ -1224,7 +1226,7 @@ Field separators inside a struct body may be `,`, a newline (the lexer inserts `
 
 **Concrete method call desugaring:**
 
-- `v.method(args...)` where `v` has type `T` → `T.method(&v, args...)` (address taken automatically for the pointer receiver).
+- `v.method(args...)` where `v` has type `T` → `T.method(&v, args...)` if `method`'s first parameter is `*T`/`*mut T`/etc. (address taken automatically), or `T.method(v, args...)` if it is a bare `T` value receiver (the value is passed directly).
 - `p.method(args...)` where `p` has type `*T` or `*mut T` → `T.method(p, args...)` (passed directly, no extra indirection).
 - `(expr).method(args...)` where `expr` is an arbitrary expression of concrete type `T` → the expression is evaluated, its type looked up, and dispatched the same way. Interface-typed expression receivers are not yet supported; bind the value to a named variable first.
 - `T.method(args...)` where `T` is a type with a zero-receiver static method → direct call to `pkg.T.method(args...)` with no implicit receiver.
@@ -1263,10 +1265,15 @@ Satisfaction is checked at coercion sites only — there is no eager or declarat
 An interface value is 16 bytes regardless of how many methods the interface declares:
 
 ```
-{ data *byte, vtable *VtableShape }
+{ data <8 bytes>, vtable *VtableShape }
 ```
 
-The `data` pointer is an opaque type-erased pointer to the concrete value. The `vtable` pointer points to a compiler-generated static global.
+The `vtable` pointer points to a compiler-generated static global. The `data` word has two interpretations:
+
+- **Pointer-backed** (the default): `data` is an opaque type-erased pointer to the concrete value. Used whenever the source coerced into the interface is a pointer (or carries owned bits at any pointer level).
+- **Value-backed**: `data` is the concrete value bits themselves, sign- or zero-extended into 8 bytes. Used when the source is a scalar or `values`-typed value of ≤ 8 bytes and every interface method declares a non-pointer (value) receiver. No heap allocation is required, and the data word aliases no caller storage.
+
+Value-backed coercion is rejected when the value is larger than 8 bytes, when the source is a slice / fixed array / function pointer (these have well-defined pointer forms instead), or when any interface method declares a pointer receiver — the dispatch site has only a value to hand to `rdi`, so a pointer-receiver method has no address to receive.
 
 ### Vtable layout
 
@@ -1361,6 +1368,165 @@ A change to add interfaces touches each compiler layer in order:
    - Coercion from concrete type to interface type → emit `__vtable_pkg.T_I` static global (if not already emitted for this pair); build 16-byte fat pointer in two slots (`data` + vtable address).
    - Interface method call → load vtable, index to method offset, indirect call with data pointer prepended.
 6. **Symbol naming**: three-part `pkg.TypeName.method` names flow through the assembler's auto-qualification and the linker's symbol table without structural changes — they are just dot-separated symbol strings like cross-package calls today.
+
+---
+
+## Values Types
+
+`values` types are a third `type Name <kind> { ... }` form alongside type aliases and structs. A values type names a finite set of symbolic cases, optionally pairs each case with a list of statically-known projection values, and (also optionally) attaches methods. The runtime value is just a compiler-private dense tag; the user-visible cases are *not* integer literals.
+
+The motivating use case is allocation-free symbolic error values: a value-receiver method whose receiver fits in 8 bytes can satisfy an interface without any heap pointer (see [Interface values](#interface-values-fat-pointer)).
+
+### Declaration syntax
+
+There are two forms. Tag-only:
+
+```
+type color values {
+    RED
+    GREEN
+    BLUE
+} {
+    name(c color) byte[] {
+        if (c == color.RED)   { return "red" }
+        if (c == color.GREEN) { return "green" }
+        return "blue"
+    }
+}
+```
+
+And projection-bearing:
+
+```
+type io_error values (i64, byte[]) {
+    NOT_FOUND:         404, "not found"
+    PERMISSION_DENIED: 403, "permission denied"
+    BUSY:              503, "busy"
+} {
+    message(e io_error) byte[] {
+        return byte[](e)
+    }
+}
+```
+
+- The optional `(T1, T2, ...)` parenthesized list after `values` is the **projection signature**: each case must supply exactly one initializer for every projection type, in declared order. Duplicate projection types in the signature are rejected.
+- The case body is `NAME[: expr1, expr2, ...]`. Cases are separated by `;` (or a newline — the lexer inserts `;` automatically) or `,`. Duplicate case names are rejected.
+- The optional second `{ ... }` block carries methods. Method definitions follow the same grammar as type-alias methods; a value receiver (`name(c color) ...`) is the canonical form, matching the closed-symbolic-set nature of the type.
+- A tag-only values type may have no cases with initializers; a projection-bearing values type may not have cases without them. The arity check is enforced at AST construction time.
+
+### Cases are scoped
+
+Case names are namespaced under the values type and are *not* introduced into the package namespace:
+
+```
+return io_error.NOT_FOUND          // reference to a local values case
+return errors.io_error.NOT_FOUND   // reference to an imported values case
+```
+
+A bare `NOT_FOUND` does not resolve in v1, even with `io_error` in scope; this is a deliberate choice that avoids collisions between two values types that both want names like `OK` or `UNKNOWN`. Case access through a runtime values value (e.g. `e.NOT_FOUND` where `e` has type `io_error`) is rejected with a directed error suggesting the type-prefixed form.
+
+Selector resolution (`io_error.NOT_FOUND`, `errors.io_error.NOT_FOUND`, `pkg.Type.case`) flows through a shared selector resolver in `cmd/bosc/resolve.go` that walks `Dot` chains left-to-right and classifies the result (`ResolvedPackage`, `ResolvedValuesType`, `ResolvedValuesCase`, etc.). The same resolver covers struct-field access, qualified function calls, and qualified type names, so type checking and code generation cannot disagree about what a selector means.
+
+### Runtime representation
+
+A values type is represented at runtime as its private tag — `i64` in v1, dense from 0 in declaration order. The tag itself is unreachable from user code: there is no operation that exposes the raw bits, and conversion to an integer always goes through a declared integer projection.
+
+Projection data lives in compiler-generated static tables, one per declared projection type, indexed by tag. For the `io_error` declaration above, codegen emits two table symbols (`__projection_io_error__0` for the `i64` projection, `__projection_io_error__1` for the `byte[]` projection) plus the method functions.
+
+The projection-table symbol scheme uses the case's *index in the projection signature* rather than the projection type's printed form. Earlier revisions encoded the type's structure into the key, but every flat-string encoding is collidable against some user-chosen type alias. Indices are scoped to a single values declaration (whose duplicate-projection check already enforces uniqueness), so a numeric index can never collide.
+
+### Projection casts
+
+A cast `T(e)` where `e` has values type `V` and `T` is one of `V`'s declared projection target types lowers to an indexed load from the corresponding projection table:
+
+```
+const e io_error = io_error.NOT_FOUND
+string.puts(byte[](e))      // copies the byte[] projection at tag(e)
+string.puti(i64(e))         // copies the i64 projection at tag(e)
+```
+
+There is no implicit conversion: every projection use is an explicit cast. Casting to a type the values declaration does *not* project to is rejected with the directed `Cannot cast V to T: V has no T projection` diagnostic.
+
+The cast path handles scalar and memory-backed projection element types uniformly: scalar projections (i8…i64, function pointers, plain pointers) lower to a single `mov dest [base+idx*scale]`; memory-backed projections (`byte[]`, structs, fixed arrays) lower to a `lea` of the table slot followed by `spot_memcpy`. Element sizes that x86-64's SIB byte cannot encode (16-byte slice headers, larger structs) precompute the byte offset (`shl` for power-of-two sizes, `imul` otherwise) and index with scale 1.
+
+### Closed symbolic set
+
+Values types are closed: the only way to produce a values-typed value is to reference a declared case. Casting from any other type into a values type is rejected:
+
+```
+io_error(999)              // error: integer-to-values cast not allowed
+io_error(some_other_v)     // error: cross-values-type cast not allowed
+```
+
+The same rule blocks integer literals coercing into a values destination at file scope, in struct fields, in function arguments, in returns, and in array elements — every site where a `var x io_error = 999` shape could otherwise sneak through. Identity casts (`io_error(e)` where `e` is already `io_error`) are accepted as a no-op.
+
+Equality is defined only between values of the same values type:
+
+```
+if (e == io_error.NOT_FOUND) { ... }   // ok
+if (e == another_v.SOMETHING) { ... }  // error: cross-type comparison rejected
+```
+
+Different values types are rejected from comparison even when both are represented as `i64` internally.
+
+### Value-receiver methods and interface satisfaction
+
+Methods on a values type are emitted as regular three-part symbols (`pkg.io_error.message`) and are called the same way as any other type-block method. With a value-receiver shape (`message(e io_error) byte[]`), `v.method()` passes `v` directly — no address is taken, no memory backing is forced.
+
+A values type whose methods are value-receiver shaped and whose tag fits in 8 bytes satisfies a value-receiver interface without heap allocation. The interface fat pointer carries the tag in its data word and the producer's vtable in the vtable word:
+
+```
+interface error_val {
+    message(e self) byte[]
+}
+
+fn open() error_val {
+    return io_error.NOT_FOUND   // value-backed coercion; no allocation
+}
+```
+
+The cross-package case works the same way: a consumer can return another package's values case through an interface declared in either package, and the importer's compilation registers a `(pkg.io_error, error_val)` vtable just as it would for any other concrete-type → interface pair.
+
+### Cross-package metadata
+
+Values types cross package boundaries through a new `.bo` directive parallel to `interface` and `struct`. The schematic form is:
+
+```
+values io_error {
+    tag i64
+    case NOT_FOUND 0
+    case PERMISSION_DENIED 1
+    projection i64
+    projection byte[]
+    method message
+}
+```
+
+This carries the case list (with private tags), the projection signature, and the bare method names. The importing package reconstructs the `ValuesDecl` from this directive and from the already-imported function table, so `errors.io_error.NOT_FOUND`, `byte[](err)`, and `err.message()` all work cross-package without re-running the producer's `ToAST`. The projection-table symbols themselves are referenced by their qualified form (`errors.__projection_io_error__0`); the consumer emits a reference and the linker resolves it to the producer's data section.
+
+### What is not in v1
+
+- No payload variants. A future `NOT_FOUND(path byte[])` shape (tagged union) would need a wider representation and is left to a separate feature.
+- No exposed raw tag value. The compiler may encode tags as a different representation in the future without changing surface semantics; users observing the tag must declare an integer projection.
+- No exhaustive `switch`/`match` syntax.
+- No shorthand for hoisting selected case names into local scope.
+- No generated `.data()` or printing helpers — users project explicitly.
+
+### Implementation notes
+
+A change to add `values` touches the compiler layers in order:
+
+1. **Lexer** (`cmd/bosc/lexer.go`): adds `values` as a global keyword.
+2. **Parser** (`cmd/bosc/parser.go`): extends `parseTypeDecl` to recognize `type Name values ...` and delegate to `parseValuesDecl`. The parser produces a dedicated `n_valuesdecl` node carrying projection-type nodes, case nodes, and method nodes.
+3. **AST** (`cmd/bosc/ast.go`): `ValuesDecl` and `ValuesCase` types; a new `valuesDecls` map on `Context` (distinct from `structs`, `typeAliases`, and `interfaceDecls`); cross-kind collision rejection at registration time. `ToAST` assigns each case a dense private tag, checks duplicate cases, checks duplicate projection types, and checks per-case initializer arity.
+4. **Selector resolver** (`cmd/bosc/resolve.go`): `ResolvedValuesType` / `ResolvedValuesCase` classifications; case-on-instance rejection (`e.NOT_FOUND` against a runtime values value); qualified cross-package case access.
+5. **Codegen** (`cmd/bosc/compile.go`):
+   - `ValuesDecl` top-level case emits the `values` metadata directive, one `__projection_<type>__<index>` static table per projection (encoded through the same path as ordinary array initializers), and the method functions.
+   - Case references compile via the selector resolver: a `ResolvedValuesCase` lowers to `mov dest <tag>` as a value of the values type.
+   - Projection casts (`T(e)`) detect the values-source case in `compileCast` and route to `compileProjectionCast`, which materializes the table base with `lea` and emits the indexed load.
+   - Closed-symbolic-set rules close coercion sites that would otherwise admit non-values sources into values destinations (file-scope vars, struct fields, arguments, returns, array elements).
+6. **Cross-package metadata** (`ofile.go`, `bwrite.go`, `cmd/bas/main.go`): a `ValuesShape` carries the tag width, ordered cases-with-tags, projection signature, and method names through the `.bo` format; `cmd/bas` parses the `values` directive and stores it on the producer's `OFile`.
+7. **Tools** (`cmd/bdump`, `cmd/bdoc`): both inspect and document values declarations alongside structs, type aliases, and interfaces.
 
 ---
 
@@ -1921,6 +2087,10 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Boson source string and character literal escapes: `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, `\'`, `\xHH`
 - Type-alias casts as file-scope static initializers (`var fd FD = FD(3)`, qualified form `io.FD(3)`)
 - Position tracking through a leading file-level doc comment preamble (errors point at the correct source line even when the file begins with comments)
+- `values` types (`type Name values { ... }`): closed symbolic case sets with compiler-private dense `i64` tags, scoped case access (`T.CASE`, `pkg.T.CASE`), declared static projections with explicit projection casts (`i64(e)`, `byte[](e)`, struct projections, function-pointer projections), optional value-receiver methods, value-backed interface satisfaction without heap allocation, and cross-package use through a `.bo` `values` directive
+- Value-receiver methods (`name(e T)` rather than `name(e *T)`) on `i64`-sized type aliases and `values` types; recognized at call-site dispatch and accepted as the receiver shape for value-backed interface coercion
+- Shared selector resolver (`cmd/bosc/resolve.go`) classifying `Dot` chains into `ResolvedRuntimeValue` / `ResolvedPackage` / `ResolvedType` / `ResolvedValuesType` / `ResolvedValuesCase` / `ResolvedStructField` / `ResolvedFunction`; `Funcall.Callee` carries the resolved chain, so qualified calls, methods, function pointers, and values cases reach codegen through the same path
+- Cross-kind name collision rejection at package level between type-shaped declarations (struct / typealias / interface / values / imported package), so a values type cannot silently shadow a struct or vice versa
 
 **Known limitations / future direction:**
 
