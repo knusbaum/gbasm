@@ -1,22 +1,23 @@
 all: bld bas bosc bdoc
 
+# Toolchain binaries: untyped (phony) so mmk always invokes `go build`,
+# which is fast under Go's own build cache and is the only layer that
+# tracks .go source changes accurately. The previous `file <name> { go
+# build ... }` form pinned freshness to the binary's mtime with no deps,
+# so once the binary existed mmk skipped the body and edits to .go files
+# never propagated.
+
+bld  { go build ./cmd/bld }
+bas  { go build ./cmd/bas }
+bosc { go build ./cmd/bosc }
+bdoc { go build ./cmd/bdoc }
+
+[clean bld]  { rm -f bld }
+[clean bas]  { rm -f bas }
+[clean bosc] { rm -f bosc }
+[clean bdoc] { rm -f bdoc }
+
 [clean all] :+ [clean cmd/bas] [clean cmd/bosc]
-
-file bld {
-    go build ./cmd/bld
-}  
-
-file bas {
-    go build ./cmd/bas
-}
-
-file bosc {
-    go build ./cmd/bosc
-}
-
-file bdoc {
-    go build ./cmd/bdoc
-}
 
 test: go_test cmd/bas/test cmd/bosc/test
 
