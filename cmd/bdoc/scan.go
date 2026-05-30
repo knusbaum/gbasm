@@ -589,7 +589,13 @@ func tryBsDecl(s *bufio.Scanner, head string, lineno *int, srcfile string) (Decl
 		sig := "function " + name
 		annot := peekTypeAnnotation(s, lineno)
 		if annot != "" {
-			sig = annot + "   // " + name
+			// Strip the leading `type` keyword — it's just a marker
+			// in the .bs source and adds visual noise to the signature.
+			// Lead with the function name (parallel to how DeclFunc
+			// signatures lead with `fn name(...)`) so the name is the
+			// primary visible label rather than a trailing comment.
+			annot = strings.TrimSpace(strings.TrimPrefix(annot, "type"))
+			sig = "function " + name + " " + annot
 		}
 		return Decl{
 			Kind:      DeclAsmFunc,
