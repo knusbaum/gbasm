@@ -4,7 +4,7 @@ import "pair"
 import "string"
 
 // Cross-package struct usage end-to-end. The `pair` package (under
-// runtime/pair) defines `struct pair { a, b i64 }` plus two functions:
+// cmd/bosc/testpkgs/pair) defines `struct pair { a, b i64 }` plus two functions:
 //   - sum(p pair) i64
 //   - make_pair(x, y i64) pair
 // This test imports it and exercises:

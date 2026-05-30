@@ -14,6 +14,11 @@ file bld {
 
 
 RUNTIME=../../runtime
+# Test-only packages live alongside the test fixtures rather than in
+# the runtime tree. Keeping them out of runtime/ means bdoc's BOSONPATH
+# discovery doesn't list them with the real standard library and the
+# layout never tempts users into importing them from production code.
+TESTPKGS=testpkgs
 
 file string.bo : bas $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs {
     ./bas -o string.bo $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs >/dev/null 2>&1
@@ -44,7 +49,7 @@ file builtin.bo : bas builtin.bs {
     ./bas -o builtin.bo builtin.bs >/dev/null 2>&1
 }
 
-# Compile the Boson-source `pair` test runtime package so cross-package
+# Compile the Boson-source `pair` test package so cross-package
 # struct tests have something to import.
 file pair.importcfg : builtin.bo {
     cat > pair.importcfg <<EOF
@@ -52,8 +57,8 @@ builtin=builtin.bo
 EOF
 }
 
-file pair.bs : bosc pair.importcfg $RUNTIME/pair/pair.bos {
-    ./bosc -importcfg=pair.importcfg -o pair.bs $RUNTIME/pair/pair.bos >/dev/null 2>&1
+file pair.bs : bosc pair.importcfg $TESTPKGS/pair/pair.bos {
+    ./bosc -importcfg=pair.importcfg -o pair.bs $TESTPKGS/pair/pair.bos >/dev/null 2>&1
 }
 
 file pair.bo : bas pair.bs {
@@ -62,7 +67,7 @@ file pair.bo : bas pair.bs {
 #rm -f pair.importcfg
 
 
-# Compile the Boson-source `errors` runtime package so the
+# Compile the Boson-source `errors` test package so the
 # cross-package values tests under cmd/bosc/tests have a values type
 # to import.
 file errors.importcfg : builtin.bo {
@@ -71,8 +76,8 @@ builtin=builtin.bo
 EOF
 }
 
-file errors.bs : bosc errors.importcfg $RUNTIME/errors/errors.bos {
-    ./bosc -importcfg=errors.importcfg -o errors.bs $RUNTIME/errors/errors.bos >/dev/null 2>&1
+file errors.bs : bosc errors.importcfg $TESTPKGS/errors/errors.bos {
+    ./bosc -importcfg=errors.importcfg -o errors.bs $TESTPKGS/errors/errors.bos >/dev/null 2>&1
 }
 
 file errors.bo : bas errors.bs {

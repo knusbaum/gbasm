@@ -7,10 +7,11 @@ import (
 
 // TestScanValuesDecl confirms parseBosType recognizes the values form
 // added in Stage 6 and captures the cases block plus methods. It scans
-// the runtime/errors fixture rather than a synthetic file so the
-// regression catches drift in the real producer source.
+// the cmd/bosc/testpkgs/errors fixture rather than a synthetic file so
+// the regression catches drift in the real producer source the
+// cross-package values tests import.
 func TestScanValuesDecl(t *testing.T) {
-	ps, err := ScanPackage("../../runtime/errors", "errors")
+	ps, err := ScanPackage("../bosc/testpkgs/errors", "errors")
 	if err != nil {
 		t.Fatalf("ScanPackage: %v", err)
 	}
@@ -45,13 +46,13 @@ func TestScanValuesDecl(t *testing.T) {
 	}
 	// consumeStructBody-by-brace-depth gets confused if the cases-block
 	// `} {` (methods opener on the same closing-brace line) is mis-
-	// tracked, and the method body folds into Body. The runtime/errors
+	// tracked, and the method body folds into Body. The errors testpkg
 	// fixture uses this shape so the scanner must split the cases body
 	// from the following methods block at the first balanced closing brace.
 	if strings.Contains(got.Body, "fn message") || strings.Contains(got.Body, "return byte[](e)") {
 		t.Errorf("method body bled into Body: %q", got.Body)
 	}
-	// runtime/errors.bos has `} {` on one line — the closing brace of
+	// testpkgs/errors/errors.bos has `} {` on one line — the closing brace of
 	// the cases block immediately followed by the methods-block
 	// opener. consumeBracedBody's earlier multi-line path appended
 	// the whole closing line into the body builder before truncating,
