@@ -19,7 +19,7 @@ bos_exe buggy source=src :
 
 build {
     set -e
-    (cd ../../ && make)
+    (cd ../../ && mmk clean && mmk)
     mmk buggy
 }
 

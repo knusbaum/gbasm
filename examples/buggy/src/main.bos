@@ -1,6 +1,7 @@
 package main
 
 import "string"
+import "src/subpkg"
 
 type strerr struct{ err byte[] } {
 	message(e *strerr) byte[] {
@@ -27,4 +28,13 @@ fn main(args byte[][]) {
 	const e = do_a_thing()
 	string.puts(e.message())
 	e.destroy()
+
+	subpkg.x = subpkg.x + 10
+	subpkg.do_something_else()
+	subpkg.do_something_else()
+	subpkg.do_something_else()
+	subpkg.do_something_else()
+	subpkg.do_something_else()
+	subpkg.do_something_else()
+	string.puti(subpkg.x) // why is this fine
 }
