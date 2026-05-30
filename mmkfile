@@ -18,6 +18,17 @@ file bdoc {
     go build ./cmd/bdoc
 }
 
+# docs builds bdoc and runs it in the foreground. `exec` replaces the
+# shell with the bdoc process so Ctrl-C in the launching terminal
+# reaches bdoc directly — without exec, mmk's intermediate shell
+# eats SIGINT, returns control to the user's shell, and leaves bdoc
+# orphaned in the background still holding the port. bdoc itself has
+# a PDEATHSIG fallback for the case where some other caller spawns
+# it without exec; this target makes the common path correct.
+docs: bdoc {
+    exec ./bdoc -path ./runtime
+}
+
 test: go_test cmd/bas/test cmd/bosc/test
 
 go_test {
