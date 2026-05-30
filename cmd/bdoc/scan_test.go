@@ -46,9 +46,8 @@ func TestScanValuesDecl(t *testing.T) {
 	// consumeStructBody-by-brace-depth gets confused if the cases-block
 	// `} {` (methods opener on the same closing-brace line) is mis-
 	// tracked, and the method body folds into Body. The runtime/errors
-	// fixture has the methods block on a separate line so the easy
-	// path works, but the proposal §85 example puts `} {` on one line
-	// — the bug would have the method body leak into Body.
+	// fixture uses this shape so the scanner must split the cases body
+	// from the following methods block at the first balanced closing brace.
 	if strings.Contains(got.Body, "fn message") || strings.Contains(got.Body, "return byte[](e)") {
 		t.Errorf("method body bled into Body: %q", got.Body)
 	}
