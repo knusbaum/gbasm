@@ -2,26 +2,44 @@ package main
 
 import (
 	_ "embed"
+	"fmt"
 	"html/template"
 	"net/http"
+	"os"
 	"strings"
 )
 
 //go:embed styles.css
 var stylesCSS []byte
 
-// docState holds the discovered package set for serving.
+// docState is the per-server config used to satisfy each request.
+// Packages are not cached: every request re-runs discoverPackages so a
+// .bos / .bs edit shows up on the next browser refresh without
+// restarting bdoc. Discovery is a directory walk over a small
+// BOSONPATH tree; the cost is acceptable for a dev tool.
 type docState struct {
-	packages []*PackageScan
-	byPath   map[string]*PackageScan
+	bosonpath string
 }
 
-func newDocState(packages []*PackageScan) *docState {
-	d := &docState{packages: packages, byPath: make(map[string]*PackageScan)}
-	for _, p := range packages {
-		d.byPath[p.ImportPath] = p
+func newDocState(bosonpath string) *docState {
+	return &docState{bosonpath: bosonpath}
+}
+
+// snapshot re-discovers the package set on each request. On error,
+// returns nil and writes a 500 to w. Callers should bail out on a
+// nil return.
+func (d *docState) snapshot(w http.ResponseWriter) ([]*PackageScan, map[string]*PackageScan) {
+	packages, err := discoverPackages(d.bosonpath)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("discover: %v", err), 500)
+		fmt.Fprintf(os.Stderr, "bdoc: discover error: %v\n", err)
+		return nil, nil
 	}
-	return d
+	byPath := make(map[string]*PackageScan, len(packages))
+	for _, p := range packages {
+		byPath[p.ImportPath] = p
+	}
+	return packages, byPath
 }
 
 // serveCSS serves the embedded stylesheet.
@@ -36,8 +54,12 @@ func (d *docState) serveIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	view := &indexView{Packages: make([]indexEntry, 0, len(d.packages))}
-	for _, p := range d.packages {
+	packages, _ := d.snapshot(w)
+	if packages == nil {
+		return
+	}
+	view := &indexView{Packages: make([]indexEntry, 0, len(packages))}
+	for _, p := range packages {
 		view.Packages = append(view.Packages, indexEntry{
 			ImportPath: p.ImportPath,
 			PkgName:    p.PkgName,
@@ -53,7 +75,11 @@ func (d *docState) serveIndex(w http.ResponseWriter, r *http.Request) {
 func (d *docState) servePkg(w http.ResponseWriter, r *http.Request) {
 	importPath := strings.TrimPrefix(r.URL.Path, "/pkg/")
 	importPath = strings.TrimSuffix(importPath, "/")
-	pkg, ok := d.byPath[importPath]
+	_, byPath := d.snapshot(w)
+	if byPath == nil {
+		return
+	}
+	pkg, ok := byPath[importPath]
 	if !ok {
 		http.NotFound(w, r)
 		return

@@ -32,6 +32,10 @@ func main() {
 		bosonpath = "."
 	}
 
+	// One-shot discovery at startup is purely for the listing logged
+	// to stderr — every request re-discovers (see docState.snapshot)
+	// so .bos / .bs edits show up on the next browser refresh
+	// without restarting the server.
 	fmt.Fprintf(os.Stderr, "bdoc: discovering packages in %s\n", bosonpath)
 	packages, err := discoverPackages(bosonpath)
 	if err != nil {
@@ -42,7 +46,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s -> %s (%d decls)\n", p.ImportPath, p.Dir, len(p.Decls))
 	}
 
-	state := newDocState(packages)
+	state := newDocState(bosonpath)
 	http.HandleFunc("/", state.serveIndex)
 	http.HandleFunc("/pkg/", state.servePkg)
 	http.HandleFunc("/styles.css", state.serveCSS)
