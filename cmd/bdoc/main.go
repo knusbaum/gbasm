@@ -47,6 +47,7 @@ func main() {
 	}
 
 	state := newDocState(bosonpath)
+	http.HandleFunc("/search", state.serveSearch)
 	http.HandleFunc("/", state.serveIndex)
 	http.HandleFunc("/pkg/", state.servePkg)
 	http.HandleFunc("/styles.css", state.serveCSS)

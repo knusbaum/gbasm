@@ -96,6 +96,20 @@ body { font-family: var(--font-sans); color: var(--body); }
   font-size: 13px;
   color: var(--muted);
 }
+.chrome .search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+}
+.chrome .search input::placeholder { color: var(--muted); opacity: 1; }
+.chrome .search:focus-within {
+  border-color: var(--accent-rule);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
 .chrome .search .kbd {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -476,9 +490,23 @@ body { font-family: var(--font-sans); color: var(--body); }
   max-width: 72ch;
   text-wrap: pretty;
 }
-.pkglist .empty {
+.empty {
   color: var(--muted);
   font-style: italic;
+}
+.search-section { margin: 34px 0; }
+.search-results { margin-top: 0; }
+.search-sig {
+  margin-top: 7px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--body);
+  background: var(--code-bg);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 7px 10px;
+  overflow-x: auto;
+  white-space: pre;
 }
 
 /* ---------- Syntax highlight tokens ---------- */

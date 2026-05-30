@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -71,6 +72,23 @@ func (d *docState) serveIndex(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// serveSearch shows matching packages and symbols for q.
+func (d *docState) serveSearch(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/search" {
+		http.NotFound(w, r)
+		return
+	}
+	packages, _ := d.snapshot(w)
+	if packages == nil {
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	view := buildSearchView(packages, query)
+	if err := searchTmpl.Execute(w, view); err != nil {
+		http.Error(w, err.Error(), 500)
+	}
+}
+
 // servePkg shows one package's contents.
 func (d *docState) servePkg(w http.ResponseWriter, r *http.Request) {
 	importPath := strings.TrimPrefix(r.URL.Path, "/pkg/")
@@ -96,7 +114,8 @@ func (d *docState) servePkg(w http.ResponseWriter, r *http.Request) {
 // -----------------------------------------------------------------------------
 
 type indexView struct {
-	Packages []indexEntry
+	SearchQuery string
+	Packages    []indexEntry
 }
 
 type indexEntry struct {
@@ -108,9 +127,10 @@ type indexEntry struct {
 // packageView is the per-package render shape. Sections are populated only
 // when non-empty so the template can elide them.
 type packageView struct {
-	Pkg        *PackageScan
-	PkgDisplay string   // PkgName, fallback to ImportPath
-	DocParas   []string // overview paragraphs from DocComment
+	SearchQuery string
+	Pkg         *PackageScan
+	PkgDisplay  string   // PkgName, fallback to ImportPath
+	DocParas    []string // overview paragraphs from DocComment
 
 	Vars       []Decl
 	FreeFns    []Decl
@@ -141,6 +161,24 @@ type typeGroup struct {
 type interfaceGroup struct {
 	Decl    Decl
 	Methods []assocFn
+}
+
+type searchView struct {
+	SearchQuery string
+	HasQuery    bool
+	Packages    []searchResult
+	Symbols     []searchResult
+}
+
+type searchResult struct {
+	Kind      string
+	Name      string
+	Package   string
+	Signature string
+	Blurb     string
+	URL       string
+	score     int
+	groupRank int
 }
 
 // -----------------------------------------------------------------------------
@@ -253,6 +291,147 @@ func buildPackageView(p *PackageScan) *packageView {
 	return v
 }
 
+func buildSearchView(packages []*PackageScan, query string) *searchView {
+	view := &searchView{
+		SearchQuery: query,
+		HasQuery:    query != "",
+	}
+	if query == "" {
+		return view
+	}
+
+	var results []searchResult
+	for _, p := range packages {
+		blurb := firstParagraph(p.DocComment)
+		if score, ok := searchScore(query, p.ImportPath, p.PkgName, blurb); ok {
+			results = append(results, searchResult{
+				Kind:      "package",
+				Name:      p.PkgName,
+				Package:   p.ImportPath,
+				Blurb:     blurb,
+				URL:       "/pkg/" + p.ImportPath + "/",
+				score:     score,
+				groupRank: 0,
+			})
+		}
+
+		pv := buildPackageView(p)
+		addDecl := func(d Decl, kind string, anchor string) {
+			if score, ok := searchScore(query, d.Name, d.Signature, d.Doc, kind, p.ImportPath, p.PkgName); ok {
+				results = append(results, searchResult{
+					Kind:      kind,
+					Name:      d.Name,
+					Package:   p.ImportPath,
+					Signature: d.Signature,
+					Blurb:     firstParagraph(d.Doc),
+					URL:       "/pkg/" + p.ImportPath + "/#" + anchor,
+					score:     score,
+					groupRank: 1,
+				})
+			}
+		}
+		addAssoc := func(a assocFn, kind string) {
+			if score, ok := searchScore(query, a.Name, a.Signature, strings.Join(a.DocParas, "\n\n"), kind, p.ImportPath, p.PkgName); ok {
+				results = append(results, searchResult{
+					Kind:      kind,
+					Name:      a.Name,
+					Package:   p.ImportPath,
+					Signature: a.Signature,
+					Blurb:     firstParagraph(strings.Join(a.DocParas, "\n\n")),
+					URL:       "/pkg/" + p.ImportPath + "/#" + a.Anchor,
+					score:     score,
+					groupRank: 1,
+				})
+			}
+		}
+
+		for _, d := range pv.Vars {
+			addDecl(d, "var", d.Name)
+		}
+		for _, d := range pv.FreeFns {
+			addDecl(d, "fn", d.Name)
+		}
+		for _, g := range pv.Types {
+			addDecl(g.Decl, "type", g.Decl.Name)
+			for _, a := range g.Ctors {
+				addAssoc(a, "fn")
+			}
+			for _, a := range g.Methods {
+				addAssoc(a, "method")
+			}
+		}
+		for _, g := range pv.Interfaces {
+			addDecl(g.Decl, "interface", g.Decl.Name)
+			for _, a := range g.Methods {
+				addAssoc(a, "method")
+			}
+		}
+		for _, d := range pv.AsmFuncs {
+			addDecl(d, "asm function", d.Name)
+		}
+		for _, d := range pv.AsmVars {
+			addDecl(d, "asm var", d.Name)
+		}
+		for _, d := range pv.AsmData {
+			addDecl(d, "asm data", d.Name)
+		}
+	}
+
+	sort.SliceStable(results, func(i, j int) bool {
+		a, b := results[i], results[j]
+		switch {
+		case a.score != b.score:
+			return a.score < b.score
+		case a.groupRank != b.groupRank:
+			return a.groupRank < b.groupRank
+		case a.Package != b.Package:
+			return a.Package < b.Package
+		case a.Kind != b.Kind:
+			return a.Kind < b.Kind
+		default:
+			return a.Name < b.Name
+		}
+	})
+
+	for _, r := range results {
+		if r.groupRank == 0 {
+			view.Packages = append(view.Packages, r)
+		} else {
+			view.Symbols = append(view.Symbols, r)
+		}
+	}
+	return view
+}
+
+func searchScore(query string, fields ...string) (int, bool) {
+	q := strings.ToLower(strings.TrimSpace(query))
+	if q == "" {
+		return 0, false
+	}
+	best := 3
+	for _, field := range fields {
+		f := strings.ToLower(strings.TrimSpace(field))
+		if f == "" {
+			continue
+		}
+		switch {
+		case f == q:
+			if best > 0 {
+				best = 0
+			}
+		case strings.HasPrefix(f, q):
+			if best > 1 {
+				best = 1
+			}
+		case strings.Contains(f, q):
+			if best > 2 {
+				best = 2
+			}
+		}
+	}
+	return best, best < 3
+}
+
 // firstParagraph returns the first paragraph of a doc comment (used for the
 // index-page blurb).
 func firstParagraph(doc string) string {
@@ -304,14 +483,14 @@ const chromeBlock = `
     <span class="dot"></span>
     <a href="/"><span>bdoc</span></a>
   </div>
-  <div class="search">
+  <form class="search" action="/search" method="get" role="search">
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
       <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.4"/>
       <path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
     </svg>
-    <span>Search packages, types, functions…</span>
+    <input type="search" name="q" value="{{.SearchQuery}}" placeholder="Search packages, types, functions..." aria-label="Search packages, types, functions">
     <span class="kbd">/</span>
-  </div>
+  </form>
   <nav class="nav">
     <a href="/" class="current">Packages</a>
   </nav>
@@ -353,6 +532,79 @@ var indexTmpl = template.Must(template.New("index").Funcs(tmplFuncs).Parse(chrom
   </ul>
   {{else}}
   <p class="empty">No packages found. Set BOSONPATH or pass -path.</p>
+  {{end}}
+</main>
+</div>
+</body>
+</html>
+`))
+
+var searchTmpl = template.Must(template.New("search").Funcs(tmplFuncs).Parse(chromeBlock + `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bdoc — search</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<div class="bdoc">
+{{template "chrome" .}}
+<main class="main solo">
+  <section class="pkg-head">
+    <span class="kind">search</span>
+    <h1><span class="name">Search</span>{{if .HasQuery}}<span class="label">for "{{.SearchQuery}}"</span>{{end}}</h1>
+  </section>
+
+  {{if not .HasQuery}}
+  <p class="empty">Enter a package, type, function, method, variable, or doc term.</p>
+  {{else}}
+    {{if or .Packages .Symbols}}
+      {{if .Packages}}
+      <section class="search-section">
+        <div class="section-head">
+          <h2>Packages <span class="count">{{len .Packages}}</span></h2>
+        </div>
+        <ul class="pkglist search-results">
+          {{range .Packages}}
+          <li>
+            <div class="row">
+              <a href="{{.URL}}" class="ipath">{{.Package}}</a>
+              {{if .Name}}<span class="pkgname">package {{.Name}}</span>{{end}}
+            </div>
+            {{if .Blurb}}<div class="blurb">{{.Blurb}}</div>{{end}}
+          </li>
+          {{end}}
+        </ul>
+      </section>
+      {{end}}
+
+      {{if .Symbols}}
+      <section class="search-section">
+        <div class="section-head">
+          <h2>Symbols <span class="count">{{len .Symbols}}</span></h2>
+        </div>
+        <ul class="pkglist search-results">
+          {{range .Symbols}}
+          <li>
+            <div class="row">
+              <a href="{{.URL}}" class="ipath">{{.Name}}</a>
+              <span class="pkgname">{{.Kind}} in {{.Package}}</span>
+            </div>
+            {{if .Signature}}<div class="search-sig">{{highlight .Signature}}</div>{{end}}
+            {{if .Blurb}}<div class="blurb">{{.Blurb}}</div>{{end}}
+          </li>
+          {{end}}
+        </ul>
+      </section>
+      {{end}}
+    {{else}}
+      <p class="empty">No results for "{{.SearchQuery}}".</p>
+    {{end}}
   {{end}}
 </main>
 </div>
@@ -678,4 +930,3 @@ var pkgTmpl = template.Must(template.New("pkg").Funcs(tmplFuncs).Parse(chromeBlo
   </div>
 </div>{{end}}
 `))
-
