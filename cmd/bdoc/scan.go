@@ -374,8 +374,6 @@ func consumeStructBody(s *bufio.Scanner, headRest string, lineno *int) (body str
 		for s.Scan() {
 			*lineno++
 			l := s.Text()
-			b.WriteByte('\n')
-			b.WriteString(l)
 			for i := 0; i < len(l); i++ {
 				switch l[i] {
 				case '{':
@@ -383,7 +381,13 @@ func consumeStructBody(s *bufio.Scanner, headRest string, lineno *int) (body str
 				case '}':
 					depth--
 					if depth == 0 {
-						// Struct body closes on this line at position i.
+						// Body closes at position i on this line.
+						// Append only the body portion (up to and
+						// including `}`); anything past it (a method
+						// block opener on the same line) stays out so
+						// it doesn't leak into Body.
+						b.WriteByte('\n')
+						b.WriteString(l[:i+1])
 						trailing := strings.TrimSpace(l[i+1:])
 						body = strings.TrimSpace(b.String())
 						if strings.Contains(trailing, "{") {
@@ -393,18 +397,22 @@ func consumeStructBody(s *bufio.Scanner, headRest string, lineno *int) (body str
 					}
 				}
 			}
+			// No closing brace on this line — the whole line is body.
+			b.WriteByte('\n')
+			b.WriteString(l)
 		}
 		// EOF mid-body — return what we have.
 		body = strings.TrimSpace(b.String())
 		return
 	}
-	// headRest is just "struct" (no `{` yet) — body opens on next line(s).
-	body = "struct"
+	// headRest is just "struct" / "values" (no `{` yet) — body opens
+	// on next line(s).
+	var b strings.Builder
+	b.WriteString(headRest)
 	depth := 0
 	for s.Scan() {
 		*lineno++
 		l := s.Text()
-		body += "\n" + l
 		for i := 0; i < len(l); i++ {
 			switch l[i] {
 			case '{':
@@ -412,16 +420,20 @@ func consumeStructBody(s *bufio.Scanner, headRest string, lineno *int) (body str
 			case '}':
 				depth--
 				if depth == 0 {
+					b.WriteByte('\n')
+					b.WriteString(l[:i+1])
 					trailing := strings.TrimSpace(l[i+1:])
 					if strings.Contains(trailing, "{") {
 						methodBlockOpens = true
 					}
-					return strings.TrimSpace(body), methodBlockOpens
+					return strings.TrimSpace(b.String()), methodBlockOpens
 				}
 			}
 		}
+		b.WriteByte('\n')
+		b.WriteString(l)
 	}
-	return strings.TrimSpace(body), false
+	return strings.TrimSpace(b.String()), false
 }
 
 // collapseBody renders a multi-line type body as a single-line summary

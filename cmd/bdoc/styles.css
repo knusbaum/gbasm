@@ -359,7 +359,7 @@ body { font-family: var(--font-sans); color: var(--body); }
 .decl .sig.interface-sig { border-left-color: var(--syn-type); }
 .decl .sig.data-sig      { border-left-color: var(--syn-num); }
 
-.decl .struct-body {
+.decl .type-body {
   font-family: var(--font-mono);
   font-size: 13px;
   margin: 8px 0 0 0;

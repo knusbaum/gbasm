@@ -259,8 +259,15 @@ func splitDoc(s string) []string {
 var tmplFuncs = template.FuncMap{
 	"highlight":  highlight,
 	"paragraphs": splitDoc,
-	"hasStructBody": func(d Decl) bool {
-		return strings.HasPrefix(strings.TrimSpace(d.Body), "struct")
+	// hasTypeBody reports whether a type decl has a body block worth
+	// rendering verbatim under the signature. Today that's struct
+	// bodies and values blocks (Stage 6 added the latter); both reach
+	// here as a TrimSpace-able string with the leading keyword
+	// preserved. Renamed from hasStructBody to drop the
+	// shape-specific name now that values is a customer too.
+	"hasTypeBody": func(d Decl) bool {
+		body := strings.TrimSpace(d.Body)
+		return strings.HasPrefix(body, "struct") || strings.HasPrefix(body, "values")
 	},
 }
 
@@ -520,7 +527,7 @@ var pkgTmpl = template.Must(template.New("pkg").Funcs(tmplFuncs).Parse(chromeBlo
       {{range .Types}}
       <div class="decl decl-type" id="{{.Decl.Name}}">
         <div class="sig type-sig">{{highlight .Decl.Signature}}</div>
-        {{if hasStructBody .Decl}}<pre class="struct-body">{{highlight .Decl.Body}}</pre>{{end}}
+        {{if hasTypeBody .Decl}}<pre class="type-body">{{highlight .Decl.Body}}</pre>{{end}}
         {{template "doc" .Decl.Doc}}
         <div class="meta">
           <span>{{.Decl.SrcFile}}:{{.Decl.SrcLine}}</span>

@@ -52,4 +52,18 @@ func TestScanValuesDecl(t *testing.T) {
 	if strings.Contains(got.Body, "fn message") || strings.Contains(got.Body, "return byte[](e)") {
 		t.Errorf("method body bled into Body: %q", got.Body)
 	}
+	// runtime/errors.bos has `} {` on one line — the closing brace of
+	// the cases block immediately followed by the methods-block
+	// opener. consumeBracedBody's earlier multi-line path appended
+	// the whole closing line into the body builder before truncating,
+	// so the trailing `{` (method-block opener) leaked into Body.
+	// Lock the truncation: nothing past the body's closing `}` may
+	// remain in Body.
+	closeIdx := strings.LastIndex(got.Body, "}")
+	if closeIdx < 0 {
+		t.Fatalf("Body missing closing brace: %q", got.Body)
+	}
+	if rest := strings.TrimSpace(got.Body[closeIdx+1:]); rest != "" {
+		t.Errorf("Body has content past the cases-block closing brace: %q (extra: %q)", got.Body, rest)
+	}
 }
