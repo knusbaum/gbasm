@@ -665,14 +665,36 @@ func lvalueIsWritable(c *Context, a AST) (bool, string) {
 		}
 		return true, ""
 	case *Dot:
-		baseType := v.Val.ASTType(c)
-		if baseType.Indirection > 0 {
-			if !canWriteImmediatePointee(baseType) {
-				return false, fmt.Sprintf("Cannot write field %q through read-only pointer of type %s; pointer must be *mut", v.Member, baseType)
+		// Route the parent through the shared selector resolver instead of
+		// asking v.Val.ASTType directly. ASTType crashes on a package root
+		// (Symbol.ASTType doesn't expect a package name) and re-implements
+		// chain-walking that the resolver already does — both reasons the
+		// rest of the compiler routes Dot chains through ResolveSelector.
+		parent := ResolveSelector(c, v.Val)
+		switch parent.Kind {
+		case ResolvedPackage:
+			// pkg.member = …. The producer's const/var distinction isn't
+			// carried in the .bo today (Var has no IsConst flag), so we
+			// permit writes to any exported var by name and rely on the
+			// owning package to expose what it intends to be writable.
+			// TODO(cross-pkg-const): once Var.IsConst flows through .bo,
+			// reject writes here when the producer declared `const`.
+			if _, ok := c.ImportedVarType(parent.Name, v.Member); !ok {
+				return false, fmt.Sprintf("package %q has no variable %q", parent.Name, v.Member)
 			}
 			return true, ""
+		case ResolvedRuntimeValue, ResolvedStructField:
+			baseType := parent.Type
+			if baseType.Indirection > 0 {
+				if !canWriteImmediatePointee(baseType) {
+					return false, fmt.Sprintf("Cannot write field %q through read-only pointer of type %s; pointer must be *mut", v.Member, baseType)
+				}
+				return true, ""
+			}
+			return lvalueIsWritable(c, v.Val)
 		}
-		return lvalueIsWritable(c, v.Val)
+		// Types, values cases, functions, etc. aren't lvalues.
+		return false, fmt.Sprintf("Cannot assign to %s.%s", parent.Name, v.Member)
 	case *Index:
 		baseType := v.Val.ASTType(c)
 		if baseType.Indirection > 0 {
@@ -796,8 +818,15 @@ func targetMayOverwriteOwnedStorage(c *Context, target AST) bool {
 		return true
 	}
 	if dot, ok := target.(*Dot); ok {
-		baseType := dot.Val.ASTType(c)
-		def, ok := structDeclForType(c, baseType)
+		// Resolve through the selector so a package root doesn't blow up
+		// in Symbol.ASTType. Only value-typed parents can be an owned
+		// struct; anything else (cross-package var, type name, etc.) can't
+		// overwrite owned storage by definition.
+		parent := ResolveSelector(c, dot.Val)
+		if parent.Kind != ResolvedRuntimeValue && parent.Kind != ResolvedStructField {
+			return false
+		}
+		def, ok := structDeclForType(c, parent.Type)
 		if !ok {
 			return false
 		}
@@ -2506,9 +2535,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 		}
 		if dot, ok := ast.Target.(*Dot); ok {
-			baseType := dot.Val.ASTType(c)
-			if parentOwnsFields(baseType) && dstt.HasOwned() {
-				CompileErrorF(a, "Cannot assign to owned field %s of an owned aggregate after initialization", dot.Member)
+			// Route through the selector so a package root (`pkg.x = …`)
+			// doesn't trip Symbol.ASTType. Only value-typed parents can
+			// be an owned aggregate; everything else (packages, types,
+			// values cases) skips the check.
+			parent := ResolveSelector(c, dot.Val)
+			if parent.Kind == ResolvedRuntimeValue || parent.Kind == ResolvedStructField {
+				if parentOwnsFields(parent.Type) && dstt.HasOwned() {
+					CompileErrorF(a, "Cannot assign to owned field %s of an owned aggregate after initialization", dot.Member)
+				}
 			}
 		}
 		if sl, ok := ast.Val.(*StructLiteral); ok {

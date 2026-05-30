@@ -289,7 +289,9 @@ fn main() {
 }
 ```
 
-Cross-package vars are read-only from the consumer's side. Writing through a foreign-package name is rejected; mutation must go through a function exported by the owning package.
+Cross-package var access follows the usual mutability rules: `var` declarations are readable and writable by importers; `const` declarations are read-only. Boson does not impose an extra access-control rule on cross-package vars beyond what the producer's `var`/`const` keyword already says — protection against unwanted external mutation comes from whether the package exports the binding at all (a visibility system, when one exists) or from the producer exposing only function-mediated accessors. (Cross-package `const` enforcement currently relies on the consumer-side declaration: the `.bo` format does not yet carry the producer's `IsConst` flag, so writes to a producer-declared `const` from an importer compile until that flag is plumbed through.)
+
+Owned types are not allowed at file scope. A global never goes out of scope, so the end-of-scope move check that gives `owned` its teeth can never fire; a `dispose()` inside a function isn't visible elsewhere either. `var x owned …` and `const x owned …` at the top level are rejected.
 
 **The `builtin` package.** A single package, `builtin`, is auto-imported into every compilation unit (except `builtin` itself). It contains the `error` interface and serves as the home for declarations that need to be visible without an explicit `import`. The `-listimports` driver always emits `builtin` first, so the build system pulls in `target/builtin.bo` automatically. Bare references to `error` resolve to `builtin.error` the same way an explicitly imported package's interface would, but without requiring `import "builtin"` at the top of every file.
 

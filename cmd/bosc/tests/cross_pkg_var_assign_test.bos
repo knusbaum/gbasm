@@ -1,0 +1,20 @@
+package main
+
+import "io"
+import "string"
+
+// Cross-package var assignment: writing to a foreign-package `var` follows
+// the usual mutability rules. The io package declares STDIN as
+//   var STDIN FD = FD(0)
+// so an importer can read or write it. Read-back through the same
+// qualified form sees the new value.
+fn main() i64 {
+    var orig io.FD = io.STDIN
+    io.STDIN = io.FD(42)
+    string.puti(i64(io.STDIN))
+    string.putc('\n')
+    io.STDIN = orig
+    string.puti(i64(io.STDIN))
+    string.putc('\n')
+    return 0
+}

@@ -24,6 +24,13 @@ type relocSpec struct {
 // from the single-line string-literal form to the block form whenever the
 // payload carries one or more relocations.
 func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
+	// Owned at file scope has no place to discharge the obligation —
+	// a global never goes out of scope, and any dispose() inside a
+	// function isn't visible elsewhere. Reject regardless of whether
+	// an initializer is present so the zero-init path is covered too.
+	if ast.Type.HasOwned() {
+		CompileErrorF(a, "Top-level vars cannot carry owned types")
+	}
 	// Record the name as address-backed so codegen sites that build
 	// indirect addressing know they're operating on a memory-resident
 	// name. Without this mark, NameIsAddress would fall back to
@@ -41,9 +48,6 @@ func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
 	}
 
 	dstt := ast.Type
-	if ast.Type.HasOwned() {
-		CompileErrorF(a, "Top-level vars cannot carry owned types")
-	}
 
 	// Type-fit is decided by encodeStaticInit, which knows when a
 	// literal can be coerced into a wider/narrower destination

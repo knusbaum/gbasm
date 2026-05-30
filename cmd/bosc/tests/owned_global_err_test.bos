@@ -1,0 +1,12 @@
+package main
+
+// Negative: owned at file scope has no place to discharge the obligation.
+// A global never goes out of scope, so the end-of-scope move check that
+// gives `owned` its teeth can never fire; a dispose() inside any function
+// isn't visible elsewhere. bosc rejects owned-typed globals regardless
+// of whether an initializer is supplied.
+var x owned *mut i64 = nil
+
+fn main() i64 {
+    return 0
+}

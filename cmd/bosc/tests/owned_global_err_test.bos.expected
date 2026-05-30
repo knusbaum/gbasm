@@ -1,0 +1,2 @@
+Compiling tests/owned_global_err_test.bos
+Fatal: Top-level vars cannot carry owned types
