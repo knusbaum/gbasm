@@ -186,7 +186,7 @@ build_package() {
 # pattern capture group; the source directory is found via BOSONPATH.
 
 deftype bos_pkg {
-    stat -c %Y "$target" 2>/dev/null || return 1
+    stat -c %.Y "$target" 2>/dev/null || return 1
 }
 
 bos_pkg 'target/(.*)\.bo' : $(pkg_resolve_and_deps "$1") {
@@ -210,7 +210,7 @@ defbody bos_pkg clean {
 # together with the runtime init.
 
 deftype bos_exe {
-    stat -c %Y "target/$target" 2>/dev/null || return 1
+    stat -c %.Y "target/$target" 2>/dev/null || return 1
 }
 
 defbody bos_exe : $(bos_exe_deps "$source") {
