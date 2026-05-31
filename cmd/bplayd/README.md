@@ -15,6 +15,8 @@ The image contains:
 - `/usr/local/bin/bld`
 - `/usr/local/lib/boson/playground/importcfg`
 - `/usr/local/lib/boson/playground/objects/*.bo`
+- `/usr/local/lib/boson/runtime/**/*.bos`
+- `/usr/local/lib/boson/runtime/**/*.bs`
 
 ## Build and Publish
 
@@ -45,7 +47,8 @@ The image defaults to secure mode:
   -mode sandbox \
   -runner /usr/local/bin/bplay-runner \
   -toolchain-dir /usr/local/bin \
-  -runtime-bundle /usr/local/lib/boson/playground
+  -runtime-bundle /usr/local/lib/boson/playground \
+  -docs-bosonpath /usr/local/lib/boson/runtime
 ```
 
 The service listens on port `8086`.
@@ -53,6 +56,7 @@ The service listens on port `8086`.
 HTTP routes:
 
 - `/` and `/play` serve the playground UI.
+- `/docs/` serves bdoc documentation for the bundled runtime source.
 - `/api/run` compiles/runs a submitted program.
 - `/api/toolchain` reports bundled toolchain/runtime metadata.
 - `/healthz` and `/readyz` are health checks.
@@ -68,14 +72,36 @@ namespaces for the child command:
 - network namespace
 - IPC namespace
 - UTS namespace
+- mount namespace
 
 This means the Nomad/Podman task must allow the container process to create
 those namespaces. If the runtime denies unprivileged user namespaces or nested
 namespaces, `/api/run` will fail at the stage that cannot start.
 
-The current sandbox does **not** yet create a private mount namespace or
-seccomp profile. Filesystem isolation and syscall filtering are future
-hardening layers.
+Sandbox mode also applies a Landlock filesystem ruleset before each command
+execs. The policy allows:
+
+- read/write access to that request's temporary work directory;
+- execute access to the specific compiler/linker/program being run;
+- read access to the exact importcfg/runtime object paths needed by that
+  command;
+- read/execute access to common system library directories for dynamically
+  linked toolchain binaries.
+
+The final Boson executable is static. Its run-stage policy does not allow
+common system library directories; it only grants the per-request work
+directory plus execute permission on the generated executable.
+
+User programs that call `io.open()` can only open files allowed by that
+per-command policy, so paths such as `/etc/passwd` are denied even though they
+exist in the container filesystem.
+
+The host kernel and container runtime must allow the Landlock syscalls
+`landlock_create_ruleset`, `landlock_add_rule`, and `landlock_restrict_self`.
+If they are unavailable or blocked by seccomp, secure mode fails closed and the
+playground request returns a sandbox start error.
+
+The current sandbox does **not** yet install an additional seccomp profile.
 
 ## Cgroups
 
@@ -121,7 +147,8 @@ override the command to use runner mode:
   -mode runner \
   -runner /usr/local/bin/bplay-runner \
   -toolchain-dir /usr/local/bin \
-  -runtime-bundle /usr/local/lib/boson/playground
+  -runtime-bundle /usr/local/lib/boson/playground \
+  -docs-bosonpath /usr/local/lib/boson/runtime
 ```
 
 This keeps the one-command-per-runner process boundary and rlimits, but it
@@ -137,8 +164,12 @@ A Nomad job should:
 - set the image to `ghcr.io/knusbaum/bplayd:${var.version}`;
 - keep the default command for secure mode unless the host cannot support the
   namespace requirements;
+- make sure the container seccomp policy allows Landlock syscalls when secure
+  mode is enabled;
 - add `args` only when overriding defaults, for example to set
   `-cgroup-root`;
+- leave `/usr/local/lib/boson/runtime` available in the image so `/docs/`
+  can render the packaged API documentation;
 - provide a writable delegated cgroup v2 subtree if enabling cgroup limits;
 - route with Traefik to the desired playground hostname;
 - use `/readyz` for readiness if the deployment supports HTTP checks.

@@ -46,11 +46,13 @@ body {
 }
 
 button,
+a.button,
 textarea {
   font: inherit;
 }
 
 button:focus-visible,
+a.button:focus-visible,
 textarea:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
@@ -102,7 +104,8 @@ h1 {
   gap: 8px;
 }
 
-button {
+button,
+a.button {
   min-height: 36px;
   border: 1px solid var(--accent);
   border-radius: 6px;
@@ -110,10 +113,15 @@ button {
   background: var(--accent);
   color: #fff;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-weight: 620;
+  text-decoration: none;
 }
 
-button:hover {
+button:hover,
+a.button:hover {
   background: var(--accent-strong);
 }
 
@@ -123,6 +131,7 @@ button:disabled {
 }
 
 button.secondary,
+a.button.secondary,
 button.tab {
   background: transparent;
   color: var(--text);
@@ -130,6 +139,7 @@ button.tab {
 }
 
 button.secondary:hover,
+a.button.secondary:hover,
 button.tab:hover,
 button.tab.active {
   border-color: var(--accent);

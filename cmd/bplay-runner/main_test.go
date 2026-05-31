@@ -47,6 +47,7 @@ func TestChildSysProcAttrSandbox(t *testing.T) {
 		syscall.CLONE_NEWNET,
 		syscall.CLONE_NEWIPC,
 		syscall.CLONE_NEWUTS,
+		syscall.CLONE_NEWNS,
 	} {
 		if sandboxed.Cloneflags&flag == 0 {
 			t.Fatalf("sandbox Cloneflags missing %#x in %#x", flag, sandboxed.Cloneflags)
@@ -60,6 +61,172 @@ func TestChildSysProcAttrSandbox(t *testing.T) {
 	}
 	if sandboxed.GidMappingsEnableSetgroups {
 		t.Fatal("GidMappingsEnableSetgroups = true")
+	}
+}
+
+func TestSandboxChildArgvWrapsCommand(t *testing.T) {
+	oldWorkdir, oldCPU, oldMem, oldFile, oldOpen, oldCgroup, oldStatic := *workdir, *cpuLimit, *memLimit, *fileLimit, *openFiles, *cgroupRoot, *staticExec
+	defer func() {
+		*workdir = oldWorkdir
+		*cpuLimit = oldCPU
+		*memLimit = oldMem
+		*fileLimit = oldFile
+		*openFiles = oldOpen
+		*cgroupRoot = oldCgroup
+		*staticExec = oldStatic
+	}()
+	*workdir = "/tmp/work"
+	*cpuLimit = 2 * time.Second
+	*memLimit = "64MiB"
+	*fileLimit = "1MiB"
+	*openFiles = 32
+	*cgroupRoot = ""
+	*staticExec = true
+
+	got, err := sandboxChildArgv([]string{"/bin/echo", "hello"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFlags := []string{
+		"-sandbox-child",
+		"-workdir", "/tmp/work",
+		"-cpu", "2s",
+		"-mem", "64MiB",
+		"-fsize", "1MiB",
+		"-nofile", "32",
+		"-static-exec",
+		"--",
+	}
+	if len(got) < 1+len(wantFlags)+2 {
+		t.Fatalf("sandbox child argv too short: %#v", got)
+	}
+	for i, want := range wantFlags {
+		if got[i+1] != want {
+			t.Fatalf("got[%d] = %q, want %q in %#v", i+1, got[i+1], want, got)
+		}
+	}
+	if got[len(got)-2] != "/bin/echo" || got[len(got)-1] != "hello" {
+		t.Fatalf("unexpected wrapped command: %#v", got)
+	}
+}
+
+func TestSandboxChildArgvOmitsMemoryLimitWhenCgrouped(t *testing.T) {
+	oldWorkdir, oldMem, oldCgroup := *workdir, *memLimit, *cgroupRoot
+	defer func() {
+		*workdir = oldWorkdir
+		*memLimit = oldMem
+		*cgroupRoot = oldCgroup
+	}()
+	*workdir = "/tmp/work"
+	*memLimit = "64MiB"
+	*cgroupRoot = "/sys/fs/cgroup/bplayd"
+
+	got, err := sandboxChildArgv([]string{"/bin/echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(got, "\x00"), "-mem") {
+		t.Fatalf("sandbox child argv includes -mem despite cgroup root: %#v", got)
+	}
+}
+
+func TestArgvReadPathsSkipsOutputsAndWorkdir(t *testing.T) {
+	work := filepath.Join(t.TempDir(), "run")
+	if err := os.MkdirAll(work, 0755); err != nil {
+		t.Fatal(err)
+	}
+	bundle := t.TempDir()
+	importcfg := filepath.Join(bundle, "importcfg")
+	builtin := filepath.Join(bundle, "builtin.bo")
+	obj := filepath.Join(bundle, "io.bo")
+	if err := os.WriteFile(importcfg, []byte("builtin="+builtin+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	argv := []string{
+		"/tools/bld",
+		"-o", filepath.Join(work, "main"),
+		filepath.Join(work, "main.bo"),
+		obj,
+		"-importcfg=" + importcfg,
+		"-o=" + filepath.Join(work, "ignored"),
+	}
+
+	got := argvReadPaths(argv, work)
+	want := []string{obj, importcfg, builtin}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("argvReadPaths = %#v, want %#v", got, want)
+	}
+}
+
+func TestCollectLandlockPathsIncludesWorkdirAndCommandInputs(t *testing.T) {
+	oldStatic := *staticExec
+	defer func() {
+		*staticExec = oldStatic
+	}()
+	*staticExec = false
+
+	root := t.TempDir()
+	work := filepath.Join(root, "work")
+	tools := filepath.Join(root, "tools")
+	bundle := filepath.Join(root, "bundle")
+	for _, dir := range []string{work, tools, bundle} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tool := filepath.Join(tools, "bld")
+	obj := filepath.Join(bundle, "io.bo")
+	for _, path := range []string{tool, obj} {
+		if err := os.WriteFile(path, []byte("x"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rules := collectLandlockPaths([]string{tool, "-o", filepath.Join(work, "main"), obj}, work, 3)
+	byPath := map[string]uint64{}
+	for _, rule := range rules {
+		byPath[rule.path] = rule.access
+	}
+	if byPath[work]&landlockAccessFSWriteFile == 0 {
+		t.Fatalf("workdir rule missing write access: %#v", rules)
+	}
+	if byPath[tool]&landlockAccessFSExecute == 0 {
+		t.Fatalf("tool rule missing execute access: %#v", rules)
+	}
+	if byPath[obj]&landlockAccessFSReadFile == 0 {
+		t.Fatalf("object rule missing read access: %#v", rules)
+	}
+}
+
+func TestCollectLandlockPathsForStaticExecOmitsSystemLibraries(t *testing.T) {
+	oldStatic := *staticExec
+	defer func() {
+		*staticExec = oldStatic
+	}()
+	*staticExec = true
+
+	work := t.TempDir()
+	exe := filepath.Join(work, "main")
+	if err := os.WriteFile(exe, []byte("x"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	rules := collectLandlockPaths([]string{exe}, work, 3)
+	for _, rule := range rules {
+		switch rule.path {
+		case "/lib", "/lib64", "/usr/lib", "/usr/lib64":
+			t.Fatalf("static executable rule includes system library path: %#v", rules)
+		}
+	}
+	byPath := map[string]uint64{}
+	for _, rule := range rules {
+		byPath[rule.path] = rule.access
+	}
+	if byPath[work]&landlockAccessFSWriteFile == 0 {
+		t.Fatalf("workdir rule missing write access: %#v", rules)
+	}
+	if byPath[exe]&landlockAccessFSExecute == 0 {
+		t.Fatalf("executable rule missing execute access: %#v", rules)
 	}
 }
 

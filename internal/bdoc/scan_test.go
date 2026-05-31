@@ -1,4 +1,4 @@
-package main
+package bdoc
 
 import (
 	"strings"
@@ -11,7 +11,7 @@ import (
 // the regression catches drift in the real producer source the
 // cross-package values tests import.
 func TestScanValuesDecl(t *testing.T) {
-	ps, err := ScanPackage("../bosc/testpkgs/errors", "errors")
+	ps, err := ScanPackage("../../cmd/bosc/testpkgs/errors", "errors")
 	if err != nil {
 		t.Fatalf("ScanPackage: %v", err)
 	}

@@ -1,4 +1,4 @@
-package main
+package bdoc
 
 import (
 	_ "embed"
@@ -14,23 +14,72 @@ import (
 var stylesCSS []byte
 
 // docState is the per-server config used to satisfy each request.
-// Packages are not cached: every request re-runs discoverPackages so a
+// Packages are not cached: every request re-runs DiscoverPackages so a
 // .bos / .bs edit shows up on the next browser refresh without
 // restarting bdoc. Discovery is a directory walk over a small
 // BOSONPATH tree; the cost is acceptable for a dev tool.
 type docState struct {
 	bosonpath string
+	basePath  string
 }
 
-func newDocState(bosonpath string) *docState {
-	return &docState{bosonpath: bosonpath}
+// Options configures a bdoc HTTP handler.
+type Options struct {
+	BosonPath string
+	BasePath  string
+}
+
+// Handler returns a documentation handler for the configured BOSONPATH.
+// BasePath lets callers mount bdoc below a subdirectory such as /docs.
+func Handler(opts Options) http.Handler {
+	state := newDocState(opts.BosonPath, opts.BasePath)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/search", state.serveSearch)
+	mux.HandleFunc("/pkg/", state.servePkg)
+	mux.HandleFunc("/styles.css", state.serveCSS)
+	mux.HandleFunc("/", state.serveIndex)
+	if state.basePath == "" {
+		return mux
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == state.basePath {
+			http.Redirect(w, r, state.basePath+"/", http.StatusMovedPermanently)
+			return
+		}
+		prefix := state.basePath + "/"
+		if !strings.HasPrefix(r.URL.Path, prefix) {
+			http.NotFound(w, r)
+			return
+		}
+		rr := r.Clone(r.Context())
+		rr.URL.Path = strings.TrimPrefix(r.URL.Path, state.basePath)
+		if rr.URL.Path == "" {
+			rr.URL.Path = "/"
+		}
+		mux.ServeHTTP(w, rr)
+	})
+}
+
+func newDocState(bosonpath, basePath string) *docState {
+	return &docState{bosonpath: bosonpath, basePath: normalizeBasePath(basePath)}
+}
+
+func normalizeBasePath(basePath string) string {
+	basePath = strings.TrimSpace(basePath)
+	if basePath == "" || basePath == "/" {
+		return ""
+	}
+	if !strings.HasPrefix(basePath, "/") {
+		basePath = "/" + basePath
+	}
+	return strings.TrimRight(basePath, "/")
 }
 
 // snapshot re-discovers the package set on each request. On error,
 // returns nil and writes a 500 to w. Callers should bail out on a
 // nil return.
 func (d *docState) snapshot(w http.ResponseWriter) ([]*PackageScan, map[string]*PackageScan) {
-	packages, err := discoverPackages(d.bosonpath)
+	packages, err := DiscoverPackages(d.bosonpath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("discover: %v", err), 500)
 		fmt.Fprintf(os.Stderr, "bdoc: discover error: %v\n", err)
@@ -59,7 +108,7 @@ func (d *docState) serveIndex(w http.ResponseWriter, r *http.Request) {
 	if packages == nil {
 		return
 	}
-	view := &indexView{Packages: make([]indexEntry, 0, len(packages))}
+	view := &indexView{BasePath: d.basePath, Packages: make([]indexEntry, 0, len(packages))}
 	for _, p := range packages {
 		view.Packages = append(view.Packages, indexEntry{
 			ImportPath: p.ImportPath,
@@ -83,7 +132,7 @@ func (d *docState) serveSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	view := buildSearchView(packages, query)
+	view := buildSearchView(packages, query, d.basePath)
 	if err := searchTmpl.Execute(w, view); err != nil {
 		http.Error(w, err.Error(), 500)
 	}
@@ -104,6 +153,7 @@ func (d *docState) servePkg(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := buildPackageView(pkg)
+	view.BasePath = d.basePath
 	if err := pkgTmpl.Execute(w, view); err != nil {
 		http.Error(w, err.Error(), 500)
 	}
@@ -114,6 +164,7 @@ func (d *docState) servePkg(w http.ResponseWriter, r *http.Request) {
 // -----------------------------------------------------------------------------
 
 type indexView struct {
+	BasePath    string
 	SearchQuery string
 	Packages    []indexEntry
 }
@@ -127,6 +178,7 @@ type indexEntry struct {
 // packageView is the per-package render shape. Sections are populated only
 // when non-empty so the template can elide them.
 type packageView struct {
+	BasePath    string
 	SearchQuery string
 	Pkg         *PackageScan
 	PkgDisplay  string   // PkgName, fallback to ImportPath
@@ -164,6 +216,7 @@ type interfaceGroup struct {
 }
 
 type searchView struct {
+	BasePath    string
 	SearchQuery string
 	HasQuery    bool
 	Packages    []searchResult
@@ -291,8 +344,9 @@ func buildPackageView(p *PackageScan) *packageView {
 	return v
 }
 
-func buildSearchView(packages []*PackageScan, query string) *searchView {
+func buildSearchView(packages []*PackageScan, query, basePath string) *searchView {
 	view := &searchView{
+		BasePath:    basePath,
 		SearchQuery: query,
 		HasQuery:    query != "",
 	}
@@ -309,7 +363,7 @@ func buildSearchView(packages []*PackageScan, query string) *searchView {
 				Name:      p.PkgName,
 				Package:   p.ImportPath,
 				Blurb:     blurb,
-				URL:       "/pkg/" + p.ImportPath + "/",
+				URL:       basePath + "/pkg/" + p.ImportPath + "/",
 				score:     score,
 				groupRank: 0,
 			})
@@ -324,7 +378,7 @@ func buildSearchView(packages []*PackageScan, query string) *searchView {
 					Package:   p.ImportPath,
 					Signature: d.Signature,
 					Blurb:     firstParagraph(d.Doc),
-					URL:       "/pkg/" + p.ImportPath + "/#" + anchor,
+					URL:       basePath + "/pkg/" + p.ImportPath + "/#" + anchor,
 					score:     score,
 					groupRank: 1,
 				})
@@ -338,7 +392,7 @@ func buildSearchView(packages []*PackageScan, query string) *searchView {
 					Package:   p.ImportPath,
 					Signature: a.Signature,
 					Blurb:     firstParagraph(strings.Join(a.DocParas, "\n\n")),
-					URL:       "/pkg/" + p.ImportPath + "/#" + a.Anchor,
+					URL:       basePath + "/pkg/" + p.ImportPath + "/#" + a.Anchor,
 					score:     score,
 					groupRank: 1,
 				})
@@ -481,9 +535,9 @@ const chromeBlock = `
 <header class="chrome">
   <div class="wordmark">
     <span class="dot"></span>
-    <a href="/"><span>bdoc</span></a>
+    <a href="{{.BasePath}}/"><span>bdoc</span></a>
   </div>
-  <form class="search" action="/search" method="get" role="search">
+  <form class="search" action="{{.BasePath}}/search" method="get" role="search">
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
       <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.4"/>
       <path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
@@ -492,7 +546,7 @@ const chromeBlock = `
     <span class="kbd">/</span>
   </form>
   <nav class="nav">
-    <a href="/" class="current">Packages</a>
+    <a href="{{.BasePath}}/" class="current">Packages</a>
   </nav>
 </header>
 {{end}}
@@ -508,7 +562,7 @@ var indexTmpl = template.Must(template.New("index").Funcs(tmplFuncs).Parse(chrom
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="{{.BasePath}}/styles.css">
 </head>
 <body>
 <div class="bdoc">
@@ -523,7 +577,7 @@ var indexTmpl = template.Must(template.New("index").Funcs(tmplFuncs).Parse(chrom
     {{range .Packages}}
     <li>
       <div class="row">
-        <a href="/pkg/{{.ImportPath}}/" class="ipath">{{.ImportPath}}</a>
+        <a href="{{$.BasePath}}/pkg/{{.ImportPath}}/" class="ipath">{{.ImportPath}}</a>
         {{if .PkgName}}<span class="pkgname">package {{.PkgName}}</span>{{end}}
       </div>
       {{if .Blurb}}<div class="blurb">{{.Blurb}}</div>{{end}}
@@ -549,7 +603,7 @@ var searchTmpl = template.Must(template.New("search").Funcs(tmplFuncs).Parse(chr
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="{{.BasePath}}/styles.css">
 </head>
 <body>
 <div class="bdoc">
@@ -623,7 +677,7 @@ var pkgTmpl = template.Must(template.New("pkg").Funcs(tmplFuncs).Parse(chromeBlo
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="{{.BasePath}}/styles.css">
 </head>
 <body>
 <div class="bdoc">
@@ -687,7 +741,7 @@ var pkgTmpl = template.Must(template.New("pkg").Funcs(tmplFuncs).Parse(chromeBlo
 
   <main class="main">
     <div class="crumbs">
-      <a href="/">packages</a>
+      <a href="{{.BasePath}}/">packages</a>
       <span class="sep">/</span>
       <span class="current">{{.PkgDisplay}}</span>
     </div>

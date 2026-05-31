@@ -1,4 +1,4 @@
-package main
+package bdoc
 
 import (
 	"html"
@@ -37,15 +37,15 @@ var bosonPrimitives = map[string]bool{
 }
 
 var (
-	tokenRe   = regexp.MustCompile(`[A-Za-z_]\w*|\d+|\s+|"[^"]*"|[^\w\s]`)
-	identRe   = regexp.MustCompile(`^[A-Za-z_]\w*$`)
-	digitsRe  = regexp.MustCompile(`^\d+$`)
-	constRe   = regexp.MustCompile(`^[A-Z][A-Z0-9_]+$`)
-	typeRe    = regexp.MustCompile(`^[A-Z]`)
-	lowerRe   = regexp.MustCompile(`^[a-z_]\w*$`)
-	stringRe  = regexp.MustCompile(`^"[^"]*"$`)
-	wsRe      = regexp.MustCompile(`^\s+$`)
-	punctSet  = `()[]{}<>,;:.*&=`
+	tokenRe  = regexp.MustCompile(`[A-Za-z_]\w*|\d+|\s+|"[^"]*"|[^\w\s]`)
+	identRe  = regexp.MustCompile(`^[A-Za-z_]\w*$`)
+	digitsRe = regexp.MustCompile(`^\d+$`)
+	constRe  = regexp.MustCompile(`^[A-Z][A-Z0-9_]+$`)
+	typeRe   = regexp.MustCompile(`^[A-Z]`)
+	lowerRe  = regexp.MustCompile(`^[a-z_]\w*$`)
+	stringRe = regexp.MustCompile(`^"[^"]*"$`)
+	wsRe     = regexp.MustCompile(`^\s+$`)
+	punctSet = `()[]{}<>,;:.*&=`
 )
 
 // highlight returns the signature as syntax-highlighted HTML.

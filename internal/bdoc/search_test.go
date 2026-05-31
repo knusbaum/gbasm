@@ -1,4 +1,4 @@
-package main
+package bdoc
 
 import (
 	"net/http"
@@ -38,7 +38,7 @@ func TestBuildSearchViewFindsPackagesDeclsAndMethods(t *testing.T) {
 		},
 	}
 
-	got := buildSearchView(packages, "message")
+	got := buildSearchView(packages, "message", "")
 	if len(got.Symbols) != 1 {
 		t.Fatalf("expected one symbol result, got packages=%d symbols=%d", len(got.Packages), len(got.Symbols))
 	}
@@ -49,7 +49,7 @@ func TestBuildSearchViewFindsPackagesDeclsAndMethods(t *testing.T) {
 		t.Fatalf("unexpected method URL: %q", got.Symbols[0].URL)
 	}
 
-	got = buildSearchView(packages, "ERRORS")
+	got = buildSearchView(packages, "ERRORS", "")
 	if len(got.Packages) != 1 {
 		t.Fatalf("expected case-insensitive package result, got %+v", got)
 	}
@@ -70,7 +70,7 @@ func TestBuildSearchViewRanksExactBeforeSubstring(t *testing.T) {
 		},
 	}
 
-	got := buildSearchView(packages, "find")
+	got := buildSearchView(packages, "find", "")
 	if len(got.Symbols) != 2 {
 		t.Fatalf("expected two symbols, got %+v", got.Symbols)
 	}
@@ -96,7 +96,7 @@ fn open(path byte[]) i64 {
 		t.Fatal(err)
 	}
 
-	state := newDocState(root)
+	state := newDocState(root, "")
 	req := httptest.NewRequest(http.MethodGet, "/search?q=open", nil)
 	rec := httptest.NewRecorder()
 	state.serveSearch(rec, req)
@@ -108,6 +108,45 @@ fn open(path byte[]) i64 {
 	for _, want := range []string{`value="open"`, `/pkg/io/#open`, `Opens a file descriptor.`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("response missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestHandlerServesUnderBasePath(t *testing.T) {
+	root := t.TempDir()
+	pkgDir := filepath.Join(root, "io")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := `package io
+
+// Opens a file descriptor.
+fn open(path byte[]) i64 {
+	return 0
+}
+`
+	if err := os.WriteFile(filepath.Join(pkgDir, "io.bos"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := Handler(Options{BosonPath: root, BasePath: "/docs"})
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{path: "/docs/", want: `/docs/pkg/io/`},
+		{path: "/docs/pkg/io/", want: `href="/docs/"`},
+		{path: "/docs/search?q=open", want: `/docs/pkg/io/#open`},
+		{path: "/docs/styles.css", want: `.bdoc`},
+	} {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, body: %s", tc.path, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), tc.want) {
+			t.Fatalf("%s response missing %q:\n%s", tc.path, tc.want, rec.Body.String())
 		}
 	}
 }

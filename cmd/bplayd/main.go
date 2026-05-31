@@ -20,6 +20,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/knusbaum/gbasm/internal/bdoc"
 )
 
 //go:embed static/*
@@ -57,6 +59,9 @@ var (
 	cgroupRoot    = flag.String("cgroup-root", "", "Optional delegated cgroup v2 root for bplay-runner")
 	workRoot      = flag.String("work-root", "", "Directory for per-run workspaces (default: system temp)")
 	runTimeout    = flag.Duration("timeout", 5*time.Second, "Per-run wall-clock timeout")
+	docs          = flag.Bool("docs", true, "Serve bdoc documentation")
+	docsBase      = flag.String("docs-base", "/docs", "Base URL path for documentation")
+	docsBosonPath = flag.String("docs-bosonpath", "runtime", "Colon-separated package search path for documentation")
 )
 
 var (
@@ -80,6 +85,9 @@ func main() {
 		CgroupRoot:    *cgroupRoot,
 		WorkRoot:      *workRoot,
 		Timeout:       *runTimeout,
+		Docs:          *docs,
+		DocsBase:      *docsBase,
+		DocsBosonPath: *docsBosonPath,
 	}
 	state, err := newServerState(cfg)
 	if err != nil {
@@ -91,6 +99,11 @@ func main() {
 	mux.HandleFunc("/api/toolchain", state.handleToolchain)
 	mux.HandleFunc("/healthz", state.handleHealthz)
 	mux.HandleFunc("/readyz", state.handleReadyz)
+	if state.cfg.Docs {
+		docsHandler := bdoc.Handler(bdoc.Options{BosonPath: state.cfg.DocsBosonPath, BasePath: state.cfg.DocsBase})
+		mux.Handle(state.cfg.DocsBase, docsHandler)
+		mux.Handle(state.cfg.DocsBase+"/", docsHandler)
+	}
 	mux.HandleFunc("/", state.handlePlayground)
 	mux.Handle("/static/", state.staticHandler())
 
@@ -108,6 +121,9 @@ type serverConfig struct {
 	CgroupRoot    string
 	WorkRoot      string
 	Timeout       time.Duration
+	Docs          bool
+	DocsBase      string
+	DocsBosonPath string
 }
 
 type serverState struct {
@@ -131,6 +147,12 @@ func newServerState(cfg serverConfig) (*serverState, error) {
 	}
 	if cfg.Mode != "local" && cfg.Mode != "runner" && cfg.Mode != "sandbox" {
 		return nil, fmt.Errorf("unsupported mode %q", cfg.Mode)
+	}
+	if cfg.Docs {
+		cfg.DocsBase = normalizeDocsBase(cfg.DocsBase)
+		if cfg.DocsBase == "" {
+			return nil, errors.New("docs base must not be /")
+		}
 	}
 	if cfg.Mode == "runner" || cfg.Mode == "sandbox" {
 		abs, err := filepath.Abs(cfg.RunnerPath)
@@ -166,6 +188,21 @@ func newServerState(cfg serverConfig) (*serverState, error) {
 		return nil, err
 	}
 	return &serverState{cfg: cfg, bundle: bundle}, nil
+}
+
+func normalizeDocsBase(base string) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		base = "/docs"
+	}
+	if !strings.HasPrefix(base, "/") {
+		base = "/" + base
+	}
+	base = strings.TrimRight(base, "/")
+	if base == "" {
+		return ""
+	}
+	return base
 }
 
 func (s *serverState) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -626,6 +663,9 @@ func runnerArgs(pc plannedCommand, stdinPath string, timeout time.Duration, cgro
 	}
 	if sandbox {
 		args = append(args, "-sandbox")
+		if pc.Name == "run" {
+			args = append(args, "-static-exec")
+		}
 	}
 	if cgroupRoot != "" {
 		args = append(args, "-cgroup-root", cgroupRoot)

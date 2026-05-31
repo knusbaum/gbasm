@@ -20,6 +20,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 var (
@@ -34,6 +35,8 @@ var (
 	cgroupRoot = flag.String("cgroup-root", "", "Optional delegated cgroup v2 root for per-command cgroups")
 	pidsMax    = flag.Uint64("pids", 0, "Optional cgroup pids.max limit")
 	sandbox    = flag.Bool("sandbox", false, "Run command in user, pid, network, ipc, and uts namespaces")
+	staticExec = flag.Bool("static-exec", false, "Sandboxed command is statically linked; do not allow system library paths")
+	child      = flag.Bool("sandbox-child", false, "Internal sandbox child mode")
 )
 
 func main() {
@@ -55,6 +58,9 @@ func main() {
 	}
 	if *maxOutput <= 0 {
 		writeFatal("max-output must be positive")
+	}
+	if *child {
+		os.Exit(runSandboxChild(argv))
 	}
 
 	result := run(argv)
@@ -83,6 +89,13 @@ func run(argv []string) runnerResult {
 
 	start := time.Now()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	if *sandbox {
+		childArgv, err := sandboxChildArgv(argv)
+		if err != nil {
+			return runnerResult{ExitCode: -1, Stderr: err.Error(), MS: time.Since(start).Milliseconds(), Killed: true, Reason: "sandbox"}
+		}
+		cmd = exec.CommandContext(ctx, childArgv[0], childArgv[1:]...)
+	}
 	cmd.Dir = *workdir
 	cmd.Stdin = stdin
 	cmd.SysProcAttr = childSysProcAttr(*sandbox)
@@ -101,12 +114,14 @@ func run(argv []string) runnerResult {
 		defer cg.cleanup()
 	}
 
-	limits, err := buildRLimits()
-	if err != nil {
-		return runnerResult{ExitCode: -1, Stderr: err.Error(), MS: time.Since(start).Milliseconds(), Killed: true, Reason: "limits"}
-	}
-	if err := applyRLimits(limits); err != nil {
-		return runnerResult{ExitCode: -1, Stderr: err.Error(), MS: time.Since(start).Milliseconds(), Killed: true, Reason: "limits"}
+	if !*sandbox {
+		limits, err := buildRLimits()
+		if err != nil {
+			return runnerResult{ExitCode: -1, Stderr: err.Error(), MS: time.Since(start).Milliseconds(), Killed: true, Reason: "limits"}
+		}
+		if err := applyRLimits(limits); err != nil {
+			return runnerResult{ExitCode: -1, Stderr: err.Error(), MS: time.Since(start).Milliseconds(), Killed: true, Reason: "limits"}
+		}
 	}
 
 	err = cmd.Start()
@@ -175,7 +190,8 @@ func childSysProcAttr(useSandbox bool) *syscall.SysProcAttr {
 		syscall.CLONE_NEWPID |
 		syscall.CLONE_NEWNET |
 		syscall.CLONE_NEWIPC |
-		syscall.CLONE_NEWUTS
+		syscall.CLONE_NEWUTS |
+		syscall.CLONE_NEWNS
 	attr.UidMappings = []syscall.SysProcIDMap{{
 		ContainerID: 0,
 		HostID:      os.Getuid(),
@@ -188,6 +204,357 @@ func childSysProcAttr(useSandbox bool) *syscall.SysProcAttr {
 	}}
 	attr.GidMappingsEnableSetgroups = false
 	return attr
+}
+
+func sandboxChildArgv(argv []string) ([]string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	childArgv := []string{exe, "-sandbox-child", "-workdir", *workdir}
+	childArgv = appendSandboxLimitArgs(childArgv)
+	if *staticExec {
+		childArgv = append(childArgv, "-static-exec")
+	}
+	childArgv = append(childArgv, "--")
+	childArgv = append(childArgv, argv...)
+	return childArgv, nil
+}
+
+func appendSandboxLimitArgs(args []string) []string {
+	if *cpuLimit > 0 {
+		args = append(args, "-cpu", cpuLimit.String())
+	}
+	if *memLimit != "" && *cgroupRoot == "" {
+		args = append(args, "-mem", *memLimit)
+	}
+	if *fileLimit != "" {
+		args = append(args, "-fsize", *fileLimit)
+	}
+	if *openFiles > 0 {
+		args = append(args, "-nofile", strconv.FormatUint(*openFiles, 10))
+	}
+	return args
+}
+
+func runSandboxChild(argv []string) int {
+	if len(argv) == 0 {
+		_, _ = os.Stderr.WriteString("sandbox child missing command\n")
+		return 126
+	}
+	if err := setupFilesystemSandbox(argv, *workdir); err != nil {
+		_, _ = os.Stderr.WriteString("sandbox filesystem: " + err.Error() + "\n")
+		return 126
+	}
+	limits, err := buildRLimits()
+	if err != nil {
+		_, _ = os.Stderr.WriteString("limits: " + err.Error() + "\n")
+		return 126
+	}
+	if err := applyRLimits(limits); err != nil {
+		_, _ = os.Stderr.WriteString("limits: " + err.Error() + "\n")
+		return 126
+	}
+	if err := os.Chdir(*workdir); err != nil {
+		_, _ = os.Stderr.WriteString("chdir: " + err.Error() + "\n")
+		return 126
+	}
+	if err := syscall.Exec(argv[0], argv, os.Environ()); err != nil {
+		_, _ = os.Stderr.WriteString("exec: " + err.Error() + "\n")
+		return 126
+	}
+	return 126
+}
+
+func setupFilesystemSandbox(argv []string, workdir string) error {
+	if err := syscall.Mount("", "/", "", syscall.MS_PRIVATE|syscall.MS_REC, ""); err != nil {
+		return err
+	}
+	return applyLandlock(argv, workdir)
+}
+
+const (
+	landlockCreateRulesetVersion = 1
+	landlockRulePathBeneath      = 1
+
+	landlockAccessFSExecute    = uint64(1 << 0)
+	landlockAccessFSWriteFile  = uint64(1 << 1)
+	landlockAccessFSReadFile   = uint64(1 << 2)
+	landlockAccessFSReadDir    = uint64(1 << 3)
+	landlockAccessFSRemoveDir  = uint64(1 << 4)
+	landlockAccessFSRemoveFile = uint64(1 << 5)
+	landlockAccessFSMakeChar   = uint64(1 << 6)
+	landlockAccessFSMakeDir    = uint64(1 << 7)
+	landlockAccessFSMakeReg    = uint64(1 << 8)
+	landlockAccessFSMakeSock   = uint64(1 << 9)
+	landlockAccessFSMakeFifo   = uint64(1 << 10)
+	landlockAccessFSMakeBlock  = uint64(1 << 11)
+	landlockAccessFSMakeSym    = uint64(1 << 12)
+	landlockAccessFSRefer      = uint64(1 << 13)
+	landlockAccessFSTruncate   = uint64(1 << 14)
+	landlockAccessFSIOCTLDev   = uint64(1 << 15)
+
+	sysLandlockCreateRuleset = uintptr(444)
+	sysLandlockAddRule       = uintptr(445)
+	sysLandlockRestrictSelf  = uintptr(446)
+
+	prSetNoNewPrivs = uintptr(38)
+	oPath           = 010000000
+)
+
+type landlockRulesetAttr struct {
+	HandledAccessFS uint64
+}
+
+type landlockPathBeneathAttr struct {
+	AllowedAccess uint64
+	ParentFD      int32
+}
+
+func applyLandlock(argv []string, workdir string) error {
+	abi, err := landlockABI()
+	if err != nil {
+		return err
+	}
+	handled := landlockHandledAccess(abi)
+	ruleset := landlockRulesetAttr{HandledAccessFS: handled}
+	fd, _, errno := syscall.Syscall(sysLandlockCreateRuleset, uintptr(unsafe.Pointer(&ruleset)), unsafe.Sizeof(ruleset), 0)
+	if errno != 0 {
+		return errno
+	}
+	defer syscall.Close(int(fd))
+
+	for _, rule := range collectLandlockPaths(argv, workdir, abi) {
+		if err := addLandlockPathRule(int(fd), rule.path, rule.access&handled); err != nil {
+			return err
+		}
+	}
+
+	if _, _, errno := syscall.Syscall6(syscall.SYS_PRCTL, prSetNoNewPrivs, 1, 0, 0, 0, 0); errno != 0 {
+		return errno
+	}
+	if _, _, errno := syscall.Syscall(sysLandlockRestrictSelf, fd, 0, 0); errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+func landlockABI() (int, error) {
+	abi, _, errno := syscall.Syscall(sysLandlockCreateRuleset, 0, 0, landlockCreateRulesetVersion)
+	if errno != 0 {
+		return 0, errno
+	}
+	if abi == 0 {
+		return 0, errors.New("landlock ABI unavailable")
+	}
+	return int(abi), nil
+}
+
+func landlockHandledAccess(abi int) uint64 {
+	access := landlockAccessFSExecute |
+		landlockAccessFSWriteFile |
+		landlockAccessFSReadFile |
+		landlockAccessFSReadDir |
+		landlockAccessFSRemoveDir |
+		landlockAccessFSRemoveFile |
+		landlockAccessFSMakeChar |
+		landlockAccessFSMakeDir |
+		landlockAccessFSMakeReg |
+		landlockAccessFSMakeSock |
+		landlockAccessFSMakeFifo |
+		landlockAccessFSMakeBlock |
+		landlockAccessFSMakeSym
+	if abi >= 2 {
+		access |= landlockAccessFSRefer
+	}
+	if abi >= 3 {
+		access |= landlockAccessFSTruncate
+	}
+	if abi >= 5 {
+		access |= landlockAccessFSIOCTLDev
+	}
+	return access
+}
+
+type landlockPathRule struct {
+	path   string
+	access uint64
+}
+
+func collectLandlockPaths(argv []string, workdir string, abi int) []landlockPathRule {
+	rw := landlockReadAccess() | landlockWriteAccess(abi)
+	ro := landlockReadAccess()
+	rx := landlockReadAccess() | landlockAccessFSExecute
+
+	rulesByPath := map[string]uint64{}
+	add := func(path string, access uint64) {
+		clean, ok := existingAbsolutePath(path)
+		if !ok {
+			return
+		}
+		rulesByPath[clean] |= access
+	}
+
+	add(workdir, rw)
+	if len(argv) > 0 {
+		add(argv[0], rx)
+	}
+	for _, path := range argvReadPaths(argv, workdir) {
+		add(path, ro)
+	}
+	if !*staticExec {
+		for _, path := range []string{"/lib", "/lib64", "/usr/lib", "/usr/lib64"} {
+			add(path, rx)
+		}
+	}
+
+	rules := make([]landlockPathRule, 0, len(rulesByPath))
+	for path, access := range rulesByPath {
+		rules = append(rules, landlockPathRule{path: path, access: access})
+	}
+	return rules
+}
+
+func landlockReadAccess() uint64 {
+	return landlockAccessFSReadFile | landlockAccessFSReadDir
+}
+
+func landlockWriteAccess(abi int) uint64 {
+	access := landlockAccessFSWriteFile |
+		landlockAccessFSRemoveDir |
+		landlockAccessFSRemoveFile |
+		landlockAccessFSMakeChar |
+		landlockAccessFSMakeDir |
+		landlockAccessFSMakeReg |
+		landlockAccessFSMakeSock |
+		landlockAccessFSMakeFifo |
+		landlockAccessFSMakeBlock |
+		landlockAccessFSMakeSym
+	if abi >= 2 {
+		access |= landlockAccessFSRefer
+	}
+	if abi >= 3 {
+		access |= landlockAccessFSTruncate
+	}
+	if abi >= 5 {
+		access |= landlockAccessFSIOCTLDev
+	}
+	return access
+}
+
+func argvReadPaths(argv []string, workdir string) []string {
+	var paths []string
+	skipNext := false
+	for i, arg := range argv {
+		if i == 0 {
+			continue
+		}
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		if arg == "-o" {
+			skipNext = true
+			continue
+		}
+		if strings.HasPrefix(arg, "-o=") {
+			continue
+		}
+		if strings.HasPrefix(arg, "-importcfg=") {
+			importcfg := strings.TrimPrefix(arg, "-importcfg=")
+			paths = append(paths, importcfg)
+			paths = append(paths, importcfgObjectPaths(importcfg)...)
+			continue
+		}
+		if filepath.IsAbs(arg) && !pathWithin(arg, workdir) {
+			paths = append(paths, arg)
+		}
+	}
+	return paths
+}
+
+func importcfgObjectPaths(path string) []string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		_, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if filepath.IsAbs(value) {
+			paths = append(paths, value)
+		}
+	}
+	return paths
+}
+
+func existingAbsolutePath(path string) (string, bool) {
+	if path == "" || !filepath.IsAbs(path) {
+		return "", false
+	}
+	clean, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		clean = filepath.Clean(path)
+	}
+	if _, err := os.Stat(clean); err != nil {
+		return "", false
+	}
+	return clean, true
+}
+
+func pathWithin(path, root string) bool {
+	cleanPath, ok := existingAbsolutePath(path)
+	if !ok {
+		cleanPath = filepath.Clean(path)
+	}
+	cleanRoot, ok := existingAbsolutePath(root)
+	if !ok {
+		cleanRoot = filepath.Clean(root)
+	}
+	rel, err := filepath.Rel(cleanRoot, cleanPath)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+func addLandlockPathRule(rulesetFD int, path string, access uint64) error {
+	if access == 0 {
+		return nil
+	}
+	if st, err := os.Stat(path); err != nil {
+		return err
+	} else if !st.IsDir() {
+		access &^= landlockAccessFSReadDir |
+			landlockAccessFSRemoveDir |
+			landlockAccessFSMakeChar |
+			landlockAccessFSMakeDir |
+			landlockAccessFSMakeReg |
+			landlockAccessFSMakeSock |
+			landlockAccessFSMakeFifo |
+			landlockAccessFSMakeBlock |
+			landlockAccessFSMakeSym
+	}
+	fd, err := syscall.Open(path, oPath|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer syscall.Close(fd)
+
+	rule := landlockPathBeneathAttr{
+		AllowedAccess: access,
+		ParentFD:      int32(fd),
+	}
+	_, _, errno := syscall.Syscall(sysLandlockAddRule, uintptr(rulesetFD), landlockRulePathBeneath, uintptr(unsafe.Pointer(&rule)))
+	if errno != 0 {
+		return errno
+	}
+	return nil
 }
 
 type rlimitSpec struct {

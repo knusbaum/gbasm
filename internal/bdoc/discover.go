@@ -1,4 +1,4 @@
-package main
+package bdoc
 
 import (
 	"fmt"
@@ -8,13 +8,13 @@ import (
 	"strings"
 )
 
-// discoverPackages walks each entry in bosonpath (colon-separated) and finds
+// DiscoverPackages walks each entry in bosonpath (colon-separated) and finds
 // directories containing at least one .bos or .bs file. Each such directory
 // is one package, identified by its path relative to its BOSONPATH entry.
 // The returned slice is sorted by import path. If the same import path is
 // found in more than one BOSONPATH entry, the earlier entry wins (mirroring
 // the build system's resolve_pkg behaviour).
-func discoverPackages(bosonpath string) ([]*PackageScan, error) {
+func DiscoverPackages(bosonpath string) ([]*PackageScan, error) {
 	seen := make(map[string]bool)
 	var packages []*PackageScan
 

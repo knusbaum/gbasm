@@ -36,7 +36,8 @@ COPY --from=build /out/bosc /usr/local/bin/bosc
 COPY --from=build /out/bas /usr/local/bin/bas
 COPY --from=build /out/bld /usr/local/bin/bld
 COPY --from=build /out/playground /usr/local/lib/boson/playground
+COPY --from=build /src/runtime /usr/local/lib/boson/runtime
 
 EXPOSE 8086
 
-CMD ["/usr/local/bin/bplayd", "-addr", ":8086", "-mode", "sandbox", "-runner", "/usr/local/bin/bplay-runner", "-toolchain-dir", "/usr/local/bin", "-runtime-bundle", "/usr/local/lib/boson/playground"]
+CMD ["/usr/local/bin/bplayd", "-addr", ":8086", "-mode", "sandbox", "-runner", "/usr/local/bin/bplay-runner", "-toolchain-dir", "/usr/local/bin", "-runtime-bundle", "/usr/local/lib/boson/playground", "-docs-bosonpath", "/usr/local/lib/boson/runtime"]

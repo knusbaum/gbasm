@@ -1,4 +1,4 @@
-package main
+package bdoc
 
 import (
 	"bufio"
@@ -21,9 +21,9 @@ type Decl struct {
 type DeclKind int
 
 const (
-	DeclFunc DeclKind = iota
-	DeclType      // `type Name X [{ methods }]` and `type Name struct { ... } [{ methods }]`
-	DeclInterface // `interface Name { sigs }`
+	DeclFunc      DeclKind = iota
+	DeclType               // `type Name X [{ methods }]` and `type Name struct { ... } [{ methods }]`
+	DeclInterface          // `interface Name { sigs }`
 	DeclVar
 	DeclData
 	DeclAsmFunc // .bs `function` declaration

@@ -172,6 +172,7 @@ func TestRunnerArgsUseSandboxFlag(t *testing.T) {
 		"-max-output", "65536",
 		"-cpu", "2s",
 		"-sandbox",
+		"-static-exec",
 		"-fsize", "1MiB",
 		"-nofile", "32",
 		"--",
