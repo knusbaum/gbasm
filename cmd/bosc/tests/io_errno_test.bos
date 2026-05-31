@@ -1,0 +1,25 @@
+package main
+
+import "io"
+import "string"
+
+fn main() {
+	var e io.io_err = io.err_from_code(13)
+	if (e == io.io_err.EACCES) {
+		string.puts(e.message())
+		string.puts("\n")
+	}
+
+	e = io.err_from_code(999)
+	if (e == io.io_err.UNKNOWN) {
+		string.puts(e.message())
+		string.puts("\n")
+	}
+
+	const f, const openerr = io.open("/definitely/not/a/boson/file", io.O_RDONLY, 0)
+	if (openerr == io.io_err.ENOENT) {
+		string.puts(openerr.message())
+		string.puts("\n")
+	}
+	dispose(f)
+}

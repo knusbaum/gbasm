@@ -3,9 +3,9 @@ package main
 import "io"
 import "string"
 
-fn perror(err i64) {
+fn perror(err io.io_err) {
 	string.puts("ERROR: ")
-	string.puti(err)
+	string.puts(err.message())
 	string.puts("\n")
 }
 
@@ -14,7 +14,7 @@ fn main(args byte[][]) {
 
 	if (len(args) == 1) {
 		const err = io.copy(&io.STDOUT, &io.STDIN)
-		if(err != 0) {
+		if(err != io.io_err.OK) {
 			perror(err)
 			return
 		}
@@ -23,7 +23,7 @@ fn main(args byte[][]) {
 	}
 	for(var i i64 = 1; i < len(args); i = i + 1) {
 		const f, err = io.open(args[i], io.O_CREAT | io.O_RDONLY, 0o660)
-		if (err != 0) {
+		if (err != io.io_err.OK) {
 			string.puts("While opening ")
 			string.puts(args[i])
 			string.puts("\n")
@@ -32,7 +32,7 @@ fn main(args byte[][]) {
 			return
 		}
 		err = io.copy(&io.STDOUT, &f)
-		if(err != 0) {
+		if(err != io.io_err.OK) {
 			perror(err)
 			f.close()
 			return
@@ -41,4 +41,3 @@ fn main(args byte[][]) {
 	}
 	string.puts("Done.\n")
 }
-

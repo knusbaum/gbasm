@@ -6,8 +6,8 @@
 // to close exactly once; the three pre-opened standard streams STDIN,
 // STDOUT, and STDERR are exposed as non-owning globals.
 //
-// All fallible operations return a (value, err) pair where err is 0 on
-// success and a positive errno value on failure. On read and write errors
+// All fallible operations return a (value, err) pair where err is io_err.OK on
+// success and a Linux errno-backed io_err on failure. On read and write errors
 // the returned byte count is 0; on open errors the returned FD is invalid
 // and must be disposed rather than closed.
 //
@@ -30,6 +30,287 @@ pub const O_TRUNC    i64 = 512     // truncate file to zero length on open (0100
 pub const O_APPEND   i64 = 1024    // writes always append to end of file (02000 octal)
 pub const O_NONBLOCK i64 = 2048    // non-blocking I/O (04000 octal)
 pub const O_CLOEXEC  i64 = 524288  // set close-on-exec flag (02000000 octal)
+
+// io_err is the typed error set returned by this package. The cases mirror
+// Linux's asm-generic errno values: kernel syscalls return -EACCES, -ENOENT,
+// etc.; io maps those raw integers to this closed set.
+pub type io_err values (byte[]) {
+	OK: "success"
+	UNKNOWN: "unknown I/O error"
+	EPERM: "operation not permitted"
+	ENOENT: "no such file or directory"
+	ESRCH: "no such process"
+	EINTR: "interrupted system call"
+	EIO: "I/O error"
+	ENXIO: "no such device or address"
+	E2BIG: "argument list too long"
+	ENOEXEC: "exec format error"
+	EBADF: "bad file descriptor"
+	ECHILD: "no child processes"
+	EAGAIN: "resource temporarily unavailable"
+	ENOMEM: "out of memory"
+	EACCES: "permission denied"
+	EFAULT: "bad address"
+	ENOTBLK: "block device required"
+	EBUSY: "device or resource busy"
+	EEXIST: "file exists"
+	EXDEV: "cross-device link"
+	ENODEV: "no such device"
+	ENOTDIR: "not a directory"
+	EISDIR: "is a directory"
+	EINVAL: "invalid argument"
+	ENFILE: "file table overflow"
+	EMFILE: "too many open files"
+	ENOTTY: "inappropriate ioctl for device"
+	ETXTBSY: "text file busy"
+	EFBIG: "file too large"
+	ENOSPC: "no space left on device"
+	ESPIPE: "illegal seek"
+	EROFS: "read-only file system"
+	EMLINK: "too many links"
+	EPIPE: "broken pipe"
+	EDOM: "numerical argument out of domain"
+	ERANGE: "numerical result out of range"
+	EDEADLK: "resource deadlock avoided"
+	ENAMETOOLONG: "file name too long"
+	ENOLCK: "no locks available"
+	ENOSYS: "function not implemented"
+	ENOTEMPTY: "directory not empty"
+	ELOOP: "too many levels of symbolic links"
+	ENOMSG: "no message of desired type"
+	EIDRM: "identifier removed"
+	ECHRNG: "channel number out of range"
+	EL2NSYNC: "level 2 not synchronized"
+	EL3HLT: "level 3 halted"
+	EL3RST: "level 3 reset"
+	ELNRNG: "link number out of range"
+	EUNATCH: "protocol driver not attached"
+	ENOCSI: "no CSI structure available"
+	EL2HLT: "level 2 halted"
+	EBADE: "invalid exchange"
+	EBADR: "invalid request descriptor"
+	EXFULL: "exchange full"
+	ENOANO: "no anode"
+	EBADRQC: "invalid request code"
+	EBADSLT: "invalid slot"
+	EBFONT: "bad font file format"
+	ENOSTR: "device not a stream"
+	ENODATA: "no data available"
+	ETIME: "timer expired"
+	ENOSR: "out of streams resources"
+	ENONET: "machine is not on the network"
+	ENOPKG: "package not installed"
+	EREMOTE: "object is remote"
+	ENOLINK: "link has been severed"
+	EADV: "advertise error"
+	ESRMNT: "srmount error"
+	ECOMM: "communication error on send"
+	EPROTO: "protocol error"
+	EMULTIHOP: "multihop attempted"
+	EDOTDOT: "RFS specific error"
+	EBADMSG: "bad message"
+	EOVERFLOW: "value too large for defined data type"
+	ENOTUNIQ: "name not unique on network"
+	EBADFD: "file descriptor in bad state"
+	EREMCHG: "remote address changed"
+	ELIBACC: "cannot access a needed shared library"
+	ELIBBAD: "accessing a corrupted shared library"
+	ELIBSCN: ".lib section in a.out corrupted"
+	ELIBMAX: "attempting to link in too many shared libraries"
+	ELIBEXEC: "cannot exec a shared library directly"
+	EILSEQ: "illegal byte sequence"
+	ERESTART: "interrupted system call should be restarted"
+	ESTRPIPE: "streams pipe error"
+	EUSERS: "too many users"
+	ENOTSOCK: "socket operation on non-socket"
+	EDESTADDRREQ: "destination address required"
+	EMSGSIZE: "message too long"
+	EPROTOTYPE: "protocol wrong type for socket"
+	ENOPROTOOPT: "protocol not available"
+	EPROTONOSUPPORT: "protocol not supported"
+	ESOCKTNOSUPPORT: "socket type not supported"
+	EOPNOTSUPP: "operation not supported"
+	EPFNOSUPPORT: "protocol family not supported"
+	EAFNOSUPPORT: "address family not supported by protocol"
+	EADDRINUSE: "address already in use"
+	EADDRNOTAVAIL: "cannot assign requested address"
+	ENETDOWN: "network is down"
+	ENETUNREACH: "network is unreachable"
+	ENETRESET: "network dropped connection on reset"
+	ECONNABORTED: "software caused connection abort"
+	ECONNRESET: "connection reset by peer"
+	ENOBUFS: "no buffer space available"
+	EISCONN: "transport endpoint is already connected"
+	ENOTCONN: "transport endpoint is not connected"
+	ESHUTDOWN: "cannot send after transport endpoint shutdown"
+	ETOOMANYREFS: "too many references"
+	ETIMEDOUT: "connection timed out"
+	ECONNREFUSED: "connection refused"
+	EHOSTDOWN: "host is down"
+	EHOSTUNREACH: "no route to host"
+	EALREADY: "operation already in progress"
+	EINPROGRESS: "operation now in progress"
+	ESTALE: "stale file handle"
+	EUCLEAN: "structure needs cleaning"
+	ENOTNAM: "not a XENIX named type file"
+	ENAVAIL: "no XENIX semaphores available"
+	EISNAM: "is a named type file"
+	EREMOTEIO: "remote I/O error"
+	EDQUOT: "quota exceeded"
+	ENOMEDIUM: "no medium found"
+	EMEDIUMTYPE: "wrong medium type"
+	ECANCELED: "operation canceled"
+	ENOKEY: "required key not available"
+	EKEYEXPIRED: "key has expired"
+	EKEYREVOKED: "key has been revoked"
+	EKEYREJECTED: "key was rejected by service"
+	EOWNERDEAD: "owner died"
+	ENOTRECOVERABLE: "state not recoverable"
+	ERFKILL: "operation not possible due to RF-kill"
+	EHWPOISON: "memory page has hardware error"
+} {
+	message(e io_err) byte[] {
+		return byte[](e)
+	}
+}
+
+// err_from_code maps a positive Linux errno number to io_err. It also accepts
+// 0 for success. Unknown codes map to io_err.UNKNOWN.
+pub fn err_from_code(errno i64) io_err {
+	if (errno == 0) { return io_err.OK }
+	if (errno == 1) { return io_err.EPERM }
+	if (errno == 2) { return io_err.ENOENT }
+	if (errno == 3) { return io_err.ESRCH }
+	if (errno == 4) { return io_err.EINTR }
+	if (errno == 5) { return io_err.EIO }
+	if (errno == 6) { return io_err.ENXIO }
+	if (errno == 7) { return io_err.E2BIG }
+	if (errno == 8) { return io_err.ENOEXEC }
+	if (errno == 9) { return io_err.EBADF }
+	if (errno == 10) { return io_err.ECHILD }
+	if (errno == 11) { return io_err.EAGAIN }
+	if (errno == 12) { return io_err.ENOMEM }
+	if (errno == 13) { return io_err.EACCES }
+	if (errno == 14) { return io_err.EFAULT }
+	if (errno == 15) { return io_err.ENOTBLK }
+	if (errno == 16) { return io_err.EBUSY }
+	if (errno == 17) { return io_err.EEXIST }
+	if (errno == 18) { return io_err.EXDEV }
+	if (errno == 19) { return io_err.ENODEV }
+	if (errno == 20) { return io_err.ENOTDIR }
+	if (errno == 21) { return io_err.EISDIR }
+	if (errno == 22) { return io_err.EINVAL }
+	if (errno == 23) { return io_err.ENFILE }
+	if (errno == 24) { return io_err.EMFILE }
+	if (errno == 25) { return io_err.ENOTTY }
+	if (errno == 26) { return io_err.ETXTBSY }
+	if (errno == 27) { return io_err.EFBIG }
+	if (errno == 28) { return io_err.ENOSPC }
+	if (errno == 29) { return io_err.ESPIPE }
+	if (errno == 30) { return io_err.EROFS }
+	if (errno == 31) { return io_err.EMLINK }
+	if (errno == 32) { return io_err.EPIPE }
+	if (errno == 33) { return io_err.EDOM }
+	if (errno == 34) { return io_err.ERANGE }
+	if (errno == 35) { return io_err.EDEADLK }
+	if (errno == 36) { return io_err.ENAMETOOLONG }
+	if (errno == 37) { return io_err.ENOLCK }
+	if (errno == 38) { return io_err.ENOSYS }
+	if (errno == 39) { return io_err.ENOTEMPTY }
+	if (errno == 40) { return io_err.ELOOP }
+	if (errno == 42) { return io_err.ENOMSG }
+	if (errno == 43) { return io_err.EIDRM }
+	if (errno == 44) { return io_err.ECHRNG }
+	if (errno == 45) { return io_err.EL2NSYNC }
+	if (errno == 46) { return io_err.EL3HLT }
+	if (errno == 47) { return io_err.EL3RST }
+	if (errno == 48) { return io_err.ELNRNG }
+	if (errno == 49) { return io_err.EUNATCH }
+	if (errno == 50) { return io_err.ENOCSI }
+	if (errno == 51) { return io_err.EL2HLT }
+	if (errno == 52) { return io_err.EBADE }
+	if (errno == 53) { return io_err.EBADR }
+	if (errno == 54) { return io_err.EXFULL }
+	if (errno == 55) { return io_err.ENOANO }
+	if (errno == 56) { return io_err.EBADRQC }
+	if (errno == 57) { return io_err.EBADSLT }
+	if (errno == 59) { return io_err.EBFONT }
+	if (errno == 60) { return io_err.ENOSTR }
+	if (errno == 61) { return io_err.ENODATA }
+	if (errno == 62) { return io_err.ETIME }
+	if (errno == 63) { return io_err.ENOSR }
+	if (errno == 64) { return io_err.ENONET }
+	if (errno == 65) { return io_err.ENOPKG }
+	if (errno == 66) { return io_err.EREMOTE }
+	if (errno == 67) { return io_err.ENOLINK }
+	if (errno == 68) { return io_err.EADV }
+	if (errno == 69) { return io_err.ESRMNT }
+	if (errno == 70) { return io_err.ECOMM }
+	if (errno == 71) { return io_err.EPROTO }
+	if (errno == 72) { return io_err.EMULTIHOP }
+	if (errno == 73) { return io_err.EDOTDOT }
+	if (errno == 74) { return io_err.EBADMSG }
+	if (errno == 75) { return io_err.EOVERFLOW }
+	if (errno == 76) { return io_err.ENOTUNIQ }
+	if (errno == 77) { return io_err.EBADFD }
+	if (errno == 78) { return io_err.EREMCHG }
+	if (errno == 79) { return io_err.ELIBACC }
+	if (errno == 80) { return io_err.ELIBBAD }
+	if (errno == 81) { return io_err.ELIBSCN }
+	if (errno == 82) { return io_err.ELIBMAX }
+	if (errno == 83) { return io_err.ELIBEXEC }
+	if (errno == 84) { return io_err.EILSEQ }
+	if (errno == 85) { return io_err.ERESTART }
+	if (errno == 86) { return io_err.ESTRPIPE }
+	if (errno == 87) { return io_err.EUSERS }
+	if (errno == 88) { return io_err.ENOTSOCK }
+	if (errno == 89) { return io_err.EDESTADDRREQ }
+	if (errno == 90) { return io_err.EMSGSIZE }
+	if (errno == 91) { return io_err.EPROTOTYPE }
+	if (errno == 92) { return io_err.ENOPROTOOPT }
+	if (errno == 93) { return io_err.EPROTONOSUPPORT }
+	if (errno == 94) { return io_err.ESOCKTNOSUPPORT }
+	if (errno == 95) { return io_err.EOPNOTSUPP }
+	if (errno == 96) { return io_err.EPFNOSUPPORT }
+	if (errno == 97) { return io_err.EAFNOSUPPORT }
+	if (errno == 98) { return io_err.EADDRINUSE }
+	if (errno == 99) { return io_err.EADDRNOTAVAIL }
+	if (errno == 100) { return io_err.ENETDOWN }
+	if (errno == 101) { return io_err.ENETUNREACH }
+	if (errno == 102) { return io_err.ENETRESET }
+	if (errno == 103) { return io_err.ECONNABORTED }
+	if (errno == 104) { return io_err.ECONNRESET }
+	if (errno == 105) { return io_err.ENOBUFS }
+	if (errno == 106) { return io_err.EISCONN }
+	if (errno == 107) { return io_err.ENOTCONN }
+	if (errno == 108) { return io_err.ESHUTDOWN }
+	if (errno == 109) { return io_err.ETOOMANYREFS }
+	if (errno == 110) { return io_err.ETIMEDOUT }
+	if (errno == 111) { return io_err.ECONNREFUSED }
+	if (errno == 112) { return io_err.EHOSTDOWN }
+	if (errno == 113) { return io_err.EHOSTUNREACH }
+	if (errno == 114) { return io_err.EALREADY }
+	if (errno == 115) { return io_err.EINPROGRESS }
+	if (errno == 116) { return io_err.ESTALE }
+	if (errno == 117) { return io_err.EUCLEAN }
+	if (errno == 118) { return io_err.ENOTNAM }
+	if (errno == 119) { return io_err.ENAVAIL }
+	if (errno == 120) { return io_err.EISNAM }
+	if (errno == 121) { return io_err.EREMOTEIO }
+	if (errno == 122) { return io_err.EDQUOT }
+	if (errno == 123) { return io_err.ENOMEDIUM }
+	if (errno == 124) { return io_err.EMEDIUMTYPE }
+	if (errno == 125) { return io_err.ECANCELED }
+	if (errno == 126) { return io_err.ENOKEY }
+	if (errno == 127) { return io_err.EKEYEXPIRED }
+	if (errno == 128) { return io_err.EKEYREVOKED }
+	if (errno == 129) { return io_err.EKEYREJECTED }
+	if (errno == 130) { return io_err.EOWNERDEAD }
+	if (errno == 131) { return io_err.ENOTRECOVERABLE }
+	if (errno == 132) { return io_err.ERFKILL }
+	if (errno == 133) { return io_err.EHWPOISON }
+	return io_err.UNKNOWN
+}
 
 // STDIN is the standard input file descriptor (fd 0), pre-opened by the
 // kernel at process start. It is borrowed: do not pass it to close.
@@ -59,60 +340,61 @@ pub type FD i64 {
 	// read fills buf with bytes from the descriptor.
 	//
 	// Returns (n, err): n is the number of bytes read (0 = EOF) and err
-	// is 0 on success or a positive errno value on failure.
-	// A partial read (n < len(buf), err == 0) may be retried.
-	read(fd *FD, buf mut byte[]) i64, i64 {
+	// is io_err.OK on success or an errno-backed io_err on failure.
+	// A partial read (n < len(buf), err == io_err.OK) may be retried.
+	read(fd *FD, buf mut byte[]) i64, io_err {
 		const raw i64 = _io_sys.read(i64(*fd), buf)
 		if (raw < 0) {
-			return 0, -raw
+			return 0, err_from_code(-raw)
 		}
-		return raw, 0
+		return raw, io_err.OK
 	}
 
 	// write writes buf to the descriptor.
 	//
-	// Returns (n, err): n is the number of bytes written and err is 0 on
-	// success or a positive errno value on failure.
-	// A short write (n < len(buf), err == 0) is not an error; the caller
-	// is responsible for re-issuing the remainder.
-	write(fd *FD, buf byte[]) i64, i64 {
+	// Returns (n, err): n is the number of bytes written and err is
+	// io_err.OK on success or an errno-backed io_err on failure. A short
+	// write (n < len(buf), err == io_err.OK) is not an error; the caller is
+	// responsible for re-issuing the remainder.
+	write(fd *FD, buf byte[]) i64, io_err {
 		const raw i64 = _io_sys.write(i64(*fd), buf)
 		if (raw < 0) {
-			return 0, -raw
+			return 0, err_from_code(-raw)
 		}
-		return raw, 0
+		return raw, io_err.OK
 	}
 
 	// close releases the descriptor back to the kernel and consumes the
 	// owned FD. After close, the FD value is dead — any subsequent use
 	// is a compile-time error.
 	//
-	// Returns 0 on success or a positive errno value on failure. Some
-	// filesystems surface delayed write errors through close.
-	close(fd *owned FD) i64 {
+	// Returns io_err.OK on success or an errno-backed io_err on failure.
+	// Some filesystems surface delayed write errors through close.
+	close(fd *owned FD) io_err {
 		const raw i64 = _io_sys.close(i64(*fd))
 		dispose(fd)
 		if (raw < 0) {
-			return -raw
+			return err_from_code(-raw)
 		}
-		return 0
+		return io_err.OK
 	}
 }
 
 // reader is the interface satisfied by any value with a read method of
 // the appropriate shape. read fills buf with up to len(buf) bytes and
-// returns (n, err): n bytes read (0 = EOF), err = 0 on success or a
-// positive errno on failure.
+// returns (n, err): n bytes read (0 = EOF), err = io_err.OK on success or an
+// errno-backed io_err on failure.
 pub interface reader {
-	read(r *self, buf mut byte[]) i64, i64
+	read(r *self, buf mut byte[]) i64, io_err
 }
 
 // writer is the interface satisfied by any value with a write method of
 // the appropriate shape. write attempts to write buf and returns (n, err):
-// n bytes written, err = 0 on success or a positive errno on failure.
-// A short write (n < len(buf), err == 0) must be retried by the caller.
+// n bytes written, err = io_err.OK on success or an errno-backed io_err on
+// failure. A short write (n < len(buf), err == io_err.OK) must be retried by
+// the caller.
 pub interface writer {
-	write(w *self, buf byte[]) i64, i64
+	write(w *self, buf byte[]) i64, io_err
 }
 
 // open opens the file at path with the given open(2) flags and mode.
@@ -127,15 +409,15 @@ pub interface writer {
 // mode is the permission bits applied when O_CREAT creates a new file
 // (e.g. 0o644 = 420).
 //
-// Returns (fd, err): on success err is 0 and fd is the opened descriptor.
-// On failure err is a positive errno value and fd is invalid — the caller
-// must dispose it rather than close it.
-// Paths longer than 4095 bytes return err = 36 (ENAMETOOLONG).
-pub fn open(path byte[], flags i64, mode i64) owned FD, i64 {
+// Returns (fd, err): on success err is io_err.OK and fd is the opened
+// descriptor. On failure err is an errno-backed io_err and fd is invalid — the
+// caller must dispose it rather than close it.
+// Paths longer than 4095 bytes return io_err.ENAMETOOLONG.
+pub fn open(path byte[], flags i64, mode i64) owned FD, io_err {
 	var buf byte[4096]
 	const n i64 = len(path)
 	if (n >= 4096) {
-		return owned(FD(-1)), 36
+		return owned(FD(-1)), io_err.ENAMETOOLONG
 	}
 	var i i64
 	for (i = 0; i < n; i = i + 1) {
@@ -144,30 +426,30 @@ pub fn open(path byte[], flags i64, mode i64) owned FD, i64 {
 	buf[n] = 0
 	const raw i64 = _io_sys.open(buf[:n+1], flags, mode)
 	if (raw < 0) {
-		return owned(FD(-1)), -raw
+		return owned(FD(-1)), err_from_code(-raw)
 	}
-	return owned(FD(raw)), 0
+	return owned(FD(raw)), io_err.OK
 }
 
-pub fn copy(dst writer, src reader) i64 {
+pub fn copy(dst writer, src reader) io_err {
 	var b byte[1024]
 	var bs mut byte[]
 	for(;;) {
 		bs = b[:]
 		const n, var err = src.read(bs)
-		if (err != 0) {
+		if (err != io_err.OK) {
 			return err
 		}
 		if(n == 0) {
-			return 0
+			return io_err.OK
 		}
 		bs = bs[:n]
 		const wn, err = dst.write(bs)
-		if(err != 0) {
+		if(err != io_err.OK) {
 			return err
 		}
 		if(wn != n) {
-			return -1 // this is shit, we will fix this with proper error types.
+			return io_err.EIO
 		}
 	}
 }
