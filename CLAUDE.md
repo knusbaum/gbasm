@@ -75,7 +75,7 @@ checks belong in those code paths, not in a phase that doesn't exist.
 | `errctx.go` | `fatalCtx` + `printErrorContext` — five-line source snippet around an `interpreterError`'s position, with a caret arrow (red on TTY, plain otherwise). Always use `fatalCtx` for errors carrying positions. |
 | `lexer_test.go`, `parser_test.go`, `checker_test.go` | Go unit tests for the front end. |
 | `tests/` | ~490 files. Each `*_test.bos` has a paired `*_test.bos.expected`. See [Tests](#tests). |
-| `run_tests.sh` | The compiler integration test runner. |
+| `mmkfile` | mmk target: `test` runs go + integration suites. A single test can be re-run by name: `mmk tests/<name>_test.bos`. |
 | `boson-mode.el` | Emacs major mode for `.bos` files. |
 
 ### `cmd/bas/` — the Boson assembler
@@ -89,7 +89,7 @@ print as `Fatal: <message>` (test-friendly) instead of Go tracebacks.
 |------|---------|
 | `main.go` | Parser for directives (`function`, `local`, `bytes`, `arg`, `var`, `data`, `struct`, `prologue`, `epilogue`, etc.) and the line-by-line instruction matcher that calls `gbasm.Encode`. |
 | `tests/` | ~73 files. `*_test.bs` + `.bs.expected`; some have `_err_test.bs` (negative tests). |
-| `run_tests.sh` | Assembler integration runner. |
+| `mmkfile` | mmk target: `test` runs go + integration suites. A single test can be re-run by name: `mmk tests/<name>_test.bs`. |
 
 ### `cmd/bld/` — the linker
 
@@ -132,7 +132,8 @@ rules from `boson.mmk`.
 
 | File | Purpose |
 |------|---------|
-| `Makefile` | `make all` (builds `bld bas bosc`), `make test`, `make go_test`, `make bas_test`, `make bosc_test`, `make sloc`/`loc`. |
+| `Makefile` | Thin convenience wrapper that shells out to `mmk` for `all` (`bld bas bosc bdoc`) and `test`. |
+| `mmkfile` (top-level) | Real build root. Defines `all`, `test`, `go_test`, `playground`, `sloc`/`loc`, and includes `boson.mmk`. Subproject mmkfiles in `cmd/bas/` and `cmd/bosc/` own the integration suites. |
 | `boson.mmk` | mmk library defining `bos_pkg` (pattern rule for `target/<import-path>.bo`) and `bos_exe`. Drives import discovery via `bosc -listimports`. Requires the external `mmk` build tool. |
 
 ---
@@ -151,16 +152,19 @@ working tree commonly carries them as untracked build outputs.
 ### Running tests
 
 ```
-make test          # everything: Go unit tests + bas + bosc suites
-make go_test       # Go unit tests only (encoder, parser, checker, flow)
-make bas_test      # ~70 .bs integration tests
-make bosc_test     # ~260 .bos integration tests
+make test                    # everything: Go unit tests + bas + bosc suites
+mmk test                     # equivalent to `make test`; this is the real runner
+mmk go_test                  # Go unit tests only (encoder, parser, checker, flow)
+mmk cmd/bas/test             # ~70 .bs integration tests
+mmk cmd/bosc/test            # ~490 .bos integration tests
 ```
 
-`run_tests.sh` in `cmd/bas` and `cmd/bosc` will rebuild the
+The subproject mmkfiles in `cmd/bas/` and `cmd/bosc/` rebuild the
 toolchain itself before running. They also pre-assemble the runtime
-(`string.bo`, `init.bo`, `heap.bo`, `pair.bo`) into the working
-directory and tear them down on success.
+(`string.bo`, `init.bo`, `heap.bo`, `builtin.bo`, `pair.bo`, `io.bo`,
+`io_sys.bo`, `errors.bo`) into the working directory and tear them
+down on success. A single test can be re-run by name from the
+subproject directory: `cd cmd/bosc && mmk tests/<name>_test.bos`.
 
 ### Test file conventions
 
@@ -196,9 +200,10 @@ mmk run                         # builds and runs
 ```
 
 `mmk` itself is a separate tool (a make-like build orchestrator
-with bash-native DSL). It's not part of this repo. If you don't
-have it, the integration test scripts and `make test` exercise the
-toolchain without it.
+with bash-native DSL). It's not part of this repo, but it is a
+hard prerequisite for building and testing — the top-level
+`Makefile` and the subprojects in `cmd/bas/`, `cmd/bosc/`, and
+`examples/*` all delegate to `mmk`.
 
 ---
 
@@ -395,9 +400,9 @@ items that are not pending work:
 - `bas`, `bld`, `bosc` at the repo root — build outputs from
   `make all` (the binaries themselves are ignored from commits).
 - `cmd/bosc/pair.bo` / `cmd/bosc/pair.bs` — test artifacts produced
-  by `cmd/bosc/run_tests.sh` when it compiles the `pair` runtime
-  package for cross-package-struct tests. The script removes them
-  on a clean pass; if the suite was interrupted, they're left over.
+  by `cmd/bosc/mmkfile`'s pre-test setup when it compiles the `pair`
+  runtime package for cross-package-struct tests. `mmk clean`
+  removes them; if the suite was interrupted, they're left over.
 - `examples/linked/target/`, `examples/interface/target/`,
   `examples/hello/target/` — built example artifacts. Each example's
   `target/` holds the executable (e.g. `target/linked`), the

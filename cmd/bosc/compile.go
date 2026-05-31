@@ -288,6 +288,40 @@ func interfaceSatisfactionError(c *Context, typeName, ifaceName string, iface *I
 	return fmt.Sprintf("Type %s does not implement interface %s", typeName, ifaceName)
 }
 
+// multiReturnReturnsClause formats the "<name> returns (T1, T2)" fragment
+// used in the single-bind-rejection diagnostic. Falls back to a bare
+// "returns (...)" form when the initializer isn't a recognizable call.
+func multiReturnReturnsClause(init AST, t ASTType) string {
+	var types []string
+	for _, f := range t.AnonFields {
+		types = append(types, f.Type.String())
+	}
+	tuple := "(" + strings.Join(types, ", ") + ")"
+	if fc, ok := init.(*Funcall); ok {
+		if name := fc.QualifiedName(); name != "" {
+			return fmt.Sprintf("%s returns %s.", name, tuple)
+		}
+	}
+	return fmt.Sprintf("expression returns %s.", tuple)
+}
+
+// multiReturnDestructureTemplate builds a copy-pasteable "var a T1, var b T2 = ..."
+// template using the actual return types from a MultiReturn ASTType.
+func multiReturnDestructureTemplate(t ASTType) string {
+	names := []string{"a", "b", "c", "d", "e", "f"}
+	var parts []string
+	for i, f := range t.AnonFields {
+		var n string
+		if i < len(names) {
+			n = names[i]
+		} else {
+			n = fmt.Sprintf("v%d", i)
+		}
+		parts = append(parts, fmt.Sprintf("var %s %s", n, f.Type.String()))
+	}
+	return strings.Join(parts, ", ") + " = ..."
+}
+
 // fillAnonymousLiteralIfNeeded fills in the type of a bare struct literal
 // (one whose Type has Name=="" and AnonFields==nil) from the expected context
 // type. Call this at every site where a StructLiteral may appear with an
@@ -1684,8 +1718,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			ast.Type = inferred
 		}
 		// Reject single-binding a multi-value return: must use destructuring.
-		if ast.Init != nil && ast.Init.ASTType(c).MultiReturn {
-			CompileErrorF(a, "var %s: cannot bind a multi-value return as a single variable; use destructuring: var a T1, var b T2 = ...", ast.Name)
+		if ast.Init != nil {
+			initT := ast.Init.ASTType(c)
+			if initT.MultiReturn {
+				CompileErrorF(a, "var %s: cannot bind a multi-value return as a single variable; %s use destructuring: %s",
+					ast.Name, multiReturnReturnsClause(ast.Init, initT), multiReturnDestructureTemplate(initT))
+			}
 		}
 		c.BindVar(a, ast.Name, ast.Type, ast.IsConst)
 		if c.ResolveUnderlying(ast.Type).Indirection > 0 {
