@@ -57,6 +57,9 @@ func DiscoverPackages(bosonpath string) ([]*PackageScan, error) {
 				rel = filepath.Base(path)
 			}
 			importPath := filepath.ToSlash(rel)
+			if strings.HasPrefix(filepath.Base(importPath), "_") {
+				return nil
+			}
 			if seen[importPath] {
 				return nil
 			}

@@ -9,7 +9,7 @@ package string
 
 // puts(s byte[]) void — print a byte slice to stdout.
 // rdi = pointer to slice header {data_ptr, length}
-function puts
+pub function puts
 	type fn(byte[]) void
 	prologue
 
@@ -23,7 +23,7 @@ function puts
 	epilogue
 	ret
 
-function exit
+pub function exit
 	type fn(i64) void
 	// exit code already in rdi
 	mov rax 0x3C

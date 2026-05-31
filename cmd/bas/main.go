@@ -351,6 +351,11 @@ func main() {
 				fmt.Printf("Fatal: Need package declaration before anything else.")
 				os.Exit(1)
 			}
+			isPub := false
+			if strings.HasPrefix(line, "pub ") {
+				isPub = true
+				line = strings.TrimSpace(strings.TrimPrefix(line, "pub "))
+			}
 			if strings.HasPrefix(line, "typealias ") {
 				// Single-line directive:
 				//   typealias Name underlying [method1 method2 ...]
@@ -362,7 +367,7 @@ func main() {
 				aname := parts[0]
 				underlying := parts[1]
 				methods := parts[2:]
-				if err := o.AddTypeAlias(aname, underlying, methods); err != nil {
+				if err := o.AddTypeAlias(aname, underlying, methods, isPub); err != nil {
 					fmt.Printf("Fatal: typealias %s: %s\n", aname, err)
 					os.Exit(1)
 				}
@@ -475,7 +480,7 @@ func main() {
 						Return: retType,
 					})
 				}
-				if err := o.AddInterface(iname, methods); err != nil {
+				if err := o.AddInterface(iname, methods, isPub); err != nil {
 					fmt.Printf("Fatal: interface %s: %s\n", iname, err)
 					os.Exit(1)
 				}
@@ -567,7 +572,7 @@ func main() {
 					fmt.Printf("Fatal: values %s: missing 'tag <type>' line\n", vname)
 					os.Exit(1)
 				}
-				if err := o.AddValues(vname, tagType, cases, projections, methodNames); err != nil {
+				if err := o.AddValues(vname, tagType, cases, projections, methodNames, isPub); err != nil {
 					fmt.Printf("Fatal: values %s: %s\n", vname, err)
 					os.Exit(1)
 				}
@@ -624,7 +629,7 @@ func main() {
 					}
 					fields = append(fields, gbasm.FieldShape{Name: fname, Type: ftype})
 				}
-				if err := o.AddStruct(sname, fields); err != nil {
+				if err := o.AddStruct(sname, fields, isPub); err != nil {
 					fmt.Printf("Fatal: struct %s: %s\n", sname, err)
 					os.Exit(1)
 				}
@@ -641,6 +646,7 @@ func main() {
 					fmt.Printf("Fatal: Failed to create function \"%s\": %s\n", fname, err)
 					os.Exit(1)
 				}
+				f.IsPub = isPub
 				//locals = make(map[string]*gbasm.Ralloc)
 				continue
 			}
@@ -657,7 +663,10 @@ func main() {
 					fmt.Printf("Fatal: failed to parse data for data declaration %s: %v", parts[0], err)
 					os.Exit(1)
 				}
-				o.AddData(parts[0], parts[1], data)
+				if err := o.AddData(parts[0], parts[1], data, isPub); err != nil {
+					fmt.Printf("Fatal: data %s: %s\n", parts[0], err)
+					os.Exit(1)
+				}
 				continue
 			}
 			if strings.HasPrefix(line, "var") {
@@ -771,7 +780,7 @@ func main() {
 					}
 					data = make([]byte, n)
 				}
-				if err := o.AddVar(parts[0], parts[1], data); err != nil {
+				if err := o.AddVar(parts[0], parts[1], data, isPub); err != nil {
 					fmt.Printf("Fatal: var %s: %s\n", parts[0], err)
 					os.Exit(1)
 				}

@@ -13,6 +13,7 @@ type Decl struct {
 	Signature string   // header line for funcs/types/interfaces/vars
 	Body      string   // for struct types: the `struct { ... }` block (verbatim)
 	Doc       string   // joined comment block immediately preceding the decl
+	IsPub     bool     // whether the declaration is part of the public surface
 	SrcFile   string   // file in which this decl appears (relative to package dir)
 	SrcLine   int      // 1-based line number of the declaration's first line
 	Methods   []Decl   // for DeclType: method definitions; for DeclInterface: method signatures
@@ -204,16 +205,25 @@ func commentText(line string) string {
 // tryBosDecl recognizes top-level .bos declarations.
 func tryBosDecl(s *bufio.Scanner, head string, lineno *int, srcfile string) (Decl, bool) {
 	startLine := *lineno
+	isPub := false
+	if strings.HasPrefix(head, "pub ") {
+		isPub = true
+		head = strings.TrimSpace(strings.TrimPrefix(head, "pub "))
+	}
 
 	// fn name(...) ret { ... }
 	if strings.HasPrefix(head, "fn ") {
 		name := extractName(head[3:], "(")
 		sig := strings.TrimSpace(stripBodyOpener(head))
+		if isPub {
+			sig = "pub " + sig
+		}
 		skipBracedBody(s, head, lineno)
 		return Decl{
 			Kind:      DeclFunc,
 			Name:      name,
 			Signature: sig,
+			IsPub:     isPub,
 			SrcFile:   srcfile,
 			SrcLine:   startLine,
 		}, true
@@ -222,12 +232,12 @@ func tryBosDecl(s *bufio.Scanner, head string, lineno *int, srcfile string) (Dec
 	// type Name <underlying> [{ methods }]
 	// type Name struct { ... } [{ methods }]
 	if strings.HasPrefix(head, "type ") {
-		return parseBosType(s, head, lineno, srcfile, startLine)
+		return parseBosType(s, head, lineno, srcfile, startLine, isPub)
 	}
 
 	// interface Name { sigs }
 	if strings.HasPrefix(head, "interface ") || head == "interface" {
-		return parseBosInterface(s, head, lineno, srcfile, startLine)
+		return parseBosInterface(s, head, lineno, srcfile, startLine, isPub)
 	}
 
 	// const NAME T = expr / var NAME T = expr  (file scope)
@@ -241,7 +251,8 @@ func tryBosDecl(s *bufio.Scanner, head string, lineno *int, srcfile string) (Dec
 		return Decl{
 			Kind:      DeclVar,
 			Name:      name,
-			Signature: head,
+			Signature: pubPrefix(isPub) + head,
+			IsPub:     isPub,
 			SrcFile:   srcfile,
 			SrcLine:   startLine,
 		}, true
@@ -260,7 +271,7 @@ func tryBosDecl(s *bufio.Scanner, head string, lineno *int, srcfile string) (Dec
 //
 // Two `{`s on one line; brace-depth tracking finds the boundary between the
 // struct body and the method block.
-func parseBosType(s *bufio.Scanner, head string, lineno *int, srcfile string, startLine int) (Decl, bool) {
+func parseBosType(s *bufio.Scanner, head string, lineno *int, srcfile string, startLine int, isPub bool) (Decl, bool) {
 	rest := strings.TrimSpace(strings.TrimPrefix(head, "type"))
 	if rest == "" {
 		return Decl{}, false
@@ -274,6 +285,7 @@ func parseBosType(s *bufio.Scanner, head string, lineno *int, srcfile string, st
 	d := Decl{
 		Kind:    DeclType,
 		Name:    name,
+		IsPub:   isPub,
 		SrcFile: srcfile,
 		SrcLine: startLine,
 	}
@@ -285,9 +297,9 @@ func parseBosType(s *bufio.Scanner, head string, lineno *int, srcfile string, st
 	if afterName == "struct" || strings.HasPrefix(afterName, "struct{") || strings.HasPrefix(afterName, "struct ") {
 		body, methodOpen := consumeStructBody(s, afterName, lineno)
 		d.Body = body
-		d.Signature = "type " + name + " " + collapseBody(body)
+		d.Signature = pubPrefix(isPub) + "type " + name + " " + collapseBody(body)
 		if methodOpen {
-			d.Methods = parseBosMethodList(s, lineno, srcfile)
+			d.Methods = parseBosMethodList(s, lineno, srcfile, isPub)
 		}
 		return d, true
 	}
@@ -301,9 +313,9 @@ func parseBosType(s *bufio.Scanner, head string, lineno *int, srcfile string, st
 	if afterName == "values" || strings.HasPrefix(afterName, "values ") || strings.HasPrefix(afterName, "values(") {
 		body, methodOpen := consumeStructBody(s, afterName, lineno)
 		d.Body = body
-		d.Signature = "type " + name + " " + collapseBody(body)
+		d.Signature = pubPrefix(isPub) + "type " + name + " " + collapseBody(body)
 		if methodOpen {
-			d.Methods = parseBosMethodList(s, lineno, srcfile)
+			d.Methods = parseBosMethodList(s, lineno, srcfile, isPub)
 		}
 		return d, true
 	}
@@ -321,12 +333,12 @@ func parseBosType(s *bufio.Scanner, head string, lineno *int, srcfile string, st
 	} else {
 		underlying = afterName
 	}
-	d.Signature = "type " + name
+	d.Signature = pubPrefix(isPub) + "type " + name
 	if underlying != "" {
 		d.Signature += " " + underlying
 	}
 	if methodOpen {
-		d.Methods = parseBosMethodList(s, lineno, srcfile)
+		d.Methods = parseBosMethodList(s, lineno, srcfile, isPub)
 	}
 	return d, true
 }
@@ -470,7 +482,7 @@ func collapseBody(body string) string {
 // Each method has the form `name(params) [rettype] { body }`. The body is
 // skipped via brace tracking; only the header line becomes the method's
 // signature.
-func parseBosMethodList(s *bufio.Scanner, lineno *int, srcfile string) []Decl {
+func parseBosMethodList(s *bufio.Scanner, lineno *int, srcfile string, isPub bool) []Decl {
 	var methods []Decl
 	var pending []string
 	for s.Scan() {
@@ -508,6 +520,7 @@ func parseBosMethodList(s *bufio.Scanner, lineno *int, srcfile string) []Decl {
 			Name:      name,
 			Signature: sig,
 			Doc:       strings.Join(pending, "\n"),
+			IsPub:     isPub,
 			SrcFile:   srcfile,
 			SrcLine:   startLine,
 		})
@@ -518,7 +531,7 @@ func parseBosMethodList(s *bufio.Scanner, lineno *int, srcfile string) []Decl {
 
 // parseBosInterface handles `interface Name { sig sig ... }`. Each sig is a
 // single line `name(params) [rettype]` with no body.
-func parseBosInterface(s *bufio.Scanner, head string, lineno *int, srcfile string, startLine int) (Decl, bool) {
+func parseBosInterface(s *bufio.Scanner, head string, lineno *int, srcfile string, startLine int, isPub bool) (Decl, bool) {
 	rest := strings.TrimSpace(strings.TrimPrefix(head, "interface"))
 	name := extractName(rest, " \t{")
 	if name == "" {
@@ -528,7 +541,8 @@ func parseBosInterface(s *bufio.Scanner, head string, lineno *int, srcfile strin
 	d := Decl{
 		Kind:      DeclInterface,
 		Name:      name,
-		Signature: "interface " + name,
+		Signature: pubPrefix(isPub) + "interface " + name,
+		IsPub:     isPub,
 		SrcFile:   srcfile,
 		SrcLine:   startLine,
 	}
@@ -572,6 +586,7 @@ func parseBosInterface(s *bufio.Scanner, head string, lineno *int, srcfile strin
 			Name:      methodName,
 			Signature: line,
 			Doc:       strings.Join(pending, "\n"),
+			IsPub:     isPub,
 			SrcLine:   *lineno,
 		})
 		pending = nil
@@ -582,11 +597,16 @@ func parseBosInterface(s *bufio.Scanner, head string, lineno *int, srcfile strin
 // tryBsDecl recognizes top-level .bs declarations.
 func tryBsDecl(s *bufio.Scanner, head string, lineno *int, srcfile string) (Decl, bool) {
 	startLine := *lineno
+	isPub := false
+	if strings.HasPrefix(head, "pub ") {
+		isPub = true
+		head = strings.TrimSpace(strings.TrimPrefix(head, "pub "))
+	}
 
 	// function name
 	if strings.HasPrefix(head, "function ") {
 		name := strings.TrimSpace(strings.TrimPrefix(head, "function"))
-		sig := "function " + name
+		sig := pubPrefix(isPub) + "function " + name
 		annot := peekTypeAnnotation(s, lineno)
 		if annot != "" {
 			// Strip the leading `type` keyword — it's just a marker
@@ -595,12 +615,13 @@ func tryBsDecl(s *bufio.Scanner, head string, lineno *int, srcfile string) (Decl
 			// signatures lead with `fn name(...)`) so the name is the
 			// primary visible label rather than a trailing comment.
 			annot = strings.TrimSpace(strings.TrimPrefix(annot, "type"))
-			sig = "function " + name + " " + annot
+			sig = pubPrefix(isPub) + "function " + name + " " + annot
 		}
 		return Decl{
 			Kind:      DeclAsmFunc,
 			Name:      name,
 			Signature: sig,
+			IsPub:     isPub,
 			SrcFile:   srcfile,
 			SrcLine:   startLine,
 		}, true
@@ -613,7 +634,8 @@ func tryBsDecl(s *bufio.Scanner, head string, lineno *int, srcfile string) (Decl
 			return Decl{
 				Kind:      DeclAsmData,
 				Name:      parts[1],
-				Signature: head,
+				Signature: pubPrefix(isPub) + head,
+				IsPub:     isPub,
 				SrcFile:   srcfile,
 				SrcLine:   startLine,
 			}, true
@@ -627,7 +649,8 @@ func tryBsDecl(s *bufio.Scanner, head string, lineno *int, srcfile string) (Decl
 			return Decl{
 				Kind:      DeclAsmVar,
 				Name:      parts[1],
-				Signature: head,
+				Signature: pubPrefix(isPub) + head,
+				IsPub:     isPub,
 				SrcFile:   srcfile,
 				SrcLine:   startLine,
 			}, true
@@ -635,6 +658,13 @@ func tryBsDecl(s *bufio.Scanner, head string, lineno *int, srcfile string) (Decl
 	}
 
 	return Decl{}, false
+}
+
+func pubPrefix(isPub bool) string {
+	if isPub {
+		return "pub "
+	}
+	return ""
 }
 
 // extractName returns the identifier at the start of s, up to (but excluding)

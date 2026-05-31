@@ -1,7 +1,7 @@
 package builtin
 
 // error is the interface implemented by types that represent error conditions.
-interface error {
+pub interface error {
 	message(e *self) byte[]
 	destroy(e owned *self)
 }

@@ -19,6 +19,9 @@ type TypeDescr struct {
 
 type Var struct {
 	Name string
+	// IsPub marks this top-level var/data as importable from .bos source in
+	// other packages. The linker does not consult this bit.
+	IsPub bool
 	// VType is a string and must be parsed by the compiler/linker to ensure it matches some
 	// TypeDescr.
 	VType string
@@ -136,6 +139,7 @@ type OFile struct {
 // producer side; the importer reparses it with parseTypeString.
 type StructShape struct {
 	Name   string
+	IsPub  bool
 	Fields []FieldShape
 }
 
@@ -151,6 +155,7 @@ type FieldShape struct {
 // imported function signatures.
 type TypeAliasShape struct {
 	Name        string
+	IsPub       bool
 	Underlying  string
 	MethodNames []string
 }
@@ -162,6 +167,7 @@ type TypeAliasShape struct {
 // are ASTType.String() output, reparsed by the importer.
 type InterfaceShape struct {
 	Name    string
+	IsPub   bool
 	Methods []InterfaceMethodShape
 }
 
@@ -187,6 +193,7 @@ type InterfaceMethodShape struct {
 // signatures (same pattern as TypeAliasShape).
 type ValuesShape struct {
 	Name        string
+	IsPub       bool
 	TagType     string
 	Cases       []ValuesCaseShape
 	Projections []ProjectionShape
@@ -228,7 +235,7 @@ func NewOFile(name string, pkgname string) (*OFile, error) {
 }
 
 // AddValues registers a Boson values type for export.
-func (o *OFile) AddValues(name, tagType string, cases []ValuesCaseShape, projections []ProjectionShape, methodNames []string) error {
+func (o *OFile) AddValues(name, tagType string, cases []ValuesCaseShape, projections []ProjectionShape, methodNames []string, isPub bool) error {
 	if o.Values[name] != nil {
 		return fmt.Errorf("Values type %s already declared.", name)
 	}
@@ -237,6 +244,7 @@ func (o *OFile) AddValues(name, tagType string, cases []ValuesCaseShape, project
 	}
 	o.Values[name] = &ValuesShape{
 		Name:        name,
+		IsPub:       isPub,
 		TagType:     tagType,
 		Cases:       cases,
 		Projections: projections,
@@ -247,32 +255,32 @@ func (o *OFile) AddValues(name, tagType string, cases []ValuesCaseShape, project
 
 // AddStruct registers a Boson struct definition for export. Returns
 // an error if the name is already in use by any kind of declaration.
-func (o *OFile) AddStruct(name string, fields []FieldShape) error {
+func (o *OFile) AddStruct(name string, fields []FieldShape, isPub bool) error {
 	if o.Structs[name] != nil {
 		return fmt.Errorf("Struct %s already declared.", name)
 	}
 	if o.Vars[name] != nil || o.Data[name] != nil || o.Funcs[name] != nil {
 		return fmt.Errorf("Name %s already declared.", name)
 	}
-	o.Structs[name] = &StructShape{Name: name, Fields: fields}
+	o.Structs[name] = &StructShape{Name: name, IsPub: isPub, Fields: fields}
 	return nil
 }
 
 // AddTypeAlias registers a Boson type alias for export.
-func (o *OFile) AddTypeAlias(name, underlying string, methodNames []string) error {
+func (o *OFile) AddTypeAlias(name, underlying string, methodNames []string, isPub bool) error {
 	if o.TypeAliases[name] != nil {
 		return fmt.Errorf("TypeAlias %s already declared.", name)
 	}
-	o.TypeAliases[name] = &TypeAliasShape{Name: name, Underlying: underlying, MethodNames: methodNames}
+	o.TypeAliases[name] = &TypeAliasShape{Name: name, IsPub: isPub, Underlying: underlying, MethodNames: methodNames}
 	return nil
 }
 
 // AddInterface registers a Boson interface declaration for export.
-func (o *OFile) AddInterface(name string, methods []InterfaceMethodShape) error {
+func (o *OFile) AddInterface(name string, methods []InterfaceMethodShape, isPub bool) error {
 	if o.Interfaces[name] != nil {
 		return fmt.Errorf("Interface %s already declared.", name)
 	}
-	o.Interfaces[name] = &InterfaceShape{Name: name, Methods: methods}
+	o.Interfaces[name] = &InterfaceShape{Name: name, IsPub: isPub, Methods: methods}
 	return nil
 }
 
@@ -289,7 +297,7 @@ func (o *OFile) Type(name string, properties []string, description []byte) error
 }
 
 // AddVar declares a mutable variable of type vtype at package scope.
-func (o *OFile) AddVar(name, vtype string, val interface{}) error {
+func (o *OFile) AddVar(name, vtype string, val interface{}, isPub bool) error {
 	if o.Vars[name] != nil || o.Data[name] != nil || o.Funcs[name] != nil {
 		return fmt.Errorf("Name %s already declared.", name)
 	}
@@ -299,12 +307,12 @@ func (o *OFile) AddVar(name, vtype string, val interface{}) error {
 	}
 	var bs bytes.Buffer
 	binary.Write(&bs, binary.LittleEndian, val)
-	o.Vars[name] = &Var{Name: name, VType: vtype, Val: bs.Bytes()}
+	o.Vars[name] = &Var{Name: name, IsPub: isPub, VType: vtype, Val: bs.Bytes()}
 	return nil
 }
 
 // AddData declares a piece of immutable data of type vtype at package scope.
-func (o *OFile) AddData(name, vtype string, val interface{}) error {
+func (o *OFile) AddData(name, vtype string, val interface{}, isPub bool) error {
 	if o.Vars[name] != nil || o.Data[name] != nil || o.Funcs[name] != nil {
 		return fmt.Errorf("Name %s already declared.", name)
 	}
@@ -314,7 +322,7 @@ func (o *OFile) AddData(name, vtype string, val interface{}) error {
 	}
 	var bs bytes.Buffer
 	binary.Write(&bs, binary.LittleEndian, val)
-	o.Data[name] = &Var{Name: name, VType: vtype, Val: bs.Bytes()}
+	o.Data[name] = &Var{Name: name, IsPub: isPub, VType: vtype, Val: bs.Bytes()}
 	return nil
 }
 

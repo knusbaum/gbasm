@@ -4,7 +4,7 @@ package errors
 // io_error satisfy via a value-receiver `message` method. Cross-
 // package consumers can return values cases through this interface
 // without heap-allocating the underlying tag.
-interface error_val {
+pub interface error_val {
 	message(e self) byte[]
 }
 
@@ -13,7 +13,7 @@ interface error_val {
 // them (i64(err), byte[](err)). It's the proposal's motivating
 // example, moved into a separate package so the importer path is
 // exercised end-to-end.
-type io_error values (i64, byte[]) {
+pub type io_error values (i64, byte[]) {
 	NOT_FOUND: 404, "not found"
 	PERMISSION_DENIED: 403, "permission denied"
 	BUSY: 503, "busy"
@@ -26,7 +26,7 @@ type io_error values (i64, byte[]) {
 // open_for is a tiny helper that returns a values case behind the
 // error_val interface, so consumers can verify value-backed
 // interface return across package boundaries.
-fn open_for(kind i64) error_val {
+pub fn open_for(kind i64) error_val {
 	if (kind == 1) {
 		return io_error.PERMISSION_DENIED
 	}

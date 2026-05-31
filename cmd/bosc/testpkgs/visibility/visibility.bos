@@ -1,0 +1,26 @@
+package visibility
+
+pub fn public_marker() i64 {
+	return 0
+}
+
+fn hidden_fn() i64 {
+	return 1
+}
+
+type hidden_type struct {
+	x i64
+}
+
+var hidden_var i64 = 2
+
+const hidden_const i64 = 3
+
+interface hidden_iface {
+	value(v *self) i64
+}
+
+type hidden_values values {
+	A
+	B
+}

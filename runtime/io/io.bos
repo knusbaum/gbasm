@@ -21,27 +21,27 @@ import "string"
 
 // Flags for open(). These correspond to the O_* constants in <fcntl.h> on
 // Linux x86-64. Combine with bitwise OR for multi-flag values.
-const O_RDONLY   i64 = 0       // open for reading only
-const O_WRONLY   i64 = 1       // open for writing only
-const O_RDWR     i64 = 2       // open for reading and writing
-const O_CREAT    i64 = 64      // create file if it does not exist (0100 octal)
-const O_EXCL     i64 = 128     // error if O_CREAT and file exists (0200 octal)
-const O_TRUNC    i64 = 512     // truncate file to zero length on open (01000 octal)
-const O_APPEND   i64 = 1024    // writes always append to end of file (02000 octal)
-const O_NONBLOCK i64 = 2048    // non-blocking I/O (04000 octal)
-const O_CLOEXEC  i64 = 524288  // set close-on-exec flag (02000000 octal)
+pub const O_RDONLY   i64 = 0       // open for reading only
+pub const O_WRONLY   i64 = 1       // open for writing only
+pub const O_RDWR     i64 = 2       // open for reading and writing
+pub const O_CREAT    i64 = 64      // create file if it does not exist (0100 octal)
+pub const O_EXCL     i64 = 128     // error if O_CREAT and file exists (0200 octal)
+pub const O_TRUNC    i64 = 512     // truncate file to zero length on open (01000 octal)
+pub const O_APPEND   i64 = 1024    // writes always append to end of file (02000 octal)
+pub const O_NONBLOCK i64 = 2048    // non-blocking I/O (04000 octal)
+pub const O_CLOEXEC  i64 = 524288  // set close-on-exec flag (02000000 octal)
 
 // STDIN is the standard input file descriptor (fd 0), pre-opened by the
 // kernel at process start. It is borrowed: do not pass it to close.
-var STDIN  FD = FD(0)
+pub var STDIN  FD = FD(0)
 
 // STDOUT is the standard output file descriptor (fd 1), pre-opened by the
 // kernel at process start. It is borrowed: do not pass it to close.
-var STDOUT FD = FD(1)
+pub var STDOUT FD = FD(1)
 
 // STDERR is the standard error file descriptor (fd 2), pre-opened by the
 // kernel at process start. It is borrowed: do not pass it to close.
-var STDERR FD = FD(2)
+pub var STDERR FD = FD(2)
 
 // FD is a Linux file descriptor. Every kernel-backed handle in this
 // package is represented as one.
@@ -55,7 +55,7 @@ var STDERR FD = FD(2)
 // FD's underlying representation is i64 so it can be stored directly in
 // struct fields, slice elements, and passed by value into the _io_sys
 // syscall wrappers.
-type FD i64 {
+pub type FD i64 {
 	// read fills buf with bytes from the descriptor.
 	//
 	// Returns (n, err): n is the number of bytes read (0 = EOF) and err
@@ -103,7 +103,7 @@ type FD i64 {
 // the appropriate shape. read fills buf with up to len(buf) bytes and
 // returns (n, err): n bytes read (0 = EOF), err = 0 on success or a
 // positive errno on failure.
-interface reader {
+pub interface reader {
 	read(r *self, buf mut byte[]) i64, i64
 }
 
@@ -111,7 +111,7 @@ interface reader {
 // the appropriate shape. write attempts to write buf and returns (n, err):
 // n bytes written, err = 0 on success or a positive errno on failure.
 // A short write (n < len(buf), err == 0) must be retried by the caller.
-interface writer {
+pub interface writer {
 	write(w *self, buf byte[]) i64, i64
 }
 
@@ -131,7 +131,7 @@ interface writer {
 // On failure err is a positive errno value and fd is invalid — the caller
 // must dispose it rather than close it.
 // Paths longer than 4095 bytes return err = 36 (ENAMETOOLONG).
-fn open(path byte[], flags i64, mode i64) owned FD, i64 {
+pub fn open(path byte[], flags i64, mode i64) owned FD, i64 {
 	var buf byte[4096]
 	const n i64 = len(path)
 	if (n >= 4096) {
@@ -149,7 +149,7 @@ fn open(path byte[], flags i64, mode i64) owned FD, i64 {
 	return owned(FD(raw)), 0
 }
 
-fn copy(dst writer, src reader) i64 {
+pub fn copy(dst writer, src reader) i64 {
 	var b byte[1024]
 	var bs mut byte[]
 	for(;;) {

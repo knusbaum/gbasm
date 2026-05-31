@@ -4,7 +4,7 @@ package pair
 // tests under cmd/bosc/tests. The whole point of this package is
 // to exercise the path where one .bo's struct definitions get
 // imported into another bosc compilation.
-type pair struct {
+pub type pair struct {
 	a i64
 	b i64
 }
@@ -12,7 +12,7 @@ type pair struct {
 // sum returns the sum of a pair's two fields. Exercised from outside
 // the package to confirm function-call resolution survives a
 // parameter type of pair.pair.
-fn sum(p pair) i64 {
+pub fn sum(p pair) i64 {
 	return p.a + p.b
 }
 
@@ -20,7 +20,7 @@ fn sum(p pair) i64 {
 // struct of this package's own type from a function the consumer
 // calls. (Struct returns happen by-pointer in the existing ABI;
 // this function exists so the import side compiles end-to-end.)
-fn make_pair(x i64, y i64) pair {
+pub fn make_pair(x i64, y i64) pair {
 	var p pair = pair{a: x, b: y}
 	return p
 }

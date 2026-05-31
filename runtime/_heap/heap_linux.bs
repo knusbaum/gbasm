@@ -3,7 +3,7 @@ package _heap
 // mmap-backed bootstrap allocator.
 // alloc(size i64) returns a pointer to size writable bytes. Each allocation is
 // one mmap region with an 8-byte header storing the total mapped length.
-function alloc
+pub function alloc
 	type fn(i64) *mut byte
 	prologue
 
@@ -26,7 +26,7 @@ function alloc
 	ret
 
 // free(p *mut byte) releases a pointer returned by alloc.
-function free
+pub function free
 	type fn(*mut byte) void
 	prologue
 

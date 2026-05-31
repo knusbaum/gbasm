@@ -1567,11 +1567,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return s
 	case *TypeAliasDecl:
 		// Emit typealias directive so bas can carry it into the .bo.
-		fmt.Fprintf(of, "typealias %s %s\n", ast.Name, ast.Underlying)
+		fmt.Fprintf(of, "%stypealias %s %s\n", pubPrefix(ast.IsPub), ast.Name, ast.Underlying)
 		return nullspot
 	case *TypeWithMethodsDecl:
 		// Emit typealias directive with method names for cross-package import.
-		fmt.Fprintf(of, "typealias %s %s", ast.Name, ast.Underlying)
+		fmt.Fprintf(of, "%stypealias %s %s", pubPrefix(ast.IsPub), ast.Name, ast.Underlying)
 		for _, m := range ast.Methods {
 			fmt.Fprintf(of, " %s", m.Name)
 		}
@@ -1584,6 +1584,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				Args:   m.Args,
 				Return: m.Return,
 				Body:   m.Body,
+				IsPub:  m.IsPub,
 				p:      m.p,
 			}
 			compileTop(of, c, qualified, nullspot)
@@ -1594,7 +1595,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// the .bo for cross-package import. Each method's param/return
 		// types are rendered via ASTType.String() and reparsed by the
 		// importer with parseTypeString.
-		fmt.Fprintf(of, "interface %s {\n", ast.Name)
+		fmt.Fprintf(of, "%sinterface %s {\n", pubPrefix(ast.IsPub), ast.Name)
 		for _, m := range ast.Methods {
 			fmt.Fprintf(of, "\tmethod %s {\n", m.Name)
 			for _, p := range m.Params {
@@ -1617,7 +1618,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		//     projection <target-type>
 		//     method <bare-method-name>
 		//   }
-		fmt.Fprintf(of, "values %s {\n", ast.Name)
+		fmt.Fprintf(of, "%svalues %s {\n", pubPrefix(ast.IsPub), ast.Name)
 		fmt.Fprintf(of, "\ttag %s\n", ast.TagType.String())
 		for _, vc := range ast.Cases {
 			fmt.Fprintf(of, "\tcase %s %d\n", vc.Name, vc.Tag)
@@ -1650,10 +1651,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			symName := projectionSymbolName(ast.Name, projIdx)
 			c.MarkAddress(symName)
-			emitVarBlock(of, symName, arrType.String(), data, relocs)
+			emitVarBlock(of, symName, arrType.String(), data, relocs, false)
 			for _, ag := range c.DrainAnonGlobals() {
 				c.MarkAddress(ag.Name)
-				emitVarBlock(of, ag.Name, ag.Type, ag.Bytes, ag.Relocs)
+				emitVarBlock(of, ag.Name, ag.Type, ag.Bytes, ag.Relocs, false)
 			}
 		}
 		// Value-receiver methods land alongside the projection tables,
@@ -1664,6 +1665,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				Args:   m.Args,
 				Return: m.Return,
 				Body:   m.Body,
+				IsPub:  m.IsPub,
 				p:      m.p,
 			}
 			compileTop(of, c, qualified, nullspot)
@@ -1675,7 +1677,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// cross-package import. Other packages can then declare
 		// 'mypkg.Name'-typed values, construct them via 'mypkg.Name{...}',
 		// and walk their fields.
-		fmt.Fprintf(of, "struct %s {\n", ast.TName)
+		fmt.Fprintf(of, "%sstruct %s {\n", pubPrefix(ast.IsPub), ast.TName)
 		for _, f := range ast.Fields {
 			fmt.Fprintf(of, "\t%s %s\n", f.Name, f.Type)
 		}
@@ -1687,6 +1689,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 					Args:   m.Args,
 					Return: m.Return,
 					Body:   m.Body,
+					IsPub:  m.IsPub,
 					p:      m.p,
 				}
 				compileTop(of, c, qualified, nullspot)
@@ -1939,7 +1942,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		defer c.ForgetPointerBindings()
 		retlab := c.PushRetlabel(ast.Return)
 		defer c.PopRetlabel()
-		fmt.Fprintf(of, "function %s\n", ast.Name)
+		fmt.Fprintf(of, "%sfunction %s\n", pubPrefix(ast.IsPub), ast.Name)
 		// Emit a 'type fn(...) ret' directive so cross-package importers
 		// (Context.Import → parseFuncType) can read this function's
 		// signature back out of the .bo. Render args and return via

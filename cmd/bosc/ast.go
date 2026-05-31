@@ -1022,6 +1022,9 @@ func (c *Context) Import(importKey, path string) error {
 	// "pkg.Type" references, since that's how this package's structs
 	// are registered in the consuming context.
 	for _, fn := range o.Funcs {
+		if !fn.IsPub {
+			continue
+		}
 		if fn.Type != "" {
 			t, err := parseFuncType(fn.Type)
 			if err != nil {
@@ -1036,6 +1039,9 @@ func (c *Context) Import(importKey, path string) error {
 		}
 	}
 	for _, sh := range o.Structs {
+		if !sh.IsPub {
+			continue
+		}
 		var fields []Binding
 		for _, fs := range sh.Fields {
 			ft, err := parseTypeString(fs.Type)
@@ -1049,6 +1055,9 @@ func (c *Context) Import(importKey, path string) error {
 		c.DefineStruct(qname, &StructDecl{TName: qname, Fields: fields})
 	}
 	for _, ta := range o.TypeAliases {
+		if !ta.IsPub {
+			continue
+		}
 		ut, err := parseTypeString(ta.Underlying)
 		if err != nil {
 			return fmt.Errorf("import %q: type alias %s underlying: %v", importKey, ta.Name, err)
@@ -1072,6 +1081,9 @@ func (c *Context) Import(importKey, path string) error {
 		}
 	}
 	for _, v := range o.Vars {
+		if !v.IsPub {
+			continue
+		}
 		if v.VType == "" {
 			continue
 		}
@@ -1083,6 +1095,9 @@ func (c *Context) Import(importKey, path string) error {
 		c.DefineImportedVar(o.Pkgname, v.Name, vt)
 	}
 	for _, ifc := range o.Interfaces {
+		if !ifc.IsPub {
+			continue
+		}
 		qname := o.Pkgname + "." + ifc.Name
 		decl := &InterfaceDecl{Name: qname}
 		for _, m := range ifc.Methods {
@@ -1108,6 +1123,9 @@ func (c *Context) Import(importKey, path string) error {
 		c.DefineInterface(position{}, qname, decl)
 	}
 	for _, vs := range o.Values {
+		if !vs.IsPub {
+			continue
+		}
 		qname := o.Pkgname + "." + vs.Name
 		tagType, err := parseTypeString(vs.TagType)
 		if err != nil {
@@ -1947,6 +1965,7 @@ type Binding struct {
 
 type StructDecl struct {
 	TName  string
+	IsPub  bool
 	Fields []Binding
 	p      position
 }
@@ -2010,6 +2029,7 @@ type VarDecl struct {
 	Name    string
 	Type    ASTType
 	IsConst bool
+	IsPub   bool
 	Init    AST // optional: nil if no initializer
 	p       position
 }
@@ -2027,7 +2047,9 @@ func (v *VarDecl) Pos() position {
 }
 
 // MultiBindDecl is the AST node for a multi-value destructuring declaration:
-//   var a T1, const b T2 = expr
+//
+//	var a T1, const b T2 = expr
+//
 // Bindings holds each individual binding (Type/IsConst set; Init is nil).
 // Init is the shared initializer, which must have a MultiReturn return type.
 type MultiBindDecl struct {
@@ -2042,6 +2064,7 @@ func (m *MultiBindDecl) Pos() position          { return m.p }
 
 type FuncDecl struct {
 	Name   string
+	IsPub  bool
 	Args   []Binding
 	Return ASTType
 	Body   *Block
@@ -2084,9 +2107,9 @@ func (b *Block) Pos() position {
 // called and is one of:
 //   - *Symbol            — bare call: `fn(args)` (built-in or local function)
 //   - *Dot{Symbol, name} — qualified call: `pkg.fn(args)`,
-//                          method on a named variable `v.method(args)`,
-//                          or static method `Type.method(args)`.
-//                          The call site asks the resolver which meaning applies.
+//     method on a named variable `v.method(args)`,
+//     or static method `Type.method(args)`.
+//     The call site asks the resolver which meaning applies.
 //   - *Dot{<expr>, name} — method on an arbitrary expression: `(expr).method(args)`.
 //
 // Helper methods FName, PkgName, ReceiverExpr, PkgAndName, and QualifiedName
@@ -2834,6 +2857,7 @@ func (o *OwnedPromotion) Pos() position { return o.p }
 
 type TypeAliasDecl struct {
 	Name       string
+	IsPub      bool
 	Underlying ASTType
 	p          position
 }
@@ -2855,6 +2879,7 @@ type InterfaceMethodSig struct {
 // InterfaceDecl is the AST node for `interface Name { sig... }`.
 type InterfaceDecl struct {
 	Name    string
+	IsPub   bool
 	Methods []InterfaceMethodSig
 	p       position
 }
@@ -2866,6 +2891,7 @@ func (d *InterfaceDecl) Pos() position          { return d.p }
 // TypeWithMethodsDecl is the AST node for `type TypeName Base { methods... }`.
 type TypeWithMethodsDecl struct {
 	Name       string
+	IsPub      bool
 	Underlying ASTType
 	Methods    []*FuncDecl // each FuncDecl.Name is the bare method name
 	p          position
@@ -2895,6 +2921,7 @@ type ValuesCase struct {
 // no projection signature (`type Name values { CASE_A; CASE_B }`).
 type ValuesDecl struct {
 	Name        string
+	IsPub       bool
 	TagType     ASTType // v1: always i64
 	Projections []ASTType
 	Cases       []ValuesCase
@@ -3123,6 +3150,7 @@ func (n *Node) ToAST(c *Context) (a AST, e error) {
 func buildStructDecl(name string, structNode *Node, p position) *StructDecl {
 	var sd StructDecl
 	sd.TName = name
+	sd.IsPub = structNode.isPub
 	sd.p = p
 	for _, a := range structNode.args {
 		if a.t != n_stfield {
@@ -3148,6 +3176,7 @@ func (n *Node) toASTTop(c *Context) AST {
 		var v VarDecl
 		v.Name = n.sval
 		v.IsConst = n.ival != 0
+		v.IsPub = n.isPub
 		v.p = n.p
 		if n.args[0].sval == "<infer>" {
 			// Type inference: leave type as sentinel; compile.go resolves it
@@ -3196,6 +3225,7 @@ func (n *Node) toASTTop(c *Context) AST {
 	case n_fn:
 		var fn FuncDecl
 		fn.Name = n.sval
+		fn.IsPub = n.isPub
 		fn.p = n.p
 		nargs := int(n.ival)
 		args := n.args
@@ -3450,6 +3480,7 @@ func (n *Node) toASTTop(c *Context) AST {
 		return &al
 	case n_typedecl:
 		if n.args[0].sval == "<struct>" {
+			n.args[0].isPub = n.isPub
 			sd := buildStructDecl(n.sval, n.args[0], n.p)
 			c.DefineStruct(sd.TName, sd)
 			return sd
@@ -3461,9 +3492,10 @@ func (n *Node) toASTTop(c *Context) AST {
 			underlying.Signed = true
 		}
 		c.DefineTypeAlias(n.p, n.sval, underlying)
-		return &TypeAliasDecl{Name: n.sval, Underlying: underlying, p: n.p}
+		return &TypeAliasDecl{Name: n.sval, IsPub: n.isPub, Underlying: underlying, p: n.p}
 	case n_typedecl_with_methods:
 		if n.args[0].sval == "<struct>" {
+			n.args[0].isPub = n.isPub
 			sd := buildStructDecl(n.sval, n.args[0], n.p)
 			c.DefineStruct(sd.TName, sd)
 			var methods []*FuncDecl
@@ -3473,6 +3505,7 @@ func (n *Node) toASTTop(c *Context) AST {
 				}
 				var fn FuncDecl
 				fn.Name = mn.sval
+				fn.IsPub = n.isPub
 				fn.p = mn.p
 				nargs := int(mn.ival)
 				margs := mn.args
@@ -3494,6 +3527,7 @@ func (n *Node) toASTTop(c *Context) AST {
 				qualName := n.sval + "." + fn.Name
 				c.DefineFunc(qualName, &FuncDecl{
 					Name:   qualName,
+					IsPub:  n.isPub,
 					Args:   fn.Args,
 					Return: fn.Return,
 					Body:   fn.Body,
@@ -3517,6 +3551,7 @@ func (n *Node) toASTTop(c *Context) AST {
 			}
 			var fn FuncDecl
 			fn.Name = mn.sval // bare method name
+			fn.IsPub = n.isPub
 			fn.p = mn.p
 			nargs := int(mn.ival)
 			margs := mn.args
@@ -3539,6 +3574,7 @@ func (n *Node) toASTTop(c *Context) AST {
 			qualName := n.sval + "." + fn.Name
 			c.DefineFunc(qualName, &FuncDecl{
 				Name:   qualName,
+				IsPub:  n.isPub,
 				Args:   fn.Args,
 				Return: fn.Return,
 				Body:   fn.Body,
@@ -3547,7 +3583,7 @@ func (n *Node) toASTTop(c *Context) AST {
 			methods = append(methods, &fn)
 		}
 		c.DefineTypeMethods(n.sval, methods)
-		return &TypeWithMethodsDecl{Name: n.sval, Underlying: underlying, Methods: methods, p: n.p}
+		return &TypeWithMethodsDecl{Name: n.sval, IsPub: n.isPub, Underlying: underlying, Methods: methods, p: n.p}
 	case n_valuesdecl:
 		nProj := int(n.ival)
 		projNodes := n.args[:nProj]
@@ -3563,6 +3599,7 @@ func (n *Node) toASTTop(c *Context) AST {
 
 		decl := &ValuesDecl{
 			Name:    n.sval,
+			IsPub:   n.isPub,
 			TagType: ASTType{Name: "i64", Signed: true},
 			p:       n.p,
 		}
@@ -3618,6 +3655,7 @@ func (n *Node) toASTTop(c *Context) AST {
 			}
 			var fn FuncDecl
 			fn.Name = mn.sval
+			fn.IsPub = n.isPub
 			fn.p = mn.p
 			nargs := int(mn.ival)
 			margs := mn.args
@@ -3639,6 +3677,7 @@ func (n *Node) toASTTop(c *Context) AST {
 			qualName := n.sval + "." + fn.Name
 			c.DefineFunc(qualName, &FuncDecl{
 				Name:   qualName,
+				IsPub:  n.isPub,
 				Args:   fn.Args,
 				Return: fn.Return,
 				Body:   fn.Body,
@@ -3654,6 +3693,7 @@ func (n *Node) toASTTop(c *Context) AST {
 	case n_interface_decl:
 		var decl InterfaceDecl
 		decl.Name = n.sval
+		decl.IsPub = n.isPub
 		decl.p = n.p
 		for _, sig := range n.args {
 			if sig.t != n_interface_method {

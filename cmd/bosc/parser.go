@@ -189,8 +189,9 @@ type Node struct {
 	ownedmask uint64 // for n_typename: bit N = owned at pointer/slice level N
 	nilmask   uint64 // for n_typename: bit N = nullable pointer at pointer level N
 	//fval float64 // we'll add floats later.
-	sval string
-	args []*Node
+	sval  string
+	args  []*Node
+	isPub bool
 	// typeIdent is the raw type-identifier node for n_stlit when the
 	// literal was written with a leading type (`Name{...}` or
 	// `pkg.Type{...}`). ToAST routes it through the shared selector
@@ -1242,6 +1243,9 @@ func (p *Parser) parseMultiBind(first *Node) *Node {
 func (p *Parser) parseExpression() (r *Node) {
 	//fmt.Printf("[Start parseExpression] %#v\n", p.current())
 	//defer func() { fmt.Printf("[Finish parseExpression]: %#v\n", r) }()
+	if p.current().t == tok_pub {
+		panic(&interpreterError{"pub is only valid as a top-level declaration modifier", p.current().p})
+	}
 	if p.current().t == tok_var {
 		p.advance()
 		first := p.parseBindingDecl(false)
@@ -1280,7 +1284,6 @@ func (p *Parser) parseExpression() (r *Node) {
 	}
 	return v
 }
-
 
 func (p *Parser) parseImport() *Node {
 	importpos := p.current().p
@@ -1510,12 +1513,50 @@ func (p *Parser) parseValuesDecl(pos position, name *Node) *Node {
 }
 
 func (p *Parser) parseTopLevel() *Node {
+	isPub := false
+	pubPos := p.current().p
+	if p.current().t == tok_pub {
+		isPub = true
+		p.advance()
+	}
 	if p.current().t == tok_import {
+		if isPub {
+			panic(&interpreterError{"pub import is not supported", pubPos})
+		}
 		return p.parseImport()
 	} else if p.current().t == tok_type {
-		return p.parseTypeDecl()
+		n := p.parseTypeDecl()
+		n.isPub = isPub
+		return n
 	} else if p.current().t == tok_interface {
-		return p.parseInterfaceDecl()
+		n := p.parseInterfaceDecl()
+		n.isPub = isPub
+		return n
+	} else if isPub {
+		switch p.current().t {
+		case tok_fn:
+			n := p.parseFn()
+			n.isPub = true
+			return n
+		case tok_var:
+			p.advance()
+			n := p.parseBindingDecl(false)
+			if len(n.args) == 1 && p.current().t == tok_comma {
+				ParseErrorF(n, "pub multi-bind declarations are not supported")
+			}
+			n.isPub = true
+			return n
+		case tok_const:
+			p.advance()
+			n := p.parseBindingDecl(true)
+			if len(n.args) == 1 && p.current().t == tok_comma {
+				ParseErrorF(n, "pub multi-bind declarations are not supported")
+			}
+			n.isPub = true
+			return n
+		default:
+			panic(&interpreterError{"pub must be followed by fn, type, interface, var, or const", pubPos})
+		}
 	}
 	return p.parseExpression()
 }

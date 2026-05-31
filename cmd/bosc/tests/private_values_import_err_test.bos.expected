@@ -1,0 +1,2 @@
+Compiling tests/private_values_import_err_test.bos
+Fatal: package "visibility" has no variable "hidden_values"

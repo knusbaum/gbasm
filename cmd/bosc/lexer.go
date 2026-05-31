@@ -64,26 +64,28 @@ const (
 	tok_type
 	tok_interface
 	tok_values
+	tok_pub
 )
 
 var keywords map[string]toktype = map[string]toktype{
-	"if":       tok_if,
-	"else":     tok_else,
-	"return":   tok_return,
-	"for":      tok_for,
-	"fn":       tok_fn,
-	"break":    tok_break,
-	"continue": tok_continue,
-	"struct":   tok_struct,
-	"import":   tok_import,
-	"var":      tok_var,
-	"const":    tok_const,
-	"mut":      tok_mut,
-	"owned":    tok_owned,
+	"if":        tok_if,
+	"else":      tok_else,
+	"return":    tok_return,
+	"for":       tok_for,
+	"fn":        tok_fn,
+	"break":     tok_break,
+	"continue":  tok_continue,
+	"struct":    tok_struct,
+	"import":    tok_import,
+	"var":       tok_var,
+	"const":     tok_const,
+	"mut":       tok_mut,
+	"owned":     tok_owned,
 	"dispose":   tok_dispose,
 	"type":      tok_type,
 	"interface": tok_interface,
 	"values":    tok_values,
+	"pub":       tok_pub,
 }
 
 const (
@@ -198,6 +200,8 @@ func (t toktype) String() string {
 		return "tok_interface"
 	case tok_values:
 		return "tok_values"
+	case tok_pub:
+		return "tok_pub"
 	}
 	return "UNKNOWN"
 }

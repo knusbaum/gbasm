@@ -17,7 +17,7 @@ package _io_sys
 
 // SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
 // call number: 0
-function read
+pub function read
 	// fd, buf
 	type fn(i64, mut byte[]) i64
 	prologue
@@ -33,7 +33,7 @@ function read
 
 // SYSCALL_DEFINE3(write, unsigned int, fd, const char __user *, buf, size_t, count)
 // call number: 1
-function write
+pub function write
 	// fd, buf
 	type fn(i64, byte[]) i64
 	prologue
@@ -50,7 +50,7 @@ function write
 // SYSCALL_DEFINE3(open, const char __user *, filename, int, flags, umode_t, mode)
 // call number: 2
 // path must be a null-terminated byte slice.
-function open
+pub function open
 	// path, flags, mode
 	type fn(byte[], i64, i64) i64
 	prologue
@@ -66,7 +66,7 @@ function open
 
 // SYSCALL_DEFINE1(close, unsigned int, fd)
 // call number: 3
-function close
+pub function close
 	// fd
 	type fn(i64) i64
 	prologue

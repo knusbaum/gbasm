@@ -28,9 +28,9 @@ type Ralloc struct {
 //   - source from register: read the N-bit sub-register
 //   - source from memory:   read N bytes from the allocation's stack slot
 //   - dest to register:     write to the N-bit sub-register (hardware
-//                           zero-extends the full register for 32-bit writes)
+//     zero-extends the full register for 32-bit writes)
 //   - dest to memory:       write N bytes to the allocation's stack slot
-//                           (upper bytes unchanged)
+//     (upper bytes unchanged)
 //
 // The differing write semantics across storage classes are a property of
 // the hardware. Callers that need consistent extension semantics across
@@ -732,6 +732,7 @@ func (ra *Rallocs) Acquire(r Register) {
 type Function struct {
 	Name        string
 	Pkgname     string // owning package; set by loader, used by linker for namespacing
+	IsPub       bool   // importable from .bos source in other packages
 	Type        string
 	SrcFile     string
 	SrcLine     int

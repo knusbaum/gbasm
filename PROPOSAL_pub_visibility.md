@@ -2,7 +2,11 @@
 
 ## Status
 
-Proposal only. This is not a confirmed language design.
+Implemented in the current working tree. The core visibility model, runtime
+migration, bdoc public filtering, and negative visibility tests are complete.
+
+The intentionally-deferred item is a future `bosc --show-exports` command that
+prints a doc-comment-preserving public header view.
 
 ## Summary
 
@@ -11,9 +15,9 @@ Add a single keyword, `pub`, as a leading modifier on top-level declarations
 modifier on the corresponding `.bs` directives. Declarations without `pub` are
 **package-private** — they exist in their declaring package but cannot be
 referenced through a qualified `pkg.name` from any other package. A
-`bosc --show-exports <pkg>` driver mode prints a package's public surface as a
-synthesized "header" view, and `bdoc` is updated to render the same
-public-only surface (with `_`-prefixed runtime packages hidden from
+future `bosc --show-exports <pkg>` driver mode can print a package's public
+surface as a synthesized "header" view; `bdoc` is updated now to render the
+same public-only surface (with `_`-prefixed runtime packages hidden from
 discovery).
 
 This replaces today's de-facto rule that everything declared at top level is
@@ -49,8 +53,6 @@ rather than maintained by hand.
 - Add an analogous leading modifier in `.bs` for hand-written runtime code.
 - Carry the visibility bit through the `.bo` format so the consumer-side
   compiler can enforce visibility at name-resolution time.
-- Provide `bosc --show-exports <pkg>` (or equivalent) that prints the
-  synthesized "header view" of a package's public surface.
 - Update `bdoc` so the default index, per-package landing pages, and search
   results render only the `pub` surface.
 - As a related, separable cleanup, hide packages whose name begins with `_`
@@ -165,11 +167,11 @@ The linker is unchanged. It continues to resolve whatever the consumer's
 `call other_pkg.private_fn` would still link; the visibility rule is a
 source-language constraint, not a link-time one.
 
-## `bosc --show-exports <path>`
+## Deferred: `bosc --show-exports <path>`
 
-A new driver mode reads a package (via `BOSONPATH` resolution, the same way
-`bdoc` walks today) and prints its public surface in declaration order, one
-declaration per logical block, with attached doc comments:
+A future driver mode should read a package (via `BOSONPATH` resolution, the
+same way `bdoc` walks today) and print its public surface in declaration
+order, one declaration per logical block, with attached doc comments:
 
 ```
 $ bosc --show-exports io
@@ -248,45 +250,42 @@ regressions.
 
 Following the layering note in `CLAUDE.md`:
 
-1. **`.bo` shape** (`bwrite.go`, `ofile.go`) — add `IsPub` fields to
+1. **Done: `.bo` shape** (`bwrite.go`, `ofile.go`) — add `IsPub` fields to
    `Function`, the vars/data table, `StructShape`, `TypeAliasShape`,
    `InterfaceShape`, and `ValuesShape`. Because Boson has no compatibility
    commitment yet, old `.bo` files can simply fail to read until rebuilt.
-2. **`.bs`** (`cmd/bas/main.go`) — accept `pub` as a leading modifier on
+2. **Done: `.bs`** (`cmd/bas/main.go`) — accept `pub` as a leading modifier on
    `function`, `var`, `data`, `struct`, `typealias`, `interface`, and values
    declarations if/when `.bs` grows a values directive. Record into the
-   corresponding `.bo` entry. To keep the tree compiling during migration,
-   initially treat unmarked `.bs` directives as public, then flip them to
-   private once runtime declarations have been marked.
-3. **bosc lexer/parser** (`cmd/bosc/lexer.go`, `cmd/bosc/parser.go`) — add
+   corresponding `.bo` entry. Unmarked `.bs` directives are private.
+3. **Done: bosc lexer/parser** (`cmd/bosc/lexer.go`, `cmd/bosc/parser.go`) — add
    `pub` to the `keywords` map and accept it as a leading modifier before
    `fn`, `type`, `interface`, `var`, `const` at file scope. Reject `pub`
    elsewhere with a directed error.
-4. **AST and codegen** (`cmd/bosc/ast.go`, `cmd/bosc/compile.go`,
+4. **Done: AST and codegen** (`cmd/bosc/ast.go`, `cmd/bosc/compile.go`,
    `globals.go`) — add an `IsPub` bit to the affected top-level node types
    and propagate it to the `.bo` entries written for functions, var/data, and
-   type/interface/values shapes. During migration, temporarily default
-   unmarked declarations to public so the compiler can be landed before every
-   package is annotated.
-5. **Import filtering / name resolution** (`cmd/bosc/ast.go`,
+   type/interface/values shapes. Unmarked declarations are private.
+5. **Done: import filtering / name resolution** (`cmd/bosc/ast.go`,
    `cmd/bosc/resolve.go`) — switch `Context.Import` to register only public
    producer entries in the consumer context. After this step, unmarked
    declarations are private and qualified lookups fail the same way as any
    missing imported name.
-6. **Migration** — add `pub` to the runtime, builtin, test fixture, and example
+6. **Done: migration** — add `pub` to the runtime, builtin, test fixture, and example
    declarations that are intentionally referenced cross-package. Then remove
    the temporary "default public" compatibility path from `.bos` and `.bs`.
-7. **`bdoc`** (`cmd/bdoc/main.go` + `internal/bdoc/`) —
+7. **Done: `bdoc`** (`cmd/bdoc/main.go` + `internal/bdoc/`) —
    `internal/bdoc/discover.go` skips packages whose name begins with `_`.
    `internal/bdoc/server.go` filters the index, per-package landing pages,
    and search results to `pub`-only declarations at render time. The
    `PackageScan` produced by `internal/bdoc/scan.go` continues to record
    every declaration so future private/developer documentation can be added as
    a pure render-time option.
-8. **New driver mode** — `bosc --show-exports <package>` that reuses the
-   scanning code from `bdoc` and prints a textual header.
-9. **Linker** — no changes.
-10. **Tests** — the existing `cmd/bosc/tests/` suite needs `pub` added to
+8. **Future work: driver mode** — add `bosc --show-exports <package>` that
+   reuses the scanning code from `bdoc` and prints a textual header with doc
+   comments.
+9. **Done: linker** — no changes.
+10. **Done: tests** — the existing `cmd/bosc/tests/` suite needs `pub` added to
     every cross-package fixture symbol. A new set of negative tests
     (`*_err_test.bos`) covers attempted import-side use of private fn, type,
     var, const, interface, and values declarations.

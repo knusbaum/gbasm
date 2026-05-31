@@ -21,6 +21,7 @@ func TestBuildSearchViewFindsPackagesDeclsAndMethods(t *testing.T) {
 					Name:      "io_error",
 					Signature: "type io_error values { ... }",
 					Doc:       "I/O error values.",
+					IsPub:     true,
 					SrcFile:   "errors.bos",
 					SrcLine:   3,
 					Methods: []Decl{
@@ -29,6 +30,7 @@ func TestBuildSearchViewFindsPackagesDeclsAndMethods(t *testing.T) {
 							Name:      "message",
 							Signature: "message() byte[]",
 							Doc:       "Human-readable error text.",
+							IsPub:     true,
 							SrcFile:   "errors.bos",
 							SrcLine:   12,
 						},
@@ -64,8 +66,8 @@ func TestBuildSearchViewRanksExactBeforeSubstring(t *testing.T) {
 			ImportPath: "alpha",
 			PkgName:    "alpha",
 			Decls: []Decl{
-				{Kind: DeclFunc, Name: "find", Signature: "fn find() i64"},
-				{Kind: DeclFunc, Name: "refind", Signature: "fn refind() i64"},
+				{Kind: DeclFunc, Name: "find", Signature: "pub fn find() i64", IsPub: true},
+				{Kind: DeclFunc, Name: "refind", Signature: "pub fn refind() i64", IsPub: true},
 			},
 		},
 	}
@@ -88,7 +90,7 @@ func TestServeSearch(t *testing.T) {
 	src := `package io
 
 // Opens a file descriptor.
-fn open(path byte[]) i64 {
+pub fn open(path byte[]) i64 {
 	return 0
 }
 `
@@ -121,7 +123,7 @@ func TestHandlerServesUnderBasePath(t *testing.T) {
 	src := `package io
 
 // Opens a file descriptor.
-fn open(path byte[]) i64 {
+pub fn open(path byte[]) i64 {
 	return 0
 }
 `

@@ -83,7 +83,7 @@ label skipconvert
 	ret
 
 // putb(i byte) void — print byte value as a decimal integer.
-function putb
+pub function putb
 	type fn(byte) void
 	jmp puti
 
@@ -93,7 +93,7 @@ function putb
 //   [rsp+0 .. rsp+23]  number string buffer (24 bytes, enough for any i64)
 //   [rsp+24.. rsp+31]  slice header: data pointer
 //   [rsp+32.. rsp+39]  slice header: length
-function puti
+pub function puti
 	type fn(i64) void
 	prologue
 	sub rsp 48
@@ -127,7 +127,7 @@ function puti
 //   [rsp+0 .. rsp+7]   character stored as 64-bit (only low byte used by write)
 //   [rsp+8 .. rsp+15]  slice header: data pointer
 //   [rsp+16.. rsp+23]  slice header: length
-function putc
+pub function putc
 	type fn(byte) void
 	prologue
 	sub rsp 24

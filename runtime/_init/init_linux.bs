@@ -21,7 +21,7 @@ var nilassert string "Fatal: nullable pointer assertion failed\n\0"
 // rdi is set to point at the outer header before we call main.main, so a
 // Boson main declared as `fn main(args byte[][])` receives argv in args.
 // A main declared as `fn main()` simply ignores rdi.
-function start
+pub function start
 	// Preserve the original argc/argv block address in a callee-saved reg.
 	mov r12 rsp
 	// rbx = argc
@@ -84,7 +84,7 @@ label argv_done
 	mov rax 0x3C
 	syscall
 
-function index_oob
+pub function index_oob
 	prologue
 	push rsi
 	push rdi
@@ -111,7 +111,7 @@ function index_oob
 
 	epilogue
 
-function nil_assert
+pub function nil_assert
 	prologue
 
 	lea rdi nilassert

@@ -1,0 +1,7 @@
+package main
+
+import "visibility"
+
+fn main() i64 {
+	return visibility.hidden_fn()
+}

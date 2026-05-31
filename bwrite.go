@@ -182,6 +182,9 @@ func writeVar(w io.Writer, v *Var) error {
 	if err := writeString(w, v.Name); err != nil {
 		return err
 	}
+	if err := binary.Write(w, binary.LittleEndian, v.IsPub); err != nil {
+		return err
+	}
 	if err := writeString(w, v.VType); err != nil {
 		return err
 	}
@@ -205,6 +208,10 @@ func writeVar(w io.Writer, v *Var) error {
 func readVar(r io.Reader) (*Var, error) {
 	name, err := readString(r)
 	if err != nil {
+		return nil, err
+	}
+	var isPub bool
+	if err := binary.Read(r, binary.LittleEndian, &isPub); err != nil {
 		return nil, err
 	}
 	vtype, err := readString(r)
@@ -231,7 +238,7 @@ func readVar(r io.Reader) (*Var, error) {
 		}
 		relocs = append(relocs, dr)
 	}
-	return &Var{Name: name, VType: vtype, Val: bs, Relocs: relocs}, nil
+	return &Var{Name: name, IsPub: isPub, VType: vtype, Val: bs, Relocs: relocs}, nil
 }
 
 func writeDataReloc(w io.Writer, r *DataReloc) error {
@@ -353,6 +360,10 @@ func writeFunction(w io.Writer, f *Function) error {
 	if err != nil {
 		return fmt.Errorf("Writing name: %w", err)
 	}
+	err = binary.Write(w, binary.LittleEndian, f.IsPub)
+	if err != nil {
+		return fmt.Errorf("Writing pub bit: %w", err)
+	}
 	err = writeString(w, f.Type)
 	if err != nil {
 		return fmt.Errorf("Writing type: %w", err)
@@ -420,6 +431,10 @@ func readFunction(r io.Reader) (*Function, error) {
 	if err != nil {
 		return nil, err
 	}
+	var isPub bool
+	if err := binary.Read(r, binary.LittleEndian, &isPub); err != nil {
+		return nil, err
+	}
 	fType, err := readString(r)
 	if err != nil {
 		return nil, err
@@ -480,6 +495,7 @@ func readFunction(r io.Reader) (*Function, error) {
 	}
 	return &Function{
 		Name:        name,
+		IsPub:       isPub,
 		Type:        fType,
 		SrcFile:     srcFile,
 		SrcLine:     srcLine,
@@ -604,6 +620,9 @@ func writeStructs(w io.Writer, ss map[string]*StructShape) error {
 		if err := writeString(w, s.Name); err != nil {
 			return err
 		}
+		if err := binary.Write(w, binary.LittleEndian, s.IsPub); err != nil {
+			return err
+		}
 		if err := writeSize(w, len(s.Fields)); err != nil {
 			return err
 		}
@@ -630,6 +649,10 @@ func readStructs(r io.Reader) (map[string]*StructShape, error) {
 		if err != nil {
 			return nil, err
 		}
+		var isPub bool
+		if err := binary.Read(r, binary.LittleEndian, &isPub); err != nil {
+			return nil, err
+		}
 		nFields, err := readSize(r)
 		if err != nil {
 			return nil, err
@@ -646,7 +669,7 @@ func readStructs(r io.Reader) (map[string]*StructShape, error) {
 			}
 			fields[j] = FieldShape{Name: fName, Type: fType}
 		}
-		m[name] = &StructShape{Name: name, Fields: fields}
+		m[name] = &StructShape{Name: name, IsPub: isPub, Fields: fields}
 	}
 	return m, nil
 }
@@ -663,6 +686,9 @@ func writeTypeAliases(w io.Writer, aliases map[string]*TypeAliasShape) error {
 	for _, name := range names {
 		a := aliases[name]
 		if err := writeString(w, a.Name); err != nil {
+			return err
+		}
+		if err := binary.Write(w, binary.LittleEndian, a.IsPub); err != nil {
 			return err
 		}
 		if err := writeString(w, a.Underlying); err != nil {
@@ -691,6 +717,10 @@ func readTypeAliases(r io.Reader) (map[string]*TypeAliasShape, error) {
 		if err != nil {
 			return nil, err
 		}
+		var isPub bool
+		if err := binary.Read(r, binary.LittleEndian, &isPub); err != nil {
+			return nil, err
+		}
 		underlying, err := readString(r)
 		if err != nil {
 			return nil, err
@@ -707,7 +737,7 @@ func readTypeAliases(r io.Reader) (map[string]*TypeAliasShape, error) {
 			}
 			methods[j] = mn
 		}
-		m[name] = &TypeAliasShape{Name: name, Underlying: underlying, MethodNames: methods}
+		m[name] = &TypeAliasShape{Name: name, IsPub: isPub, Underlying: underlying, MethodNames: methods}
 	}
 	return m, nil
 }
@@ -724,6 +754,9 @@ func writeInterfaces(w io.Writer, ifaces map[string]*InterfaceShape) error {
 	for _, name := range names {
 		ifc := ifaces[name]
 		if err := writeString(w, ifc.Name); err != nil {
+			return err
+		}
+		if err := binary.Write(w, binary.LittleEndian, ifc.IsPub); err != nil {
 			return err
 		}
 		if err := writeSize(w, len(ifc.Methods)); err != nil {
@@ -763,6 +796,10 @@ func readInterfaces(r io.Reader) (map[string]*InterfaceShape, error) {
 		if err != nil {
 			return nil, err
 		}
+		var isPub bool
+		if err := binary.Read(r, binary.LittleEndian, &isPub); err != nil {
+			return nil, err
+		}
 		nMethods, err := readSize(r)
 		if err != nil {
 			return nil, err
@@ -795,7 +832,7 @@ func readInterfaces(r io.Reader) (map[string]*InterfaceShape, error) {
 			}
 			methods[j] = InterfaceMethodShape{Name: mname, Params: params, Return: ret}
 		}
-		m[name] = &InterfaceShape{Name: name, Methods: methods}
+		m[name] = &InterfaceShape{Name: name, IsPub: isPub, Methods: methods}
 	}
 	return m, nil
 }
@@ -812,6 +849,9 @@ func writeValues(w io.Writer, vs map[string]*ValuesShape) error {
 	for _, name := range names {
 		v := vs[name]
 		if err := writeString(w, v.Name); err != nil {
+			return err
+		}
+		if err := binary.Write(w, binary.LittleEndian, v.IsPub); err != nil {
 			return err
 		}
 		if err := writeString(w, v.TagType); err != nil {
@@ -857,6 +897,10 @@ func readValues(r io.Reader) (map[string]*ValuesShape, error) {
 	for i := 0; i < n; i++ {
 		name, err := readString(r)
 		if err != nil {
+			return nil, err
+		}
+		var isPub bool
+		if err := binary.Read(r, binary.LittleEndian, &isPub); err != nil {
 			return nil, err
 		}
 		tagType, err := readString(r)
@@ -905,6 +949,7 @@ func readValues(r io.Reader) (map[string]*ValuesShape, error) {
 		}
 		m[name] = &ValuesShape{
 			Name:        name,
+			IsPub:       isPub,
 			TagType:     tagType,
 			Cases:       cases,
 			Projections: projs,

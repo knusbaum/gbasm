@@ -43,7 +43,7 @@ func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
 			CompileErrorF(a, "Variable \"%s\" of type %s requires an initializer", ast.Name, ast.Type)
 		}
 		// Zero-init form: bas allocates `size` zero bytes.
-		fmt.Fprintf(of, "var %s %s %d\n", ast.Name, ast.Type, size)
+		fmt.Fprintf(of, "%svar %s %s %d\n", pubPrefix(ast.IsPub), ast.Name, ast.Type, size)
 		return
 	}
 
@@ -62,7 +62,7 @@ func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
 		// rather than emit a globally-misaligned variable.
 		CompileErrorF(a, "internal: static initializer encoded %d bytes, but type %s has size %d", len(data), dstt, size)
 	}
-	emitVarBlock(of, ast.Name, ast.Type.String(), data, relocs)
+	emitVarBlock(of, ast.Name, ast.Type.String(), data, relocs, ast.IsPub)
 	// Any `&literal` forms encountered during the encode queued
 	// anonymous globals to back their pointer targets. Emit them now,
 	// alongside the named global they're nested inside. Mark each as
@@ -70,7 +70,7 @@ func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
 	// file-scope name.
 	for _, ag := range c.DrainAnonGlobals() {
 		c.MarkAddress(ag.Name)
-		emitVarBlock(of, ag.Name, ag.Type, ag.Bytes, ag.Relocs)
+		emitVarBlock(of, ag.Name, ag.Type, ag.Bytes, ag.Relocs, false)
 	}
 }
 
@@ -78,17 +78,24 @@ func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
 // no relocs) or the multi-line block form. Centralized so we don't repeat
 // the choice and the formatting in callers that might emit anonymous
 // globals later.
-func emitVarBlock(of io.Writer, name, vtype string, data []byte, relocs []relocSpec) {
+func emitVarBlock(of io.Writer, name, vtype string, data []byte, relocs []relocSpec, isPub bool) {
 	if len(relocs) == 0 {
-		fmt.Fprintf(of, "var %s %s \"%s\"\n", name, vtype, bytesToBasStringLiteral(data))
+		fmt.Fprintf(of, "%svar %s %s \"%s\"\n", pubPrefix(isPub), name, vtype, bytesToBasStringLiteral(data))
 		return
 	}
-	fmt.Fprintf(of, "var %s %s {\n", name, vtype)
+	fmt.Fprintf(of, "%svar %s %s {\n", pubPrefix(isPub), name, vtype)
 	fmt.Fprintf(of, "\tbytes \"%s\"\n", bytesToBasStringLiteral(data))
 	for _, r := range relocs {
 		fmt.Fprintf(of, "\treloc %d %s %d\n", r.Offset, r.Symbol, r.Addend)
 	}
 	fmt.Fprintf(of, "}\n")
+}
+
+func pubPrefix(isPub bool) string {
+	if isPub {
+		return "pub "
+	}
+	return ""
 }
 
 // encodeStaticInit serializes a compile-time constant AST node into a raw

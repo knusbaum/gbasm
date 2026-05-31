@@ -250,6 +250,9 @@ func buildPackageView(p *PackageScan) *packageView {
 	var freeFns []Decl
 	var interfaces []Decl
 	for _, d := range p.Decls {
+		if !d.IsPub {
+			continue
+		}
 		switch d.Kind {
 		case DeclFunc:
 			freeFns = append(freeFns, d)

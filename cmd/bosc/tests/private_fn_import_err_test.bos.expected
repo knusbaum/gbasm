@@ -1,0 +1,2 @@
+Compiling tests/private_fn_import_err_test.bos
+Fatal: No such function "visibility.hidden_fn"
