@@ -1,7 +1,14 @@
 package builtin
 
-// error is the interface implemented by types that represent error conditions.
+// error is the interface implemented by types that represent typical error conditions.
 pub interface error {
+	message(e *self) byte[]
+}
+
+// built_error is the interface implemented by types that represent complicated error
+// conditions. These error conditions contain owned resources such as allocations
+// and require destruction when they're no longer in use.
+pub interface built_error {
 	message(e *self) byte[]
 	destroy(e owned *self)
 }
@@ -12,7 +19,7 @@ pub interface error {
 //   fn len(T[]) i64      - dynamic: runtime load of slice fat-pointer length field
 //   fn len(T[N]) i64     - static: compile-time constant N
 
-// alloc allocates a zeroed heap value of type T and returns an owned pointer to it.
-// It is a compiler intrinsic backed by _heap.alloc.
+// alloc allocates a zeroed heap value of type T and returns an owned pointer
+// to it. It is a compiler intrinsic and cannot be passed as a value.
 //
 //   fn alloc(T) *owned mut T

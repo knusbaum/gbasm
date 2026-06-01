@@ -12,7 +12,7 @@ type strerr struct{ err byte[] } {
 	}
 }
 
-fn do_a_thing() owned error {
+fn do_a_thing() owned built_error {
 	return new(strerr{err: "This Is An Error\n" })
 }
 
