@@ -1,0 +1,20 @@
+package main
+
+interface labeled {
+	label(v self) byte[]
+}
+
+type code values {
+	OK
+} {
+	label(c code) byte[] {
+		return "code"
+	}
+}
+
+fn main() {
+	var a labeled = code.OK
+	var b labeled = code.OK
+	if (a < b) {
+	}
+}

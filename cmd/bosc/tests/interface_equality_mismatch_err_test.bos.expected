@@ -1,0 +1,2 @@
+Compiling tests/interface_equality_mismatch_err_test.bos
+Fatal: Cannot compare interface values of types left_iface and right_iface

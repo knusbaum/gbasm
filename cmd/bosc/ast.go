@@ -570,12 +570,13 @@ func (c *Context) WriteVtables(of io.Writer) {
 		root = root.parent
 	}
 	for name, spec := range root.vtables {
-		n := len(spec.methods)
+		n := len(spec.methods) + 1
 		zeros := make([]byte, n*8)
 		fmt.Fprintf(of, "var %s byte[%d] {\n", name, n*8)
 		fmt.Fprintf(of, "\tbytes \"%s\"\n", bytesToBasStringLiteral(zeros))
+		fmt.Fprintf(of, "\treloc 0 %s.__typedesc_%s 0\n", spec.pkgName, spec.typeName)
 		for i, m := range spec.methods {
-			fmt.Fprintf(of, "\treloc %d %s.%s.%s 0\n", i*8, spec.pkgName, spec.typeName, m)
+			fmt.Fprintf(of, "\treloc %d %s.%s.%s 0\n", (i+1)*8, spec.pkgName, spec.typeName, m)
 		}
 		fmt.Fprintf(of, "}\n")
 	}

@@ -1,0 +1,67 @@
+package main
+
+import "string"
+
+fn say(name byte[], ok bool) {
+	string.puts(name)
+	if (ok) {
+		string.puts(" yes\n")
+	} else {
+		string.puts(" no\n")
+	}
+}
+
+interface labeled {
+	label(v self) byte[]
+}
+
+type code values {
+	OK
+	FAIL
+} {
+	label(c code) byte[] {
+		return "code"
+	}
+}
+
+type other values {
+	OK
+} {
+	label(o other) byte[] {
+		return "other"
+	}
+}
+
+interface ptr_labeled {
+	label(v *self) byte[]
+}
+
+type thing i64 {
+	label(t *thing) byte[] {
+		return "thing"
+	}
+}
+
+fn main() {
+	var e labeled = code.OK
+	var same labeled = code.OK
+	var different_value labeled = code.FAIL
+	var different_type labeled = other.OK
+
+	say("iface concrete eq", e == code.OK)
+	say("concrete iface eq", code.OK == e)
+	say("iface concrete neq", e != code.FAIL)
+	say("iface iface eq", e == same)
+	say("iface iface data neq", e != different_value)
+	say("iface iface type neq", e != different_type)
+
+	var a thing = 1
+	var b thing = 1
+	var pa ptr_labeled = &a
+	var pa2 ptr_labeled = &a
+	var pb ptr_labeled = &b
+
+	say("ptr iface eq", pa == pa2)
+	say("ptr concrete eq", pa == &a)
+	say("ptr identity neq", pa != pb)
+}

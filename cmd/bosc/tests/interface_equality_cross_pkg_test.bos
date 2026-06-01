@@ -1,0 +1,22 @@
+package main
+
+import "errors"
+import "string"
+
+fn say(name byte[], ok bool) {
+	string.puts(name)
+	if (ok) {
+		string.puts(" yes\n")
+	} else {
+		string.puts(" no\n")
+	}
+}
+
+fn main() {
+	var not_found errors.error_val = errors.open_for(2)
+	var busy errors.error_val = errors.open_for(0)
+
+	say("cross concrete eq", not_found == errors.io_error.NOT_FOUND)
+	say("cross concrete neq", not_found != errors.io_error.BUSY)
+	say("cross iface neq", not_found != busy)
+}

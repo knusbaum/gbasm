@@ -1,0 +1,49 @@
+package main
+
+import "string"
+
+// labeled is a pointer-backed interface with a consuming destroy method.
+// The point of this test: comparing an owned interface value must NOT
+// consume the binding, so the variable is still usable after the
+// comparison.
+
+interface labeled {
+	label(v *self) byte[]
+	destroy(v owned *self)
+}
+
+type code i64 {
+	label(c *code) byte[] {
+		return "code"
+	}
+	destroy(c owned *code) {
+		dispose(c)
+	}
+}
+
+fn make_one() owned labeled {
+	return new(code(1))
+}
+
+fn say(name byte[], ok bool) {
+	string.puts(name)
+	if (ok) {
+		string.puts(" yes\n")
+	} else {
+		string.puts(" no\n")
+	}
+}
+
+fn main() {
+	var a owned labeled = make_one()
+	var b owned labeled = make_one()
+
+	// Two distinct heap allocations -> pointer-identity neq.
+	say("owned compare distinct", a != b)
+	// Re-use both bindings; would fail to compile if compare had
+	// consumed them.
+	say("owned compare reuse", a != b)
+
+	a.destroy()
+	b.destroy()
+}

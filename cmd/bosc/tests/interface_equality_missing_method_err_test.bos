@@ -1,0 +1,19 @@
+package main
+
+interface labeled {
+	label(v self) byte[]
+}
+
+type good i64 {
+	label(g good) byte[] {
+		return "good"
+	}
+}
+
+type bad i64
+
+fn main() {
+	var x labeled = good(1)
+	if (x == bad(1)) {
+	}
+}

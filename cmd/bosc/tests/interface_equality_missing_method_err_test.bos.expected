@@ -1,0 +1,2 @@
+Compiling tests/interface_equality_missing_method_err_test.bos
+Fatal: Type bad does not implement interface labeled

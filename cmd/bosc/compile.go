@@ -254,6 +254,14 @@ func shouldCoerceToInterface(c *Context, dstt, srct ASTType) bool {
 		(srct.Indirection > 0 || !srct.Same(intlitASTType()))
 }
 
+func typedescSymbolName(typeName string) string {
+	return "__typedesc_" + strings.ReplaceAll(typeName, ".", "_")
+}
+
+func emitTypedesc(of io.Writer, typeName string) {
+	fmt.Fprintf(of, "data %s byte[1] \"\\0\"\n", typedescSymbolName(typeName))
+}
+
 func interfaceSatisfactionError(c *Context, typeName, ifaceName string, iface *InterfaceDecl) string {
 	methods, ok := c.TypeMethodsFor(typeName)
 	if !ok {
@@ -1568,6 +1576,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	case *TypeAliasDecl:
 		// Emit typealias directive so bas can carry it into the .bo.
 		fmt.Fprintf(of, "%stypealias %s %s\n", pubPrefix(ast.IsPub), ast.Name, ast.Underlying)
+		emitTypedesc(of, ast.Name)
 		return nullspot
 	case *TypeWithMethodsDecl:
 		// Emit typealias directive with method names for cross-package import.
@@ -1576,6 +1585,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, " %s", m.Name)
 		}
 		fmt.Fprintf(of, "\n")
+		emitTypedesc(of, ast.Name)
 		// Emit each method as `function TypeName.method_name` — the assembler
 		// prepends the package name, producing pkg.TypeName.method_name.
 		for _, m := range ast.Methods {
@@ -1630,6 +1640,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, "\tmethod %s\n", m.Name)
 		}
 		fmt.Fprintf(of, "}\n")
+		emitTypedesc(of, ast.Name)
 		// One static projection table per declared projection. Each
 		// table is a fixed array indexed by the case's compiler-private
 		// tag, so a projection cast can lower to a single indexed load
@@ -1682,6 +1693,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, "\t%s %s\n", f.Name, f.Type)
 		}
 		fmt.Fprintf(of, "}\n")
+		emitTypedesc(of, ast.TName)
 		if methods, ok := c.TypeMethodsFor(ast.TName); ok {
 			for _, m := range methods {
 				qualified := &FuncDecl{
@@ -3898,6 +3910,106 @@ func resolveOperandType(ft, st ASTType) ASTType {
 	return numASTType()
 }
 
+func sameInterfaceType(c *Context, a, b ASTType) bool {
+	a = a.StripOwned()
+	b = b.StripOwned()
+	if !c.IsInterfaceType(a) || !c.IsInterfaceType(b) {
+		return false
+	}
+	if a.Name == b.Name {
+		return true
+	}
+	ad, aok := c.InterfaceForName(a.Name)
+	bd, bok := c.InterfaceForName(b.Name)
+	return aok && bok && ad == bd
+}
+
+func compareUsesInterface(c *Context, o *Op2) bool {
+	return c.IsInterfaceType(o.First.ASTType(c).StripOwned()) ||
+		c.IsInterfaceType(o.Second.ASTType(c).StripOwned())
+}
+
+func compileAsInterfaceValue(of io.Writer, c *Context, errNode AST, ifaceType ASTType, val AST) spot {
+	ifaceType = ifaceType.StripOwned()
+	valType := val.ASTType(c)
+	if c.IsInterfaceType(valType.StripOwned()) {
+		if !sameInterfaceType(c, ifaceType, valType) {
+			CompileErrorF(val, "Cannot compare interface values of types %s and %s", ifaceType, valType)
+		}
+		return compileTop(of, c, val, nullspot)
+	}
+	dst := newSpot(of, c, c.Temp(), ifaceType)
+	emitInterfaceFatPtr(of, c, errNode, ifaceType, valType, val, dst.ref, "")
+	return dst
+}
+
+func compileInterfaceEquality(of io.Writer, c *Context, o *Op2, dest spot) spot {
+	ft := o.First.ASTType(c).StripOwned()
+	st := o.Second.ASTType(c).StripOwned()
+	var ifaceType ASTType
+	switch {
+	case c.IsInterfaceType(ft) && c.IsInterfaceType(st):
+		if !sameInterfaceType(c, ft, st) {
+			CompileErrorF(o.First, "Cannot compare interface values of types %s and %s", ft, st)
+		}
+		ifaceType = ft
+	case c.IsInterfaceType(ft):
+		ifaceType = ft
+	case c.IsInterfaceType(st):
+		ifaceType = st
+	default:
+		panic("compileInterfaceEquality called without an interface operand")
+	}
+
+	first := compileAsInterfaceValue(of, c, o.First, ifaceType, o.First)
+	second := compileAsInterfaceValue(of, c, o.Second, ifaceType, o.Second)
+	defer first.free(of)
+	defer second.free(of)
+
+	if dest.empty() {
+		dest = newSpot(of, c, c.Temp(), boolASTType())
+	}
+	firstData := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	firstVtable := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	firstTypedesc := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	secondData := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	secondVtable := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	secondTypedesc := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	defer firstData.free(of)
+	defer firstVtable.free(of)
+	defer firstTypedesc.free(of)
+	defer secondData.free(of)
+	defer secondVtable.free(of)
+	defer secondTypedesc.free(of)
+
+	fmt.Fprintf(of, "\tmov %s [%s+0]\n", firstData.ref, first.ref)
+	fmt.Fprintf(of, "\tmov %s [%s+8]\n", firstVtable.ref, first.ref)
+	fmt.Fprintf(of, "\tmov %s [%s+0]\n", firstTypedesc.ref, firstVtable.ref)
+	fmt.Fprintf(of, "\tmov %s [%s+0]\n", secondData.ref, second.ref)
+	fmt.Fprintf(of, "\tmov %s [%s+8]\n", secondVtable.ref, second.ref)
+	fmt.Fprintf(of, "\tmov %s [%s+0]\n", secondTypedesc.ref, secondVtable.ref)
+
+	done := c.Label("ifacecmp")
+	if o.Type == n_neq {
+		fmt.Fprintf(of, "\tmov %s 1\n", dest.ref)
+		fmt.Fprintf(of, "\tcmp %s %s\n", firstTypedesc.ref, secondTypedesc.ref)
+		fmt.Fprintf(of, "\tjne %s\n", done)
+		fmt.Fprintf(of, "\tcmp %s %s\n", firstData.ref, secondData.ref)
+		fmt.Fprintf(of, "\tjne %s\n", done)
+		fmt.Fprintf(of, "\tmov %s 0\n", dest.ref)
+		fmt.Fprintf(of, "\tlabel %s\n", done)
+		return dest
+	}
+	fmt.Fprintf(of, "\tmov %s 0\n", dest.ref)
+	fmt.Fprintf(of, "\tcmp %s %s\n", firstTypedesc.ref, secondTypedesc.ref)
+	fmt.Fprintf(of, "\tjne %s\n", done)
+	fmt.Fprintf(of, "\tcmp %s %s\n", firstData.ref, secondData.ref)
+	fmt.Fprintf(of, "\tjne %s\n", done)
+	fmt.Fprintf(of, "\tmov %s 1\n", dest.ref)
+	fmt.Fprintf(of, "\tlabel %s\n", done)
+	return dest
+}
+
 func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 	//if dest.empty() {
 	//dest = newSpot(of, c, c.Temp(), o.ASTType(c))
@@ -4110,6 +4222,9 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		return tmp
 	case n_lt:
+		if compareUsesInterface(c, o) {
+			CompileErrorF(o.First, "Cannot order interface values")
+		}
 		checkValuesComparisonCompat(c, o, true)
 		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
 		fst := newSpot(of, c, c.Temp(), ft)
@@ -4132,6 +4247,9 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		return dest
 	case n_le:
+		if compareUsesInterface(c, o) {
+			CompileErrorF(o.First, "Cannot order interface values")
+		}
 		checkValuesComparisonCompat(c, o, true)
 		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
 		fst := newSpot(of, c, c.Temp(), ft)
@@ -4154,6 +4272,9 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		return dest
 	case n_gt:
+		if compareUsesInterface(c, o) {
+			CompileErrorF(o.First, "Cannot order interface values")
+		}
 		checkValuesComparisonCompat(c, o, true)
 		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
 		fst := newSpot(of, c, c.Temp(), ft)
@@ -4176,6 +4297,9 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		return dest
 	case n_ge:
+		if compareUsesInterface(c, o) {
+			CompileErrorF(o.First, "Cannot order interface values")
+		}
 		checkValuesComparisonCompat(c, o, true)
 		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
 		fst := newSpot(of, c, c.Temp(), ft)
@@ -4198,6 +4322,9 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		return dest
 	case n_deq:
+		if compareUsesInterface(c, o) {
+			return compileInterfaceEquality(of, c, o, dest)
+		}
 		checkValuesComparisonCompat(c, o, false)
 		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
 		fst := newSpot(of, c, c.Temp(), ft)
@@ -4217,6 +4344,9 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		fmt.Fprintf(of, "\tsete %s\n", dest.ref)
 		return dest
 	case n_neq:
+		if compareUsesInterface(c, o) {
+			return compileInterfaceEquality(of, c, o, dest)
+		}
 		checkValuesComparisonCompat(c, o, false)
 		ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
 		fst := newSpot(of, c, c.Temp(), ft)
@@ -4396,7 +4526,7 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 	fnPtr := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
 	fmt.Fprintf(of, "\tmov %s [%s+0]\n", dataPtr.ref, ifaceRef)
 	fmt.Fprintf(of, "\tmov %s [%s+8]\n", vtablePtr.ref, ifaceRef)
-	fmt.Fprintf(of, "\tmov %s [%s+%d]\n", fnPtr.ref, vtablePtr.ref, methodIdx*8)
+	fmt.Fprintf(of, "\tmov %s [%s+%d]\n", fnPtr.ref, vtablePtr.ref, (methodIdx+1)*8)
 	vtablePtr.free(of)
 
 	order := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}

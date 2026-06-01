@@ -1,0 +1,22 @@
+package main
+
+interface left_iface {
+	label(v self) byte[]
+}
+
+interface right_iface {
+	label(v self) byte[]
+}
+
+type good i64 {
+	label(g good) byte[] {
+		return "good"
+	}
+}
+
+fn main() {
+	var left left_iface = good(1)
+	var right right_iface = good(1)
+	if (left == right) {
+	}
+}

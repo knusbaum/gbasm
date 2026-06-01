@@ -1,0 +1,9 @@
+iface concrete eq yes
+concrete iface eq yes
+iface concrete neq yes
+iface iface eq yes
+iface iface data neq yes
+iface iface type neq yes
+ptr iface eq yes
+ptr concrete eq yes
+ptr identity neq yes
