@@ -8,7 +8,6 @@ package string
 // x86-64		rdi 	rsi 	rdx 	r10 	r8 		r9 		-
 
 // puts(s byte[]) void — print a byte slice to stdout.
-// rdi = pointer to slice header {data_ptr, length}
 pub function puts
 	type fn(byte[]) void
 	prologue
@@ -23,6 +22,9 @@ pub function puts
 	epilogue
 	ret
 
+// exit(code i64) void — terminate the process with the given exit code.
+// Does not return; any pending IO is not flushed before the kernel reaps
+// the process.
 pub function exit
 	type fn(i64) void
 	// exit code already in rdi

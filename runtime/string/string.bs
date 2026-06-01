@@ -88,7 +88,7 @@ pub function putb
 	jmp puti
 
 // puti(i i64) void — print a 64-bit signed integer to stdout.
-//
+
 // Stack layout after sub rsp 48:
 //   [rsp+0 .. rsp+23]  number string buffer (24 bytes, enough for any i64)
 //   [rsp+24.. rsp+31]  slice header: data pointer
@@ -122,7 +122,7 @@ pub function puti
 	ret
 
 // putc(c byte) void — print a single byte as a character.
-//
+
 // Stack layout after sub rsp 24:
 //   [rsp+0 .. rsp+7]   character stored as 64-bit (only low byte used by write)
 //   [rsp+8 .. rsp+15]  slice header: data pointer
