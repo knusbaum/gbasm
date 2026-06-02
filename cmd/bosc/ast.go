@@ -387,7 +387,37 @@ func (c *Context) DefineInterface(p position, name string, decl *InterfaceDecl) 
 		panic(&interpreterError{fmt.Sprintf("Interface %q already defined", name), p})
 	}
 	root.checkPackageNameCollision(p, name, "interface")
+	if err := checkInterfaceReceiverHomogeneity(decl); err != nil {
+		panic(&interpreterError{err.Error(), p})
+	}
 	root.interfaceDecls[name] = decl
+}
+
+// checkInterfaceReceiverHomogeneity rejects interfaces whose methods mix
+// value-receiver and pointer-receiver shapes. Every method's first parameter
+// (the implicit receiver) must have the same indirection level. Methods with
+// no parameters are skipped — they have no receiver to constrain. The
+// homogeneous shape lets dispatch use a single uniform calling convention
+// (data slot → rdi) regardless of which method is being called, without the
+// vtable needing to encode per-method receiver kinds.
+func checkInterfaceReceiverHomogeneity(decl *InterfaceDecl) error {
+	haveShape := false
+	wantPointer := false
+	for _, m := range decl.Methods {
+		if len(m.Params) == 0 {
+			continue
+		}
+		isPointer := m.Params[0].Type.Indirection > 0
+		if !haveShape {
+			wantPointer = isPointer
+			haveShape = true
+			continue
+		}
+		if wantPointer != isPointer {
+			return fmt.Errorf("interface %s mixes value-receiver and pointer-receiver methods; all methods must use the same receiver shape (all self or all *self)", decl.Name)
+		}
+	}
+	return nil
 }
 
 // DefineValuesType registers a values declaration on the root context.
@@ -497,8 +527,26 @@ func substituteReceiver(t ASTType, typeName string) ASTType {
 }
 
 // TypeSatisfiesInterface checks structural satisfaction: does type typeName
-// implement all methods of iface, with self→typeName substituted in receiver types?
+// implement all methods of iface, with self→typeName substituted in receiver
+// types? Receiver shape is taken from the interface's declared form (the
+// homogeneous direction of its methods).
 func (c *Context) TypeSatisfiesInterface(typeName string, iface *InterfaceDecl) bool {
+	return c.TypeSatisfiesInterfaceAs(typeName, iface, interfaceIsPointerShape(iface))
+}
+
+// TypeSatisfiesInterfaceAs checks structural satisfaction with the receiver
+// direction overridden. pointerDirection=true requires T's methods to take a
+// pointer receiver (*T or owned *T as declared by the interface);
+// pointerDirection=false requires plain-value receivers (T). Non-receiver
+// args and return types must match the interface declaration exactly.
+//
+// This is the predicate used by the coercion path: a value-typed source
+// coerces under value direction, a pointer-typed source under pointer
+// direction. The interface's own declared receiver shape becomes
+// documentation rather than a hard constraint, letting (for example) a
+// value-receiver `io_err.message(e io_err)` satisfy a pointer-shape
+// `error.message(e *self)` interface when coerced from a value source.
+func (c *Context) TypeSatisfiesInterfaceAs(typeName string, iface *InterfaceDecl, pointerDirection bool) bool {
 	methods, ok := c.TypeMethodsFor(typeName)
 	if !ok {
 		return false
@@ -512,7 +560,21 @@ func (c *Context) TypeSatisfiesInterface(typeName string, iface *InterfaceDecl) 
 			if len(m.Args) == 0 || len(isig.Params) == 0 {
 				continue
 			}
-			expectedReceiver := substituteReceiver(isig.Params[0].Type, typeName)
+			// Build the expected receiver. For pointer direction, take the
+			// interface's declared receiver qualifiers (mut/owned/nullable)
+			// and force pointer shape — if the interface declared `self`
+			// (value), we synthesize a non-qualified *T. For value
+			// direction, the receiver is just plain T.
+			declReceiver := substituteReceiver(isig.Params[0].Type, typeName)
+			var expectedReceiver ASTType
+			if pointerDirection {
+				expectedReceiver = declReceiver
+				if expectedReceiver.Indirection == 0 {
+					expectedReceiver.Indirection = 1
+				}
+			} else {
+				expectedReceiver = ASTType{Name: typeName}
+			}
 			if !m.Args[0].Type.Same(expectedReceiver) {
 				continue
 			}
@@ -540,6 +602,21 @@ func (c *Context) TypeSatisfiesInterface(typeName string, iface *InterfaceDecl) 
 		}
 	}
 	return true
+}
+
+// interfaceIsPointerShape reports the homogeneous receiver direction of an
+// interface declaration. Homogeneity is enforced at declaration time
+// (checkInterfaceReceiverHomogeneity), so we only need to look at the first
+// method that has a receiver. Interfaces whose methods all lack receivers
+// are reported as value-shape, but such interfaces can't be satisfied today
+// because the satisfaction check skips zero-param methods.
+func interfaceIsPointerShape(iface *InterfaceDecl) bool {
+	for _, m := range iface.Methods {
+		if len(m.Params) > 0 {
+			return m.Params[0].Type.Indirection > 0
+		}
+	}
+	return false
 }
 
 // NeedVtable registers a vtable to be emitted; no-op if already registered.

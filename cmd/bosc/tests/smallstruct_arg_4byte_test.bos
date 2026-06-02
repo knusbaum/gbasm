@@ -1,0 +1,22 @@
+package main
+
+import "string"
+
+type foo struct {
+	a i8
+	b i8
+	c i8
+	d i8
+}
+
+fn whatever(f foo) {
+	string.puti(i64(f.a)); string.puts(" ")
+	string.puti(i64(f.b)); string.puts(" ")
+	string.puti(i64(f.c)); string.puts(" ")
+	string.puti(i64(f.d)); string.puts("\n")
+}
+
+fn main() {
+	var x foo = foo{a: 1, b: 2, c: 3, d: 4}
+	whatever(x)
+}

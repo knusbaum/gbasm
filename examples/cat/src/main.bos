@@ -3,7 +3,13 @@ package main
 import "io"
 import "string"
 
-fn perror(err io.io_err) {
+fn perror_io(err io.io_err) {
+	string.puts("ERROR: ")
+	string.puts(err.message())
+	string.puts("\n")
+}
+
+fn perror_iface(err error) {
 	string.puts("ERROR: ")
 	string.puts(err.message())
 	string.puts("\n")
@@ -15,28 +21,28 @@ fn main(args byte[][]) {
 	if (len(args) == 1) {
 		const err = io.copy(&io.STDOUT, &io.STDIN)
 		if(err != io.io_err.OK) {
-			perror(err)
+			perror_iface(err)
 			return
 		}
 		string.puts("Done.\n")
 		return
 	}
 	for(var i i64 = 1; i < len(args); i = i + 1) {
-		const f, err = io.open(args[i], io.O_CREAT | io.O_RDONLY, 0o660)
-		if (err != io.io_err.OK) {
+		const f, var openerr = io.open(args[i], io.O_CREAT | io.O_RDONLY, 0o660)
+		if (openerr != io.io_err.OK) {
 			string.puts("While opening ")
 			string.puts(args[i])
 			string.puts("\n")
-			perror(err)
+			perror_io(openerr)
 			dispose(f) // Interesting we can't coherently dispose f close(f) feels wrong here.
 			return
 		}
-		err = io.copy(&io.STDOUT, &f)
+		const err = io.copy(&io.STDOUT, &f)
 		if(err != io.io_err.OK) {
-			perror(err)
+			perror_iface(err)
 			f.close()
 			return
-		}	
+		}
 		f.close()
 	}
 	string.puts("Done.\n")

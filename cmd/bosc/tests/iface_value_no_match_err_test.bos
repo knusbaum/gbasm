@@ -1,0 +1,19 @@
+package main
+
+// Under option (b), coercing a value source still requires T to have a
+// value-receiver method matching the interface. Here T has only a
+// pointer-receiver method, so value-source coercion must be rejected.
+
+interface labeled {
+	tag(v *self) byte[]
+}
+
+type only_ptr i64 {
+	tag(o *only_ptr) byte[] {
+		return "ptr"
+	}
+}
+
+fn main() {
+	var x labeled = only_ptr(1)
+}

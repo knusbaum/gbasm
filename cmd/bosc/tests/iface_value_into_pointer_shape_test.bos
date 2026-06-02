@@ -1,0 +1,28 @@
+package main
+
+import "string"
+
+// Option (b): a value-receiver type satisfies a pointer-shape interface
+// when coerced as a value. The vtable holds T's value-receiver method
+// pointer, dispatch passes value bits via [iface+0] -> RDI, and T's
+// method body reads RDI as the value (its declared shape).
+
+interface error_ptr {
+	message(e *self) byte[]
+}
+
+type my_err i64 {
+	message(e my_err) byte[] {
+		return "value-receiver method via pointer-shape interface"
+	}
+}
+
+fn show(e error_ptr) {
+	string.puts(e.message())
+	string.puts("\n")
+}
+
+fn main() {
+	var e error_ptr = my_err(1)
+	show(e)
+}

@@ -220,26 +220,24 @@ func interfaceConcreteTypeName(t ASTType) string {
 func validateInterfaceCoercion(c *Context, errNode AST, dstt, srct ASTType) (valueBacked bool) {
 	concreteTypeName := interfaceConcreteTypeName(srct)
 	ifaceDecl, _ := c.InterfaceForName(dstt.Name)
-	if !c.TypeSatisfiesInterface(concreteTypeName, ifaceDecl) {
-		CompileErrorF(errNode, "%s", interfaceSatisfactionError(c, concreteTypeName, dstt.Name, ifaceDecl))
+	// The coercion direction is determined by the source, not by the
+	// interface's declared receiver shape. A pointer source produces a
+	// pointer-backed interface (data slot = pointer); a non-pointer
+	// source produces a value-backed interface (data slot = value bits).
+	// Dispatch is uniform: `mov rdi, [iface+0]` — so T's methods must
+	// match the source direction, not the interface's syntactic shape.
+	pointerDirection := srct.Indirection > 0
+	if !c.TypeSatisfiesInterfaceAs(concreteTypeName, ifaceDecl, pointerDirection) {
+		CompileErrorF(errNode, "%s", interfaceSatisfactionError(c, concreteTypeName, dstt.Name, ifaceDecl, pointerDirection))
 	}
 	if dstt.OwnedMask != 0 && srct.OwnedMask == 0 {
 		CompileErrorF(errNode, "Cannot use non-owned %s where owned %s is required", srct, dstt.Name)
 	}
-	if srct.Indirection > 0 {
+	if pointerDirection {
 		return false
 	}
 	if srct.IsSliceOrArray() || srct.FuncSig != nil {
 		CompileErrorF(errNode, "Cannot convert value of type %s to interface %s; use a pointer instead", srct, dstt.Name)
-	}
-	for _, m := range ifaceDecl.Methods {
-		if len(m.Params) == 0 {
-			continue
-		}
-		receiver := substituteReceiver(m.Params[0].Type, concreteTypeName)
-		if receiver.Indirection > 0 {
-			CompileErrorF(errNode, "Cannot convert value of type %s to interface %s: method %s expects pointer receiver %s. Use a pointer instead.", srct, dstt.Name, m.Name, receiver)
-		}
 	}
 	size := srct.Size(c)
 	if size > PTR_SIZE {
@@ -262,7 +260,7 @@ func emitTypedesc(of io.Writer, typeName string) {
 	fmt.Fprintf(of, "data %s byte[1] \"\\0\"\n", typedescSymbolName(typeName))
 }
 
-func interfaceSatisfactionError(c *Context, typeName, ifaceName string, iface *InterfaceDecl) string {
+func interfaceSatisfactionError(c *Context, typeName, ifaceName string, iface *InterfaceDecl, pointerDirection bool) string {
 	methods, ok := c.TypeMethodsFor(typeName)
 	if !ok {
 		return fmt.Sprintf("Type %s does not implement interface %s", typeName, ifaceName)
@@ -275,7 +273,16 @@ func interfaceSatisfactionError(c *Context, typeName, ifaceName string, iface *I
 			if len(m.Args) == 0 || len(isig.Params) == 0 {
 				return fmt.Sprintf("Type %s does not implement interface %s: method %s has no receiver", typeName, ifaceName, isig.Name)
 			}
-			expectedReceiver := substituteReceiver(isig.Params[0].Type, typeName)
+			declReceiver := substituteReceiver(isig.Params[0].Type, typeName)
+			var expectedReceiver ASTType
+			if pointerDirection {
+				expectedReceiver = declReceiver
+				if expectedReceiver.Indirection == 0 {
+					expectedReceiver.Indirection = 1
+				}
+			} else {
+				expectedReceiver = ASTType{Name: typeName}
+			}
 			if !m.Args[0].Type.Same(expectedReceiver) {
 				return fmt.Sprintf("Type %s does not implement interface %s: method %s receiver has type %s, expected %s", typeName, ifaceName, isig.Name, m.Args[0].Type, expectedReceiver)
 			}
@@ -1970,8 +1977,35 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		sig.WriteString(") ")
 		sig.WriteString(ast.Return.String())
 		fmt.Fprintf(of, "\ttype %s\n", sig.String())
+		// Collect any memBacked-by-value params that need a prologue
+		// spill: argi puts the arg in a (sub-)register, but the body
+		// addresses fields via [name+offset] which requires a memory
+		// base. For these params we declare a stack slot and receive
+		// the value in a temporary register named __arg_<name>, then
+		// spill register → stack after the prologue.
+		type pendingSpill struct {
+			name string
+			size int
+		}
+		var spills []pendingSpill
 		for i, a := range ast.Args {
-			fmt.Fprintf(of, "\targi %s %d %d\n", a.Name, i, a.Type.Size(c)*8)
+			// memBacked params narrower than a pointer (1/2/4 bytes)
+			// need a stack slot for [name+offset] field reads to land
+			// somewhere addressable; the arg arrives in a sub-register
+			// (DIL/DI/EDI...), which isn't a legal memory base on
+			// x86-64. Spill it after the prologue. 8-byte memBacked
+			// params already work through the older argi-into-RDI path
+			// because RDI is a legal base register, and the existing
+			// eviction logic in bas spills it to the reserved stack
+			// offset on demand.
+			if a.Type.Indirection == 0 && typeIsMemoryBacked(c, a.Type) && a.Type.Size(c) < PTR_SIZE {
+				sz := a.Type.Size(c)
+				fmt.Fprintf(of, "\tbytes %s %d\n", a.Name, sz)
+				fmt.Fprintf(of, "\targi __arg_%s %d %d\n", a.Name, i, sz*8)
+				spills = append(spills, pendingSpill{name: a.Name, size: sz})
+			} else {
+				fmt.Fprintf(of, "\targi %s %d %d\n", a.Name, i, a.Type.Size(c)*8)
+			}
 			c.BindVar(ast, a.Name, a.Type, a.IsConst)
 			if a.Type.Indirection > 0 && !a.Type.HasOwned() {
 				c.SetBorrowedBinding(a.Name, true)
@@ -1981,6 +2015,26 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 		}
 		fmt.Fprintf(of, "\n\tprologue\n\n")
+		// Spill memBacked-by-value param registers into their stack
+		// slots. This happens after the prologue so RBP/RSP are set
+		// up, and before the body so [name+offset] reads see the
+		// expected bits.
+		for _, s := range spills {
+			switch s.size {
+			case 1:
+				fmt.Fprintf(of, "\tmov byte[%s] __arg_%s\n", s.name, s.name)
+			case 2:
+				fmt.Fprintf(of, "\tmov word[%s] __arg_%s\n", s.name, s.name)
+			case 4:
+				fmt.Fprintf(of, "\tmov dword[%s] __arg_%s\n", s.name, s.name)
+			case 8:
+				fmt.Fprintf(of, "\tmov qword[%s] __arg_%s\n", s.name, s.name)
+			}
+			fmt.Fprintf(of, "\tforget __arg_%s\n", s.name)
+		}
+		if len(spills) > 0 {
+			fmt.Fprintf(of, "\n")
+		}
 		compileTop(of, c, ast.Body, nullspot)
 		for _, name := range c.UnconsumedOwned() {
 			CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
@@ -3419,13 +3473,21 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		note(of, "\t// Ensuring argument %d (%v) is in register %v for call.\n",
 			i, argspots[i].ref, order[i])
 		argt := argspots[i].t
-		if argt.Size(c) >= PTR_SIZE {
-			// The >= requires some explanation here.
-			// It relies on the fact that for objects of size > PTR_SIZE,
-			// they are held as pointers in register, meaning we can move
-			// them around as if they were 64-bit values.
+		switch {
+		case argt.Indirection == 0 && typeIsMemoryBacked(c, argt) && argt.Size(c) < PTR_SIZE:
+			// memBacked struct of 1, 2, or 4 bytes: pack the bits from
+			// the stack chunk into the argument register via a width-
+			// matched mov. mov to a 32-bit sub-register zero-extends to
+			// the full 64-bit register on x86-64. 8-byte memBacked
+			// values rode the register-hint + inreg path on the dest
+			// allocation above and fall into the >= PTR_SIZE branch.
+			packSmallMemBackedArg(of, c, f.Args[i], argspots[i].ref, argt.Size(c), i, order)
+		case argt.Size(c) >= PTR_SIZE:
+			// Pointer-sized scalar, or >8-byte memBacked passed by
+			// address (the callee derefs).
 			fmt.Fprintf(of, "\tinreg %s %s\n", argspots[i].ref, order[i])
-		} else {
+		default:
+			// Scalar narrower than a pointer (i8/i16/i32 etc.).
 			fmt.Fprintf(of, "\tacquire %s\n", order[i])
 			if argt.Signed {
 				fmt.Fprintf(of, "\tmovsx %s %s\n", order[i], argspots[i].ref)
@@ -3437,6 +3499,29 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 	}
 
 	return order
+}
+
+// packSmallMemBackedArg emits the width-matched load that brings a memBacked
+// value of size 1, 2, or 4 bytes from its stack chunk into the call
+// register order[i]. 32-bit writes auto-zero-extend to 64 bits on x86-64;
+// 8- and 16-bit loads go through movzx. Odd sizes (3, 5, 6, 7) are rejected
+// — the natural alignment of struct fields means these layouts are unusual
+// and supporting them would require multi-load packing. 8-byte memBacked
+// args ride the bytes-with-register-hint + inreg path on the caller side.
+func packSmallMemBackedArg(of io.Writer, c *Context, errNode AST, srcRef string, size int, argIdx int, regOrder []string) {
+	reg64 := regOrder[argIdx]
+	reg32 := []string{"edi", "esi", "edx", "ecx", "r8d", "r9d"}[argIdx]
+	fmt.Fprintf(of, "\tacquire %s\n", reg64)
+	switch size {
+	case 1:
+		fmt.Fprintf(of, "\tmovzx %s byte[%s]\n", reg64, srcRef)
+	case 2:
+		fmt.Fprintf(of, "\tmovzx %s word[%s]\n", reg64, srcRef)
+	case 4:
+		fmt.Fprintf(of, "\tmov %s dword[%s]\n", reg32, srcRef)
+	default:
+		CompileErrorF(errNode, "passing a %d-byte value by value is not supported; use a pointer or a 1/2/4/8-byte layout", size)
+	}
 }
 
 func jumpOp(of io.Writer, c *Context, o *Op2, label string) {
@@ -4673,15 +4758,47 @@ func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTTy
 		c.PointerFlow().SetFieldPointer(flow.Binding(destBinding), "data", pointerExprForAST(c, valAST, ""))
 	}
 	val := compileTop(of, c, valAST, nullspot)
-	if valueBacked && val.t.Size(c) < PTR_SIZE {
-		tmp := newSpot(of, c, c.Temp(), ASTType{Name: "i64", Signed: val.t.Signed})
-		if val.t.Signed {
-			fmt.Fprintf(of, "\tmovsx %s %s\n", tmp.ref, val.ref)
+	if valueBacked {
+		valSize := val.t.Size(c)
+		if val.t.Indirection == 0 && typeIsMemoryBacked(c, val.t) && valSize <= PTR_SIZE {
+			// memBacked struct ≤ 8 bytes: pack the value bits via a
+			// width-matched memory load into a scratch register, then
+			// store into the interface data slot. We grab r10 explicitly
+			// — `local Temp 64` followed by `Temp:32` would force the
+			// allocator to find a 64-bit register, which it may evict to
+			// memory to free a different register for the source LEA;
+			// the resulting partial-of-evicted-Ralloc resolves to a
+			// memory operand, and bas can't encode mem-to-mem mov.
+			fmt.Fprintf(of, "\tacquire r10\n")
+			switch valSize {
+			case 1:
+				fmt.Fprintf(of, "\tmovzx r10 byte[%s]\n", val.ref)
+			case 2:
+				fmt.Fprintf(of, "\tmovzx r10 word[%s]\n", val.ref)
+			case 4:
+				// mov to 32-bit auto-zero-extends on x86-64.
+				fmt.Fprintf(of, "\tmov r10d dword[%s]\n", val.ref)
+			case 8:
+				fmt.Fprintf(of, "\tmov r10 qword[%s]\n", val.ref)
+			default:
+				CompileErrorF(errNode, "Cannot convert value of type %s to interface %s: %d-byte values are not supported by the small-struct value-backed path; use a 1/2/4/8-byte layout or a pointer", val.t, dstt.Name, valSize)
+			}
+			fmt.Fprintf(of, "\tmov [%s+0] r10\n", destRef)
+			fmt.Fprintf(of, "\trelease r10\n")
+		} else if valSize < PTR_SIZE {
+			// Scalar narrower than a pointer: existing sign/zero-extend
+			// path on a sub-register source.
+			tmp := newSpot(of, c, c.Temp(), ASTType{Name: "i64", Signed: val.t.Signed})
+			if val.t.Signed {
+				fmt.Fprintf(of, "\tmovsx %s %s\n", tmp.ref, val.ref)
+			} else {
+				fmt.Fprintf(of, "\tmovzx %s %s\n", tmp.ref, val.ref)
+			}
+			fmt.Fprintf(of, "\tmov [%s+0] %s\n", destRef, tmp.ref)
+			tmp.free(of)
 		} else {
-			fmt.Fprintf(of, "\tmovzx %s %s\n", tmp.ref, val.ref)
+			fmt.Fprintf(of, "\tmov [%s+0] %s\n", destRef, val.ref)
 		}
-		fmt.Fprintf(of, "\tmov [%s+0] %s\n", destRef, tmp.ref)
-		tmp.free(of)
 	} else {
 		fmt.Fprintf(of, "\tmov [%s+0] %s\n", destRef, val.ref)
 	}

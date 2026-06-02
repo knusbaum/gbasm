@@ -1,0 +1,2 @@
+Compiling tests/iface_pointer_no_match_err_test.bos
+Fatal: Type only_val does not implement interface labeled: method tag receiver has type only_val, expected *only_val

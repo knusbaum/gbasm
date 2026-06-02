@@ -1,0 +1,9 @@
+package main
+
+interface mixed {
+	first(v self) byte[]
+	second(v *self) byte[]
+}
+
+fn main() {
+}

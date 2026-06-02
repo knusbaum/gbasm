@@ -1,0 +1,2 @@
+Compiling tests/interface_mixed_receiver_err_test.bos
+Failed to parse: interface mixed mixes value-receiver and pointer-receiver methods; all methods must use the same receiver shape (all self or all *self)

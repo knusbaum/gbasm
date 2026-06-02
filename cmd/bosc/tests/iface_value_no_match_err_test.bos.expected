@@ -1,0 +1,2 @@
+Compiling tests/iface_value_no_match_err_test.bos
+Fatal: Type only_ptr does not implement interface labeled: method tag receiver has type *only_ptr, expected only_ptr

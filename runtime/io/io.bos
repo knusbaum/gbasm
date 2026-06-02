@@ -428,12 +428,18 @@ pub fn open(path byte[], flags i64, mode i64) owned FD, io_err {
 // copy reads from src and writes to dst until src returns EOF. It uses a
 // 1024-byte internal buffer and issues one write per read.
 //
-// Returns io_err.OK once src reaches EOF. On any read or write error it
-// returns the failing io_err immediately, with no further attempts to
-// drain src or flush dst. A short write from dst (fewer bytes written
-// than read) is reported as io_err.EIO, since copy has no way to buffer
-// the remainder for a retry.
-pub fn copy(dst writer, src reader) io_err {
+// Returns io_err.OK (coerced to the error interface) once src reaches EOF.
+// On any read or write error it returns the failing io_err immediately,
+// with no further attempts to drain src or flush dst. A short write from
+// dst (fewer bytes written than read) is reported as io_err.EIO, since
+// copy has no way to buffer the remainder for a retry.
+//
+// The return type is the builtin `error` interface, not a specific concrete
+// type, so callers can take the result and pass it onward without forcing
+// io_err on every signature in the chain. Callers that want to match on
+// specific failures can use `==` against io_err cases — the interface
+// equality machinery folds that into a typedesc-and-data-word compare.
+pub fn copy(dst writer, src reader) error {
 	var b byte[1024]
 	var bs mut byte[]
 	for(;;) {

@@ -1,0 +1,26 @@
+package main
+
+import "io"
+import "string"
+
+// io.copy now returns the builtin error interface instead of io.io_err.
+// The function still produces io_err values internally; option-b coercion
+// folds those values into the pointer-shape `error` interface. Callers
+// match on specific failure tags via interface equality (e == io_err.X),
+// or pass the error onward as the generic interface.
+
+fn main() {
+	const f, var openerr = io.open("/dev/null", io.O_RDONLY, 0)
+	if (openerr != io.io_err.OK) {
+		string.puts("open failed\n")
+		dispose(f)
+		return
+	}
+	const err = io.copy(&io.STDOUT, &f)
+	if (err == io.io_err.OK) {
+		string.puts("copy from /dev/null returned OK as expected\n")
+	} else {
+		string.puts("unexpected non-OK\n")
+	}
+	f.close()
+}

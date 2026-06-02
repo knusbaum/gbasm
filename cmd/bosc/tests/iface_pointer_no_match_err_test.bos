@@ -1,0 +1,20 @@
+package main
+
+// Symmetric to iface_value_no_match: a pointer source coercion requires
+// T to have a pointer-receiver method. Here T has only a value-receiver
+// method, so pointer-source coercion must be rejected.
+
+interface labeled {
+	tag(v self) byte[]
+}
+
+type only_val i64 {
+	tag(o only_val) byte[] {
+		return "val"
+	}
+}
+
+fn main() {
+	var x only_val = 1
+	var i labeled = &x
+}

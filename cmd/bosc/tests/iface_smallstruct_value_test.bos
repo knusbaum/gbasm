@@ -1,0 +1,35 @@
+package main
+
+import "string"
+
+// A 4-byte struct value satisfying a value-shape interface. Combines
+// the option-b satisfaction relaxation (track A) with the small-struct
+// pack/unpack ABI fix (track B): the struct value gets packed into the
+// fat pointer's data slot via a 32-bit dword load, dispatch hands the
+// packed bits to RDI, and the callee's prologue spills the register
+// back to a stack slot so the method body's field accesses work.
+
+type tag struct {
+	a i8
+	b i8
+	c i8
+	d i8
+} {
+	name(t tag) byte[] {
+		return "tag"
+	}
+}
+
+interface shape {
+	name(s self) byte[]
+}
+
+fn show(s shape) {
+	string.puts(s.name())
+	string.puts("\n")
+}
+
+fn main() {
+	var t tag = tag{a: 1, b: 2, c: 3, d: 4}
+	show(t)
+}

@@ -1,0 +1,29 @@
+package main
+
+import "string"
+
+// Symmetric to iface_value_into_pointer_shape_test: a pointer-receiver
+// type satisfies a value-shape interface when coerced as a pointer. The
+// vtable holds T's pointer-receiver method, dispatch passes the pointer
+// via [iface+0] -> RDI, and T's method body reads RDI as a pointer.
+
+interface value_shape {
+	name(v self) byte[]
+}
+
+type widget i64 {
+	name(w *widget) byte[] {
+		return "widget"
+	}
+}
+
+fn show(v value_shape) {
+	string.puts(v.name())
+	string.puts("\n")
+}
+
+fn main() {
+	var w widget = 42
+	var v value_shape = &w
+	show(v)
+}

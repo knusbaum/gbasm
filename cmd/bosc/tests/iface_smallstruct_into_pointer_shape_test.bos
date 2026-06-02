@@ -1,0 +1,36 @@
+package main
+
+import "string"
+
+// Option (b) + small-struct ABI: a 4-byte struct with value-receiver
+// methods satisfies a pointer-shape interface when coerced as a value.
+// The interface declares *self; the relaxed satisfaction check
+// (TypeSatisfiesInterfaceAs with value direction) picks the value-
+// receiver method; coercion stores the packed struct bits into the
+// data slot; dispatch hands the bits to RDI and the prologue spill
+// in the callee lets the body read fields.
+
+interface labeled {
+	tag(s *self) byte[]
+}
+
+type bag struct {
+	a i8
+	b i8
+	c i8
+	d i8
+} {
+	tag(b bag) byte[] {
+		return "bag"
+	}
+}
+
+fn show(l labeled) {
+	string.puts(l.tag())
+	string.puts("\n")
+}
+
+fn main() {
+	var b bag = bag{a: 9, b: 8, c: 7, d: 6}
+	show(b)
+}
