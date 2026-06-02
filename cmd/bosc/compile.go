@@ -1055,6 +1055,21 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 		srcType := f.Val.ASTType(c)
 		checkBorrowedPointerDoesNotEscape(c, f.Val, fmt.Sprintf("field %v.%s", lit.Type, f.Name))
 		checkAddressOfOwnedForDest(c, f.Val, fieldType)
+		// Interface field: route through the interface coercion path so
+		// a concrete value gets a fat pointer into the field's storage.
+		// This mirrors the assignment/return/arg-call coercion sites and
+		// supports synthesized multi-return tuples whose fields use the
+		// builtin error interface.
+		if shouldCoerceToInterface(c, fieldType, srcType) {
+			fieldAddr := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", fieldAddr.ref, dest.ref, off)
+			emitInterfaceFatPtr(of, c, f.Val, fieldType, srcType, f.Val, fieldAddr.ref, "")
+			if fieldType.OwnedMask != 0 {
+				markMovedIfOwnedSource(of, c, fieldType, f.Val)
+			}
+			fieldAddr.free(of)
+			continue
+		}
 		if _, reason := coerceType(c, fieldType, srcType); reason != coerceOK {
 			reportCoerceFailure(f.Val, fieldType, srcType, reason,
 				"For field %v.%s, expected type %v but got %v",

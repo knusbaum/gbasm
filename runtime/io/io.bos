@@ -334,9 +334,10 @@ pub type FD i64 {
 	// read fills buf with bytes from the descriptor.
 	//
 	// Returns (n, err): n is the number of bytes read (0 = EOF) and err
-	// is io_err.OK on success or an errno-backed io_err on failure.
-	// A partial read (n < len(buf), err == io_err.OK) may be retried.
-	read(fd *FD, buf mut byte[]) i64, io_err {
+	// is io_err.OK on success or an errno-backed io_err on failure,
+	// coerced to the builtin error interface. A partial read
+	// (n < len(buf), err == io_err.OK) may be retried.
+	read(fd *FD, buf mut byte[]) i64, error {
 		const raw i64 = _io_sys.read(i64(*fd), buf)
 		if (raw < 0) {
 			return 0, err_from_code(-raw)
@@ -347,10 +348,10 @@ pub type FD i64 {
 	// write writes buf to the descriptor.
 	//
 	// Returns (n, err): n is the number of bytes written and err is
-	// io_err.OK on success or an errno-backed io_err on failure. A short
-	// write (n < len(buf), err == io_err.OK) is not an error; the caller is
-	// responsible for re-issuing the remainder.
-	write(fd *FD, buf byte[]) i64, io_err {
+	// io_err.OK on success or an errno-backed io_err on failure (coerced
+	// to error). A short write (n < len(buf), err == io_err.OK) is not
+	// an error; the caller is responsible for re-issuing the remainder.
+	write(fd *FD, buf byte[]) i64, error {
 		const raw i64 = _io_sys.write(i64(*fd), buf)
 		if (raw < 0) {
 			return 0, err_from_code(-raw)
@@ -362,9 +363,10 @@ pub type FD i64 {
 	// owned FD. After close, the FD value is dead — any subsequent use
 	// is a compile-time error.
 	//
-	// Returns io_err.OK on success or an errno-backed io_err on failure.
-	// Some filesystems surface delayed write errors through close.
-	close(fd *owned FD) io_err {
+	// Returns io_err.OK on success or an errno-backed io_err on failure,
+	// coerced to error. Some filesystems surface delayed write errors
+	// through close.
+	close(fd *owned FD) error {
 		const raw i64 = _io_sys.close(i64(*fd))
 		dispose(fd)
 		if (raw < 0) {
@@ -376,19 +378,21 @@ pub type FD i64 {
 
 // reader is the interface satisfied by any value with a read method of
 // the appropriate shape. read fills buf with up to len(buf) bytes and
-// returns (n, err): n bytes read (0 = EOF), err = io_err.OK on success or an
-// errno-backed io_err on failure.
+// returns (n, err): n bytes read (0 = EOF), err is io_err.OK (or any
+// other error implementation) on success, an errno-backed io_err on
+// failure. The return type is the builtin error interface so a single
+// reader can wrap diverse underlying error types.
 pub interface reader {
-	read(r *self, buf mut byte[]) i64, io_err
+	read(r *self, buf mut byte[]) i64, error
 }
 
 // writer is the interface satisfied by any value with a write method of
 // the appropriate shape. write attempts to write buf and returns (n, err):
-// n bytes written, err = io_err.OK on success or an errno-backed io_err on
-// failure. A short write (n < len(buf), err == io_err.OK) must be retried by
-// the caller.
+// n bytes written, err is io_err.OK on success or an errno-backed io_err
+// on failure (coerced to error). A short write (n < len(buf), err ==
+// io_err.OK) must be retried by the caller.
 pub interface writer {
-	write(w *self, buf byte[]) i64, io_err
+	write(w *self, buf byte[]) i64, error
 }
 
 // open opens the file at path with the given open(2) flags and mode.
@@ -403,11 +407,12 @@ pub interface writer {
 // mode is the permission bits applied when O_CREAT creates a new file
 // (e.g. 0o644 = 420).
 //
-// Returns (fd, err): on success err is io_err.OK and fd is the opened
-// descriptor. On failure err is an errno-backed io_err and fd is invalid — the
-// caller must dispose it rather than close it.
-// Paths longer than 4095 bytes return io_err.ENAMETOOLONG.
-pub fn open(path byte[], flags i64, mode i64) owned FD, io_err {
+// Returns (fd, err): on success err is io_err.OK (coerced to error) and
+// fd is the opened descriptor. On failure err is an errno-backed io_err
+// behind the error interface and fd is invalid — the caller must dispose
+// it rather than close it. Paths longer than 4095 bytes return
+// io_err.ENAMETOOLONG.
+pub fn open(path byte[], flags i64, mode i64) owned FD, error {
 	var buf byte[4096]
 	const n i64 = len(path)
 	if (n >= 4096) {

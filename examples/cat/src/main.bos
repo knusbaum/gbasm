@@ -3,13 +3,7 @@ package main
 import "io"
 import "string"
 
-fn perror_io(err io.io_err) {
-	string.puts("ERROR: ")
-	string.puts(err.message())
-	string.puts("\n")
-}
-
-fn perror_iface(err error) {
+fn perror(err error) {
 	string.puts("ERROR: ")
 	string.puts(err.message())
 	string.puts("\n")
@@ -21,7 +15,7 @@ fn main(args byte[][]) {
 	if (len(args) == 1) {
 		const err = io.copy(&io.STDOUT, &io.STDIN)
 		if(err != io.io_err.OK) {
-			perror_iface(err)
+			perror(err)
 			return
 		}
 		string.puts("Done.\n")
@@ -33,13 +27,13 @@ fn main(args byte[][]) {
 			string.puts("While opening ")
 			string.puts(args[i])
 			string.puts("\n")
-			perror_io(openerr)
+			perror(openerr)
 			dispose(f) // Interesting we can't coherently dispose f close(f) feels wrong here.
 			return
 		}
 		const err = io.copy(&io.STDOUT, &f)
 		if(err != io.io_err.OK) {
-			perror_iface(err)
+			perror(err)
 			f.close()
 			return
 		}
