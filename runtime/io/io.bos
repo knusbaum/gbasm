@@ -171,7 +171,7 @@ pub type io_err values (byte[]) {
 
 // err_from_code maps a positive Linux errno number to io_err. It also accepts
 // 0 for success. Unknown codes map to io_err.UNKNOWN.
-pub fn err_from_code(errno i64) io_err {
+fn err_from_code(errno i64) io_err {
 	if (errno == 0) { return io_err.OK }
 	if (errno == 1) { return io_err.EPERM }
 	if (errno == 2) { return io_err.ENOENT }
