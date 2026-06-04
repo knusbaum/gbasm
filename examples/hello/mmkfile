@@ -17,4 +17,7 @@ all : hello
 
 bos_exe hello source=src :
 
-[run all] : hello { ./target/hello }
+## run the cat example
+run : hello {
+    ./target/hello
+}

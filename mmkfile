@@ -16,11 +16,17 @@ all: bld bas bosc bdoc
 # so once the binary existed mmk skipped the body and edits to .go files
 # never propagated.
 
+## Build the Boson linker
 bld  { go build ./cmd/bld }
+## Build the Boson assembler
 bas  { go build ./cmd/bas }
+## Build the Boson compiler
 bosc { go build ./cmd/bosc }
+## Build the Boson documentation server
 bdoc { go build ./cmd/bdoc }
+## Build the Boson playground server
 bplayd { go build ./cmd/bplayd }
+## Build the Boson playground sandbox runner
 bplay-runner { go build ./cmd/bplay-runner }
 
 [clean bld]  { rm -f bld }
@@ -62,6 +68,9 @@ subproject cmd/bas
 subproject cmd/bosc
 
 subproject examples/buggy
+subproject examples/cat
+subproject examples/hello
+
 
 sloc {
     echo "Source Lines of Code:"

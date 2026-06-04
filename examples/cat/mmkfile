@@ -16,3 +16,8 @@ include $BOSON_HOME/boson.mmk
 all : cat
 
 bos_exe cat source=src :
+
+## run the cat example
+run : cat {
+    ./target/cat
+}

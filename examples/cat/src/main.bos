@@ -10,8 +10,6 @@ fn perror(err error) {
 }
 
 fn main(args byte[][]) {
-	string.puts("Hello, World\n")
-
 	if (len(args) == 1) {
 		const err = io.copy(&io.STDOUT, &io.STDIN)
 		if(err != io.io_err.OK) {
