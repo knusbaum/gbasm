@@ -1,0 +1,18 @@
+package main
+
+// Local-array-rooted slice stored in a local struct field, then re-sliced
+// and returned. The intermediate field hop must not lose the local-origin
+// provenance.
+
+type B struct {
+	buf byte[]
+}
+
+fn bad() byte[] {
+	var local byte[8]
+	var b B
+	b.buf = local[:]
+	return b.buf[:]
+}
+
+fn main() {}

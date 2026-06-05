@@ -1,0 +1,15 @@
+package main
+
+import "visibility"
+
+// Storing a borrowed slice parameter into an imported package's global
+// var must reject the same way an in-package global store does. The
+// receiver is a package symbol, not a value binding, so the escape
+// check has to recognize Dot{ImportedPkg, member} as a global target
+// without trying to type-check the package name as a variable.
+
+fn store(s byte[]) {
+	visibility.pub_slice = s
+}
+
+fn main() {}

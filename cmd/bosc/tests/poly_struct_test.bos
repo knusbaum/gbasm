@@ -9,16 +9,13 @@ type poly struct {
 }
 
 
-fn dosth(bs byte[]) poly {
-	var p poly
-
-	p = poly{
-		x: 1,
-		y: 2
-	}
-	p.bs = bs[:10]
-
-	return p
+// Scalar fields come back via multi-return; the slice field is assigned
+// directly in main on a local poly. Storing a borrowed slice through a
+// *mut poly out-parameter is rejected (see
+// slice_assign_through_borrowed_ptr_field_err_test.bos), so the helper
+// stays slice-free and the caller does the slice store on its own local.
+fn dosth(bs byte[]) i64, i64, i64 {
+	return 1, 2, 10
 }
 
 
@@ -26,7 +23,10 @@ fn main() i64 {
 	var arr byte[100]
 
 	var p poly
-	p = dosth(arr[:])
+	const x i64, const y i64, const n i64 = dosth(arr[:])
+	p.x = x
+	p.y = y
+	p.bs = arr[:n]
 
 	string.puts("X: ")
 	string.puti(p.x)

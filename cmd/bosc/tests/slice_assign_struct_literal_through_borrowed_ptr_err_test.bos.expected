@@ -1,0 +1,2 @@
+Compiling tests/slice_assign_struct_literal_through_borrowed_ptr_err_test.bos
+Fatal: Borrowed slice escapes via field B.buf

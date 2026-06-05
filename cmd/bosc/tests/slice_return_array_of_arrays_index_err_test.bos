@@ -1,0 +1,12 @@
+package main
+
+// Indexing into a local array-of-arrays then slicing the inner element.
+// The Index step stays on a fixed array, so the chain walker should
+// still see the root binding as the local-storage origin.
+
+fn bad() byte[] {
+	var a byte[8][1]
+	return a[0][:]
+}
+
+fn main() {}

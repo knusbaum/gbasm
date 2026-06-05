@@ -74,6 +74,36 @@ func FlowPathForExpr(a AST) (FlowPath, bool) {
 	}
 }
 
+// ProvenancePathForExpr is the slice-provenance counterpart of
+// FlowPathForExpr. It mirrors the Dot/NonNullAssert recursion but adds
+// an Index→"[]" arm: all array (or slice) elements share a single
+// aggregate bucket, sound for escape (over-rejects) but explicitly
+// unsound for null tracking (would over-narrow). The two builders must
+// not be merged — null/owned tracking has the opposite over-
+// approximation requirement.
+func ProvenancePathForExpr(a AST) (FlowPath, bool) {
+	switch ast := a.(type) {
+	case *Symbol:
+		return VarFlowPath(ast.Name), true
+	case *Dot:
+		base, ok := ProvenancePathForExpr(ast.Val)
+		if !ok {
+			return FlowPath{}, false
+		}
+		return base.Append(ast.Member), true
+	case *Index:
+		base, ok := ProvenancePathForExpr(ast.Val)
+		if !ok {
+			return FlowPath{}, false
+		}
+		return base.Append("[]"), true
+	case *NonNullAssert:
+		return ProvenancePathForExpr(ast.Val)
+	default:
+		return FlowPath{}, false
+	}
+}
+
 // CheckerState holds flow-sensitive semantic state. Context owns names, types,
 // codegen labels, temporaries, and emitted data; checker state owns facts about
 // those names during checking and compilation.
@@ -232,7 +262,7 @@ func (c *Context) RestorePointerFlow(s *flow.State) {
 
 func (c *Context) ForgetPointerBindings() {
 	for name, t := range c.bindings {
-		if t.Indirection > 0 {
+		if t.Indirection > 0 || t.IsSlice() {
 			c.PointerFlow().Forget(flow.Binding(name))
 		}
 	}

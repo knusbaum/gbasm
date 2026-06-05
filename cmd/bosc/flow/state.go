@@ -35,8 +35,18 @@ type OriginKind int
 
 const (
 	OriginUnknown OriginKind = iota
+	// OriginLocal: storage tied to a stack frame's binding (a local `var`
+	// or a fixed-array root). Invalidated at scope exit.
 	OriginLocal
+	// OriginAllocated: heap-allocated storage owned by a binding; valid
+	// until the owner is consumed (free / dispose / consume-move).
 	OriginAllocated
+	// OriginBorrowed: a borrowed view's source — a function parameter
+	// whose lifetime is the caller's, opaque to the callee. The view
+	// must not outlive the call: escape gates treat it the same as
+	// OriginLocal for that purpose, but unlike OriginLocal it is *not*
+	// invalidated at scope exit (the source outlives the borrower).
+	OriginBorrowed
 )
 
 type originInfo struct {
@@ -293,6 +303,17 @@ func (s *State) NewAllocatedOrigin(name Binding) PointerExpr {
 	return PointerExpr{Origin: o, KnownOrigin: true}
 }
 
+// NewBorrowedOrigin registers an origin for a binding whose source lives in
+// the caller's frame — typically a non-owned slice or pointer parameter.
+// The view is valid for the whole call (never invalidated at block exit)
+// but must not escape the function: escape gates that reject OriginLocal
+// also reject OriginBorrowed.
+func (s *State) NewBorrowedOrigin(name Binding) PointerExpr {
+	o := Origin(name)
+	s.origins[o] = originInfo{kind: OriginBorrowed, validity: TargetLive}
+	return PointerExpr{Origin: o, KnownOrigin: true}
+}
+
 func (s *State) InvalidateOrigin(o Origin, v TargetValidity) {
 	if info, ok := s.origins[o]; ok {
 		info.validity = v
@@ -324,6 +345,22 @@ func (s *State) OriginKindOf(o Origin) OriginKind {
 	return s.origins[o].kind
 }
 
+// IsEscapeRestricted reports whether an origin's storage outlives a function
+// frame only by virtue of being borrowed or stack-rooted — true for
+// OriginLocal (local fixed-array or value binding) and OriginBorrowed
+// (parameter view). The single predicate consulted by escape gates so
+// any new short-lived origin kind has one place to be wired in.
+func (s *State) IsEscapeRestricted(o Origin) bool {
+	if s == nil {
+		return false
+	}
+	switch s.origins[o].kind {
+	case OriginLocal, OriginBorrowed:
+		return true
+	}
+	return false
+}
+
 func fieldKey(name Binding, field string) string {
 	return string(name) + "." + field
 }
@@ -339,11 +376,54 @@ func (s *State) GetFieldPointer(name Binding, field string) PointerExpr {
 	return s.fieldPointers[fieldKey(name, field)]
 }
 
+// SetPathPointer stores a provenance fact at a full dotted path produced
+// by ProvenancePathForExpr (e.g. "b.inner.buf", "arr.[]"). Single-level
+// keys match fieldKey's format so existing readers and writers continue
+// to interop with multi-level entries in the same map.
+func (s *State) SetPathPointer(path string, ptr PointerExpr) {
+	s.fieldPointers[path] = ptr
+}
+
+// GetPathPointer reads a provenance fact by full dotted path.
+func (s *State) GetPathPointer(path string) PointerExpr {
+	if s == nil {
+		return PointerExpr{}
+	}
+	return s.fieldPointers[path]
+}
+
 func (s *State) ForgetFieldPointers(name Binding) {
 	prefix := string(name) + "."
 	for k := range s.fieldPointers {
 		if strings.HasPrefix(k, prefix) {
 			delete(s.fieldPointers, k)
+		}
+	}
+}
+
+// ForgetFieldPointersUnder deletes every fieldPointers entry whose key
+// starts with `prefix + "."`. Called when an aggregate assignment
+// overwrites a sub-path so descendant facts from the previous contents
+// don't survive as false positives.
+func (s *State) ForgetFieldPointersUnder(prefix string) {
+	p := prefix + "."
+	for k := range s.fieldPointers {
+		if strings.HasPrefix(k, p) {
+			delete(s.fieldPointers, k)
+		}
+	}
+}
+
+// CopyFieldPointersUnderPath copies descendant provenance facts from
+// one sub-path to another. Clears any pre-existing descendants of dst
+// first, then re-keys each `src.<suffix>` entry as `dst.<suffix>`. Used
+// for sub-path struct copies like `o.inner = other.inner`.
+func (s *State) CopyFieldPointersUnderPath(src, dst string) {
+	s.ForgetFieldPointersUnder(dst)
+	srcPrefix := src + "."
+	for k, v := range s.fieldPointers {
+		if strings.HasPrefix(k, srcPrefix) {
+			s.fieldPointers[dst+"."+k[len(srcPrefix):]] = v
 		}
 	}
 }
@@ -360,7 +440,8 @@ func (s *State) CopyFieldPointers(src, dst Binding) {
 }
 
 // CheckStructFieldEscape returns (true, fieldName) if any field pointer for
-// the binding targets a OriginLocal origin that is still known.
+// the binding targets an escape-restricted origin (OriginLocal or
+// OriginBorrowed) that is still known.
 func (s *State) CheckStructFieldEscape(name Binding) (escaped bool, field string) {
 	if s == nil {
 		return false, ""
@@ -373,7 +454,7 @@ func (s *State) CheckStructFieldEscape(name Binding) (escaped bool, field string
 		if !ptr.KnownOrigin {
 			continue
 		}
-		if s.origins[ptr.Origin].kind == OriginLocal {
+		if s.IsEscapeRestricted(ptr.Origin) {
 			return true, k[len(prefix):]
 		}
 	}

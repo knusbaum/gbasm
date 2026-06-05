@@ -1,0 +1,17 @@
+package main
+
+// Borrowed slice parameter wrapped into a struct literal assigned to a
+// file-scope global. The whole-struct copy carries the slice into a
+// long-lived slot just as a direct `g.buf = s` would.
+
+type B struct {
+	buf byte[]
+}
+
+var g B
+
+fn store(s byte[]) {
+	g = B{buf: s}
+}
+
+fn main() {}

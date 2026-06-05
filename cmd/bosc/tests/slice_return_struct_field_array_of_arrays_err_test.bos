@@ -1,0 +1,16 @@
+package main
+
+// Struct field is an array-of-arrays; we index into it and slice the
+// element. Combines the Dot and Index steps — both stay within local
+// storage and neither crosses a pointer.
+
+type B struct {
+	bufs byte[8][1]
+}
+
+fn bad() byte[] {
+	var b B
+	return b.bufs[0][:]
+}
+
+fn main() {}

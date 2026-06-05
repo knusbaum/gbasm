@@ -1,0 +1,22 @@
+package main
+
+// Storing an escape-restricted slice into a struct field through a borrowed
+// *mut pointer must be rejected. The function body sees only the pointer
+// parameter; it has no way to prove the pointee's lifetime matches the
+// slice's, so the conservative answer is to reject — same shape as bare
+// borrowed-pointer return, just one indirection deeper.
+
+type B struct {
+	buf byte[]
+}
+
+var g B
+
+fn fill(out *mut B, s byte[]) {
+	out.buf = s
+}
+
+fn main() {
+	var local byte[8]
+	fill(&g, local[:])
+}

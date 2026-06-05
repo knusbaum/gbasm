@@ -1,0 +1,26 @@
+package main
+
+// Locally-rooted slice stored in a local struct variable, then the
+// struct is returned by value. Parallels DESIGN.md §Borrowing
+// `bad_field(n *node) { var h holder; h.n = n }` (the store), combined
+// with a return that carries the field out.
+//
+// The field-store form on its own is safe — `h` and `local` both die at
+// scope end and the slice is never read after that. What's unsound is
+// the return: copying `h` out of the frame carries `local[:]`'s data
+// pointer to a caller who can no longer assume `local` is alive.
+//
+// Currently accepted (compiles cleanly). Should be rejected.
+
+type B struct {
+	buf mut byte[]
+	pos i64
+}
+
+fn bad() B {
+	var local byte[64]
+	var h B = B{buf: local[:], pos: 0}
+	return h
+}
+
+fn main() {}

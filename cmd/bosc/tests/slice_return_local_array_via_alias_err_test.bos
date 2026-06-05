@@ -1,0 +1,16 @@
+package main
+
+// Slice into a local fixed-size array routed through an alias variable,
+// then returned. Parallels DESIGN.md §Borrowing `bad_alias(n *node) *node
+// { var alias *node = n; return alias }` — the alias inherits the
+// borrowed-or-locally-rooted provenance and the return is still rejected.
+//
+// Currently accepted (compiles cleanly). Should be rejected.
+
+fn bad() byte[] {
+	var local byte[64]
+	var alias byte[] = local[:]
+	return alias
+}
+
+fn main() {}

@@ -1,0 +1,2 @@
+Compiling tests/slice_return_nested_struct_field_array_err_test.bos
+Fatal: Borrowed slice escapes through return

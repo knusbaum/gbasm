@@ -1,0 +1,2 @@
+Compiling tests/slice_return_struct_literal_var_init_nested_param_err_test.bos
+Fatal: Cannot return struct by value: field "inner.buf" contains a slice into local-scope storage; the alias would dangle in the returned copy

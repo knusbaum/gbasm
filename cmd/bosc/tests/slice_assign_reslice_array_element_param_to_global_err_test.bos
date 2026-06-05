@@ -1,0 +1,16 @@
+package main
+
+// Borrowed slice stored into a local array-of-slices element, then
+// re-sliced and assigned to a global. The element store and the
+// re-slice both have to flow the borrow through arr's element-fact
+// bucket, so the global write is caught.
+
+var g byte[]
+
+fn bad(s byte[]) {
+	var arr byte[][1]
+	arr[0] = s
+	g = arr[0][:]
+}
+
+fn main() {}

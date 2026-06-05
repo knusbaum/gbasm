@@ -1,0 +1,18 @@
+package main
+
+// Local-array-rooted slice wrapped into a struct literal assigned to a
+// file-scope global. Twin of the borrowed-param version but with a
+// local-array source — same site, same gate, different origin kind.
+
+type B struct {
+	buf byte[]
+}
+
+var g B
+
+fn store() {
+	var local byte[8]
+	g = B{buf: local[:]}
+}
+
+fn main() {}

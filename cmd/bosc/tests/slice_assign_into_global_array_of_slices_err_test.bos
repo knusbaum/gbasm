@@ -1,0 +1,17 @@
+package main
+
+// Storing a locally-rooted slice into an element of a file-scope global
+// array-of-slices is the same escape as the bare `g_slice = local[:]`
+// case, just one indirection deeper. The destination's lifetime is
+// process-lifetime; the source's lifetime is a frame. Must be rejected.
+
+var g byte[][1]
+
+fn store(s byte[]) {
+	g[0] = s
+}
+
+fn main() {
+	var local byte[8]
+	store(local[:])
+}

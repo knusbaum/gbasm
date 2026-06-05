@@ -1,0 +1,2 @@
+Compiling tests/slice_assign_into_global_array_of_slices_err_test.bos
+Fatal: Borrowed slice escapes via slice element

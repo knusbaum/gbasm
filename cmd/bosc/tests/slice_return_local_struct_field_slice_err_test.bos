@@ -1,0 +1,16 @@
+package main
+
+// Returning a slice made from a fixed array field of a local struct should be
+// rejected. The backing storage still lives in the local struct's frame, even
+// though the slice expression is not rooted at a bare Symbol.
+
+type B struct {
+	buf byte[8]
+}
+
+fn bad() byte[] {
+	var b B
+	return b.buf[:]
+}
+
+fn main() {}

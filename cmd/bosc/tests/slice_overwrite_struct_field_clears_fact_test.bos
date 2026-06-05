@@ -1,0 +1,30 @@
+package main
+
+import "string"
+
+// Overwriting `o.inner` with a fresh struct must clear the stale
+// `o.inner.buf` fact recorded by the earlier borrowed-slice write —
+// otherwise the return-by-value escape check reports a false positive
+// on a struct whose `buf` field was overwritten to its zero value.
+
+type Inner struct {
+	buf byte[]
+}
+type Outer struct {
+	inner Inner
+}
+
+fn ok(s byte[]) Outer {
+	var o Outer
+	o.inner.buf = s
+	var clean Inner
+	o.inner = clean
+	return o
+}
+
+fn main() {
+	var arr byte[8]
+	var r Outer = ok(arr[:])
+	string.puti(len(r.inner.buf))
+	string.puts("\n")
+}

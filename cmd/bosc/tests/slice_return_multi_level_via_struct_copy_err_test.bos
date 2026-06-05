@@ -1,0 +1,23 @@
+package main
+
+// Multi-level field fact survives a whole-struct copy. The first
+// binding records "o.inner.buf"; CopyFieldPointers level-agnostically
+// re-keys the same suffix under the second binding ("o2.inner.buf"),
+// so returning the copy is still rejected. This pins what was reasoning
+// in the migration's verification.
+
+type Inner struct {
+	buf byte[]
+}
+type Outer struct {
+	inner Inner
+}
+
+fn bad(s byte[]) Outer {
+	var o Outer
+	o.inner.buf = s
+	var o2 Outer = o
+	return o2
+}
+
+fn main() {}

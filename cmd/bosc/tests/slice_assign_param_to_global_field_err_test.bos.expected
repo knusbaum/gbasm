@@ -1,0 +1,2 @@
+Compiling tests/slice_assign_param_to_global_field_err_test.bos
+Fatal: Borrowed slice escapes via field B.buf

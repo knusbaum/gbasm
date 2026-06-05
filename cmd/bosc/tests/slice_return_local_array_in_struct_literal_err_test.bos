@@ -1,0 +1,25 @@
+package main
+
+// Slice into a local fixed-size array embedded in a returned struct
+// literal. Parallels DESIGN.md §Borrowing `bad_literal(n *node) {
+// var h holder = holder{n: n} }` (and `bad_return` for the return path).
+//
+// This is the exact shape that motivated the `fmt.Builder` BYOM
+// construction discussion — a `fn new_b(buf mut byte[]) B { return
+// B{buf: buf, ...} }` constructor called with a caller's local would
+// be safe (caller manages backing), but the version that hides a
+// locally-rooted slice inside the returned struct must be rejected.
+//
+// Currently accepted (compiles cleanly). Should be rejected.
+
+type B struct {
+	buf mut byte[]
+	pos i64
+}
+
+fn bad() B {
+	var local byte[64]
+	return B{buf: local[:], pos: 0}
+}
+
+fn main() {}

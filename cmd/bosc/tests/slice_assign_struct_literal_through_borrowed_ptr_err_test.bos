@@ -1,0 +1,20 @@
+package main
+
+// Struct-literal fill through a borrowed pointer. The slice field of the
+// literal carries a borrowed view; writing the whole struct through *out
+// must reject the same way per-field `out.buf = s` does. This is the
+// recursive form of the borrowed-pointer-field-store rule.
+
+type B struct {
+	buf byte[]
+}
+
+fn fill(out *mut B, s byte[]) {
+	*out = B{buf: s}
+}
+
+fn main() {
+	var b B
+	var local byte[8]
+	fill(&b, local[:])
+}

@@ -1,0 +1,2 @@
+Compiling tests/slice_return_local_array_bare_err_test.bos
+Fatal: Borrowed slice escapes through return

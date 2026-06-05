@@ -1,0 +1,19 @@
+package main
+
+// Borrowed slice tucked one level down in a nested struct literal,
+// returned by value. The struct-literal-field escape check that catches
+// the flat shape `return B{buf: s}` must also recurse through
+// Outer{inner: B{buf: s}}.
+
+type B struct {
+	buf byte[]
+}
+type Outer struct {
+	inner B
+}
+
+fn wrap(s byte[]) Outer {
+	return Outer{inner: B{buf: s}}
+}
+
+fn main() {}

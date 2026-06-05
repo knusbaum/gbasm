@@ -1,0 +1,27 @@
+package main
+
+import "string"
+
+// Positive: a global-rooted slice ends up in a struct field reached
+// through a borrowed pointer. The source's lifetime is process-lifetime;
+// the destination's lifetime is opaque but still ≥ source. The escape
+// gate must NOT fire here — only escape-restricted sources are rejected.
+
+type B struct {
+	buf byte[]
+}
+
+var src byte[8]
+
+fn fill(out *mut B) {
+	out.buf = src[:]
+}
+
+fn main() {
+	src[0] = 'O'
+	src[1] = 'K'
+	var b B
+	fill(&b)
+	string.puts(b.buf[:2])
+	string.puts("\n")
+}

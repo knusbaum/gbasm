@@ -1,0 +1,2 @@
+Compiling tests/slice_assign_param_to_imported_global_var_err_test.bos
+Fatal: Borrowed slice escapes via global visibility.pub_slice

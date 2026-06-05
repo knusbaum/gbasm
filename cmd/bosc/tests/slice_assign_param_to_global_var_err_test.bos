@@ -1,0 +1,13 @@
+package main
+
+// Storing a borrowed slice parameter into a file-scope global routes
+// caller-frame storage past the call's lifetime — same shape as the
+// local-array escape, just with a parameter-rooted source.
+
+var g mut byte[]
+
+fn store(s byte[]) {
+	g = s
+}
+
+fn main() {}

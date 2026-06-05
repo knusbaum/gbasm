@@ -1,0 +1,27 @@
+package main
+
+import "string"
+
+// Overwriting `i.bufs` with a fresh array must clear the stale
+// `i.bufs.[]` element-bucket fact recorded by `i.bufs[0] = s` —
+// otherwise the return-by-value escape check reports a false positive
+// on an array whose elements were overwritten to their zero value.
+
+type Inner struct {
+	bufs byte[][1]
+}
+
+fn ok(s byte[]) Inner {
+	var i Inner
+	i.bufs[0] = s
+	var clean byte[][1]
+	i.bufs = clean
+	return i
+}
+
+fn main() {
+	var arr byte[8]
+	var r Inner = ok(arr[:])
+	string.puti(len(r.bufs[0]))
+	string.puts("\n")
+}

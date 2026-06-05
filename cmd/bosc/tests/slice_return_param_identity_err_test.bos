@@ -1,0 +1,16 @@
+package main
+
+// Slice parameters are borrowed views unless proven otherwise. Returning one
+// by value can route a caller's local backing storage past its lifetime, as in
+// bad() below.
+
+fn id(s byte[]) byte[] {
+	return s
+}
+
+fn bad() byte[] {
+	var local byte[8]
+	return id(local[:])
+}
+
+fn main() {}

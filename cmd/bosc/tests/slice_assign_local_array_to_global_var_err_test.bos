@@ -1,0 +1,20 @@
+package main
+
+// Locally-rooted slice assigned to a file-scope (global) slice variable.
+// Parallels DESIGN.md §Borrowing `bad_global(n *node) { saved = n }`.
+//
+// After bad() returns, `local`'s frame is gone and `g_slice` points at
+// freed stack storage.
+//
+// Currently accepted (compiles cleanly). Should be rejected.
+
+var g_slice mut byte[]
+
+fn bad() {
+	var local byte[64]
+	g_slice = local[:]
+}
+
+fn main() {
+	bad()
+}

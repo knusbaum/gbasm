@@ -1,0 +1,17 @@
+package main
+
+// Storing a borrowed slice parameter into a field of a file-scope global
+// struct is the same escape as storing into a global slice var — the
+// receiving slot outlives the parameter's lifetime.
+
+type B struct {
+	buf mut byte[]
+}
+
+var g B
+
+fn store(s byte[]) {
+	g.buf = s
+}
+
+fn main() {}

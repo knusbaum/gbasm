@@ -604,6 +604,155 @@ func checkLocalOriginDoesNotEscape(c *Context, a AST, what string) {
 	}
 }
 
+// checkSliceEscape catches a slice flowing into a slot whose lifetime
+// outlives the slice's root. The escape-restricted predicate covers
+// both stack-rooted (OriginLocal: `local[:]`, fields of local structs)
+// and borrowed (OriginBorrowed: parameter views, sub-slices of params,
+// aliases of either) — registered uniformly by param setup, SliceOp,
+// and the VarDecl/Assignment alias propagation. The caller passes the
+// full trailing phrase (e.g. "through return", "via global g_slice",
+// "via field B.buf") since the preposition varies by site.
+func checkSliceEscape(c *Context, a AST, what string) {
+	ptr := pointerExprForAST(c, a, "")
+	if !ptr.KnownOrigin {
+		return
+	}
+	if c.PointerFlow().IsEscapeRestricted(ptr.Origin) {
+		CompileErrorF(a, "Borrowed slice escapes %s", what)
+	}
+}
+
+// lvalueLocalRoot walks an lvalue chain (Symbol, Dot, Index, NonNullAssert)
+// to its root binding and returns the binding name if every step stays
+// inside the same stack frame — no pointer auto-deref at a Dot, no
+// indexing through a slice, no global root, no pointer-typed Symbol.
+// Used by SliceOp provenance to decide whether `expr[:]` carries the
+// root binding's local-storage origin.
+func lvalueLocalRoot(c *Context, expr AST) (string, bool) {
+	for {
+		switch v := expr.(type) {
+		case *Symbol:
+			if c.IsGlobalBinding(v.Name) {
+				return "", false
+			}
+			t, ok := c.TypeForVar(v.Name)
+			if !ok {
+				return "", false
+			}
+			if t.Indirection > 0 {
+				return "", false
+			}
+			return v.Name, true
+		case *Dot:
+			// Auto-deref through a pointer-typed receiver breaks the
+			// local-root chain (the pointee's storage is opaque).
+			if v.Val.ASTType(c).Indirection > 0 {
+				return "", false
+			}
+			expr = v.Val
+		case *Index:
+			// Indexing into a slice reads through the slice header's
+			// data pointer — that storage isn't necessarily local.
+			// Indexing into a fixed array stays within the receiver's
+			// storage, so the walk continues.
+			recvType := v.Val.ASTType(c)
+			if !recvType.IsArray() {
+				return "", false
+			}
+			expr = v.Val
+		case *NonNullAssert:
+			expr = v.Val
+		default:
+			return "", false
+		}
+	}
+}
+
+// recordStructLiteralFieldFacts walks a struct-literal initializer and
+// records pointer/slice provenance facts at full FlowPath keys.
+// Recurses into nested struct literals so
+// `var b Outer = Outer{inner: Inner{buf: s}}` stores at "b.inner.buf".
+//
+// Critically per-field, not blanket: a struct literal only writes the
+// fields it lists, so the fact model must match. `o.inner = Inner{}`
+// (empty literal) clears nothing — codegen leaves the prior bytes in
+// place, and the prior facts must stay too, or returning `o` becomes
+// unsoundly accepted while the borrowed slice still sits in `o.inner.buf`.
+func recordStructLiteralFieldFacts(c *Context, base FlowPath, lit *StructLiteral) {
+	for _, f := range lit.Fields {
+		if f.Val == nil {
+			continue
+		}
+		fieldPath := base.Append(f.Name)
+		// Clear stale facts at or under this field — codegen is about
+		// to overwrite this field's bytes specifically.
+		c.PointerFlow().ForgetFieldPointersUnder(fieldPath.Key())
+		c.PointerFlow().SetPathPointer(fieldPath.Key(), c.PointerFlow().UnknownPointer())
+		if nested, ok := f.Val.(*StructLiteral); ok {
+			recordStructLiteralFieldFacts(c, fieldPath, nested)
+			continue
+		}
+		ft := f.Val.ASTType(c)
+		if ft.Indirection > 0 || ft.IsSlice() {
+			c.PointerFlow().SetPathPointer(fieldPath.Key(), pointerExprForAST(c, f.Val, ""))
+		}
+	}
+}
+
+// walkLeafType walks a dotted Fields suffix (the form returned by
+// CheckStructFieldEscape) starting from rootType and returns the leaf
+// type. Recognizes "." separators between struct fields and "[]" steps
+// for array/slice element traversal. Used by the return-by-value
+// diagnostic to choose between "pointer to" and "slice into" wording
+// when the escaping field lives several hops below the binding's type.
+func walkLeafType(c *Context, rootType ASTType, fields string) (ASTType, bool) {
+	cur := rootType
+	for _, step := range strings.Split(fields, ".") {
+		if step == "[]" {
+			if !cur.IsArray() && !cur.IsSlice() {
+				return ASTType{}, false
+			}
+			cur = cur.ElementType()
+			continue
+		}
+		decl, ok := structDeclForType(c, cur)
+		if !ok {
+			return ASTType{}, false
+		}
+		found := false
+		for _, fd := range decl.Fields {
+			if fd.Name == step {
+				cur = fd.Type
+				found = true
+				break
+			}
+		}
+		if !found {
+			return ASTType{}, false
+		}
+	}
+	return cur, true
+}
+
+// readProvenancePath resolves a Dot/Index/NonNullAssert chain to its
+// stored provenance fact via ProvenancePathForExpr. Returns
+// UnknownPointer when the chain doesn't reach a binding-rooted path,
+// the root is global, or the root is a pointer-typed local (in which
+// case the path crosses an opaque pointee).
+func readProvenancePath(c *Context, a AST) flow.PointerExpr {
+	path, ok := ProvenancePathForExpr(a)
+	if !ok || path.Fields == "" {
+		return c.PointerFlow().UnknownPointer()
+	}
+	if c.IsGlobalBinding(path.Root) {
+		return c.PointerFlow().UnknownPointer()
+	}
+	if t, ok := c.TypeForVar(path.Root); !ok || t.Indirection > 0 {
+		return c.PointerFlow().UnknownPointer()
+	}
+	return c.PointerFlow().GetPathPointer(path.Key())
+}
+
 // rootSymbolName walks a Dot/Index/NonNullAssert chain to the rooted Symbol
 // and returns its name. Returns ("", false) for any other shape.
 func rootSymbolName(expr AST) (string, bool) {
@@ -647,16 +796,49 @@ func updateFieldPointerFactsForAssignment(c *Context, target AST, targetIsSymbol
 		if sym, ok := val.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) {
 			c.PointerFlow().CopyFieldPointers(flow.Binding(sym.Name), flow.Binding(targetSym.Name))
 		} else if sl, ok := val.(*StructLiteral); ok {
-			for _, f := range sl.Fields {
-				if f.Val != nil && f.Val.ASTType(c).Indirection > 0 {
-					pexpr := pointerExprForAST(c, f.Val, "")
-					c.PointerFlow().SetFieldPointer(flow.Binding(targetSym.Name), f.Name, pexpr)
-				}
+			recordStructLiteralFieldFacts(c, VarFlowPath(targetSym.Name), sl)
+		}
+		return
+	}
+	// Non-Symbol target (Dot, Index, or a chain of them). Compute the
+	// target's provenance path so all the path-keyed bookkeeping fires
+	// at the same level.
+	path, ok := ProvenancePathForExpr(target)
+	if !ok || path.Fields == "" || c.IsGlobalBinding(path.Root) {
+		return
+	}
+	if t, ok := c.TypeForVar(path.Root); !ok || t.Indirection > 0 {
+		return
+	}
+	// Record new facts based on the value's shape. Clearing strategy
+	// matches codegen exactly:
+	//   - Scalar slice/pointer destination overwrites at the path,
+	//     and clears descendants (a stale `path.[]` from prior contents
+	//     no longer describes anything reachable through the new value).
+	//   - Aggregate Symbol-copy is a memcpy of the whole source aggregate
+	//     into the target — CopyFieldPointersUnderPath clears descendants
+	//     of dst then re-keys src descendants under dst.
+	//   - Aggregate StructLiteral RHS writes only the listed fields;
+	//     unlisted fields keep their prior bytes (and their prior facts).
+	//     `recordStructLiteralFieldFacts` clears per-listed-field, not
+	//     blanket — otherwise `o.inner = Inner{}` would claim to wipe
+	//     `o.inner.buf` while codegen leaves the bytes in place.
+	switch {
+	case dstt.Indirection > 0 || dstt.IsSlice():
+		c.PointerFlow().ForgetFieldPointersUnder(path.Key())
+		c.PointerFlow().SetPathPointer(path.Key(), pointerExprForAST(c, val, ""))
+	default:
+		if sl, ok := val.(*StructLiteral); ok {
+			recordStructLiteralFieldFacts(c, path, sl)
+		} else if srcPath, ok := ProvenancePathForExpr(val); ok && srcPath.Fields != "" && !c.IsGlobalBinding(srcPath.Root) {
+			if t, ok := c.TypeForVar(srcPath.Root); ok && t.Indirection == 0 {
+				c.PointerFlow().CopyFieldPointersUnderPath(srcPath.Key(), path.Key())
+			}
+		} else if sym, ok := val.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) {
+			if t, ok := c.TypeForVar(sym.Name); ok && t.Indirection == 0 {
+				c.PointerFlow().CopyFieldPointersUnderPath(sym.Name, path.Key())
 			}
 		}
-	} else if binding, field, ok := isDirectStructFieldTarget(c, target); ok && dstt.Indirection > 0 {
-		pexpr := pointerExprForAST(c, val, "")
-		c.PointerFlow().SetFieldPointer(flow.Binding(binding), field, pexpr)
 	}
 }
 
@@ -671,6 +853,150 @@ func checkBorrowedPointerAssignment(c *Context, a *Assignment, dst ASTType) {
 		return
 	}
 	checkBorrowedPointerDoesNotEscape(c, a.Val, "assignment")
+}
+
+// targetLifetimeOpaque reports whether an assignment's destination has a
+// lifetime that can't be proven equal to or shorter than the source's
+// lifetime. Globals live forever; any path that goes through a pointer
+// (auto-deref via Dot, or explicit Deref) reaches storage we can't see
+// into — borrowed pointer parameters may point at heap, globals, or any
+// caller's frame, and the function body has no way to discriminate.
+// Both must reject escape-restricted sources. Local Symbol or local
+// Symbol.field paths are safe (their lifetime is the current frame).
+func targetLifetimeOpaque(c *Context, target AST) bool {
+	switch t := target.(type) {
+	case *Symbol:
+		return c.IsGlobalBinding(t.Name)
+	case *Dot:
+		// Imported package selector (`p.g`): receiver is a package
+		// symbol with no variable type — short-circuit before calling
+		// ASTType, which would panic with "Variable 'p' undeclared".
+		// The destination is an imported global, so opaque.
+		if sym, ok := t.Val.(*Symbol); ok && c.IsImportedPackage(sym.Name) {
+			return true
+		}
+		// Field access. If the receiver is a pointer the access is an
+		// auto-deref and the pointee's storage is opaque. Otherwise the
+		// answer recurses on the receiver.
+		if t.Val.ASTType(c).Indirection > 0 {
+			return true
+		}
+		return targetLifetimeOpaque(c, t.Val)
+	case *Deref:
+		return true
+	case *Index:
+		// Indexing into a slice yields a slot in whatever backs the
+		// slice — opaque from the caller's view. Indexing into a fixed
+		// array recurses on the array root.
+		recvType := t.Val.ASTType(c)
+		if recvType.IsSlice() {
+			return true
+		}
+		return targetLifetimeOpaque(c, t.Val)
+	}
+	return false
+}
+
+// checkSliceFieldStoreEscape gates the per-field-store primitive: a slice
+// value `val` is about to land in the `fieldName` slot of a struct whose
+// type is `ownerType`. Used by both direct field assignment (`g.buf = s`)
+// and struct-literal fill (`g = B{buf: s}`) so the same primitive enforces
+// the same rule regardless of how the store is spelled.
+func checkSliceFieldStoreEscape(c *Context, ownerType ASTType, fieldName string, val AST) {
+	what := fmt.Sprintf("via field %v.%s", ownerType, fieldName)
+	checkSliceEscape(c, val, what)
+}
+
+// checkSliceEscapeAssignment flags slice assignments whose destination has
+// an opaque or longer-than-source lifetime. Routed through the single
+// targetLifetimeOpaque predicate so every shape that the predicate
+// understands (Symbol, Dot — value or pointer receiver, Index, Deref) is
+// gated uniformly. The trailing "via …" phrase varies by target shape so
+// the diagnostic stays anchored to something the reader can find.
+func checkSliceEscapeAssignment(c *Context, a *Assignment, dst ASTType) {
+	if !dst.IsSlice() {
+		return
+	}
+	if !targetLifetimeOpaque(c, a.Target) {
+		return
+	}
+	switch target := a.Target.(type) {
+	case *Symbol:
+		checkSliceEscape(c, a.Val, fmt.Sprintf("via global %s", target.Name))
+	case *Dot:
+		// Imported global selector (`p.g`): treat as a global slice
+		// destination. The receiver is a package symbol, not a value
+		// binding, so lvalueOwnerType's ASTType lookup would panic.
+		if sym, ok := target.Val.(*Symbol); ok && c.IsImportedPackage(sym.Name) {
+			checkSliceEscape(c, a.Val, fmt.Sprintf("via global %s.%s", sym.Name, target.Member))
+			return
+		}
+		ownerType, ok := lvalueOwnerType(c, target.Val)
+		if !ok {
+			return
+		}
+		checkSliceFieldStoreEscape(c, ownerType, target.Member, a.Val)
+	case *Index:
+		// Slice element write (`g[i] = s`). No field name to anchor on.
+		checkSliceEscape(c, a.Val, "via slice element")
+	case *Deref:
+		// Pointer write (`*out = s`). Pointee lifetime is opaque, so
+		// any escape-restricted source is rejected.
+		checkSliceEscape(c, a.Val, "through pointer write")
+	}
+}
+
+// lvalueOwnerType returns the struct type whose fields are being addressed
+// by `recv` (the type containing the field being written). For a pointer
+// receiver the pointee type is returned; for a value receiver the
+// receiver's type is returned directly.
+func lvalueOwnerType(c *Context, recv AST) (ASTType, bool) {
+	t := recv.ASTType(c)
+	if t.Indirection > 0 {
+		pt := t
+		pt.Indirection--
+		pt.MutMask >>= 1
+		pt.OwnedMask >>= 1
+		pt.NilMask >>= 1
+		return pt, true
+	}
+	return t, true
+}
+
+// walkStructLiteralSliceEscape recurses into a struct literal looking for
+// slice-typed fields whose value carries an escape-restricted origin.
+// Nested struct literals are descended into so `Outer{inner: B{buf: s}}`
+// reaches `s` even though it sits two layers deep. `onEscape` is invoked
+// with the immediately-enclosing field's owner type and name so per-site
+// callers can format their own diagnostic.
+func walkStructLiteralSliceEscape(c *Context, ownerType ASTType, lit *StructLiteral, onEscape func(ownerType ASTType, fieldName string, val AST)) {
+	for _, f := range lit.Fields {
+		if f.Val == nil {
+			continue
+		}
+		ft := f.Val.ASTType(c)
+		if ft.IsSlice() {
+			onEscape(ownerType, f.Name, f.Val)
+			continue
+		}
+		if nested, ok := f.Val.(*StructLiteral); ok {
+			walkStructLiteralSliceEscape(c, ft, nested, onEscape)
+		}
+	}
+}
+
+// checkStructLiteralFieldsForOpaqueTarget walks the literal's slice fields
+// (including nested) and runs the per-field escape check when the
+// assignment's target has an opaque or longer-than-source lifetime —
+// globals, writes through borrowed pointers, etc. Equivalent to a sequence
+// of per-field stores from the escape checker's point of view.
+func checkStructLiteralFieldsForOpaqueTarget(c *Context, target AST, dst ASTType, lit *StructLiteral) {
+	if !targetLifetimeOpaque(c, target) {
+		return
+	}
+	walkStructLiteralSliceEscape(c, dst, lit, func(ownerType ASTType, fieldName string, val AST) {
+		checkSliceFieldStoreEscape(c, ownerType, fieldName, val)
+	})
 }
 
 func updateBorrowedBindingForAssignment(c *Context, target AST, dst ASTType, val AST) {
@@ -813,16 +1139,44 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 		}
 		return c.PointerFlow().UnknownPointer()
 	case *Dot:
-		if sym, ok := ast.Val.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) {
-			if t, ok2 := c.TypeForVar(sym.Name); ok2 && t.Indirection == 0 {
-				return c.PointerFlow().GetFieldPointer(flow.Binding(sym.Name), ast.Member)
-			}
-		}
-		return c.PointerFlow().UnknownPointer()
+		return readProvenancePath(c, a)
+	case *Index:
+		return readProvenancePath(c, a)
 	case *NonNullAssert:
 		return pointerExprForAST(c, ast.Val, assignedName)
 	case *OwnedPromotion:
 		return pointerExprForAST(c, ast.Val, assignedName)
+	case *SliceOp:
+		// A slice's data pointer roots at the source's storage. Walk
+		// the lvalue chain to its root:
+		//   - Array sources rooted at a local binding (`local[:]`,
+		//     `o.inner.buf[:]`, `a[0][:]`, `b.bufs[0][:]`, …) carry the
+		//     binding's local-storage origin. The walker accepts any
+		//     mix of Dot and Index as long as every step stays within
+		//     the same stack frame: no pointer auto-deref, no indexing
+		//     through a slice.
+		//   - Slice sources (`s[:]` for a slice binding `s`) propagate
+		//     the source binding's flow link directly.
+		//   - Anything else (globals, sources behind a pointer, etc.)
+		//     is opaque.
+		valType := ast.Val.ASTType(c)
+		if valType.IsArray() {
+			if root, ok := lvalueLocalRoot(c, ast.Val); ok {
+				existing := c.PointerFlow().Pointer(flow.Binding(root))
+				if existing.KnownOrigin {
+					return existing
+				}
+				return c.PointerFlow().NewLocalOrigin(flow.Binding(root))
+			}
+		}
+		if valType.IsSlice() {
+			// Re-slicing a slice keeps the same backing storage. Delegate
+			// to pointerExprForAST so field facts (`b.buf[:]`) and array
+			// element facts (`arr[0][:]`) propagate uniformly, not only
+			// the bare-Symbol case.
+			return pointerExprForAST(c, ast.Val, assignedName)
+		}
+		return c.PointerFlow().UnknownPointer()
 	case *Funcall:
 		// A type-cast Funcall (T(expr) where T is a type name) is structurally
 		// a Funcall but semantically a reinterpretation of expr. compileCast
@@ -1785,12 +2139,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			initIsBorrowed := borrowedPointerExpr(c, ast.Init)
 			if sl, ok := ast.Init.(*StructLiteral); ok && sameIgnoringOwned(ast.Type, sl.Type) {
 				compileStructLiteralInto(of, c, a, sl, s, ast.Type)
-				for _, f := range sl.Fields {
-					if f.Val != nil && f.Val.ASTType(c).Indirection > 0 {
-						pexpr := pointerExprForAST(c, f.Val, "")
-						c.PointerFlow().SetFieldPointer(flow.Binding(ast.Name), f.Name, pexpr)
-					}
-				}
+				recordStructLiteralFieldFacts(c, VarFlowPath(ast.Name), sl)
 				return nullspot
 			}
 			// Array literal initializer takes its own path: ASTType
@@ -1849,7 +2198,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			updateNullFactForAssignment(c, VarFlowPath(ast.Name), dstt, ast.Init, srct)
 			// Type-aliased pointers (`type myptr *T`) have Indirection==0 on the
 			// ASTType for their name; resolve through the alias so they get the
-			// same flow-state registration as a bare *T.
+			// same flow-state registration as a bare *T. Slice bindings now
+			// inherit borrow-ness via the origin path (AssignPointer just
+			// below propagates the source's PointerExpr), so they don't need
+			// the borrowed-bindings flag.
 			if c.ResolveUnderlying(dstt).Indirection > 0 {
 				c.SetBorrowedBinding(ast.Name, initIsBorrowed)
 			}
@@ -2027,6 +2379,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			if a.Type.Indirection > 0 {
 				c.PointerFlow().AssignPointer(flow.Binding(a.Name), c.PointerFlow().NewObject(flow.Binding(a.Name)))
+			} else if a.Type.IsSlice() && !a.Type.HasOwned() {
+				// Borrowed slice parameter: register an OriginBorrowed origin
+				// so the unified escape predicate (CheckStructFieldEscape and
+				// checkSliceEscape) recognizes the binding as having a
+				// borrowed root. Mirrors NewLocalOrigin's role for stack-
+				// allocated value bindings.
+				pexpr := c.PointerFlow().NewBorrowedOrigin(flow.Binding(a.Name))
+				c.PointerFlow().AssignPointer(flow.Binding(a.Name), pexpr)
 			}
 		}
 		fmt.Fprintf(of, "\n\tprologue\n\n")
@@ -2568,10 +2928,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			addr = newSpot(of, c, c.Temp(), addrt)
 			fmt.Fprintf(of, "\tmov %s [%s]\n", addr.ref, v.ref)
 		} else {
-			// Fixed array: addr points at the array storage itself.
-			addr = v
-			addr.t = baset
-			addr.t.Indirection++
+			// Fixed array: materialize the array's address into a fresh
+			// register temp via `lea`. Reusing the bare array name as
+			// `addr.ref` worked for `bytes`-allocated locals (bas treats
+			// the name as its address) but not for `var`-declared globals
+			// (bas resolves the name to its contents).
+			addrt := baset
+			addrt.Indirection++
+			addr = newSpot(of, c, c.Temp(), addrt)
+			fmt.Fprintf(of, "\tlea %s [%s+0]\n", addr.ref, v.ref)
 		}
 
 		var upper spot
@@ -2700,6 +3065,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		srct := ast.Val.ASTType(c)
 		checkBorrowedPointerAssignment(c, ast, dstt)
+		checkSliceEscapeAssignment(c, ast, dstt)
 		// Interface coercion at assignment: concrete pointer or small concrete value → fat pointer.
 		if shouldCoerceToInterface(c, dstt, srct) {
 			destBinding := ""
@@ -2730,6 +3096,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// struct-literal re-init after dispose work without an explicit owned()
 		// wrapper, and stays consistent with first-init.
 		if sl, ok := ast.Val.(*StructLiteral); ok && sameIgnoringOwned(dstt, sl.Type) {
+			// Per-field slice-escape gate: each slice field of the literal
+			// is semantically a `target.fieldN = expr` store, even though
+			// the codegen merges them. Route through the same primitive
+			// the direct field-store path uses.
+			checkStructLiteralFieldsForOpaqueTarget(c, ast.Target, dstt, sl)
 			compileStructLiteralInto(of, c, a, sl, lv, dstt)
 			if targetIsSymbol && dstt.HasOwned() {
 				c.Unmove(targetSym.Name)
@@ -3032,6 +3403,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			checkBorrowedPointerDoesNotEscape(c, ast.Val, "return")
 			checkLocalOriginDoesNotEscape(c, ast.Val, "return")
 		}
+		retCompat := c.ResolveUnderlying(retType)
+		if retCompat.IsSlice() {
+			checkSliceEscape(c, ast.Val, "through return")
+		}
 		if retType.Indirection == 0 {
 			retVal := ast.Val
 			if op, ok := retVal.(*OwnedPromotion); ok {
@@ -3039,18 +3414,57 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			if sym, ok := retVal.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) {
 				if escaped, field := c.PointerFlow().CheckStructFieldEscape(flow.Binding(sym.Name)); escaped {
-					CompileErrorF(ast.Val, "Cannot return %q by value: field %q contains a pointer to local-scope storage; the alias would dangle in the returned copy", sym.Name, field)
+					// The escaping field can be either a pointer or a slice.
+					// The wording differs ("pointer to" vs "slice into", and
+					// the slice form drops the binding name). For multi-level
+					// paths like "inner.buf" the leaf type lives several
+					// struct hops deep — walkLeafType follows the path.
+					fieldIsSlice := false
+					if t, ok := c.TypeForVar(sym.Name); ok {
+						if leaf, ok := walkLeafType(c, t, field); ok {
+							fieldIsSlice = leaf.IsSlice()
+						}
+					}
+					if fieldIsSlice {
+						CompileErrorF(ast.Val, "Cannot return struct by value: field %q contains a slice into local-scope storage; the alias would dangle in the returned copy", field)
+					} else {
+						CompileErrorF(ast.Val, "Cannot return %q by value: field %q contains a pointer to local-scope storage; the alias would dangle in the returned copy", sym.Name, field)
+					}
 				}
 			}
 			if sl, ok := retVal.(*StructLiteral); ok {
+				// Pointer-field escape stays single-level — owned/borrowed
+				// pointer field semantics are different enough from slices
+				// that nesting through a struct value rarely matches a real
+				// escape shape, and the pointer-field path hasn't unified
+				// onto the IsEscapeRestricted predicate yet.
 				for _, f := range sl.Fields {
-					if f.Val != nil && f.Val.ASTType(c).Indirection > 0 {
+					if f.Val == nil {
+						continue
+					}
+					ft := f.Val.ASTType(c)
+					if ft.Indirection > 0 {
 						ptr := pointerExprForAST(c, f.Val, "")
 						if ptr.KnownOrigin && c.PointerFlow().OriginKindOf(ptr.Origin) == flow.OriginLocal {
 							CompileErrorF(ast.Val, "Cannot return struct literal by value: field %q contains a pointer to local-scope storage; the alias would dangle in the returned copy", f.Name)
 						}
 					}
 				}
+				// Slice-field escape walks into nested struct literals so
+				// `return Outer{inner: B{buf: s}}` is rejected the same as
+				// the flat `return B{buf: s}` form.
+				ownerType := sl.Type
+				if !sameIgnoringOwned(retType, ownerType) {
+					// fillAnonymousLiteralIfNeeded earlier may have left
+					// sl.Type empty; fall back to retType for the walk.
+					ownerType = retType
+				}
+				walkStructLiteralSliceEscape(c, ownerType, sl, func(ot ASTType, fieldName string, val AST) {
+					ptr := pointerExprForAST(c, val, "")
+					if ptr.KnownOrigin && c.PointerFlow().IsEscapeRestricted(ptr.Origin) {
+						CompileErrorF(ast.Val, "Cannot return struct literal by value: field %q contains a slice into local-scope storage; the alias would dangle in the returned copy", fieldName)
+					}
+				})
 			}
 		}
 		if sl, ok := ast.Val.(*StructLiteral); ok && sameIgnoringOwned(retType, sl.Type) {
@@ -3097,7 +3511,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			c.Return(of)
 			return nullspot
 		}
-		retCompat := c.ResolveUnderlying(retType)
 		valCompat := c.ResolveUnderlying(valType)
 		if _, reason := coerceType(c, retCompat, valCompat); reason != coerceOK && !sameIgnoringOwned(retCompat, valCompat) {
 			reportCoerceFailure(a, retType, valType, reason,
@@ -3110,9 +3523,19 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		dest := newSpotWithReg(of, c, c.Temp(), valType, raxName)
 		v := compileTop(of, c, ast.Val, dest)
 		if !v.same(&dest) {
-			dest.free(of)
-			dest = v
-			CompileErrorF(a, "Return not same as dest. Should this happen?")
+			// Memory-backed values (e.g. SliceOp) currently compile to a
+			// fresh `bytes` slot rather than honoring `dest`. Copy into the
+			// rax-pinned dest so the standard `inreg dest rax` epilogue
+			// publishes the result's address. Non-memory-backed mismatches
+			// still indicate a compiler bug.
+			if typeIsMemoryBacked(c, valType) && dest.nameIsAddress {
+				spot_memcpy(of, c, dest, v, valType.Size(c))
+				v.free(of)
+			} else {
+				dest.free(of)
+				dest = v
+				CompileErrorF(a, "Return not same as dest. Should this happen?")
+			}
 		}
 		fmt.Fprintf(of, "\tinreg %s %s\n", dest.ref, raxName)
 		sz := valType.Size(c)

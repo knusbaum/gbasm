@@ -6,22 +6,32 @@ import "_io_sys"
 type state struct {
 	one i64
 	two i64
-	remaining mut byte[]
+	remainingOffset i64
 	complete i64
 }
 
-fn skip(var bs mut byte[]) mut byte[] {
+// skip returns the index of the first digit in bs, or 0 if no digit is
+// present (so `bs[skip(bs):]` is bs unchanged in the no-digit case). An
+// index instead of a sub-slice keeps the function escape-clean — Boson
+// can't yet express "the returned slice's lifetime equals the input's"
+// without lifetime annotations.
+fn skip(bs byte[]) i64 {
 	var i i64
 	for (i = 0; i < len(bs); i = i+1) {
 		if ((bs[i] >= '0') && (bs[i] <= '9')) {
-			bs = bs[i:]
-			break
+			return i
 		}
 	}
-	return bs
+	return 0
 }
 
-fn readRow(var bs mut byte[]) state {
+// readRow consumes a row out of bs. `remainingOffset` is the number of
+// bytes consumed from the original bs (so the caller computes the
+// leftover with `bs[s.remainingOffset:]`). Storing a borrowed sub-slice
+// of bs into a slice field of *out would be rejected by the
+// borrowed-pointer-target escape rule; the index dodges that entirely.
+fn readRow(var bs mut byte[], out *mut state) {
+	const origLen i64 = len(bs)
 	var onea byte[10]
 	var twoa byte[10]
 
@@ -31,7 +41,7 @@ fn readRow(var bs mut byte[]) state {
 	twobs = twoa[:]
 
 	// scan forward to the next number
-	bs = skip(bs)
+	bs = bs[skip(bs):]
 	
 	var i i64
 	var bsi i64
@@ -49,7 +59,7 @@ fn readRow(var bs mut byte[]) state {
 	onebs = onebs[:bsi]
 
 	// scan forward to the next number
-	bs = skip(bs)
+	bs = bs[skip(bs):]
 
 	bsi = 0
 	for (i = 0; i < len(bs); i=i+1) {
@@ -92,14 +102,12 @@ fn readRow(var bs mut byte[]) state {
 	}
 	twoi = pnum.i
 	
-	var st state
-	st = state{
+	*out = state{
 		one: onei,
 		two: twoi,
-		complete: found
+		complete: found,
+		remainingOffset: origLen - len(bs)
 	}
-	st.remaining = bs
-	return st
 }
 
 fn dumpbs(bs byte[]) {
@@ -191,25 +199,27 @@ fn main() i64 {
 
 		var s state
 		for(0; len(bs) > 4; 0) {
-			s = readRow(bs)
+			readRow(bs, &s)
 			if ( s.complete == 0 ) {
-				s.remaining = bs
+				s.remainingOffset = 0
 				break
 			}
 			left[row] = s.one
 			right[row] = s.two
 			row = row + 1
-			bs = s.remaining		
+			bs = bs[s.remainingOffset:]
 		}
-		
-		// copy out the remaining buffer for the next round.
+
+		// copy out the remaining buffer for the next round. After the
+		// inner loop, bs already reflects the last advance — natural
+		// exit advanced in the final iteration; the incomplete-row break
+		// zeroed remainingOffset so bs stayed put.
 		var i i64
-		bs = s.remaining
 		for (i = 0; i < len(bs); i = i + 1) {
 			buf[i] = bs[i]
 		}
+		remaining = len(bs)
 		bs = buf[i:]
-		remaining = len(s.remaining)
 	}
 
 	var i i64

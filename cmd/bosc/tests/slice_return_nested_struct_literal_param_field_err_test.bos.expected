@@ -1,0 +1,2 @@
+Compiling tests/slice_return_nested_struct_literal_param_field_err_test.bos
+Fatal: Cannot return struct literal by value: field "buf" contains a slice into local-scope storage; the alias would dangle in the returned copy

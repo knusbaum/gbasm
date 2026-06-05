@@ -1,0 +1,20 @@
+package main
+
+// Slicing a fixed-array field of a nested local struct must reach the
+// outer binding's local-storage root. The SliceOp's source is two Dots
+// deep; the chain walker should follow it because no step goes through
+// a pointer.
+
+type Inner struct {
+	buf byte[8]
+}
+type Outer struct {
+	inner Inner
+}
+
+fn bad() byte[] {
+	var o Outer
+	return o.inner.buf[:]
+}
+
+fn main() {}

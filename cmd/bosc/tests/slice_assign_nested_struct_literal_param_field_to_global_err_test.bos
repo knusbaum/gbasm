@@ -1,0 +1,20 @@
+package main
+
+// Borrowed slice tucked one level down in a nested struct literal,
+// assigned to a file-scope global. The field-walk that catches the
+// flat shape `g = B{buf: s}` must also see through Outer{inner: B{buf: s}}.
+
+type B struct {
+	buf byte[]
+}
+type Outer struct {
+	inner B
+}
+
+var g Outer
+
+fn store(s byte[]) {
+	g = Outer{inner: B{buf: s}}
+}
+
+fn main() {}

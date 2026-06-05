@@ -1,0 +1,28 @@
+package main
+
+// `o.inner = Inner{}` is an EMPTY struct literal — Boson codegen only
+// writes the fields the literal lists, so omitted fields keep their
+// prior bytes. After `o.inner.buf = s`, the buf slot still holds the
+// borrowed `s` even though the source might *look* like the field was
+// reset. Returning `o` would dangle the borrow.
+//
+// The escape checker matches codegen here: omitted fields keep their
+// prior provenance facts, so this is correctly rejected. The variant
+// `o.inner = clean` (Symbol-copy → real memcpy of zero bytes) is the
+// safe form; see slice_overwrite_struct_field_clears_fact_test.
+
+type Inner struct {
+	buf byte[]
+}
+type Outer struct {
+	inner Inner
+}
+
+fn bad(s byte[]) Outer {
+	var o Outer
+	o.inner.buf = s
+	o.inner = Inner{}
+	return o
+}
+
+fn main() {}

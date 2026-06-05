@@ -1,0 +1,16 @@
+package main
+
+// Bare return of a slice into a local fixed-size array. Parallels
+// DESIGN.md §Borrowing `bad_return(n *node) *node { return n }`.
+//
+// Currently rejected — but the diagnostic is a placeholder ("Return not
+// same as dest. Should this happen?"), not a borrow-escape message. The
+// rejection is incidental: a type-comparison invariant catches it before
+// any escape analysis runs.
+
+fn bad() byte[] {
+	var local byte[64]
+	return local[:]
+}
+
+fn main() {}

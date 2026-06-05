@@ -1,0 +1,24 @@
+package main
+
+// Locally-rooted slice written into a file-scope struct's slice field.
+// Parallels DESIGN.md §Borrowing `bad_global` composed with `bad_field`:
+// the global `g` outlives the function frame, so storing `local[:]` into
+// `g.buf` leaves a dangling slice readable by any later function.
+//
+// Currently accepted (compiles cleanly). Should be rejected.
+
+type B struct {
+	buf mut byte[]
+	pos i64
+}
+
+var g B
+
+fn bad() {
+	var local byte[64]
+	g.buf = local[:]
+}
+
+fn main() {
+	bad()
+}

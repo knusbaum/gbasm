@@ -1,0 +1,2 @@
+Compiling tests/slice_assign_nested_struct_literal_param_field_to_global_err_test.bos
+Fatal: Borrowed slice escapes via field B.buf
