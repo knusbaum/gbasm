@@ -131,6 +131,101 @@ func TestAssignUnknownPointerForgetsPreciseOrigin(t *testing.T) {
 	requireUnknownInvalidation(t, s.WriteThroughPointer(s.Pointer("p")))
 }
 
+func TestIndexedPathPointerKeepsEscapeRestrictedOrigin(t *testing.T) {
+	s := NewState()
+	borrowed := s.NewBorrowedOrigin("param")
+
+	s.SetPathPointer("arr.[]", borrowed)
+	s.SetPathPointer("arr.[]", s.UnknownPointer())
+
+	got := s.GetPathPointer("arr.[]")
+	if !got.KnownOrigin || !s.IsEscapeRestricted(got.Origin) {
+		t.Fatalf("indexed bucket = %#v, want escape-restricted origin", got)
+	}
+}
+
+func TestIndexedPathPointerCanBecomeEscapeRestricted(t *testing.T) {
+	s := NewState()
+	borrowed := s.NewBorrowedOrigin("param")
+
+	s.SetPathPointer("arr.[]", s.UnknownPointer())
+	s.SetPathPointer("arr.[]", borrowed)
+
+	got := s.GetPathPointer("arr.[]")
+	if !got.KnownOrigin || got.Origin != borrowed.Origin {
+		t.Fatalf("indexed bucket = %#v, want %#v", got, borrowed)
+	}
+}
+
+func TestNestedIndexedPathPointerKeepsEscapeRestrictedOrigin(t *testing.T) {
+	s := NewState()
+	borrowed := s.NewBorrowedOrigin("param")
+
+	s.SetPathPointer("b.items.[]", borrowed)
+	s.SetPathPointer("b.items.[]", s.UnknownPointer())
+
+	got := s.GetPathPointer("b.items.[]")
+	if !got.KnownOrigin || !s.IsEscapeRestricted(got.Origin) {
+		t.Fatalf("nested indexed bucket = %#v, want escape-restricted origin", got)
+	}
+}
+
+func TestForgetFieldPointersUnderClearsIndexedBucket(t *testing.T) {
+	s := NewState()
+	s.SetPathPointer("arr.[]", s.NewBorrowedOrigin("param"))
+
+	s.ForgetFieldPointersUnder("arr")
+
+	if got := s.GetPathPointer("arr.[]"); got.KnownOrigin || got.KnownSlot {
+		t.Fatalf("indexed bucket after forget = %#v, want unknown", got)
+	}
+}
+
+func TestCopyFieldPointersUnderPathCopiesDescendants(t *testing.T) {
+	s := NewState()
+	borrowed := s.NewBorrowedOrigin("param")
+	s.SetPathPointer("o.inner.buf", borrowed)
+
+	s.CopyFieldPointersUnderPath("o.inner", "o2.inner")
+
+	got := s.GetPathPointer("o2.inner.buf")
+	if !got.KnownOrigin || got.Origin != borrowed.Origin {
+		t.Fatalf("copied descendant = %#v, want %#v", got, borrowed)
+	}
+}
+
+func TestMergeKeepsEscapeRestrictedFieldPointer(t *testing.T) {
+	a := NewState()
+	borrowed := a.NewBorrowedOrigin("param")
+	a.SetPathPointer("b.buf", borrowed)
+	b := NewState()
+	b.origins[borrowed.Origin] = a.origins[borrowed.Origin]
+	b.SetPathPointer("b.buf", b.UnknownPointer())
+
+	merged := Merge(a, b)
+
+	got := merged.GetPathPointer("b.buf")
+	if !got.KnownOrigin || !merged.IsEscapeRestricted(got.Origin) {
+		t.Fatalf("merged field pointer = %#v, want escape-restricted origin", got)
+	}
+}
+
+func TestMergeKeepsEscapeRestrictedIndexedFieldPointer(t *testing.T) {
+	a := NewState()
+	borrowed := a.NewBorrowedOrigin("param")
+	a.SetPathPointer("b.items.[]", borrowed)
+	b := NewState()
+	b.origins[borrowed.Origin] = a.origins[borrowed.Origin]
+	b.SetPathPointer("b.items.[]", b.UnknownPointer())
+
+	merged := Merge(a, b)
+
+	got := merged.GetPathPointer("b.items.[]")
+	if !got.KnownOrigin || !merged.IsEscapeRestricted(got.Origin) {
+		t.Fatalf("merged indexed field pointer = %#v, want escape-restricted origin", got)
+	}
+}
+
 func TestUnknownBranchMerge(t *testing.T) {
 	a := NewState()
 	a.AssignPointer("p", a.NewObject("a"))

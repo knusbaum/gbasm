@@ -55,8 +55,8 @@ type originInfo struct {
 }
 
 type State struct {
-	pointers     map[Binding]PointerExpr
-	origins      map[Origin]originInfo
+	pointers      map[Binding]PointerExpr
+	origins       map[Origin]originInfo
 	fieldPointers map[string]PointerExpr // keys: "binding.field"
 }
 
@@ -151,7 +151,7 @@ func Merge(a, b *State) *State {
 		if b != nil {
 			bp = b.fieldPointers[k]
 		}
-		out.fieldPointers[k] = mergePointerExpr(ap, bp)
+		out.fieldPointers[k] = out.mergeFieldPointerExpr(ap, bp)
 	}
 	return out
 }
@@ -185,6 +185,16 @@ func mergePointerExpr(a, b PointerExpr) PointerExpr {
 		out.KnownSlot = true
 	}
 	return out
+}
+
+func (s *State) mergeFieldPointerExpr(a, b PointerExpr) PointerExpr {
+	if a.KnownOrigin && s.IsEscapeRestricted(a.Origin) {
+		return a
+	}
+	if b.KnownOrigin && s.IsEscapeRestricted(b.Origin) {
+		return b
+	}
+	return mergePointerExpr(a, b)
 }
 
 func (s *State) DeclarePointer(name Binding) {
@@ -381,6 +391,12 @@ func (s *State) GetFieldPointer(name Binding, field string) PointerExpr {
 // keys match fieldKey's format so existing readers and writers continue
 // to interop with multi-level entries in the same map.
 func (s *State) SetPathPointer(path string, ptr PointerExpr) {
+	if strings.HasSuffix(path, ".[]") {
+		existing := s.fieldPointers[path]
+		if existing.KnownOrigin && s.IsEscapeRestricted(existing.Origin) {
+			return
+		}
+	}
 	s.fieldPointers[path] = ptr
 }
 

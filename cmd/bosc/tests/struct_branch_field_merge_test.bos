@@ -7,10 +7,15 @@ type Foo struct {
 	xp *?i64
 }
 
+var gx i64
+var gy i64
+
 fn mkfoo(var set i64) Foo {
 	var s Foo = Foo{x: 10, xp: nil}
 	if (set) {
-		s.xp = &s.x
+		s.xp = &gx
+	} else {
+		s.xp = &gy
 	}
 	return s
 }

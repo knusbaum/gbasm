@@ -122,6 +122,72 @@ func TestFlowPathHelpers(t *testing.T) {
 	}
 }
 
+func TestProvenancePathForExprIncludesIndexBuckets(t *testing.T) {
+	tests := []struct {
+		name string
+		expr AST
+		want string
+		ok   bool
+	}{
+		{
+			name: "symbol",
+			expr: &Symbol{Name: "s"},
+			want: "s",
+			ok:   true,
+		},
+		{
+			name: "field",
+			expr: &Dot{Val: &Symbol{Name: "b"}, Member: "buf"},
+			want: "b.buf",
+			ok:   true,
+		},
+		{
+			name: "nested field",
+			expr: &Dot{Val: &Dot{Val: &Symbol{Name: "o"}, Member: "inner"}, Member: "buf"},
+			want: "o.inner.buf",
+			ok:   true,
+		},
+		{
+			name: "index bucket",
+			expr: &Index{Val: &Symbol{Name: "arr"}},
+			want: "arr.[]",
+			ok:   true,
+		},
+		{
+			name: "nested index bucket",
+			expr: &Index{Val: &Dot{Val: &Symbol{Name: "b"}, Member: "items"}},
+			want: "b.items.[]",
+			ok:   true,
+		},
+		{
+			name: "nonnull wrapper",
+			expr: &NonNullAssert{Val: &Dot{Val: &Symbol{Name: "b"}, Member: "buf"}},
+			want: "b.buf",
+			ok:   true,
+		},
+		{
+			name: "literal",
+			expr: &Literal{},
+			ok:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := ProvenancePathForExpr(tt.expr)
+			if ok != tt.ok {
+				t.Fatalf("ok = %v, want %v", ok, tt.ok)
+			}
+			if !ok {
+				return
+			}
+			if got.Key() != tt.want {
+				t.Fatalf("path = %q, want %q", got.Key(), tt.want)
+			}
+		})
+	}
+}
+
 func TestCheckerStateMoveUnmoveAndUnconsumed(t *testing.T) {
 	c := NewContext()
 	c.BindVar(&Symbol{Name: "x"}, "x", testOwnedType(), false)

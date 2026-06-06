@@ -838,6 +838,8 @@ func updateFieldPointerFactsForAssignment(c *Context, target AST, targetIsSymbol
 			if t, ok := c.TypeForVar(sym.Name); ok && t.Indirection == 0 {
 				c.PointerFlow().CopyFieldPointersUnderPath(sym.Name, path.Key())
 			}
+		} else {
+			c.PointerFlow().ForgetFieldPointersUnder(path.Key())
 		}
 	}
 }
