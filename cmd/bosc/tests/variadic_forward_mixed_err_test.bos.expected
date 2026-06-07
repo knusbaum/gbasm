@@ -1,0 +1,2 @@
+Compiling tests/variadic_forward_mixed_err_test.bos
+Fatal: `...` forwarding must be the only trailing variadic argument

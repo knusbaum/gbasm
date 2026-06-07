@@ -1,0 +1,27 @@
+package main
+import "string"
+
+// M1 positive: the legal `*mut -> *` weakening. A `var c` yields a mutable
+// `*mut counter` view (&c). It may satisfy the `*self`-declared `reader`
+// interface even though `bump`'s receiver is `*mut self`, because the source
+// is itself mutable. Dispatch goes through the mutating method correctly.
+type counter i64 {
+	bump(c *mut counter) byte[] {
+		return "bumped"
+	}
+}
+
+interface reader {
+	bump(r *self) byte[]
+}
+
+fn use(r reader) void {
+	string.puts(r.bump())
+	string.putc(10)
+}
+
+fn main() i64 {
+	var c counter = 0
+	use(&c)
+	return 0
+}

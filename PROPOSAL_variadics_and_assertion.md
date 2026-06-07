@@ -1480,15 +1480,24 @@ Two surfaces:
 
 **Tuple form (general fallback).** `x.(T)` is an expression whose
 static type is `multiretu{T, bool}` — Boson's existing multi-value
-return shape. The existing two-value bind syntax accepts it directly:
+return shape. Two binding surfaces accept it:
 
 ```
-var v T; var ok bool
-v, ok = x.(T)
+// Declaration form (declares v and ok):
+var v T, var ok bool = x.(T)
 if (ok) { use(v) }
+
+// Re-assignment form (assigns to pre-existing lvalues):
+var v T = ...
+var ok bool
+v, ok = x.(T)
 ```
 
-No new syntax for the base case. Lowering is what's described in
+The re-assignment form is the general comma-LHS multi-assignment
+`lv0, lv1, … = rhs`, recognized at statement position (it does not
+conflict with argument-list / struct-literal commas, which belong to
+their enclosing construct). Each target must be an already-declared,
+non-`const` variable. Lowering for both is described in
 [Layer 3](#layer-3-concrete-type-assertion) and [Layer 4](#layer-4-interface-to-interface-assertion).
 
 **Type switch (the readable form).** A dedicated construct that mirrors

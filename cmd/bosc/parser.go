@@ -61,6 +61,10 @@ const (
 	n_multibind             // multi-value destructuring bind: var a T1, const b T2 = expr
 	n_valuesdecl            // type TypeName values [(projections)] { cases } [{ methods }]
 	n_valuescase            // single case in a values decl: NAME[: e1, e2, ...]
+	n_variadic_forward      // trailing `slice...` forwarding at a call site
+	n_typeassert            // x.(T) — runtime type assertion
+	n_typeswitch            // switch (v x.(type)) { case T {...} ... }
+	n_typecase              // single case in a type switch
 )
 
 func (t nodetype) String() string {
@@ -180,6 +184,9 @@ type Parser struct {
 	curr   *token
 	pushed *token // one extra look-ahead slot for pushback
 	fname  string
+	// inTypeSwitchHead suppresses `.(type)` being parsed as a type
+	// assertion while parsing the switched value in a type-switch head.
+	inTypeSwitchHead bool
 }
 
 type Node struct {
@@ -278,6 +285,17 @@ func (p *Parser) parseArgs() []*Node {
 	var ret []*Node
 	for p.current().t != tok_rparen {
 		v := p.parseExpression()
+		// Trailing `slice...` forwarding: only valid as the final argument.
+		if p.current().t == tok_ellipsis {
+			fpos := p.current().p
+			p.advance()
+			v = &Node{t: n_variadic_forward, p: fpos, args: []*Node{v}}
+			ret = append(ret, v)
+			if p.current().t != tok_rparen {
+				panic(&interpreterError{"`...` forwarding must be the last argument", fpos})
+			}
+			return ret
+		}
 		ret = append(ret, v)
 		if p.current().t != tok_comma {
 			return ret
@@ -637,7 +655,21 @@ func (p *Parser) parsePostfix(v *Node) *Node {
 		c := p.current()
 		switch c.t {
 		case tok_dot:
+			// In a type-switch head, leave `.(type)` for parseTypeSwitch:
+			// stop the postfix chain without consuming the dot.
+			if p.inTypeSwitchHead {
+				return v
+			}
 			p.advance()
+			// Type assertion: `x.(T)`.
+			if p.current().t == tok_lparen {
+				dotpos := c.p
+				p.advance()
+				tn := p.parseTypeName()
+				p.expect(tok_rparen)
+				v = &Node{t: n_typeassert, p: dotpos, args: []*Node{v, tn}}
+				continue
+			}
 			v2 := p.parseTok()
 			if v2.t != n_symbol {
 				panic(&interpreterError{fmt.Sprintf("Expected a member name after '.', but found %s", v2.t), v2.p})
@@ -817,6 +849,53 @@ func (p *Parser) parseFor() *Node {
 	return &Node{t: n_for, p: forpos, args: args}
 }
 
+// parseTypeSwitch parses `switch (v x.(type)) { case T {...} ... default {...} }`.
+// The head binds `v` to the switched value `x`, narrowed to each case's type.
+func (p *Parser) parseTypeSwitch() *Node {
+	swpos := p.current().p
+	p.expect(tok_switch)
+	p.expect(tok_lparen)
+	bind := p.parseTok()
+	if bind.t != n_symbol {
+		panic(&interpreterError{fmt.Sprintf("Expected a binding name in type switch, but found %v", bind), bind.p})
+	}
+	p.inTypeSwitchHead = true
+	val := p.parseSubexpr()
+	p.inTypeSwitchHead = false
+	p.expect(tok_dot)
+	p.expect(tok_lparen)
+	if p.current().t != tok_type {
+		panic(&interpreterError{"expected `type` in `switch (v x.(type))`", p.current().p})
+	}
+	p.advance() // consume `type`
+	p.expect(tok_rparen) // close `(type)`
+	p.expect(tok_rparen) // close switch head
+	p.expect(tok_lcurly)
+	args := []*Node{val}
+	for p.current().t != tok_rcurly {
+		if p.current().t == tok_semicolon {
+			p.advance()
+			continue
+		}
+		if p.current().t == tok_case {
+			casepos := p.current().p
+			p.advance()
+			tn := p.parseTypeName()
+			body := p.parseExpression()
+			args = append(args, &Node{t: n_typecase, p: casepos, ival: 0, args: []*Node{tn, body}})
+		} else if p.current().t == tok_default {
+			casepos := p.current().p
+			p.advance()
+			body := p.parseExpression()
+			args = append(args, &Node{t: n_typecase, p: casepos, ival: 1, args: []*Node{body}})
+		} else {
+			panic(&interpreterError{fmt.Sprintf("Expected `case` or `default` in type switch, but found %s", p.current().t), p.current().p})
+		}
+	}
+	p.expect(tok_rcurly)
+	return &Node{t: n_typeswitch, p: swpos, sval: bind.sval, args: args}
+}
+
 func (p *Parser) parseParams() []*Node {
 	var ret []*Node
 	for p.current().t != tok_rparen {
@@ -831,11 +910,28 @@ func (p *Parser) parseParams() []*Node {
 		if v.t != n_symbol {
 			panic(&interpreterError{fmt.Sprintf("Expected variable name, but found: %v\n", v), v.p})
 		}
+		// Variadic parameter: `name ...T`. The element type T follows the
+		// ellipsis; the parameter binds inside the body as a T[] slice. We
+		// mark the n_arg node via ival bit 1 and wrap the element type in a
+		// slice typename so downstream code sees args = T[].
+		variadic := uint64(0)
+		if p.current().t == tok_ellipsis {
+			p.advance()
+			variadic = 2
+		}
 		v2 := p.parseTypeName()
 		if v2.t != n_typename {
 			panic(&interpreterError{fmt.Sprintf("Expected type name, but found: %v\n", v), v.p})
 		}
-		ret = append(ret, &Node{t: n_arg, p: v.p, sval: v.sval, ival: isVar, args: []*Node{v2}})
+		if variadic != 0 {
+			// Desugar `...T` to a `T[]` slice parameter: append a slice
+			// wrapper to the element typename's wrapper chain.
+			if v2.sval == "fn" || v2.sval == "<struct>" || v2.sval == "<multiretu>" {
+				panic(&interpreterError{"variadic element type must be a simple type", v2.p})
+			}
+			v2.args = append(v2.args, &Node{t: n_slice, p: v2.p})
+		}
+		ret = append(ret, &Node{t: n_arg, p: v.p, sval: v.sval, ival: isVar | variadic, args: []*Node{v2}})
 		if p.current().t != tok_comma {
 			break
 		}
@@ -925,7 +1021,7 @@ func (p *Parser) parseParens() *Node {
 				p.advance()
 				continue
 			}
-			v := p.parseExpression()
+			v := p.parseStatement()
 			block = append(block, v)
 		}
 		p.expect(tok_rcurly)
@@ -934,6 +1030,8 @@ func (p *Parser) parseParens() *Node {
 		return p.parseIf()
 	} else if c.t == tok_for {
 		return p.parseFor()
+	} else if c.t == tok_switch {
+		return p.parseTypeSwitch()
 	} else if c.t == tok_break {
 		p.advance()
 		return &Node{t: n_break, p: c.p}
@@ -1238,6 +1336,41 @@ func (p *Parser) parseMultiBind(first *Node) *Node {
 	init := p.parseExpression()
 	args := append(bindings, init)
 	return &Node{t: n_multibind, p: pos, args: args}
+}
+
+// parseStatement parses one statement in a block body. It is identical to
+// parseExpression except that it additionally recognizes the comma-LHS
+// multi-value re-assignment form `lv0, lv1, ... = rhs` (e.g. `v, ok = x.(T)`).
+//
+// This handling lives here, NOT in parseExpression, on purpose: parseExpression
+// is reused inside argument lists, struct literals, index/slice expressions and
+// binding lists, where a trailing comma belongs to the *caller* and must not be
+// consumed. At statement position a top-level comma after a parsed expression
+// is unambiguous — no plain statement otherwise contains one — so it can only
+// begin a multi-assignment LHS continuation. parseExpression already consumes
+// the `var`/`const`-prefixed multi-*bind* forms, so by the time we see a bare
+// comma here the LHS is a list of existing lvalues being re-assigned.
+func (p *Parser) parseStatement() *Node {
+	first := p.parseExpression()
+	if p.current().t != tok_comma {
+		return first
+	}
+	// Comma-LHS re-assignment: collect the remaining lvalue targets, then the
+	// shared `= rhs`. Reuses the n_multibind node shape with ival==1 (the
+	// re-assignment marker consumed by ToAST -> MultiAssign).
+	pos := first.p
+	targets := []*Node{first}
+	for p.current().t == tok_comma {
+		p.advance()
+		targets = append(targets, p.parseBoolOp())
+	}
+	if p.current().t != tok_eq {
+		panic(&interpreterError{"multi-assignment: expected '=' after the comma-separated target list", p.current().p})
+	}
+	p.advance()
+	init := p.parseExpression()
+	args := append(targets, init)
+	return &Node{t: n_multibind, p: pos, ival: 1, args: args}
 }
 
 func (p *Parser) parseExpression() (r *Node) {

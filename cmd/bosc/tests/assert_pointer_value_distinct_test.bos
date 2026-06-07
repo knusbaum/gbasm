@@ -1,0 +1,22 @@
+package main
+import "string"
+
+fn main() i64 {
+	var m i64 = 5
+	var n i64 = 9
+	var a any = &m
+	var b any = n
+	var av *mut i64, var aok bool = a.(*mut i64)
+	if (aok) { string.puti(1) } else { string.puti(0) }
+	string.putc(10)
+	var av2 i64, var aok2 bool = a.(i64)
+	if (aok2) { string.puti(1) } else { string.puti(0) }
+	string.putc(10)
+	var bv i64, var bok bool = b.(i64)
+	if (bok) { string.puti(bv) } else { string.puti(0) }
+	string.putc(10)
+	var bv2 *mut i64, var bok2 bool = b.(*mut i64)
+	if (bok2) { string.puti(1) } else { string.puti(0) }
+	string.putc(10)
+	return 0
+}

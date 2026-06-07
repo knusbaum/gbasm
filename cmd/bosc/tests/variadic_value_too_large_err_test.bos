@@ -1,0 +1,12 @@
+package main
+
+type big struct { a i64, b i64, c i64, d i64 }
+
+fn show(args ...any) {
+}
+
+fn main() i64 {
+	var x big = big{a: 1, b: 2, c: 3, d: 4}
+	show(x)
+	return 0
+}

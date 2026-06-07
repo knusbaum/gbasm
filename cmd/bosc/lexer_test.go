@@ -157,6 +157,26 @@ func TestLexer(t *testing.T) {
 			in:  "1.3.4.5.6",
 			err: "at (character offset: 9, line: 1, position 9): parsing number: strconv.ParseFloat: parsing \"1.3.4.5.6\": invalid syntax",
 		},
+		{
+			// Variadic spread / forwarding token: "..." lexes to a single
+			// tok_ellipsis.
+			in: "f(xs...)",
+			out: []token{
+				token{t: tok_ident, sval: "f"},
+				token{t: tok_lparen},
+				token{t: tok_ident, sval: "xs"},
+				token{t: tok_ellipsis},
+				token{t: tok_rparen},
+			},
+		},
+		{
+			// "..." after a type name parses as a single ellipsis.
+			in: "i64...",
+			out: []token{
+				token{t: tok_ident, sval: "i64"},
+				token{t: tok_ellipsis},
+			},
+		},
 	} {
 		t.Run("", func(t *testing.T) {
 			p := NewLexer("", strings.NewReader(tt.in))
@@ -170,5 +190,23 @@ func TestLexer(t *testing.T) {
 				assert.Equal(t, outn, n)
 			}
 		})
+	}
+}
+
+// TestLexerEllipsisError pins the directed error for a bare ".." (the lexer
+// suggests the intended "..."). The bare ".." appears after a valid token, so
+// it can't ride the TestLexer table (whose harness expects the error on the
+// very first Next()).
+func TestLexerEllipsisError(t *testing.T) {
+	nopos = true
+	defer func() { nopos = false }()
+	l := NewLexer("", strings.NewReader("x.."))
+	n, err := l.Next()
+	assert.NoError(t, err)
+	assert.Equal(t, token{t: tok_ident, sval: "x"}, n)
+	_, err = l.Next()
+	if assert.Error(t, err) {
+		assert.True(t, strings.HasSuffix(err.Error(), "unexpected '..'; did you mean '...'?"),
+			"got %q", err.Error())
 	}
 }

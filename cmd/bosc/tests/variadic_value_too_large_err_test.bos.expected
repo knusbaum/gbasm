@@ -1,0 +1,2 @@
+Compiling tests/variadic_value_too_large_err_test.bos
+Fatal: Cannot convert value of type big to interface any: value is 32 bytes; value interfaces can store at most 8 bytes inline. Use a pointer instead.

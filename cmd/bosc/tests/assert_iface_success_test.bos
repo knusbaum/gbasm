@@ -1,0 +1,25 @@
+package main
+import "string"
+
+type greeter i64 {
+	greet(g *self) byte[] {
+		return "hello"
+	}
+}
+
+interface speaker {
+	greet(s *self) byte[]
+}
+
+fn main() i64 {
+	var g greeter = 7
+	var a any = &g
+	var s speaker, var ok bool = a.(speaker)
+	if (ok) {
+		string.puts(s.greet())
+	} else {
+		string.puts("no")
+	}
+	string.putc(10)
+	return 0
+}

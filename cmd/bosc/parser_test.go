@@ -456,6 +456,65 @@ func TestParser(t *testing.T) {
 				}},
 			}},
 		},
+		{
+			// Type-assertion postfix: `x.(T)` -> n_typeassert{[symbol, type]}.
+			in: "x.(i64)",
+			out: &Node{t: n_typeassert, args: []*Node{
+				&Node{t: n_symbol, sval: "x"},
+				&Node{t: n_typename, sval: "i64"},
+			}},
+		},
+		{
+			// Pointer-target assertion: `x.(*T)` carries the indirection on the
+			// typename (ival=1).
+			in: "x.(*foo)",
+			out: &Node{t: n_typeassert, args: []*Node{
+				&Node{t: n_symbol, sval: "x"},
+				&Node{t: n_typename, sval: "foo", ival: 1},
+			}},
+		},
+		{
+			// Variadic last parameter `a ...i64`: the n_arg carries ival bit 1
+			// (variadic) and its element type is wrapped in a slice (n_slice).
+			in: "fn f(a ...i64) { }",
+			out: &Node{t: n_fn, ival: 1, sval: "f", args: []*Node{
+				&Node{t: n_arg, sval: "a", ival: 2, args: []*Node{
+					&Node{t: n_typename, sval: "i64", args: []*Node{
+						&Node{t: n_slice},
+					}},
+				}},
+				&Node{t: n_typename, sval: "void"},
+				&Node{t: n_block, args: nil},
+			}},
+		},
+		{
+			// Trailing `slice...` forwarding argument wraps the spread value in
+			// an n_variadic_forward node.
+			in: "f(x, xs...)",
+			out: &Node{t: n_funcall, sval: "f", args: []*Node{
+				&Node{t: n_symbol, sval: "x"},
+				&Node{t: n_variadic_forward, args: []*Node{
+					&Node{t: n_symbol, sval: "xs"},
+				}},
+			}},
+		},
+		{
+			// A block body containing the comma-LHS multi-value re-assignment
+			// `v, ok = x.(T)`. parseStatement (used by the block loop) turns the
+			// comma-LHS into an n_multibind with ival==1 (the re-assignment
+			// marker), whose args are the target lvalues followed by the RHS.
+			in: "{ v, ok = x.(i64) }",
+			out: &Node{t: n_block, args: []*Node{
+				&Node{t: n_multibind, ival: 1, args: []*Node{
+					&Node{t: n_symbol, sval: "v"},
+					&Node{t: n_symbol, sval: "ok"},
+					&Node{t: n_typeassert, args: []*Node{
+						&Node{t: n_symbol, sval: "x"},
+						&Node{t: n_typename, sval: "i64"},
+					}},
+				}},
+			}},
+		},
 	} {
 		t.Run("", func(t *testing.T) {
 			p := NewParser("", strings.NewReader(tt.in))

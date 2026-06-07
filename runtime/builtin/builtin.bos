@@ -1,5 +1,12 @@
 package builtin
 
+// any is the empty interface: it has zero required methods, so every
+// concrete type satisfies it. It is the element type of an untyped
+// variadic parameter (`...any`) and the canonical target for storing a
+// value of arbitrary dynamic type. Available everywhere without import.
+pub interface any {
+}
+
 // error is the interface implemented by types that represent typical error conditions.
 pub interface error {
 	message(e *self) byte[]

@@ -1,0 +1,18 @@
+package ifaces
+
+import "geom"
+
+// Stringer is an interface declared in its own package so the
+// cross-package assertion test exercises an iface_desc resolved
+// across .bo boundaries.
+pub interface Stringer {
+	describe(s *self) byte[]
+}
+
+// Combiner's method signature includes a cross-package named type
+// (*geom.Point). The implementing type geom.Point renders the same param as
+// bare *Point inside its own package; canonicalSig must canonicalize both to
+// the same fully-qualified text for the assertion to match. (m8)
+pub interface Combiner {
+	combine(s *self, other *geom.Point) byte[]
+}

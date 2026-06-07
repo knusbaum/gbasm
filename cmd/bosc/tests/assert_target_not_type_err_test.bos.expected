@@ -1,0 +1,2 @@
+Compiling tests/assert_target_not_type_err_test.bos
+Fatal: No such type "notatype"

@@ -1,0 +1,2 @@
+Assembling tests/typedesc_no_cache_err_test.bs
+Fatal: typedesc __typedesc_Orphan has no matching typedesc_cache __typedesc_cache_Orphan in the same object file

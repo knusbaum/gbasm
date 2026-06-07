@@ -122,6 +122,10 @@ bos_exe_deps() {
     all_pkg_import_targets "$d"
     echo "target/_heap.bo"
     echo "target/_init.bo"
+    # _iface backs interface-to-interface type assertions. It is not a
+    # source-level import (the compiler emits a bare call), so it is always
+    # linked; the linker's reachability drops it when unused.
+    echo "target/_iface.bo"
 }
 
 pkg_resolve_and_deps() {

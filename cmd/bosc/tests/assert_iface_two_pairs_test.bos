@@ -1,0 +1,41 @@
+package main
+import "string"
+
+// m4: one source value asserted to two different interfaces in sequence. Both
+// succeed and dispatch through their own method, exercising two distinct itabs
+// chained on the single typedesc cache for `worker`.
+type worker i64 {
+	greet(w *self) byte[] {
+		return "hi"
+	}
+	farewell(w *self) byte[] {
+		return "bye"
+	}
+}
+
+interface speaker {
+	greet(s *self) byte[]
+}
+
+interface closer {
+	farewell(c *self) byte[]
+}
+
+fn main() i64 {
+	var w worker = 3
+	var a any = &w
+
+	var s speaker, var ok1 bool = a.(speaker)
+	if (ok1) { string.puts(s.greet()) } else { string.puts("no1") }
+	string.putc(10)
+
+	var c closer, var ok2 bool = a.(closer)
+	if (ok2) { string.puts(c.farewell()) } else { string.puts("no2") }
+	string.putc(10)
+
+	// Re-assert the first interface: now a cache hit on the same typedesc cache.
+	var s2 speaker, var ok3 bool = a.(speaker)
+	if (ok3) { string.puts(s2.greet()) } else { string.puts("no3") }
+	string.putc(10)
+	return 0
+}

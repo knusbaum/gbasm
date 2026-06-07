@@ -1,0 +1,21 @@
+package main
+import "string"
+
+// m2 regression: an ARRAY shape with length > 15 must encode (the old 4-bit
+// length field capped at 15 and rejected [16]byte). &arr is *(byte[16]); the
+// coercion links and runs. Asserting it to *byte[16] (which parses as a SLICE-
+// shaped (*byte)[16] — array of pointers, a different shape) is correctly
+// false, and asserting it to *byte[32] is likewise false: the shape word
+// distinguishes array lengths.
+fn main() i64 {
+	var arr byte[16]
+	arr[0] = 90
+	var a any = &arr
+	string.puts("arr16 coerced ")
+	var p16 *byte[16], var ok16 bool = a.(*byte[16])
+	var p32 *byte[32], var ok32 bool = a.(*byte[32])
+	if (ok16) { string.puts("16y ") } else { string.puts("16n ") }
+	if (ok32) { string.puts("32y ") } else { string.puts("32n ") }
+	string.putc(10)
+	return 0
+}

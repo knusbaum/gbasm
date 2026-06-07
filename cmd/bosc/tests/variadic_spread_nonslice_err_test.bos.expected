@@ -1,0 +1,2 @@
+Compiling tests/variadic_spread_nonslice_err_test.bos
+Fatal: cannot forward i64 as variadic i64[]; expected a i64[]

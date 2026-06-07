@@ -513,40 +513,45 @@ func (c *Context) MethodForType(typeName, methodName string) (*FuncDecl, bool) {
 	return nil, false
 }
 
-// substituteReceiver replaces "self" type name with typeName at all levels of t.
-func substituteReceiver(t ASTType, typeName string) ASTType {
-	if t.Name == "self" {
-		t.Name = typeName
-		return t
-	}
-	if t.Element != nil {
-		elem := substituteReceiver(*t.Element, typeName)
-		t.Element = &elem
-	}
-	return t
-}
-
 // TypeSatisfiesInterface checks structural satisfaction: does type typeName
 // implement all methods of iface, with self→typeName substituted in receiver
 // types? Receiver shape is taken from the interface's declared form (the
 // homogeneous direction of its methods).
 func (c *Context) TypeSatisfiesInterface(typeName string, iface *InterfaceDecl) bool {
-	return c.TypeSatisfiesInterfaceAs(typeName, iface, interfaceIsPointerShape(iface))
+	// Use the interface's own homogeneous receiver direction as the source
+	// shape (value-shape if value receivers, pointer-shape if *self).
+	expected := recvShapeValue
+	if interfaceIsPointerShape(iface) {
+		expected = recvShapePtr
+	}
+	return c.TypeSatisfiesInterfaceAs(typeName, iface, expected)
 }
 
-// TypeSatisfiesInterfaceAs checks structural satisfaction with the receiver
-// direction overridden. pointerDirection=true requires T's methods to take a
-// pointer receiver (*T or owned *T as declared by the interface);
-// pointerDirection=false requires plain-value receivers (T). Non-receiver
+// TypeSatisfiesInterfaceAs checks structural satisfaction against the
+// source-derived receiver capability expectedRecv (one of the recvShape*
+// classes: value, *self, *mut self, or none). A method's declared receiver
+// must be satisfiable from that capability via receiverSatisfies — value
+// sources reach value receivers, `*T` sources reach `*self` receivers, and
+// `*mut T` sources reach `*self` or `*mut self` (the legal `*mut -> *`
+// weakening; the unsound `* -> *mut` direction is rejected). Non-receiver
 // args and return types must match the interface declaration exactly.
 //
-// This is the predicate used by the coercion path: a value-typed source
-// coerces under value direction, a pointer-typed source under pointer
-// direction. The interface's own declared receiver shape becomes
-// documentation rather than a hard constraint, letting (for example) a
-// value-receiver `io_err.message(e io_err)` satisfy a pointer-shape
-// `error.message(e *self)` interface when coerced from a value source.
-func (c *Context) TypeSatisfiesInterfaceAs(typeName string, iface *InterfaceDecl, pointerDirection bool) bool {
+// This is the predicate used by the coercion path. The interface's own
+// declared receiver shape becomes documentation rather than a hard
+// constraint, letting (for example) a value-receiver
+// `io_err.message(e io_err)` satisfy a pointer-shape `error.message(e *self)`
+// interface when coerced from a value source.
+func (c *Context) TypeSatisfiesInterfaceAs(typeName string, iface *InterfaceDecl, expectedRecv int) bool {
+	// The empty interface (`any`) has no required methods, so every concrete
+	// type satisfies it trivially — including primitives with no method set.
+	if iface == nil || len(iface.Methods) == 0 {
+		return true
+	}
+	// A source shape with no compatible receiver (e.g. **T, *byte[]) can only
+	// satisfy a zero-method interface, handled above.
+	if expectedRecv == recvShapeNone {
+		return false
+	}
 	methods, ok := c.TypeMethodsFor(typeName)
 	if !ok {
 		return false
@@ -560,22 +565,13 @@ func (c *Context) TypeSatisfiesInterfaceAs(typeName string, iface *InterfaceDecl
 			if len(m.Args) == 0 || len(isig.Params) == 0 {
 				continue
 			}
-			// Build the expected receiver. For pointer direction, take the
-			// interface's declared receiver qualifiers (mut/owned/nullable)
-			// and force pointer shape — if the interface declared `self`
-			// (value), we synthesize a non-qualified *T. For value
-			// direction, the receiver is just plain T.
-			declReceiver := substituteReceiver(isig.Params[0].Type, typeName)
-			var expectedReceiver ASTType
-			if pointerDirection {
-				expectedReceiver = declReceiver
-				if expectedReceiver.Indirection == 0 {
-					expectedReceiver.Indirection = 1
-				}
-			} else {
-				expectedReceiver = ASTType{Name: typeName}
-			}
-			if !m.Args[0].Type.Same(expectedReceiver) {
+			// Receiver-shape axis: the method's declared receiver shape must
+			// be satisfiable from the source-derived expected capability. The
+			// interface's own declared receiver marker is not consulted —
+			// Boson's rule is that the source direction (and its mut
+			// capability) drives receiver selection, with the legal
+			// `*mut -> *` weakening but not the unsound `* -> *mut` direction.
+			if !receiverSatisfies(receiverShapeOf(m.Args[0].Type), expectedRecv) {
 				continue
 			}
 			if len(m.Args) != len(isig.Params) {
@@ -620,7 +616,7 @@ func interfaceIsPointerShape(iface *InterfaceDecl) bool {
 }
 
 // NeedVtable registers a vtable to be emitted; no-op if already registered.
-func (c *Context) NeedVtable(name, typeName, ifaceName, pkgName string, iface *InterfaceDecl) {
+func (c *Context) NeedVtable(name, typeName, ifaceName, pkgName string, iface *InterfaceDecl, shapeWord uint64) {
 	root := c
 	for root.parent != nil {
 		root = root.parent
@@ -637,23 +633,32 @@ func (c *Context) NeedVtable(name, typeName, ifaceName, pkgName string, iface *I
 		ifaceName: ifaceName,
 		pkgName:   pkgName,
 		methods:   methods,
+		shapeWord: shapeWord,
 	}
 }
 
 // WriteVtables emits all registered vtable globals as `var` blocks to of.
+//
+// Layout: slot 0 = relocation to the base type's __typedesc; slot 1 = the
+// canonical shape word (written as raw bytes); slots 2..N+1 = relocations to
+// the type's methods in the interface's declaration order.
 func (c *Context) WriteVtables(of io.Writer) {
 	root := c
 	for root.parent != nil {
 		root = root.parent
 	}
 	for name, spec := range root.vtables {
-		n := len(spec.methods) + 1
-		zeros := make([]byte, n*8)
+		n := len(spec.methods) + 2
+		raw := make([]byte, n*8)
+		// slot 1: shape word, little-endian.
+		for i := 0; i < 8; i++ {
+			raw[8+i] = byte(spec.shapeWord >> uint(8*i))
+		}
 		fmt.Fprintf(of, "var %s byte[%d] {\n", name, n*8)
-		fmt.Fprintf(of, "\tbytes \"%s\"\n", bytesToBasStringLiteral(zeros))
+		fmt.Fprintf(of, "\tbytes \"%s\"\n", bytesToBasStringLiteral(raw))
 		fmt.Fprintf(of, "\treloc 0 %s.__typedesc_%s 0\n", spec.pkgName, spec.typeName)
 		for i, m := range spec.methods {
-			fmt.Fprintf(of, "\treloc %d %s.%s.%s 0\n", (i+1)*8, spec.pkgName, spec.typeName, m)
+			fmt.Fprintf(of, "\treloc %d %s.%s.%s 0\n", (i+2)*8, spec.pkgName, spec.typeName, m)
 		}
 		fmt.Fprintf(of, "}\n")
 	}
@@ -2036,9 +2041,10 @@ type AST interface {
 // A binding represents a name which is bound to a value of type Type
 // in a specific context, such as struct members or function arguments.
 type Binding struct {
-	Name    string
-	Type    ASTType
-	IsConst bool // false = var (rebindable); always false for struct fields
+	Name     string
+	Type     ASTType
+	IsConst  bool // false = var (rebindable); always false for struct fields
+	Variadic bool // true for a `...T` variadic parameter (Type is then T[])
 }
 
 type StructDecl struct {
@@ -2140,13 +2146,29 @@ func (*MultiBindDecl) ASTType(*Context) ASTType { return voidASTType() }
 func (m *MultiBindDecl) Note() string           { return "multibind" }
 func (m *MultiBindDecl) Pos() position          { return m.p }
 
+// MultiAssign is multi-value re-assignment to pre-declared lvalues:
+//
+//	a, b = expr
+//
+// Targets are arbitrary lvalue expressions; Init must have a MultiReturn type.
+type MultiAssign struct {
+	Targets []AST
+	Init    AST
+	p       position
+}
+
+func (*MultiAssign) ASTType(*Context) ASTType { return voidASTType() }
+func (m *MultiAssign) Note() string           { return "multiassign" }
+func (m *MultiAssign) Pos() position          { return m.p }
+
 type FuncDecl struct {
-	Name   string
-	IsPub  bool
-	Args   []Binding
-	Return ASTType
-	Body   *Block
-	p      position
+	Name     string
+	IsPub    bool
+	Args     []Binding
+	Return   ASTType
+	Body     *Block
+	Variadic bool // true when the last parameter is variadic (`...T`)
+	p        position
 }
 
 func (*FuncDecl) ASTType(*Context) ASTType {
@@ -3017,7 +3039,68 @@ type vtableSpec struct {
 	ifaceName string   // interface name (e.g. "error")
 	pkgName   string   // package that defines the type
 	methods   []string // method names in interface declaration order
+	shapeWord uint64   // canonical shape word for the source type (vtable slot 1)
 }
+
+// VariadicForward is a trailing `slice...` argument: the slice is forwarded
+// verbatim as the callee's variadic parameter, with no re-wrapping.
+type VariadicForward struct {
+	Val AST
+	p   position
+}
+
+func (f *VariadicForward) ASTType(c *Context) ASTType { return f.Val.ASTType(c) }
+func (f *VariadicForward) Note() string               { return "<slice>..." }
+func (f *VariadicForward) Pos() position              { return f.p }
+
+// TypeAssert is a runtime type assertion `x.(T)`. Its static type is a
+// two-field multiretu{T, bool}.
+type TypeAssert struct {
+	Val AST
+	T   ASTType
+	p   position
+}
+
+func (a *TypeAssert) ASTType(c *Context) ASTType {
+	return ASTType{
+		AnonFields:  []Binding{{Name: "_0", Type: a.T}, {Name: "_1", Type: boolASTType()}},
+		MultiReturn: true,
+	}
+}
+func (a *TypeAssert) Note() string  { return fmt.Sprintf("x.(%s)", a.T) }
+func (a *TypeAssert) Pos() position { return a.p }
+
+// TypeCase is one case in a type switch.
+type TypeCase struct {
+	T         ASTType // the case's target type; IsDefault true when this is `default`
+	IsDefault bool
+	Body      *Block
+	p         position
+}
+
+// TypeSwitch is `switch (v x.(type)) { case T {...} ... default {...} }`.
+type TypeSwitch struct {
+	BindName string // the `v` binding narrowed inside each case body
+	Val      AST    // the interface value being switched on
+	Cases    []*TypeCase
+	p        position
+}
+
+func (s *TypeSwitch) ASTType(*Context) ASTType { return voidASTType() }
+func (s *TypeSwitch) Note() string             { return "switch (... .(type)) {...}" }
+func (s *TypeSwitch) Pos() position            { return s.p }
+
+// PreboundSpot wraps an already-compiled value handle so it can be threaded
+// back through the generic argument-setup path. Used by variadic
+// call-site desugaring, which builds the args slice before setupArgs runs.
+type PreboundSpot struct {
+	S spot
+	p position
+}
+
+func (p *PreboundSpot) ASTType(*Context) ASTType { return p.S.t }
+func (p *PreboundSpot) Note() string             { return "<prebound>" }
+func (p *PreboundSpot) Pos() position            { return p.p }
 
 type Dispose struct {
 	Var string
@@ -3281,6 +3364,16 @@ func (n *Node) toASTTop(c *Context) AST {
 		}
 		return &v
 	case n_multibind:
+		// Re-assignment form: targets are lvalue expressions, not n_var specs.
+		if n.ival == 1 {
+			var ma MultiAssign
+			ma.p = n.p
+			for i := 0; i < len(n.args)-1; i++ {
+				ma.Targets = append(ma.Targets, n.args[i].toASTTop(NewContext()))
+			}
+			ma.Init = n.args[len(n.args)-1].toASTTop(NewContext())
+			return &ma
+		}
 		// Multi-bind: args[0..N-2] are n_var binding specs (no initializer),
 		// args[N-1] is the shared initializer expression.
 		var mb MultiBindDecl
@@ -3311,12 +3404,20 @@ func (n *Node) toASTTop(c *Context) AST {
 			a := args[0]
 			name := a.sval
 			t := mkTypename(a.args[0])
-			// n_arg ival: 0 = const by default, 1 = var (explicitly declared)
+			// n_arg ival: bit 0 = var (rebindable); bit 1 = variadic (...T).
+			variadic := a.ival&2 != 0
+			if variadic && i != nargs-1 {
+				ParseErrorF(a, "variadic parameter %s must be the last parameter", name)
+			}
 			fn.Args = append(fn.Args, Binding{
-				Name:    name,
-				Type:    t,
-				IsConst: a.ival == 0,
+				Name:     name,
+				Type:     t,
+				IsConst:  a.ival&1 == 0,
+				Variadic: variadic,
 			})
+			if variadic {
+				fn.Variadic = true
+			}
 			args = args[1:]
 		}
 		fn.Return = mkTypename(args[0])
@@ -3388,6 +3489,31 @@ func (n *Node) toASTTop(c *Context) AST {
 		}
 		d.Member = n.args[1].sval
 		return &d
+	case n_variadic_forward:
+		return &VariadicForward{Val: n.args[0].toASTTop(NewContext()), p: n.p}
+	case n_typeassert:
+		return &TypeAssert{
+			Val: n.args[0].toASTTop(NewContext()),
+			T:   mkTypename(n.args[1]),
+			p:   n.p,
+		}
+	case n_typeswitch:
+		var s TypeSwitch
+		s.p = n.p
+		s.BindName = n.sval
+		s.Val = n.args[0].toASTTop(NewContext())
+		for _, cn := range n.args[1:] {
+			tc := &TypeCase{p: cn.p}
+			if cn.ival == 1 {
+				tc.IsDefault = true
+				tc.Body = cn.args[0].toASTTop(NewContext()).(*Block)
+			} else {
+				tc.T = mkTypename(cn.args[0])
+				tc.Body = cn.args[1].toASTTop(NewContext()).(*Block)
+			}
+			s.Cases = append(s.Cases, tc)
+		}
+		return &s
 	case n_deref:
 		return &Deref{Val: n.args[0].toASTTop(NewContext())}
 	case n_nonnull:

@@ -32,6 +32,10 @@ type Var struct {
 	// pointers in static data — slice headers, struct fields holding
 	// addresses of other globals, and so on.
 	Relocs []DataReloc
+	// Kind tags structured records (typedesc / iface_desc / typedesc_cache)
+	// so bdump can pretty-print them. Empty for ordinary data/var blocks.
+	// The linker ignores it; placement is purely Data-vs-Vars-map driven.
+	Kind string
 }
 
 // DataReloc is a per-Var pointer-slot fixup, applied by the linker

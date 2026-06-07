@@ -1,0 +1,284 @@
+package _iface
+
+// _iface.assert_to is the runtime helper for interface-to-interface type
+// assertion (PROPOSAL_variadics_and_assertion.md, Layer 4 / "The runtime
+// helper"). It is NOT a Boson-visible function: the compiler emits a direct
+// `call _iface.assert_to` and reads the register-pair result. Signature:
+//
+//   assert_to(src_ti *u8, src_shape u64, src_data i64, dst_desc *u8)
+//            -> (vtable *u8 in rax, ok bool in rdx)
+//
+//   rdi = src_ti     (base typedesc pointer; from source vtable slot 0)
+//   rsi = src_shape  (source shape word; from source vtable slot 1)
+//   rdx = src_data   (carried through by the caller; unused here)
+//   rcx = dst_desc   (target iface_desc pointer)
+//
+// On success rax = pointer to the itab's embedded vtable region
+// ([rax+0]=src_ti, [rax+8]=src_shape, [rax+16+i*8]=fn_i) and rdx = 1.
+// On failure rax = 0 and rdx = 0.
+//
+// typedesc head layout (bytes, relative to td start):
+//   0 name_off  8 name_len  16 size  24 cache_ref  32 method_count
+//   40 methods[]: each 64 bytes:
+//      0 name_off 8 name_len 16 sig_off 24 sig_len
+//      32 name_hash 40 sig_hash 48 recv_shape 56 fn_ptr
+//   Text blobs follow the method table; name/sig offsets are relative to td.
+//
+// iface_desc layout:
+//   0 name_off 8 name_len 16 method_count
+//   24 methods[]: each 56 bytes:
+//      0 name_off 8 name_len 16 sig_off 24 sig_len
+//      32 name_hash 40 sig_hash 48 decl_idx
+//
+// itab layout (heap): header 24 bytes then vtable region.
+//   0 next  8 iface_desc  16 shape | 24 vtable[0]=typedesc 32 vtable[1]=shape
+//   40+ vtable[2+] = method fn_ptrs (placed by decl_idx)
+//
+// Register usage across assert_to:
+//   r12 = src_ti     r13 = src_shape   r14 = dst_desc   r15 = itab
+//   rbx = expected_receiver_shape
+// All callee-saved; restored on exit.
+
+pub function assert_to
+	type fn(*u8,u64,i64,*u8) i64
+	prologue
+
+	push rbx
+	push r12
+	push r13
+	push r14
+	push r15
+
+	mov r12 rdi
+	mov r13 rsi
+	mov r14 rcx
+
+	// --- 1. Cache walk: follow src_ti.cache_ref head, match (dst_desc, shape).
+	mov rax [r12+24]
+	mov rax [rax]
+label .cache_loop
+	cmp rax 0
+	je .cache_miss
+	mov rcx [rax+8]
+	cmp rcx r14
+	jne .cache_next
+	mov rcx [rax+16]
+	cmp rcx r13
+	jne .cache_next
+	add rax 24
+	mov rdx 1
+	jmp .ret
+label .cache_next
+	mov rax [rax]
+	jmp .cache_loop
+
+label .cache_miss
+	// --- expected_receiver_shape(src_shape) -> rbx  (the source's receiver
+	//     *capability*: 0=value, 1=*self, 2=*mut self, 255=none). Mirrors
+	//     shape.go expectedReceiverShape; receiverSatisfies in lookup_method
+	//     applies the asymmetric *mut->* weakening.
+	mov rbx r13
+	and rbx 15
+	cmp rbx 0
+	jne .recv_nonzero
+	// empty stack -> value capability
+	mov rbx 0
+	jmp .recv_done
+label .recv_nonzero
+	cmp rbx 1
+	// deeper than one level -> no compatible receiver
+	jne .recv_none
+	mov rcx r13
+	shr rcx 4
+	// isolate the outermost constructor kind
+	and rcx 7
+	// shapeKindPtr (1) / shapeKindNullPtr (6) -> *self capability
+	cmp rcx 1
+	je .recv_ptr
+	cmp rcx 6
+	je .recv_ptr
+	// shapeKindMutPtr (2) / shapeKindNullMut (7) -> *mut self capability
+	cmp rcx 2
+	je .recv_mutptr
+	cmp rcx 7
+	je .recv_mutptr
+	jmp .recv_none
+label .recv_ptr
+	mov rbx 1
+	jmp .recv_done
+label .recv_mutptr
+	mov rbx 2
+	jmp .recv_done
+label .recv_none
+	mov rbx 255
+label .recv_done
+
+	// --- 2. Allocate itab: header(24) + (method_count+2)*8 bytes.
+	mov rax [r14+16]
+	add rax 2
+	shl rax 3
+	add rax 24
+	mov rdi rax
+	call _heap.alloc
+	mov r15 rax
+
+	mov qword[r15+8] r14
+	mov qword[r15+16] r13
+	mov qword[r15+24] r12
+	mov qword[r15+32] r13
+
+	// --- For each required method i, find a matching typedesc method and
+	//     place its fn_ptr at vtable[decl_idx+2].
+	mov r8 [r14+16]
+	mov r9 r14
+	add r9 24
+label .req_loop
+	cmp r8 0
+	je .all_found
+	push r8
+	push r9
+	call lookup_method
+	pop r9
+	pop r8
+	cmp rax 0
+	je .miss_free
+	mov rcx [r9+48]
+	add rcx 2
+	shl rcx 3
+	add rcx 24
+	// store the resolved fn_ptr at vtable[decl_idx+2] (rcx = (decl_idx+2)*8+24)
+	mov [r15+rcx] rax
+	add r9 56
+	sub r8 1
+	jmp .req_loop
+
+label .miss_free
+	mov rdi r15
+	call _heap.free
+	mov rax 0
+	mov rdx 0
+	jmp .ret
+
+label .all_found
+	mov rcx [r12+24]
+	mov rdx [rcx]
+	mov [r15] rdx
+	mov [rcx] r15
+	mov rax r15
+	add rax 24
+	mov rdx 1
+
+label .ret
+	pop r15
+	pop r14
+	pop r13
+	pop r12
+	pop rbx
+	epilogue
+	ret
+
+
+// lookup_method finds the typedesc method matching a required method.
+// Inputs (held in callee-saved regs by assert_to):
+//   r12 = src_ti, r9 = req entry ptr, r14 = dst_desc, rbx = expected recv shape
+// Returns rax = fn_ptr on match, 0 on no match.
+function lookup_method
+	mov r10 [r9+32]
+	mov r11 [r9+40]
+	mov rcx [r12+32]
+	mov rdx r12
+	add rdx 40
+label .m_loop
+	cmp rcx 0
+	je .no_match
+	mov rdi [rdx+32]
+	cmp rdi r10
+	jne .m_next
+	mov rdi [rdx+40]
+	cmp rdi r11
+	jne .m_next
+	// receiverSatisfies(method_recv=rdi, expected=rbx): value matches value;
+	// *self(1) matches a *self expectation(1); a *mut self expectation(2)
+	// accepts BOTH *self(1) and *mut self(2) methods (legal *mut->* weakening).
+	mov rdi [rdx+48]
+	cmp rbx 2
+	je .recv_ok_mut
+	cmp rdi rbx
+	jne .m_next
+	jmp .recv_ok
+label .recv_ok_mut
+	cmp rdi 1
+	je .recv_ok
+	cmp rdi 2
+	je .recv_ok
+	jmp .m_next
+label .recv_ok
+	// byte-equal name text follows
+	push rcx
+	push rdx
+	mov rsi r12
+	add rsi [rdx+0]
+	mov rdi [rdx+8]
+	mov rax r14
+	add rax [r9+0]
+	mov r8 [r9+8]
+	call memeq
+	pop rdx
+	pop rcx
+	cmp rax 0
+	je .m_next
+	// byte-equal sig text
+	push rcx
+	push rdx
+	mov rsi r12
+	add rsi [rdx+16]
+	mov rdi [rdx+24]
+	mov rax r14
+	add rax [r9+16]
+	mov r8 [r9+24]
+	call memeq
+	pop rdx
+	pop rcx
+	cmp rax 0
+	je .m_next
+	mov rax [rdx+56]
+	ret
+label .m_next
+	add rdx 64
+	sub rcx 1
+	jmp .m_loop
+label .no_match
+	mov rax 0
+	ret
+
+
+// memeq compares two byte ranges for equality.
+//   rsi = ptr a, rdi = len a, rax = ptr b, r8 = len b
+// Returns rax = 1 if equal, 0 otherwise. Clobbers rcx, dl, r11b.
+function memeq
+	cmp rdi r8
+	jne .ne
+	mov rcx 0
+label .eq_loop
+	cmp rcx rdi
+	je .eq
+	push rax
+	push rsi
+	add rsi rcx
+	mov dl [rsi]
+	pop rsi
+	pop rax
+	push rax
+	add rax rcx
+	mov r11b [rax]
+	pop rax
+	cmp dl r11b
+	jne .ne
+	add rcx 1
+	jmp .eq_loop
+label .eq
+	mov rax 1
+	ret
+label .ne
+	mov rax 0
+	ret

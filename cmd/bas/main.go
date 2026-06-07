@@ -155,6 +155,24 @@ func SplitSpace(s string) []string {
 	return ss
 }
 
+// basUnquoteSigTok decodes a signature token emitted by the compiler: spaces
+// are encoded as \x1f so the token survives whitespace tokenization.
+func basUnquoteSigTok(tok string) string {
+	return strings.ReplaceAll(tok, "\x1f", " ")
+}
+
+// mustParseU64 parses a decimal u64 field of a typedesc/iface_desc method
+// line, exiting with a Fatal error (like the surrounding directive parsing)
+// on malformed input rather than silently yielding 0.
+func mustParseU64(directive, name, field, val string) uint64 {
+	n, err := strconv.ParseUint(val, 10, 64)
+	if err != nil {
+		fmt.Printf("Fatal: %s %s: bad %s %q: %v\n", directive, name, field, val, err)
+		os.Exit(1)
+	}
+	return n
+}
+
 // sizeKeywords maps a size-prefix keyword to its bit width.
 // Used for size-qualified memory operands: byte[reg+off], word[reg+off], dword[reg+off], qword[reg+off].
 var sizeKeywords = []struct {
@@ -484,6 +502,167 @@ func main() {
 					fmt.Printf("Fatal: interface %s: %s\n", iname, err)
 					os.Exit(1)
 				}
+				continue
+			}
+			if strings.HasPrefix(line, "typedesc_cache") {
+				// Single-line directive: typedesc_cache <name>
+				// A bare 8-byte writable slot, zero-initialized. Lives in the
+				// Vars map (F_WRITE). Tagged so bdump recognizes it and the
+				// pairing check can find it.
+				name := strings.TrimSpace(strings.TrimPrefix(line, "typedesc_cache"))
+				if name == "" {
+					fmt.Printf("Fatal: typedesc_cache directive: missing name\n")
+					os.Exit(1)
+				}
+				if err := o.AddVar(name, "byte[8]", make([]byte, 8), isPub); err != nil {
+					fmt.Printf("Fatal: typedesc_cache %s: %s\n", name, err)
+					os.Exit(1)
+				}
+				o.Vars[name].Kind = gbasm.KindTypedescCache
+				continue
+			}
+			if strings.HasPrefix(line, "typedesc") {
+				// Multi-line directive:
+				//   typedesc <name> {
+				//     name "<type-name>"
+				//     size <i64>
+				//     cache_ref <cache-symbol>
+				//     method <name> <sig> <name_hash> <sig_hash> <recv_shape> <fn_reloc>
+				//     ...
+				//   }
+				rest := strings.TrimSpace(strings.TrimPrefix(line, "typedesc"))
+				openIdx := strings.IndexByte(rest, '{')
+				if openIdx < 0 {
+					fmt.Printf("Fatal: typedesc directive: missing '{' on the same line, got: %q\n", line)
+					os.Exit(1)
+				}
+				tname := strings.TrimSpace(rest[:openIdx])
+				if tname == "" {
+					fmt.Printf("Fatal: typedesc directive: missing name before '{'\n")
+					os.Exit(1)
+				}
+				rec := &gbasm.TypedescRecord{}
+				for {
+					if !scanner.Scan() {
+						fmt.Printf("Fatal: typedesc %s: unexpected EOF before '}'\n", tname)
+						os.Exit(1)
+					}
+					ln++
+					body := strings.TrimSpace(scanner.Text())
+					if body == "" || strings.HasPrefix(body, "//") {
+						continue
+					}
+					if body == "}" {
+						break
+					}
+					switch {
+					case strings.HasPrefix(body, "name "):
+						s := strings.TrimSpace(strings.TrimPrefix(body, "name"))
+						rec.TypeName = strings.Trim(s, `"`)
+					case strings.HasPrefix(body, "size "):
+						s := strings.TrimSpace(strings.TrimPrefix(body, "size"))
+						n, err := strconv.ParseUint(s, 10, 64)
+						if err != nil {
+							fmt.Printf("Fatal: typedesc %s: bad size %q: %v\n", tname, s, err)
+							os.Exit(1)
+						}
+						rec.SizeBytes = n
+					case strings.HasPrefix(body, "cache_ref "):
+						rec.CacheSym = strings.TrimSpace(strings.TrimPrefix(body, "cache_ref"))
+					case strings.HasPrefix(body, "method "):
+						f := strings.Fields(strings.TrimPrefix(body, "method"))
+						if len(f) != 6 {
+							fmt.Printf("Fatal: typedesc %s: method requires 6 fields (name sig name_hash sig_hash recv_shape fn_reloc), got %v\n", tname, f)
+							os.Exit(1)
+						}
+						nh := mustParseU64("typedesc", tname, "name_hash", f[2])
+						sh := mustParseU64("typedesc", tname, "sig_hash", f[3])
+						rs := mustParseU64("typedesc", tname, "recv_shape", f[4])
+						rec.Methods = append(rec.Methods, gbasm.TypedescMethod{
+							Name:      f[0],
+							Sig:       basUnquoteSigTok(f[1]),
+							NameHash:  nh,
+							SigHash:   sh,
+							RecvShape: rs,
+							FnSym:     f[5],
+						})
+					default:
+						fmt.Printf("Fatal: typedesc %s: unknown line %q\n", tname, body)
+						os.Exit(1)
+					}
+				}
+				data, relocs := gbasm.EncodeTypedesc(rec)
+				if err := o.AddData(tname, fmt.Sprintf("byte[%d]", len(data)), data, isPub); err != nil {
+					fmt.Printf("Fatal: typedesc %s: %s\n", tname, err)
+					os.Exit(1)
+				}
+				o.Data[tname].Relocs = relocs
+				o.Data[tname].Kind = gbasm.KindTypedesc
+				continue
+			}
+			if strings.HasPrefix(line, "iface_desc") {
+				// Multi-line directive:
+				//   iface_desc <name> {
+				//     name "<iface-name>"
+				//     method <name> <sig> <name_hash> <sig_hash> <decl_idx>
+				//     ...
+				//   }
+				rest := strings.TrimSpace(strings.TrimPrefix(line, "iface_desc"))
+				openIdx := strings.IndexByte(rest, '{')
+				if openIdx < 0 {
+					fmt.Printf("Fatal: iface_desc directive: missing '{' on the same line, got: %q\n", line)
+					os.Exit(1)
+				}
+				iname := strings.TrimSpace(rest[:openIdx])
+				if iname == "" {
+					fmt.Printf("Fatal: iface_desc directive: missing name before '{'\n")
+					os.Exit(1)
+				}
+				rec := &gbasm.IfaceDescRecord{}
+				for {
+					if !scanner.Scan() {
+						fmt.Printf("Fatal: iface_desc %s: unexpected EOF before '}'\n", iname)
+						os.Exit(1)
+					}
+					ln++
+					body := strings.TrimSpace(scanner.Text())
+					if body == "" || strings.HasPrefix(body, "//") {
+						continue
+					}
+					if body == "}" {
+						break
+					}
+					switch {
+					case strings.HasPrefix(body, "name "):
+						s := strings.TrimSpace(strings.TrimPrefix(body, "name"))
+						rec.IfaceName = strings.Trim(s, `"`)
+					case strings.HasPrefix(body, "method "):
+						f := strings.Fields(strings.TrimPrefix(body, "method"))
+						if len(f) != 5 {
+							fmt.Printf("Fatal: iface_desc %s: method requires 5 fields (name sig name_hash sig_hash decl_idx), got %v\n", iname, f)
+							os.Exit(1)
+						}
+						nh := mustParseU64("iface_desc", iname, "name_hash", f[2])
+						sh := mustParseU64("iface_desc", iname, "sig_hash", f[3])
+						di := mustParseU64("iface_desc", iname, "decl_idx", f[4])
+						rec.Methods = append(rec.Methods, gbasm.IfaceDescMethod{
+							Name:     f[0],
+							Sig:      basUnquoteSigTok(f[1]),
+							NameHash: nh,
+							SigHash:  sh,
+							DeclIdx:  di,
+						})
+					default:
+						fmt.Printf("Fatal: iface_desc %s: unknown line %q\n", iname, body)
+						os.Exit(1)
+					}
+				}
+				data, _ := gbasm.EncodeIfaceDesc(rec)
+				if err := o.AddData(iname, fmt.Sprintf("byte[%d]", len(data)), data, isPub); err != nil {
+					fmt.Printf("Fatal: iface_desc %s: %s\n", iname, err)
+					os.Exit(1)
+				}
+				o.Data[iname].Kind = gbasm.KindIfaceDesc
 				continue
 			}
 			if strings.HasPrefix(line, "values ") {
@@ -1180,6 +1359,21 @@ func main() {
 	if o == nil {
 		fmt.Printf("Fatal: No non-empty files found.\n")
 		os.Exit(1)
+	}
+
+	// Single-emitter pairing: every typedesc must have a matching
+	// typedesc_cache (named __typedesc_cache_<T> for __typedesc_<T>) in the
+	// same .bo. Catch missing pairs before bld ever sees them.
+	for name, v := range o.Data {
+		if v.Kind != gbasm.KindTypedesc {
+			continue
+		}
+		cacheName := "__typedesc_cache_" + strings.TrimPrefix(name, "__typedesc_")
+		cv := o.Vars[cacheName]
+		if cv == nil || cv.Kind != gbasm.KindTypedescCache {
+			fmt.Printf("Fatal: typedesc %s has no matching typedesc_cache %s in the same object file\n", name, cacheName)
+			os.Exit(1)
+		}
 	}
 
 	err := o.Output()

@@ -1,0 +1,15 @@
+package main
+
+fn inner(args ...i64) {
+}
+
+fn outer(n i64) {
+	// `n...` spreads a non-slice (i64). Only a slice of the variadic element
+	// type can be forwarded; this is rejected.
+	inner(n...)
+}
+
+fn main() i64 {
+	outer(5)
+	return 0
+}

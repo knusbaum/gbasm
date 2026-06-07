@@ -1,0 +1,18 @@
+package main
+import "string"
+
+fn describe(x any) {
+	string.puti(0)
+	string.putc(10)
+	switch (v x.(type)) {
+		case i64 { string.puti(v); string.putc(10) }
+	}
+	string.puti(1)
+	string.putc(10)
+}
+
+fn main() i64 {
+	var bb byte = 5
+	describe(bb)
+	return 0
+}

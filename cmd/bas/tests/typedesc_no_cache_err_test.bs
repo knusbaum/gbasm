@@ -1,0 +1,14 @@
+package main
+
+// A typedesc without its paired typedesc_cache must be rejected by bas
+// before bld ever sees it (single-emitter pairing check).
+
+typedesc __typedesc_Orphan {
+	name "Orphan"
+	size 8
+	cache_ref __typedesc_cache_Orphan
+}
+
+function main
+	xor rax rax
+	ret

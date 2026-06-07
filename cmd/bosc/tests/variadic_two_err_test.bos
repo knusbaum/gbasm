@@ -1,0 +1,8 @@
+package main
+
+fn f(a ...any, b ...any) {
+}
+
+fn main() i64 {
+	return 0
+}

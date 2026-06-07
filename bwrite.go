@@ -202,6 +202,9 @@ func writeVar(w io.Writer, v *Var) error {
 			return err
 		}
 	}
+	if err := writeString(w, v.Kind); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -238,7 +241,11 @@ func readVar(r io.Reader) (*Var, error) {
 		}
 		relocs = append(relocs, dr)
 	}
-	return &Var{Name: name, IsPub: isPub, VType: vtype, Val: bs, Relocs: relocs}, nil
+	kind, err := readString(r)
+	if err != nil {
+		return nil, err
+	}
+	return &Var{Name: name, IsPub: isPub, VType: vtype, Val: bs, Relocs: relocs, Kind: kind}, nil
 }
 
 func writeDataReloc(w io.Writer, r *DataReloc) error {

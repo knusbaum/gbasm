@@ -1,0 +1,12 @@
+package main
+
+var g i64[]
+
+fn keep(args ...i64) {
+	g = args
+}
+
+fn main() i64 {
+	keep(1, 2, 3)
+	return 0
+}

@@ -45,6 +45,7 @@ const (
 	tok_booland
 	tok_boolor
 	tok_pipe
+	tok_ellipsis
 
 	// Keywords
 	tok_if
@@ -65,6 +66,9 @@ const (
 	tok_interface
 	tok_values
 	tok_pub
+	tok_switch
+	tok_case
+	tok_default
 )
 
 var keywords map[string]toktype = map[string]toktype{
@@ -86,6 +90,9 @@ var keywords map[string]toktype = map[string]toktype{
 	"interface": tok_interface,
 	"values":    tok_values,
 	"pub":       tok_pub,
+	"switch":    tok_switch,
+	"case":      tok_case,
+	"default":   tok_default,
 }
 
 const (
@@ -202,6 +209,14 @@ func (t toktype) String() string {
 		return "tok_values"
 	case tok_pub:
 		return "tok_pub"
+	case tok_ellipsis:
+		return "tok_ellipsis"
+	case tok_switch:
+		return "tok_switch"
+	case tok_case:
+		return "tok_case"
+	case tok_default:
+		return "tok_default"
 	}
 	return "UNKNOWN"
 }
@@ -661,6 +676,14 @@ func (l *lexer) Next() (rt token, re error) {
 		return l.parseChar(), nil
 	case '.':
 		l.nextRune()
+		if l.headRune() == '.' {
+			l.nextRune()
+			if l.headRune() == '.' {
+				l.nextRune()
+				return token{t: tok_ellipsis, p: p}, nil
+			}
+			return token{}, &interpreterError{"unexpected '..'; did you mean '...'?", p}
+		}
 		return token{t: tok_dot, p: p}, nil
 	case '+':
 		l.nextRune()

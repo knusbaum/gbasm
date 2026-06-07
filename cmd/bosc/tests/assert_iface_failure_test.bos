@@ -1,0 +1,31 @@
+package main
+import "string"
+
+// greeter has a greet method; barer does not.
+type greeter i64 {
+	greet(g *self) byte[] {
+		return "hi"
+	}
+}
+type barer i64 {
+	other(b *self) i64 {
+		return 0
+	}
+}
+
+interface speaker {
+	greet(s *self) byte[]
+}
+
+fn main() i64 {
+	var b barer = 3
+	var a any = &b
+	var s speaker, var ok bool = a.(speaker)
+	if (ok) {
+		string.puts("yes")
+	} else {
+		string.puts("no")
+	}
+	string.putc(10)
+	return 0
+}

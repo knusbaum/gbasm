@@ -226,6 +226,13 @@ func main() {
 		if !wrotePkg {
 			fmt.Fprintf(of, "package %s\n\n", pkgname)
 		}
+		// The builtin package is the single home for the primitive scalar
+		// typedescs (__typedesc_i64, __typedesc_byte, ...). Every other
+		// package that coerces a primitive into an interface relocates
+		// against these shared symbols.
+		if pkgname == "builtin" {
+			emitBuiltinScalarTypedescs(of)
+		}
 		p := NewParserAt(flag.Arg(fi), reader, linesConsumed+1)
 		//c := NewVContext()
 		//ctx := NewCompileContext()

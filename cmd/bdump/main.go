@@ -46,6 +46,9 @@ func main() {
 		}
 		fmt.Printf("\tData:\n")
 		for d, v := range o.Data {
+			if printStructuredRecord(v) {
+				continue
+			}
 			fmt.Printf("\t\t%s :: %s = %v\n", d, v.VType, v.Val)
 			if d != v.Name {
 				fmt.Printf("\t\t\tWARNING: Data name [%s] does not match variable name [%s].\n", d, v.Name)
@@ -53,6 +56,9 @@ func main() {
 		}
 		fmt.Printf("\tVars:\n")
 		for d, v := range o.Vars {
+			if printStructuredRecord(v) {
+				continue
+			}
 			fmt.Printf("\t\t%s :: %s = %v\n", d, v.VType, v.Val)
 			if d != v.Name {
 				fmt.Printf("\t\t\tWARNING: Data name [%s] does not match variable name [%s].\n", d, v.Name)
@@ -111,4 +117,33 @@ func main() {
 			}
 		}
 	}
+}
+
+// printStructuredRecord pretty-prints typedesc / iface_desc / typedesc_cache
+// records. Returns true if v was a structured record (and was printed).
+func printStructuredRecord(v *gbasm.Var) bool {
+	switch v.Kind {
+	case gbasm.KindTypedesc:
+		rec := gbasm.DecodeTypedesc(v)
+		fmt.Printf("\t\ttypedesc %s :: name=%q size=%d cache_ref=%s\n",
+			v.Name, rec.TypeName, rec.SizeBytes, rec.CacheSym)
+		for _, m := range rec.Methods {
+			fmt.Printf("\t\t\tmethod %s sig=%q name_hash=%d sig_hash=%d recv_shape=%d -> %s\n",
+				m.Name, m.Sig, m.NameHash, m.SigHash, m.RecvShape, m.FnSym)
+		}
+		return true
+	case gbasm.KindIfaceDesc:
+		rec := gbasm.DecodeIfaceDesc(v)
+		fmt.Printf("\t\tiface_desc %s :: name=%q method_count=%d\n",
+			v.Name, rec.IfaceName, len(rec.Methods))
+		for _, m := range rec.Methods {
+			fmt.Printf("\t\t\tmethod %s sig=%q name_hash=%d sig_hash=%d decl_idx=%d\n",
+				m.Name, m.Sig, m.NameHash, m.SigHash, m.DeclIdx)
+		}
+		return true
+	case gbasm.KindTypedescCache:
+		fmt.Printf("\t\ttypedesc_cache %s :: (8-byte writable, zero-init)\n", v.Name)
+		return true
+	}
+	return false
 }

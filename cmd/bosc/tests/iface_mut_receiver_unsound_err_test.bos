@@ -1,0 +1,27 @@
+package main
+import "string"
+
+// M1: a method with a `*mut self` receiver must NOT satisfy a `*self`-declared
+// interface requirement from a read-only source. Here `const c` yields a
+// read-only `*counter` view (&c is non-mut); letting it dispatch to the
+// mutating `bump(c *mut counter)` would drive a mutation through a read-only
+// interface. The coercion is rejected.
+type counter i64 {
+	bump(c *mut counter) byte[] {
+		return "bumped"
+	}
+}
+
+interface reader {
+	bump(r *self) byte[]
+}
+
+fn use(r reader) void {
+	string.puts(r.bump())
+}
+
+fn main() i64 {
+	const c counter = 0
+	use(&c)
+	return 0
+}

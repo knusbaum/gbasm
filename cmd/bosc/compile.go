@@ -213,12 +213,12 @@ func sameIgnoringOwned(a, b ASTType) bool {
 	return a.StripOwned().Same(b.StripOwned())
 }
 
-func interfaceConcreteTypeName(t ASTType) string {
-	return t.StripOwned().Name
-}
-
 func validateInterfaceCoercion(c *Context, errNode AST, dstt, srct ASTType) (valueBacked bool) {
-	concreteTypeName := interfaceConcreteTypeName(srct)
+	// Base type at the bottom of the shape's constructor stack. For composite
+	// sources (`*byte[]`, `byte[][]`) srct.Name is empty; shapeBaseName walks
+	// to the named leaf so satisfaction is checked against a real type's
+	// method set (and the typedesc symbol later resolves).
+	concreteTypeName := shapeBaseName(srct)
 	ifaceDecl, _ := c.InterfaceForName(dstt.Name)
 	// The coercion direction is determined by the source, not by the
 	// interface's declared receiver shape. A pointer source produces a
@@ -227,8 +227,16 @@ func validateInterfaceCoercion(c *Context, errNode AST, dstt, srct ASTType) (val
 	// Dispatch is uniform: `mov rdi, [iface+0]` — so T's methods must
 	// match the source direction, not the interface's syntactic shape.
 	pointerDirection := srct.Indirection > 0
-	if !c.TypeSatisfiesInterfaceAs(concreteTypeName, ifaceDecl, pointerDirection) {
-		CompileErrorF(errNode, "%s", interfaceSatisfactionError(c, concreteTypeName, dstt.Name, ifaceDecl, pointerDirection))
+	// Shape-word filter: derive the expected receiver shape from the source's
+	// full shape word (distinguishing *T / *mut T / **T / *byte[]) instead of
+	// the binary pointerDirection. The compile-time filter and the runtime
+	// helper (_iface.assert_to) use the same derivation so the two agree.
+	expectedRecv := recvShapeNone
+	if levels, serr := shapeStackFor(srct); serr == nil {
+		expectedRecv = expectedReceiverShape(levels)
+	}
+	if !c.TypeSatisfiesInterfaceAs(concreteTypeName, ifaceDecl, expectedRecv) {
+		CompileErrorF(errNode, "%s", interfaceSatisfactionError(c, concreteTypeName, dstt.Name, ifaceDecl, expectedRecv))
 	}
 	if dstt.OwnedMask != 0 && srct.OwnedMask == 0 {
 		CompileErrorF(errNode, "Cannot use non-owned %s where owned %s is required", srct, dstt.Name)
@@ -260,7 +268,117 @@ func emitTypedesc(of io.Writer, typeName string) {
 	fmt.Fprintf(of, "data %s byte[1] \"\\0\"\n", typedescSymbolName(typeName))
 }
 
-func interfaceSatisfactionError(c *Context, typeName, ifaceName string, iface *InterfaceDecl, pointerDirection bool) string {
+// emitTypedescFor emits the structured typedesc + cache pair for a named base
+// type declared in the current (home) package. The method table is the type's
+// full method set; the size is sizeof(T).
+func emitTypedescFor(of io.Writer, c *Context, isPub bool, typeName string) {
+	ownerPkg := c.Pkgname()
+	methods := methodEntriesForType(c, typeName, ownerPkg)
+	sz := sizeOfNamedType(c, typeName)
+	emitTypedescStructured(of, isPub, typeName, sz, methods)
+}
+
+// sizeOfNamedType returns sizeof of a named base type as it would appear by
+// value (used for the typedesc's size_bytes field; informational only).
+func sizeOfNamedType(c *Context, typeName string) (sz int) {
+	defer func() {
+		if recover() != nil {
+			sz = 0
+		}
+	}()
+	t := ASTType{Name: typeName}
+	return t.Size(c)
+}
+
+// builtinScalarTypes is the set of primitive base types whose typedescs are
+// emitted (once) by the builtin package.
+var builtinScalarTypes = []string{
+	"i8", "i16", "i32", "i64",
+	"u8", "u16", "u32", "u64",
+	"byte", "bool",
+}
+
+// isBuiltinScalarType reports whether name is a primitive scalar type whose
+// typedesc lives in the builtin package.
+func isBuiltinScalarType(name string) bool {
+	for _, s := range builtinScalarTypes {
+		if s == name {
+			return true
+		}
+	}
+	return false
+}
+
+// emitBuiltinScalarTypedescs emits the single shared typedesc for each
+// primitive base type. Called only when compiling the builtin package.
+func emitBuiltinScalarTypedescs(of io.Writer) {
+	for _, s := range builtinScalarTypes {
+		// Primitive scalars have no methods. Their size is fixed by name.
+		emitTypedescStructured(of, true, s, scalarSize(s), nil)
+	}
+}
+
+// scalarSize returns the byte size of a primitive scalar by name.
+func scalarSize(name string) int {
+	switch name {
+	case "i64", "u64":
+		return 8
+	case "i32", "u32":
+		return 4
+	case "i16", "u16":
+		return 2
+	case "i8", "u8", "byte", "bool":
+		return 1
+	}
+	return 0
+}
+
+// typedescOwnerPkg returns the package that emits the typedesc for the named
+// base type. Built-in scalars are owned by "builtin"; everything else is owned
+// by the package implied by the (possibly qualified) type name, defaulting to
+// the current package.
+func typedescOwnerPkg(c *Context, bareBase string) string {
+	if isBuiltinScalarType(bareBase) {
+		return "builtin"
+	}
+	return c.Pkgname()
+}
+
+// typedescSymbolForBase returns the fully-qualified typedesc symbol for a
+// (possibly package-qualified) base type name. A name like "geom.Point"
+// resolves to "geom.__typedesc_Point" (home package = geom); a bare name
+// resolves through the current package, with built-in scalars owned by
+// "builtin".
+func typedescSymbolForBase(c *Context, baseName string) string {
+	pkg := c.Pkgname()
+	bare := baseName
+	if dot := strings.LastIndex(baseName, "."); dot >= 0 {
+		pkg = baseName[:dot]
+		bare = baseName[dot+1:]
+	} else if isBuiltinScalarType(baseName) {
+		pkg = "builtin"
+	}
+	return fmt.Sprintf("%s.%s", pkg, typedescSymbolName(bare))
+}
+
+// expectedReceiverDesc renders a human-readable receiver type for the source's
+// receiver capability: a value source expects a bare-T receiver; a `*T` source
+// expects `*T`; a `*mut T` source accepts either `*T` or `*mut T` (the legal
+// `*mut -> *` weakening); an unsupported source has no compatible receiver.
+func expectedReceiverDesc(expectedRecv int, typeName string) string {
+	switch expectedRecv {
+	case recvShapeValue:
+		return typeName
+	case recvShapePtr:
+		return "*" + typeName
+	case recvShapeMutPtr:
+		return "*" + typeName + " or *mut " + typeName
+	default:
+		return "(no compatible receiver)"
+	}
+}
+
+func interfaceSatisfactionError(c *Context, typeName, ifaceName string, iface *InterfaceDecl, expectedRecv int) string {
 	methods, ok := c.TypeMethodsFor(typeName)
 	if !ok {
 		return fmt.Sprintf("Type %s does not implement interface %s", typeName, ifaceName)
@@ -273,18 +391,8 @@ func interfaceSatisfactionError(c *Context, typeName, ifaceName string, iface *I
 			if len(m.Args) == 0 || len(isig.Params) == 0 {
 				return fmt.Sprintf("Type %s does not implement interface %s: method %s has no receiver", typeName, ifaceName, isig.Name)
 			}
-			declReceiver := substituteReceiver(isig.Params[0].Type, typeName)
-			var expectedReceiver ASTType
-			if pointerDirection {
-				expectedReceiver = declReceiver
-				if expectedReceiver.Indirection == 0 {
-					expectedReceiver.Indirection = 1
-				}
-			} else {
-				expectedReceiver = ASTType{Name: typeName}
-			}
-			if !m.Args[0].Type.Same(expectedReceiver) {
-				return fmt.Sprintf("Type %s does not implement interface %s: method %s receiver has type %s, expected %s", typeName, ifaceName, isig.Name, m.Args[0].Type, expectedReceiver)
+			if !receiverSatisfies(receiverShapeOf(m.Args[0].Type), expectedRecv) {
+				return fmt.Sprintf("Type %s does not implement interface %s: method %s receiver has type %s, expected %s", typeName, ifaceName, isig.Name, m.Args[0].Type, expectedReceiverDesc(expectedRecv, typeName))
 			}
 			if len(m.Args) != len(isig.Params) {
 				return fmt.Sprintf("Type %s does not implement interface %s: method %s has %d parameters, expected %d", typeName, ifaceName, isig.Name, len(m.Args), len(isig.Params))
@@ -1938,6 +2046,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	}
 
 	switch ast := a.(type) {
+	case *PreboundSpot:
+		return ast.S
+	case *TypeAssert:
+		return compileTypeAssert(of, c, ast, dest)
+	case *TypeSwitch:
+		compileTypeSwitch(of, c, ast)
+		return nullspot
 	case *OwnedPromotion:
 		// Compile the inner expression without a typed dest (the inner type differs
 		// from the promoted type). Relabel the result with the promoted type.
@@ -1954,7 +2069,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	case *TypeAliasDecl:
 		// Emit typealias directive so bas can carry it into the .bo.
 		fmt.Fprintf(of, "%stypealias %s %s\n", pubPrefix(ast.IsPub), ast.Name, ast.Underlying)
-		emitTypedesc(of, ast.Name)
+		emitTypedescFor(of, c, ast.IsPub, ast.Name)
 		return nullspot
 	case *TypeWithMethodsDecl:
 		// Emit typealias directive with method names for cross-package import.
@@ -1963,7 +2078,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, " %s", m.Name)
 		}
 		fmt.Fprintf(of, "\n")
-		emitTypedesc(of, ast.Name)
+		emitTypedescFor(of, c, ast.IsPub, ast.Name)
 		// Emit each method as `function TypeName.method_name` — the assembler
 		// prepends the package name, producing pkg.TypeName.method_name.
 		for _, m := range ast.Methods {
@@ -1993,6 +2108,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, "\t}\n")
 		}
 		fmt.Fprintf(of, "}\n")
+		// Emit the structured iface_desc (assertion-time companion to
+		// typedesc method tables). `any` yields method_count == 0.
+		emitIfaceDescStructured(of, ast.IsPub, ast.Name, reqEntriesForInterface(c, ast))
 		return nullspot
 	case *ValuesDecl:
 		// Cross-package metadata directive: bas parses this into a
@@ -2018,7 +2136,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, "\tmethod %s\n", m.Name)
 		}
 		fmt.Fprintf(of, "}\n")
-		emitTypedesc(of, ast.Name)
+		emitTypedescFor(of, c, ast.IsPub, ast.Name)
 		// One static projection table per declared projection. Each
 		// table is a fixed array indexed by the case's compiler-private
 		// tag, so a projection cast can lower to a single indexed load
@@ -2071,7 +2189,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, "\t%s %s\n", f.Name, f.Type)
 		}
 		fmt.Fprintf(of, "}\n")
-		emitTypedesc(of, ast.TName)
+		emitTypedescFor(of, c, ast.IsPub, ast.TName)
 		if methods, ok := c.TypeMethodsFor(ast.TName); ok {
 			for _, m := range methods {
 				qualified := &FuncDecl{
@@ -2325,6 +2443,58 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		srcSpot.free(of)
 		return nullspot
+	case *MultiAssign:
+		// Multi-value re-assignment to pre-declared lvalues: a, b = expr.
+		initType := ast.Init.ASTType(c)
+		if !initType.MultiReturn {
+			CompileErrorF(a, "multi-assignment requires a multi-value expression on the right-hand side")
+		}
+		if len(ast.Targets) != len(initType.AnonFields) {
+			CompileErrorF(a, "multi-assignment: %d targets but right-hand side yields %d values", len(ast.Targets), len(initType.AnonFields))
+		}
+		srcSpot := compileTop(of, c, ast.Init, nullspot)
+		initDecl, _ := structDeclForType(c, initType)
+		for i, tgt := range ast.Targets {
+			field := initType.AnonFields[i]
+			sym, ok := tgt.(*Symbol)
+			if !ok {
+				CompileErrorF(tgt, "multi-assignment target must be a simple variable name")
+			}
+			declType, declared := c.DeclaredTypeForVar(sym.Name)
+			if !declared {
+				CompileErrorF(tgt, "Variable %q undeclared.", sym.Name)
+			}
+			if c.IsConst(sym.Name) {
+				CompileErrorF(tgt, "Cannot assign to const binding %q", sym.Name)
+			}
+			if _, reason := coerceType(c, declType, field.Type); reason != coerceOK {
+				reportCoerceFailure(tgt, declType, field.Type, reason,
+					"multi-assignment to %s: cannot assign %s to %s", sym.Name, field.Type, declType)
+			}
+			offset, _ := initDecl.ByteOffset(c, field.Name)
+			dst := spot{ref: sym.Name, t: declType, nameIsAddress: typeIsMemoryBacked(c, declType)}
+			if dst.nameIsAddress {
+				tmp := c.Temp()
+				fmt.Fprintf(of, "\tlocal %s 64\n", tmp)
+				sz := declType.Size(c)
+				for off := 0; off < sz; off += 8 {
+					fmt.Fprintf(of, "\tmov %s [%s+%d]\n", tmp, srcSpot.ref, offset+off)
+					fmt.Fprintf(of, "\tmov [%s+%d] %s\n", sym.Name, off, tmp)
+				}
+				fmt.Fprintf(of, "\tforget %s\n", tmp)
+			} else {
+				fmt.Fprintf(of, "\tmov %s [%s+%d]\n", sym.Name, srcSpot.ref, offset)
+			}
+			// Keep flow facts conservative: a freshly-assigned pointer is
+			// treated as a new local origin so later reads don't trip stale
+			// deref checks on a value we just produced from an assertion.
+			if c.ResolveUnderlying(declType).Indirection > 0 {
+				pexpr := c.PointerFlow().NewLocalOrigin(flow.Binding(sym.Name))
+				c.PointerFlow().AssignPointer(flow.Binding(sym.Name), pexpr)
+			}
+		}
+		srcSpot.free(of)
+		return nullspot
 	case *FuncDecl:
 		c := c.SubContext()
 		defer c.ForgetPointerBindings()
@@ -2560,7 +2730,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			CompileErrorF(a, "No such function \"%v\"", ast.QualifiedName())
 		}
-		if len(ast.Args) != len(decl.Args) {
+		if decl.Variadic {
+			ast = desugarVariadicCall(of, c, a, ast, decl)
+		} else if len(ast.Args) != len(decl.Args) {
 			CompileErrorF(a, "%s expected %d arguments, but was called with %d",
 				ast.QualifiedName(), len(decl.Args), len(ast.Args))
 		}
@@ -5051,7 +5223,8 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 	fnPtr := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
 	fmt.Fprintf(of, "\tmov %s [%s+0]\n", dataPtr.ref, ifaceRef)
 	fmt.Fprintf(of, "\tmov %s [%s+8]\n", vtablePtr.ref, ifaceRef)
-	fmt.Fprintf(of, "\tmov %s [%s+%d]\n", fnPtr.ref, vtablePtr.ref, (methodIdx+1)*8)
+	// Slot 0 = typedesc, slot 1 = shape word, methods at slot 2+.
+	fmt.Fprintf(of, "\tmov %s [%s+%d]\n", fnPtr.ref, vtablePtr.ref, (methodIdx+2)*8)
 	vtablePtr.free(of)
 
 	order := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
@@ -5155,6 +5328,512 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 	return ret
 }
 
+// desugarVariadicCall rewrites a call to a variadic function so the generic
+// argument-setup path sees a fixed argument list. The N trailing variadic
+// arguments are packed into a stack-allocated array in the caller's frame
+// (with per-element concrete→element-type coercion), and a slice header
+// pointing at that array replaces them. A single trailing `slice...`
+// forwards the slice verbatim.
+func desugarVariadicCall(of io.Writer, c *Context, a AST, ast *Funcall, decl *FuncDecl) *Funcall {
+	nfixed := len(decl.Args) - 1
+	variParam := decl.Args[nfixed]
+	elemType := variParam.Type.ElementType()
+	sliceType := variParam.Type
+
+	if len(ast.Args) < nfixed {
+		CompileErrorF(a, "%s expected at least %d arguments, but was called with %d",
+			ast.QualifiedName(), nfixed, len(ast.Args))
+	}
+
+	// Explicit forwarding: a single trailing `slice...`.
+	if len(ast.Args) == nfixed+1 {
+		if fwd, ok := ast.Args[nfixed].(*VariadicForward); ok {
+			srct := fwd.Val.ASTType(c)
+			if !srct.IsSlice() || !srct.ElementType().Same(elemType) {
+				CompileErrorF(a, "cannot forward %s as variadic %s; expected a %s", srct, sliceType, sliceType)
+			}
+			s := compileTop(of, c, fwd.Val, nullspot)
+			newArgs := append([]AST{}, ast.Args[:nfixed]...)
+			newArgs = append(newArgs, &PreboundSpot{S: s, p: ast.p})
+			return &Funcall{Callee: ast.Callee, Args: newArgs, p: ast.p}
+		}
+	}
+
+	// Reject a stray `slice...` that isn't the sole trailing argument.
+	for i := nfixed; i < len(ast.Args); i++ {
+		if _, ok := ast.Args[i].(*VariadicForward); ok {
+			CompileErrorF(ast.Args[i], "`...` forwarding must be the only trailing variadic argument")
+		}
+	}
+
+	nvar := len(ast.Args) - nfixed
+	elemSize := elemType.Size(c)
+	iface := c.IsInterfaceType(elemType)
+
+	// Build the args slice (header + backing) and bind it as a prebound spot.
+	var sliceSpot spot
+	if nvar == 0 {
+		// Empty slice: header with nil data and zero length.
+		hdr := c.Temp()
+		fmt.Fprintf(of, "\tbytes %s 16\n", hdr)
+		fmt.Fprintf(of, "\tmov qword[%s] 0\n", hdr)
+		fmt.Fprintf(of, "\tmov qword[%s+8] 0\n", hdr)
+		sliceSpot = spot{ref: hdr, t: sliceType, nameIsAddress: true}
+	} else {
+		backing := c.Temp()
+		fmt.Fprintf(of, "\tbytes %s %d\n", backing, elemSize*nvar)
+		for i := 0; i < nvar; i++ {
+			arg := ast.Args[nfixed+i]
+			argt := arg.ASTType(c)
+			// An untyped integer literal has no concrete size; materialize it
+			// as i64 (the default integer type) before coercing.
+			if argt.Same(intlitASTType()) {
+				lit := newSpot(of, c, c.Temp(), numASTType())
+				lv := compileTop(of, c, arg, lit)
+				if !lv.same(&lit) {
+					move(of, c, lit, lv)
+					lv.free(of)
+				}
+				arg = &PreboundSpot{S: lit, p: arg.Pos()}
+				argt = numASTType()
+			}
+			elemRef := fmt.Sprintf("[%s+%d]", backing, i*elemSize)
+			if iface {
+				// emitInterfaceFatPtr forms `[<destRef>+0]` / `[<destRef>+8]`.
+				// bas can't parse a doubly-offset memory operand
+				// (`[base+N+0]`), so materialize the element address in a
+				// register and pass that as the (offset-zero) base.
+				elemAddr := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+				fmt.Fprintf(of, "\tlea %s [%s+%d]\n", elemAddr.ref, backing, i*elemSize)
+				elemBase := elemAddr.ref
+				// A concrete (non-interface) element coerces into the slot via
+				// emitInterfaceFatPtr regardless of whether shouldCoerceToInterface
+				// fires — both arms built the same fat pointer. Only an
+				// already-interface argument of the same type takes the 16-byte
+				// copy path.
+				if !c.IsInterfaceType(argt) {
+					emitInterfaceFatPtr(of, c, arg, elemType, argt, arg, elemBase, "")
+				} else {
+					// Already an interface of the same type: copy 16 bytes.
+					src := compileTop(of, c, arg, nullspot)
+					tmp := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+					fmt.Fprintf(of, "\tmov %s [%s+0]\n", tmp.ref, src.ref)
+					fmt.Fprintf(of, "\tmov [%s+%d] %s\n", backing, i*elemSize, tmp.ref)
+					fmt.Fprintf(of, "\tmov %s [%s+8]\n", tmp.ref, src.ref)
+					fmt.Fprintf(of, "\tmov [%s+%d] %s\n", backing, i*elemSize+8, tmp.ref)
+					tmp.free(of)
+					src.free(of)
+				}
+				elemAddr.free(of)
+			} else {
+				effective, reason := coerceType(c, elemType, argt)
+				if reason != coerceOK {
+					reportCoerceFailure(arg, elemType, argt, reason,
+						"For variadic element %d, expected type %v but got %v", i, elemType, argt)
+				}
+				_ = effective
+				elemSpot := spot{ref: elemRef, t: elemType, nameIsAddress: typeIsMemoryBacked(c, elemType)}
+				if elemSpot.nameIsAddress {
+					val := compileTop(of, c, arg, nullspot)
+					move(of, c, elemSpot, val)
+					val.free(of)
+				} else {
+					val := compileTop(of, c, arg, nullspot)
+					storeScalarToMem(of, c, elemRef, elemType, val)
+					val.free(of)
+				}
+			}
+		}
+		hdr := c.Temp()
+		fmt.Fprintf(of, "\tbytes %s 16\n", hdr)
+		lt := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+		fmt.Fprintf(of, "\tlea %s %s\n", lt.ref, backing)
+		fmt.Fprintf(of, "\tmov qword[%s] %s\n", hdr, lt.ref)
+		fmt.Fprintf(of, "\tmov qword[%s+8] %d\n", hdr, nvar)
+		lt.free(of)
+		sliceSpot = spot{ref: hdr, t: sliceType, nameIsAddress: true}
+	}
+
+	newArgs := append([]AST{}, ast.Args[:nfixed]...)
+	newArgs = append(newArgs, &PreboundSpot{S: sliceSpot, p: ast.p})
+	return &Funcall{Callee: ast.Callee, Args: newArgs, p: ast.p}
+}
+
+// storeScalarToMem stores a register-resident scalar value into a memory slot
+// of the given (≤8-byte) type. For narrower-than-8 types it routes through a
+// width-matched local so bas emits the correctly-sized sub-register store.
+func storeScalarToMem(of io.Writer, c *Context, memRef string, t ASTType, val spot) {
+	sz := t.Size(c)
+	if sz >= 8 {
+		fmt.Fprintf(of, "\tmov qword%s %s\n", memRef, val.ref)
+		return
+	}
+	w := c.Temp()
+	fmt.Fprintf(of, "\tlocal %s %d\n", w, sz*8)
+	fmt.Fprintf(of, "\tmov %s %s\n", w, val.ref)
+	switch sz {
+	case 1:
+		fmt.Fprintf(of, "\tmov byte%s %s\n", memRef, w)
+	case 2:
+		fmt.Fprintf(of, "\tmov word%s %s\n", memRef, w)
+	case 4:
+		fmt.Fprintf(of, "\tmov dword%s %s\n", memRef, w)
+	}
+	fmt.Fprintf(of, "\tforget %s\n", w)
+}
+
+// compileTypeAssert lowers a concrete-type assertion `x.(T)` into a multiretu
+// {T, bool} result. T must be a concrete (non-interface) type. The check is
+// the two-cmp form: slot-0 typedesc identity plus slot-1 shape-word equality.
+func compileTypeAssert(of io.Writer, c *Context, ast *TypeAssert, dest spot) spot {
+	srcT := ast.Val.ASTType(c)
+	if !c.IsInterfaceType(srcT) {
+		CompileErrorF(ast, "type assertion requires an interface value on the left of `.(...)`, got %s", srcT)
+	}
+	if c.IsInterfaceType(ast.T) {
+		return compileInterfaceAssert(of, c, ast, dest, srcT)
+	}
+	tgt := ast.T
+	baseName := shapeBaseName(tgt)
+	if baseName == "" {
+		CompileErrorF(ast, "type assertion target %s is not a concrete named type", tgt)
+	}
+	shapeWord, serr := shapeWordFor(tgt)
+	if serr != nil {
+		CompileErrorF(ast, "cannot assert to %s: %s", tgt, serr.Error())
+	}
+	tdSym := typedescSymbolForBase(c, baseName)
+
+	// Compile the interface value to a 16-byte fat pointer (address in src.ref).
+	src := compileAsInterfaceValue(of, c, ast.Val, srcT, ast.Val)
+	defer src.free(of)
+
+	resultType := ast.ASTType(c)
+	if dest.empty() {
+		dest = newSpot(of, c, c.Temp(), resultType)
+	}
+	// dest is a memory-backed block holding the multiretu {_0 T, _1 bool};
+	// fields are packed, so compute the real offsets rather than assume +0/+8.
+	resDecl, _ := structDeclForType(c, resultType)
+	valOff, _ := resDecl.ByteOffset(c, "_0")
+	okOff, _ := resDecl.ByteOffset(c, "_1")
+
+	vtab := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	td := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	shp := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	wantTd := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	defer vtab.free(of)
+	defer td.free(of)
+	defer shp.free(of)
+	defer wantTd.free(of)
+
+	fail := c.Label("assertfail")
+	done := c.Label("assertdone")
+
+	fmt.Fprintf(of, "\tmov %s [%s+8]\n", vtab.ref, src.ref)   // vtable ptr
+	fmt.Fprintf(of, "\tmov %s [%s+0]\n", td.ref, vtab.ref)    // slot 0 typedesc
+	fmt.Fprintf(of, "\tmov %s [%s+8]\n", shp.ref, vtab.ref)   // slot 1 shape word
+	fmt.Fprintf(of, "\tlea %s %s\n", wantTd.ref, tdSym)
+	fmt.Fprintf(of, "\tcmp %s %s\n", td.ref, wantTd.ref)
+	fmt.Fprintf(of, "\tjne %s\n", fail)
+	fmt.Fprintf(of, "\tmov %s %d\n", wantTd.ref, int64(shapeWord))
+	fmt.Fprintf(of, "\tcmp %s %s\n", shp.ref, wantTd.ref)
+	fmt.Fprintf(of, "\tjne %s\n", fail)
+
+	// Success: extract the data slot as T (pointer or value), ok = 1.
+	// Read at the target width directly into a width-matched local so the
+	// store back into the result block carries the right size.
+	tsz := tgt.Size(c)
+	if tsz >= 8 {
+		dat := c.Temp()
+		fmt.Fprintf(of, "\tlocal %s 64\n", dat)
+		fmt.Fprintf(of, "\tmov %s [%s+0]\n", dat, src.ref)
+		fmt.Fprintf(of, "\tmov qword[%s+%d] %s\n", dest.ref, valOff, dat)
+		fmt.Fprintf(of, "\tforget %s\n", dat)
+	} else {
+		dat := c.Temp()
+		fmt.Fprintf(of, "\tlocal %s %d\n", dat, tsz*8)
+		switch tsz {
+		case 1:
+			fmt.Fprintf(of, "\tmov %s byte[%s+0]\n", dat, src.ref)
+			fmt.Fprintf(of, "\tmov byte[%s+%d] %s\n", dest.ref, valOff, dat)
+		case 2:
+			fmt.Fprintf(of, "\tmov %s word[%s+0]\n", dat, src.ref)
+			fmt.Fprintf(of, "\tmov word[%s+%d] %s\n", dest.ref, valOff, dat)
+		case 4:
+			fmt.Fprintf(of, "\tmov %s dword[%s+0]\n", dat, src.ref)
+			fmt.Fprintf(of, "\tmov dword[%s+%d] %s\n", dest.ref, valOff, dat)
+		}
+		fmt.Fprintf(of, "\tforget %s\n", dat)
+	}
+	fmt.Fprintf(of, "\tmov byte[%s+%d] 1\n", dest.ref, okOff)
+	fmt.Fprintf(of, "\tjmp %s\n", done)
+
+	// Failure: zero the value slot and ok = 0.
+	fmt.Fprintf(of, "\tlabel %s\n", fail)
+	if tsz >= 8 {
+		fmt.Fprintf(of, "\tmov qword[%s+%d] 0\n", dest.ref, valOff)
+	} else {
+		switch tsz {
+		case 1:
+			fmt.Fprintf(of, "\tmov byte[%s+%d] 0\n", dest.ref, valOff)
+		case 2:
+			fmt.Fprintf(of, "\tmov word[%s+%d] 0\n", dest.ref, valOff)
+		case 4:
+			fmt.Fprintf(of, "\tmov dword[%s+%d] 0\n", dest.ref, valOff)
+		}
+	}
+	fmt.Fprintf(of, "\tmov byte[%s+%d] 0\n", dest.ref, okOff)
+	fmt.Fprintf(of, "\tlabel %s\n", done)
+
+	dest.t = resultType
+	return dest
+}
+
+// ifaceDescSymbol returns the fully-qualified iface_desc symbol for an
+// interface type. The owner package is the interface's home package: built-in
+// interfaces (`any`) live in "builtin"; a qualified name `pkg.I` lives in
+// `pkg`; a bare local name lives in the current package.
+func ifaceDescSymbol(c *Context, ifaceName string) string {
+	pkg := c.Pkgname()
+	bare := ifaceName
+	if dot := strings.LastIndex(ifaceName, "."); dot >= 0 {
+		pkg = ifaceName[:dot]
+		bare = ifaceName[dot+1:]
+	} else if _, ok := c.InterfaceForName("builtin." + ifaceName); ok {
+		// Built-in interface registered under the builtin package (e.g. `any`).
+		if _, local := c.interfaceDecls[ifaceName]; !local {
+			pkg = "builtin"
+		}
+	}
+	return fmt.Sprintf("%s.__iface_desc_%s", pkg, strings.ReplaceAll(bare, ".", "_"))
+}
+
+// compileInterfaceAssert lowers an interface-to-interface assertion `x.(I)`:
+// it loads (typedesc, shape, data) from the source fat pointer, calls
+// _iface.assert_to with the target iface_desc, then builds the result
+// multiretu{I, bool}. On success the asserted interface carries src_data
+// verbatim and the helper-provided itab vtable; on failure it is zeroed.
+func compileInterfaceAssert(of io.Writer, c *Context, ast *TypeAssert, dest spot, srcT ASTType) spot {
+	descSym := ifaceDescSymbol(c, ast.T.Name)
+
+	src := compileAsInterfaceValue(of, c, ast.Val, srcT, ast.Val)
+	defer src.free(of)
+
+	resultType := ast.ASTType(c)
+	if dest.empty() {
+		dest = newSpot(of, c, c.Temp(), resultType)
+	}
+	resDecl, _ := structDeclForType(c, resultType)
+	valOff, _ := resDecl.ByteOffset(c, "_0") // the asserted interface (16 bytes)
+	okOff, _ := resDecl.ByteOffset(c, "_1")  // success flag
+
+	// Load the four helper arguments and call. The helper is a raw .bs
+	// function returning (vtable in rax, ok in rdx). We pin the arg registers
+	// so arg compilation (already done) can't be evicted underneath us.
+	// Unlike compileTypeSwitchIfaceCase (which receives the already-loaded
+	// td/shp spots), the assert path must dereference the source vtable here to
+	// pull src_ti/src_shape, so it additionally acquires rax as the scratch
+	// base register for those two indirect loads.
+	fmt.Fprintf(of, "\tacquire rdi\n")
+	fmt.Fprintf(of, "\tacquire rsi\n")
+	fmt.Fprintf(of, "\tacquire rdx\n")
+	fmt.Fprintf(of, "\tacquire rcx\n")
+	fmt.Fprintf(of, "\tacquire rax\n")
+	fmt.Fprintf(of, "\tmov rax [%s+8]\n", src.ref) // src vtable ptr
+	fmt.Fprintf(of, "\tmov rdi [rax+0]\n")          // src_ti
+	fmt.Fprintf(of, "\tmov rsi [rax+8]\n")          // src_shape
+	fmt.Fprintf(of, "\tmov rdx [%s+0]\n", src.ref)  // src_data
+	fmt.Fprintf(of, "\tlea rcx %s\n", descSym)
+	fmt.Fprintf(of, "\tcall _iface.assert_to\n")
+	// rax = itab vtable ptr (or 0), rdx = ok flag. Stash both before they are
+	// clobbered by the result-building loads.
+	okTmp := c.Temp()
+	vtTmp := c.Temp()
+	fmt.Fprintf(of, "\tlocal %s 64\n", okTmp)
+	fmt.Fprintf(of, "\tlocal %s 64\n", vtTmp)
+	fmt.Fprintf(of, "\tmov %s rdx\n", okTmp)
+	fmt.Fprintf(of, "\tmov %s rax\n", vtTmp)
+	fmt.Fprintf(of, "\trelease rax\n")
+	fmt.Fprintf(of, "\trelease rcx\n")
+	fmt.Fprintf(of, "\trelease rdx\n")
+	fmt.Fprintf(of, "\trelease rsi\n")
+	fmt.Fprintf(of, "\trelease rdi\n")
+
+	fail := c.Label("ifaceassertfail")
+	done := c.Label("ifaceassertdone")
+
+	fmt.Fprintf(of, "\tcmp %s 0\n", okTmp)
+	fmt.Fprintf(of, "\tje %s\n", fail)
+	// Success: result interface = [src_data, vtable]; ok = 1.
+	dataTmp := c.Temp()
+	fmt.Fprintf(of, "\tlocal %s 64\n", dataTmp)
+	fmt.Fprintf(of, "\tmov %s [%s+0]\n", dataTmp, src.ref)
+	fmt.Fprintf(of, "\tmov qword[%s+%d] %s\n", dest.ref, valOff, dataTmp)
+	fmt.Fprintf(of, "\tmov qword[%s+%d] %s\n", dest.ref, valOff+8, vtTmp)
+	fmt.Fprintf(of, "\tmov byte[%s+%d] 1\n", dest.ref, okOff)
+	fmt.Fprintf(of, "\tforget %s\n", dataTmp)
+	fmt.Fprintf(of, "\tjmp %s\n", done)
+	// Failure: zero the interface and ok = 0.
+	fmt.Fprintf(of, "\tlabel %s\n", fail)
+	fmt.Fprintf(of, "\tmov qword[%s+%d] 0\n", dest.ref, valOff)
+	fmt.Fprintf(of, "\tmov qword[%s+%d] 0\n", dest.ref, valOff+8)
+	fmt.Fprintf(of, "\tmov byte[%s+%d] 0\n", dest.ref, okOff)
+	fmt.Fprintf(of, "\tlabel %s\n", done)
+	fmt.Fprintf(of, "\tforget %s\n", okTmp)
+	fmt.Fprintf(of, "\tforget %s\n", vtTmp)
+
+	dest.t = resultType
+	return dest
+}
+
+// compileTypeSwitch lowers `switch (v x.(type)) { case T {...} ... }`. Each
+// case is tested top-down; the first match binds `v` to the case's type
+// (narrowed inside the case body) and runs the body. `default` runs if no
+// case matched. No fallthrough.
+func compileTypeSwitch(of io.Writer, c *Context, ast *TypeSwitch) {
+	srcT := ast.Val.ASTType(c)
+	if !c.IsInterfaceType(srcT) {
+		CompileErrorF(ast, "type switch requires an interface value, got %s", srcT)
+	}
+	src := compileAsInterfaceValue(of, c, ast.Val, srcT, ast.Val)
+	defer src.free(of)
+
+	vtab := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	td := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	shp := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	want := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+	defer vtab.free(of)
+	defer td.free(of)
+	defer shp.free(of)
+	defer want.free(of)
+	fmt.Fprintf(of, "\tmov %s [%s+8]\n", vtab.ref, src.ref)
+	fmt.Fprintf(of, "\tmov %s [%s+0]\n", td.ref, vtab.ref)
+	fmt.Fprintf(of, "\tmov %s [%s+8]\n", shp.ref, vtab.ref)
+
+	end := c.Label("tswend")
+	var defaultCase *TypeCase
+	for _, cs := range ast.Cases {
+		if cs.IsDefault {
+			defaultCase = cs
+			continue
+		}
+		if c.IsInterfaceType(cs.T) {
+			compileTypeSwitchIfaceCase(of, c, ast, cs, src, td, shp, end)
+			continue
+		}
+		baseName := shapeBaseName(cs.T)
+		shapeWord, serr := shapeWordFor(cs.T)
+		if serr != nil {
+			CompileErrorF(cs.Body, "cannot match %s: %s", cs.T, serr.Error())
+		}
+		tdSym := typedescSymbolForBase(c, baseName)
+		next := c.Label("tswnext")
+		fmt.Fprintf(of, "\tlea %s %s\n", want.ref, tdSym)
+		fmt.Fprintf(of, "\tcmp %s %s\n", td.ref, want.ref)
+		fmt.Fprintf(of, "\tjne %s\n", next)
+		fmt.Fprintf(of, "\tmov %s %d\n", want.ref, int64(shapeWord))
+		fmt.Fprintf(of, "\tcmp %s %s\n", shp.ref, want.ref)
+		fmt.Fprintf(of, "\tjne %s\n", next)
+		// Match: bind v to the data slot as cs.T inside a fresh scope.
+		compileTypeCaseBody(of, c, ast.BindName, cs.T, src, cs.Body)
+		fmt.Fprintf(of, "\tjmp %s\n", end)
+		fmt.Fprintf(of, "\tlabel %s\n", next)
+	}
+	if defaultCase != nil {
+		compileTop(of, c, defaultCase.Body, nullspot)
+	}
+	fmt.Fprintf(of, "\tlabel %s\n", end)
+}
+
+// compileTypeCaseBody binds `bindName` to the source's data slot reinterpreted
+// as type T, then compiles the case body in a child scope.
+func compileTypeCaseBody(of io.Writer, c *Context, bindName string, T ASTType, src spot, body *Block) {
+	child := c.SubContext()
+	bindSlot := newSpot(of, child, bindName, T)
+	child.BindVar(body, bindName, T, false)
+	tsz := T.Size(c)
+	if bindSlot.nameIsAddress {
+		// Memory-backed (pointer-to-struct etc. is still pointer-sized; this
+		// path only triggers for >8-byte value types, which can't be in an
+		// interface, so it is effectively unreachable).
+		dat := newSpot(of, child, child.Temp(), ASTType{Name: "i64"})
+		fmt.Fprintf(of, "\tmov %s [%s+0]\n", dat.ref, src.ref)
+		fmt.Fprintf(of, "\tmov [%s] %s\n", bindSlot.ref, dat.ref)
+		dat.free(of)
+	} else if tsz >= 8 {
+		fmt.Fprintf(of, "\tmov %s [%s+0]\n", bindSlot.ref, src.ref)
+	} else {
+		// Read the data slot at the bind's width directly into the slot.
+		switch tsz {
+		case 1:
+			fmt.Fprintf(of, "\tmov %s byte[%s+0]\n", bindSlot.ref, src.ref)
+		case 2:
+			fmt.Fprintf(of, "\tmov %s word[%s+0]\n", bindSlot.ref, src.ref)
+		case 4:
+			fmt.Fprintf(of, "\tmov %s dword[%s+0]\n", bindSlot.ref, src.ref)
+		}
+	}
+	compileTop(of, child, body, nullspot)
+	// Release the bind slot's Ralloc name so a sibling case can rebind the
+	// same user-visible name to a different type.
+	fmt.Fprintf(of, "\tforget %s\n", bindName)
+}
+
+// compileTypeSwitchIfaceCase lowers an interface-typed case in a type switch.
+// It calls _iface.assert_to with the source typedesc/shape/data and the case
+// interface's iface_desc; on success it binds `v` to the asserted interface
+// (a 16-byte fat pointer) inside a fresh scope and runs the body, then jumps
+// to end. On failure it falls through to the next case (first-match-wins).
+func compileTypeSwitchIfaceCase(of io.Writer, c *Context, ast *TypeSwitch, cs *TypeCase, src, td, shp spot, end string) {
+	descSym := ifaceDescSymbol(c, cs.T.Name)
+	next := c.Label("tswnext")
+
+	// Call assert_to: rdi=src_ti(td), rsi=shape(shp), rdx=data, rcx=desc.
+	// The switch head already materialized src_ti and src_shape into the td/shp
+	// spots once for all cases, so (unlike compileInterfaceAssert) no rax scratch
+	// is needed to re-deref the vtable: rdi/rsi load straight from those spots.
+	fmt.Fprintf(of, "\tacquire rdi\n")
+	fmt.Fprintf(of, "\tacquire rsi\n")
+	fmt.Fprintf(of, "\tacquire rdx\n")
+	fmt.Fprintf(of, "\tacquire rcx\n")
+	fmt.Fprintf(of, "\tmov rdi %s\n", td.ref)
+	fmt.Fprintf(of, "\tmov rsi %s\n", shp.ref)
+	fmt.Fprintf(of, "\tmov rdx [%s+0]\n", src.ref)
+	fmt.Fprintf(of, "\tlea rcx %s\n", descSym)
+	fmt.Fprintf(of, "\tcall _iface.assert_to\n")
+	okTmp := c.Temp()
+	vtTmp := c.Temp()
+	fmt.Fprintf(of, "\tlocal %s 64\n", okTmp)
+	fmt.Fprintf(of, "\tlocal %s 64\n", vtTmp)
+	fmt.Fprintf(of, "\tmov %s rdx\n", okTmp)
+	fmt.Fprintf(of, "\tmov %s rax\n", vtTmp)
+	fmt.Fprintf(of, "\trelease rcx\n")
+	fmt.Fprintf(of, "\trelease rdx\n")
+	fmt.Fprintf(of, "\trelease rsi\n")
+	fmt.Fprintf(of, "\trelease rdi\n")
+	fmt.Fprintf(of, "\tcmp %s 0\n", okTmp)
+	fmt.Fprintf(of, "\tje %s\n", next)
+
+	// Match: build the asserted interface block, bind `v`, run body.
+	child := c.SubContext()
+	bindSlot := newSpot(of, child, ast.BindName, cs.T)
+	child.BindVar(cs.Body, ast.BindName, cs.T, false)
+	// bindSlot is a 16-byte memory-backed interface; [+0]=data [+8]=vtable.
+	dataTmp := child.Temp()
+	fmt.Fprintf(of, "\tlocal %s 64\n", dataTmp)
+	fmt.Fprintf(of, "\tmov %s [%s+0]\n", dataTmp, src.ref)
+	fmt.Fprintf(of, "\tmov [%s+0] %s\n", bindSlot.ref, dataTmp)
+	fmt.Fprintf(of, "\tmov [%s+8] %s\n", bindSlot.ref, vtTmp)
+	fmt.Fprintf(of, "\tforget %s\n", dataTmp)
+	compileTop(of, child, cs.Body, nullspot)
+	fmt.Fprintf(of, "\tforget %s\n", ast.BindName)
+	fmt.Fprintf(of, "\tforget %s\n", okTmp)
+	fmt.Fprintf(of, "\tforget %s\n", vtTmp)
+	fmt.Fprintf(of, "\tjmp %s\n", end)
+	fmt.Fprintf(of, "\tlabel %s\n", next)
+}
+
 // emitInterfaceFatPtr validates that srct satisfies the interface dstt, registers
 // the vtable, and emits stores to fill the two-word fat pointer at destRef. srct
 // may be a concrete pointer or a non-pointer concrete value that fits in the
@@ -5176,7 +5855,12 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 // interface look dead, which is the opposite of what an ownership transfer
 // means.
 func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTType, valAST AST, destRef, destBinding string) {
-	concreteTypeName := interfaceConcreteTypeName(srct)
+	// The vtable and its typedesc relocation are keyed off the *base* type of
+	// the source — the leaf at the bottom of the shape's constructor stack.
+	// For composite sources (`*byte[]`, `byte[][]`, `*byte[N]`) the bare
+	// srct.Name is empty; shapeBaseName walks to the named leaf (`byte`,
+	// `geom.Point`, ...) so the typedesc symbol resolves to a real base type.
+	concreteTypeName := shapeBaseName(srct)
 	valueBacked := validateInterfaceCoercion(c, errNode, dstt, srct)
 	ifaceDecl, _ := c.InterfaceForName(dstt.Name)
 	// Split qualified type names (e.g. "io.FD") so the vtable's method
@@ -5190,10 +5874,21 @@ func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTTy
 		typePkg = concreteTypeName[:dot]
 		bareType = concreteTypeName[dot+1:]
 	}
-	vtableName := fmt.Sprintf("__vtable_%s__%s",
+	// Built-in scalar typedescs live in the builtin package, regardless of
+	// which package performs the coercion.
+	if isBuiltinScalarType(bareType) {
+		typePkg = "builtin"
+	}
+	levels, serr := shapeStackFor(srct)
+	if serr != nil {
+		CompileErrorF(errNode, "Cannot convert value of type %s to interface %s: %s", srct, dstt.Name, serr.Error())
+	}
+	shapeWord, _ := shapeWordFor(srct)
+	vtableName := fmt.Sprintf("__vtable_%s_%s__%s",
 		strings.ReplaceAll(concreteTypeName, ".", "_"),
+		shapeMangle(levels),
 		strings.ReplaceAll(dstt.Name, ".", "_"))
-	c.NeedVtable(vtableName, bareType, dstt.Name, typePkg, ifaceDecl)
+	c.NeedVtable(vtableName, bareType, dstt.Name, typePkg, ifaceDecl, shapeWord)
 	if destBinding != "" && dstt.OwnedMask == 0 && !valueBacked {
 		c.PointerFlow().SetFieldPointer(flow.Binding(destBinding), "data", pointerExprForAST(c, valAST, ""))
 	}

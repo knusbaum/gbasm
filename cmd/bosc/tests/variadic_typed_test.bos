@@ -1,0 +1,20 @@
+package main
+import "string"
+
+fn sum(xs ...i64) i64 {
+	var total i64 = 0
+	for (var i i64 = 0; i < len(xs); i = i + 1) {
+		total = total + xs[i]
+	}
+	return total
+}
+
+fn main() i64 {
+	string.puti(sum(1, 2, 3, 4))
+	string.putc(10)
+	string.puti(sum())
+	string.putc(10)
+	string.puti(sum(10))
+	string.putc(10)
+	return 0
+}

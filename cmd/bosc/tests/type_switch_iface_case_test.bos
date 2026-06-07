@@ -1,0 +1,34 @@
+package main
+import "string"
+
+type widget i64 {
+	render(w *self) byte[] {
+		return "widget"
+	}
+}
+
+interface renderer {
+	render(r *self) byte[]
+}
+
+fn classify(a any) i64 {
+	switch (v a.(type)) {
+		case i64       { string.puts("int"); string.putc(10) }
+		case renderer  { string.puts(v.render()); string.putc(10) }
+		default        { string.puts("other"); string.putc(10) }
+	}
+	return 0
+}
+
+fn main() i64 {
+	var n i64 = 9
+	var av any = n
+	classify(av)            // int (concrete case wins)
+	var w widget = 1
+	var aw any = &w
+	classify(aw)            // widget (interface case)
+	var m i64 = 2
+	var am any = &m
+	classify(am)            // other (*i64 matches neither)
+	return 0
+}

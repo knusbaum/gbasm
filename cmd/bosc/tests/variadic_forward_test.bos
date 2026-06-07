@@ -1,0 +1,21 @@
+package main
+import "string"
+
+fn show(args ...any) {
+	for (var i i64 = 0; i < len(args); i = i + 1) {
+		switch (v args[i].(type)) {
+			case i64 { string.puti(v) }
+			default { string.puti(0) }
+		}
+		string.putc(10)
+	}
+}
+
+fn forward(args ...any) {
+	show(args...)
+}
+
+fn main() i64 {
+	forward(7, 8, 9)
+	return 0
+}

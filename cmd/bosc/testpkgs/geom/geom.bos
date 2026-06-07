@@ -1,0 +1,26 @@
+package geom
+
+// Point is a concrete type with a pointer-receiver describe method.
+// Used by the cross-package interface-assertion tests: the type lives
+// here, the interface it satisfies lives in package `ifaces`, and the
+// assertion happens in `main`.
+pub type Point struct {
+	x i64
+	y i64
+} {
+	describe(p *self) byte[] {
+		return "point"
+	}
+	// combine's signature mentions the cross-package named type Point (here
+	// written bare, since we are inside package geom). The interface
+	// ifaces.Combiner declares the same method with the param written
+	// `*geom.Point`. canonicalSig must render both identically (fully
+	// qualified) or the cross-.bo assertion would silently miss. (m8)
+	combine(p *self, other *Point) byte[] {
+		return "combined"
+	}
+}
+
+pub fn make(a i64, b i64) Point {
+	return Point{x: a, y: b}
+}

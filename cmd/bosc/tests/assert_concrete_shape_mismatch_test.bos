@@ -1,0 +1,14 @@
+package main
+import "string"
+
+fn main() i64 {
+	var n i64 = 8
+	var a any = n
+	var p *i64, var ok bool = a.(*i64)
+	if (ok) { string.puti(1) } else { string.puti(0) }
+	string.putc(10)
+	var v i64, var ok2 bool = a.(i64)
+	if (ok2) { string.puti(v) } else { string.puti(-1) }
+	string.putc(10)
+	return 0
+}

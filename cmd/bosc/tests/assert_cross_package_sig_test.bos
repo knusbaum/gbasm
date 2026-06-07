@@ -1,0 +1,23 @@
+package main
+import "string"
+import "geom"
+import "ifaces"
+
+// m8: the satisfying method geom.Point.combine and the interface
+// ifaces.Combiner.combine both have a *geom.Point parameter, rendered bare
+// (*Point) in geom's typedesc and qualified (*geom.Point) in ifaces's
+// iface_desc. canonicalSig canonicalizes both to the same fully-qualified
+// text, so the assertion matches across the .bo boundary.
+fn main() i64 {
+	var p geom.Point = geom.make(1, 2)
+	var a any = &p
+	var c ifaces.Combiner, var ok bool = a.(ifaces.Combiner)
+	if (ok) {
+		var other geom.Point = geom.make(3, 4)
+		string.puts(c.combine(&other))
+	} else {
+		string.puts("no")
+	}
+	string.putc(10)
+	return 0
+}

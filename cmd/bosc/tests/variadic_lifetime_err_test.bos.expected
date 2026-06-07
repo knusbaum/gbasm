@@ -1,0 +1,2 @@
+Compiling tests/variadic_lifetime_err_test.bos
+Fatal: Borrowed slice escapes via global g

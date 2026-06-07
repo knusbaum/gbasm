@@ -1,0 +1,14 @@
+package main
+import "string"
+
+fn count(args ...any) i64 {
+	return len(args)
+}
+
+fn main() i64 {
+	string.puti(count())
+	string.putc(10)
+	string.puti(count(1, 2))
+	string.putc(10)
+	return 0
+}

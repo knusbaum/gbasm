@@ -293,7 +293,7 @@ Cross-package var access follows the usual mutability rules: `var` declarations 
 
 Owned types are not allowed at file scope. A global never goes out of scope, so the end-of-scope move check that gives `owned` its teeth can never fire; a `dispose()` inside a function isn't visible elsewhere either. `var x owned …` and `const x owned …` at the top level are rejected.
 
-**The `builtin` package.** A single package, `builtin`, is auto-imported into every compilation unit (except `builtin` itself). It contains the `error` interface and serves as the home for declarations that need to be visible without an explicit `import`. The `-listimports` driver always emits `builtin` first, so the build system pulls in `target/builtin.bo` automatically. Bare references to `error` resolve to `builtin.error` the same way an explicitly imported package's interface would, but without requiring `import "builtin"` at the top of every file.
+**The `builtin` package.** A single package, `builtin`, is auto-imported into every compilation unit (except `builtin` itself). It contains the `error` and `any` interfaces, the built-in scalar typedescs (`__typedesc_i64`, `__typedesc_byte`, …), and serves as the home for declarations that need to be visible without an explicit `import`. The `-listimports` driver always emits `builtin` first, so the build system pulls in `target/builtin.bo` automatically. Bare references to `error` and `any` resolve to `builtin.error` / `builtin.any` the same way an explicitly imported package's interface would, but without requiring `import "builtin"` at the top of every file.
 
 ### Built-in Functions
 
@@ -1257,8 +1257,20 @@ interface error {
 
 A type `T` satisfies interface `I` if, for every method `m` declared in `I`, type `T` has a method where:
 - The name matches exactly.
-- The first-parameter type matches after substituting `self` → `T` (including all ownership and mutability qualifiers).
-- The remaining parameter types and return type match exactly.
+- The remaining (non-receiver) parameter types and return type match exactly.
+- The method's **receiver shape** is satisfiable from the *source* of the coercion (below).
+
+**Receiver matching is source-driven, with an asymmetric mut rule.** The direction (value vs pointer) and the mut capability come from the value being coerced, not from the interface's declared receiver marker:
+
+| Source coerced into `I` | Receiver shapes the method may declare |
+|--------------------------|----------------------------------------|
+| a bare value (`T`)       | value receiver (`self`) only |
+| a read-only pointer (`*T`, `*?T`) | `*self` only |
+| a mutable pointer (`*mut T`, `*?mut T`) | `*self` **or** `*mut self` |
+
+The mutable-source row encodes the legal `*mut → *` weakening: a mutable view may call a `*self` (read-only) method. The reverse — a read-only `*T` source driving a `*mut self` (mutating) method — is **rejected**, because that would mutate through a view that promised not to. (`&x` of a `var` yields `*mut T`, so the common `greet(&d)` pattern coerces a mutable pointer and can satisfy either receiver kind; `&x` of a `const` yields a read-only `*T`.)
+
+The compile-time satisfaction filter and the runtime `_iface` helper derive the same source→capability mapping and apply the same asymmetric weakening, so a compile-time-legal coercion and a runtime interface-to-interface assertion always agree.
 
 Satisfaction is checked at coercion sites only — there is no eager or declaration-time check. If a coercion is never written, the compiler never checks whether the type satisfies the interface.
 
@@ -1279,17 +1291,38 @@ Value-backed coercion is rejected when the value is larger than 8 bytes, when th
 
 ### Vtable layout
 
-For concrete type `T` satisfying interface `I` with N methods, the compiler emits one static vtable global per `(T, I)` pair, named `__vtable_pkg.T_I`:
+For a concrete source *shape* of base type `T` satisfying interface `I` with N
+methods, the compiler emits one static vtable global per `(base, shape, I)`
+coercion, named `__vtable_<base>_<shape>__<I>` (the `<shape>` segment is a short
+deterministic mangling of the source shape — `v` for a value, `p` for `*T`, `pm`
+for `*mut T`, `s` for a slice, etc.):
 
 ```
-data __vtable_mypkg.foo_Writer {
-    bytes 8
-    reloc 0 mypkg.foo.write 0
+var __vtable_foo_pm__Writer byte[N+2 * 8] {
+    bytes "<shape word, 8 bytes>"   ; written into slot 1
+    reloc 0  pkg.__typedesc_foo 0   ; slot 0: base typedesc pointer
+    reloc 16 pkg.foo.write 0        ; slot 2: first method
     ...one entry per method, in interface declaration order...
 }
 ```
 
-Each entry is an 8-byte function pointer to the concrete method. Entries appear in the order methods are declared in the interface.
+The layout is `[typedesc_ptr, shape_word, method_0 .. method_{N-1}]`:
+
+- **Slot 0** is a relocation to the base type's single `__typedesc_<base>`
+  symbol (the type's identity). There is exactly one typedesc per *base* type,
+  emitted by that type's home package; built-in scalar typedescs
+  (`__typedesc_i64`, `__typedesc_byte`, …) are emitted by the `builtin` package.
+- **Slot 1** is a 64-bit **shape word**: a canonical, byte-deterministic encoding
+  of the source type's shape modifiers (pointer level, mut/nullable, slice,
+  array length) as a bounded constructor stack read innermost-first. The empty
+  stack (`shape_word == 0`) is a bare value. The shape word is what
+  distinguishes `var a any = m` (value) from `var b any = &m` (pointer) — both
+  share `__typedesc_i64` at slot 0 but carry different shape words at slot 1.
+- **Slots 2..N+1** are 8-byte function pointers to the concrete methods, in the
+  interface's declaration order.
+
+Method dispatch loads `[vtable + (methodIdx+2)*8]`, skipping the typedesc and
+shape-word slots.
 
 **ABI note:** vtable entries are called with the opaque `data` pointer as the first argument, followed by the remaining method arguments. Since `*byte` and `*T` have identical representation and calling convention on x86-64 (pointer-sized register), no thunks are needed. The concrete method interprets its first argument as `*T` and the caller passes the interface's `data` field — both sides agree on the machine-level ABI.
 
@@ -1532,6 +1565,155 @@ A change to add `values` touches the compiler layers in order:
 
 ---
 
+## The `any` interface, variadics, and type assertion
+
+### The `any` interface
+
+`any` is the built-in empty interface — the moral equivalent of Go's
+`interface{}`. It declares zero required methods, so every concrete type
+satisfies it trivially. It is available everywhere without an `import` (it lives
+in the `builtin` package alongside `error`, and resolves by bare name the same
+way). An `any` value is a normal 16-byte interface fat pointer; its 2-slot
+vtable carries the source's `__typedesc_<base>` at slot 0 and the source's shape
+word at slot 1 (there are no method slots).
+
+```
+var m i64 = 42
+var a any = m      ; value-backed: data = 42,    shape word = bare value
+var b any = &m     ; pointer-backed: data = &m,  shape word = *mut i64
+```
+
+### Variadic parameters
+
+A function's last parameter may be variadic, written `name ...T`. Inside the
+body it is an ordinary `T[]` slice; the `...` is shed at the body boundary.
+
+```
+fn sum(xs ...i64) i64 { ... }       ; xs has type i64[] in the body
+fn printf(fmt byte[], args ...any)  ; args has type any[]
+```
+
+Rules:
+
+- The variadic parameter must be **last**; only one is allowed.
+- At each call site, the compiler stack-allocates a backing array in the
+  caller's frame, coerces each trailing argument into an element (per-element
+  concrete→interface coercion for an `any[]` element type, or a width-matched
+  value copy for a scalar element type), and passes a slice header pointing at
+  that array. No heap allocation.
+- An untyped integer literal argument is materialized as `i64` before coercion.
+- A `>8`-byte value argument to an `...any` parameter is rejected with the same
+  "value interfaces can store at most 8 bytes inline" error as a direct
+  value-backed interface coercion — pass a pointer instead.
+- The callee's slice is **borrowed**: it may not escape the call (stored into a
+  global, returned, etc.), enforced by the existing slice-escape borrow checker.
+
+**Explicit forwarding.** A single trailing `slice...` argument forwards a
+pre-existing slice verbatim, with no re-wrapping (parallel to Go's `args...`):
+
+```
+fn outer(xs ...any) { inner(xs...) }   ; passes xs through unchanged
+```
+
+### Type assertion
+
+`x.(T)` asserts that interface value `x` holds a concrete type `T`. Its static
+type is `multiretu{T, bool}`, bound with either the two-value **declaration**
+form or, to pre-existing lvalues, the comma-LHS **re-assignment** form:
+
+```
+var v i64, var ok bool = a.(i64)   // declaration form
+if (ok) { use(v) }
+
+var w i64 = 0
+var found bool
+w, found = a.(i64)                 // re-assignment form (existing lvalues)
+```
+
+The re-assignment form is a general comma-LHS multi-assignment `lv0, lv1, … =
+rhs`; it is recognized only at statement position (a top-level comma after a
+parsed expression there can only begin a multi-assignment LHS, so it does not
+conflict with the commas in argument lists or struct literals). Each target
+must be an already-declared, non-`const` variable whose type accepts the
+corresponding result component.
+
+The lowering is an inline two-compare check: slot-0 typedesc identity against
+`__typedesc_<base(T)>`, plus slot-1 shape-word equality against the canonical
+immediate for `T`. Both must match. Shape matching is **exact** — `var x any = p`
+where `p *mut i64` succeeds only on `x.(*mut i64)`, not `x.(*i64)` or `x.(i64)`.
+The shape word encodes each pointer level's mut/nullable bit and, for arrays,
+the length (up to 8191; a longer array is a clean compile error).
+
+### Type switch
+
+A type switch dispatches on the dynamic type of an interface value. The head
+binds `v` to the switched value; each case narrows `v` to the case's type inside
+its body. Cases are top-down, first match wins, no fallthrough; `default` is
+optional, and a no-match with no default is a no-op.
+
+```
+switch (v args[i].(type)) {
+    case i64       { use_int(v) }
+    case *mut i64  { use_ptr(*v) }
+    default        { use_unknown() }
+}
+```
+
+### Interface-to-interface assertion
+
+`x.(I)` where `I` is an interface asks "does the concrete value inside `x`
+*also* satisfy interface `I`?" — answered at runtime. Type switches accept
+interface cases (`case SomeIface`) alongside concrete cases, with the same
+top-down first-match-wins ordering. The result is the same
+`multiretu{I, bool}` shape as concrete assertion; on success the asserted
+interface shares `x`'s data word verbatim and carries a vtable the runtime
+built for the `(typedesc, shape, I)` triple.
+
+The lowering loads `(typedesc, shape_word, data)` from the source fat pointer
+and calls `_iface.assert_to(src_ti, src_shape, src_data, dst_desc)` (the helper
+returns the itab vtable in `rax` and a success flag in `rdx`). The helper walks
+the source typedesc's lazy **itab cache** keyed by `(iface_desc, shape)`: a hit
+returns the cached vtable in O(1); a miss allocates one itab via `_heap.alloc`,
+fills each required method by a two-axis lookup over the typedesc method table
+(name + non-receiver-signature hash, byte-equal name/sig text, and a
+shape-derived receiver-shape match), links the itab into the cache, and returns
+its vtable. A method that can't be resolved (or a receiver-shape mismatch)
+frees the itab and returns `(nil, false)` — misses are not cached. The
+runtime's `expected_receiver_shape(src_shape)` derivation and signature
+canonicalization match the compile-time coercion filter exactly, so a value-
+backed `any` refuses a `*self`-requiring interface and vice versa.
+
+The `_iface` package is not a source-level import; the compiler emits a bare
+`call _iface.assert_to` and the build always links `_iface.bo` (reachability
+drops it when unused), mirroring how `_heap` is pulled in.
+
+The static data backing all this:
+
+- **`__typedesc_<T>`** (read-only `data`, home-package-emitted) — the structured
+  typeinfo: name string, size, a relocation to its paired cache slot, and a
+  method table sorted by `(name_hash, sig_hash, receiver_shape)`. Each entry
+  carries the method name text, the canonical non-receiver signature text, both
+  64-bit FNV-1a hashes, the receiver shape, and a relocation to the method body.
+- **`__typedesc_cache_<T>`** (writable `var`, home-package-emitted alongside the
+  head) — an 8-byte zero-initialized slot holding the head of the itab cache
+  list. bas rejects a `typedesc` that lacks its paired `typedesc_cache` in the
+  same object file.
+- **`__iface_desc_<I>`** (read-only `data`, home-package-emitted) — the
+  assertion-time companion: name string and a required-method table sorted by
+  `(name_hash, sig_hash)`, each entry carrying the method name text, canonical
+  non-receiver signature text, both hashes, and the method's declaration index
+  (used to place the resolved fn at the correct itab vtable slot for dispatch).
+  `__iface_desc_any` has zero methods; the helper allocates a 2-slot itab and
+  preserves the `[typedesc, shape_word]` slot invariants.
+
+There is exactly one `__typedesc_<T>` (and one `__iface_desc_<I>`) per declared
+base type / interface, emitted by its home package; cross-package uses are
+relocations. The linker's existing duplicate-rejection enforces the single-
+emitter invariant — no new linker semantics. `bdump` pretty-prints all three
+record kinds.
+
+---
+
 ## File-Scope Declarations
 
 `var` and `const` work at file scope as well as inside functions:
@@ -1721,6 +1903,9 @@ function add
 | `struct` | `struct Name { fname ftype \n ... }` | Multi-line declaration carrying a Boson struct shape into the `.bo`. Field types are stored verbatim; bosc reparses them on import. Used for cross-package struct types. |
 | `typealias` | `typealias Name underlying [m1 m2 ...]` | Single-line declaration carrying a Boson type alias into the `.bo`. The method-name list lets bosc reconstruct the type's method table on import from the already-imported function set. |
 | `interface` | `interface Name { method m1 { param p t \n ... \n return rt } ... }` | Multi-line declaration carrying a Boson interface shape into the `.bo`. Each method's params and return type are reparsed by bosc on import. Used for cross-package interface types. |
+| `typedesc` | `typedesc Name { name "..." \n size N \n cache_ref <sym> \n method <name> <sig> <name_hash> <sig_hash> <recv_shape> <fn_reloc> \n ... }` | Multi-line declaration of a structured typeinfo record (read-only, `o.Data`). Carries the type name string, size, a relocation to its paired cache slot, and a method table. bas serializes the fixed binary layout and emits the `cache_ref` and per-method `fn_ptr` relocations. Must be paired with a same-named `typedesc_cache` in the same `.bo` (bas errors otherwise). |
+| `typedesc_cache` | `typedesc_cache Name` | A bare 8-byte zero-initialized writable slot (`o.Vars`) holding the head of a type's lazy itab-cache list. One per `typedesc`, named in lockstep. |
+| `iface_desc` | `iface_desc Name { name "..." \n method <name> <sig> <name_hash> <sig_hash> <decl_idx> \n ... }` | Multi-line declaration of the assertion-time interface descriptor (read-only, `o.Data`). Carries the interface name and a required-method table (name/sig text, both hashes, and the method's declaration index for itab dispatch ordering). |
 | `local` | `local name bits [reg]` | Stack/register local variable (scalars and pointers) |
 | `bytes` | `bytes name size [reg]` | Stack byte array (non-register; required for structs and arrays) |
 | `arg` | `arg name reg` | Pin argument to register |
@@ -2059,7 +2244,12 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Address-of of an owned binding (`&x`) preserves owned bits; whether the result borrows or moves is decided by the destination type (`*T` borrows, `*owned T` moves; `*mut`-shaped views of the owner slot remain rejected)
 - Value-alias tracking for owned scalars: declaring `var fd owned i64 = ...` registers a flow-state Origin; coercing to a non-owned destination (`var t i64 = fd`, `thingy(fd)`, etc.) records the destination as an alias of that Origin; `c.Move` on the source invalidates all such aliases, and reading the destination after the move is rejected at the Symbol-use site with the same diagnostic as a borrowed-pointer use-after-move
 - Field-level pointer provenance: per-field pointer facts in flow state catch self-referential struct escapes at return, dispose/free invalidating field-pointer aliases, and out-of-scope local-address extraction through a struct field
-- Interfaces: structural satisfaction at coercion sites, fat-pointer representation (data + vtable, 16 bytes), automatic vtable emission per `(T, I)` pair, indirect dispatch through the vtable, and `owned I` / `I` interface qualifiers
+- Interfaces: structural satisfaction at coercion sites, fat-pointer representation (data + vtable, 16 bytes), automatic vtable emission per `(base, shape, I)` coercion, indirect dispatch through the vtable, and `owned I` / `I` interface qualifiers. The vtable carries a `[typedesc_ptr, shape_word, method_0..N]` layout: slot 0 is the single per-base-type `__typedesc_<base>` symbol (built-in scalar typedescs emitted by `builtin`), slot 1 is a canonical 64-bit shape word encoding the source's pointer/mut/slice/array shape, methods follow at slot 2+
+- The `any` built-in empty interface (zero methods, satisfied by every concrete type, available without import); used as a coercion target and as the element type of an untyped variadic
+- Variadic parameters (`name ...T`, last only): desugared to a `T[]` slice built on the caller's stack with per-element coercion, explicit `slice...` forwarding, and borrow-checked non-escaping callee slice
+- Concrete-type assertion (`x.(T)` → `multiretu{T, bool}`, bound via the two-value declaration form) lowering to an inline two-compare check (typedesc identity + exact shape-word equality), and a type switch (`switch (v x.(type)) { case T {...} default {...} }`) with first-match-wins flow-narrowed case binding
+- Interface-to-interface assertion (`x.(I)` and `case SomeIface` in a type switch) backed by the `_iface.assert_to` runtime helper and per-typedesc lazy itab caches; the structured `__typedesc_<T>` / `__typedesc_cache_<T>` / `__iface_desc_<I>` records (with FNV-1a name/sig hashes, canonical non-receiver signature text, and a shape-derived receiver-shape match) are home-package-emitted and resolved cross-package by relocation; `x.(any)` allocates a 2-slot itab preserving the `[typedesc, shape]` invariant
+- Coercion-time interface satisfaction uses the full shape-word receiver-shape filter (distinguishing value / `*self` directions exactly), in lockstep with the runtime helper's derivation; the new `typedesc` / `typedesc_cache` / `iface_desc` bas directives serialize the records and bas enforces the typedesc/cache single-emitter pairing; `bdump` pretty-prints all three
 - Type-block methods: `type T <base> { ... }` declarations carrying instance methods (pointer receiver) and static methods (no receiver), called as `v.method(args)` / `T.method(args)` respectively; `struct { ... }` is a valid base (fields in the struct body, methods in the type block)
 - Non-escaping borrowed pointer parameters by default, including local alias provenance and escape rejection for returns, globals, fields, and struct literals
 - Compiler built-ins `alloc(T)`, `new(expr)`, and `free(p)` backed by the `_heap` runtime package; `alloc(T)` and `new(expr)` return owned mutable pointers
@@ -2079,7 +2269,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - bas `typealias` and `interface` directives for cross-package export of type aliases (with method tables) and interfaces
 - Cross-package variable read access: `pkg.name` qualified reads against a foreign-package `var`/`const`
 - Built-in `len(s)` intrinsic for slice (runtime length load) and fixed-array (compile-time constant) operands
-- `builtin` package auto-imported into every compilation; currently provides the `error` interface
+- `builtin` package auto-imported into every compilation; provides the `error` and `any` interfaces and the single home for built-in scalar typedescs (`__typedesc_i64`, `__typedesc_byte`, …)
 - `owned error` ownership semantics: consuming-receiver methods (any owned bit on the receiver) require an owned interface, mark the interface variable consumed after the call, and forbid being called on a non-owned interface; return-statement checks reject silently dropping ownership (`valType.HasOwned() && !retType.HasOwned()`) and validate general return-type compatibility via `ResolveUnderlying + Accepts` with a `sameIgnoringOwned` escape so owned↔non-owned variants of the same underlying type still pass
 - Multi-value return (`fn f() i64, i64`) and destructuring bind (`var a, b = f()`), including mixed `var`/`const` per-bind qualifiers, per-bind type annotations, and re-binding when a name already exists in scope
 - Integer literal bases: decimal, hexadecimal (`0xFF`), octal (`0o755`), and binary (`0b1010`)

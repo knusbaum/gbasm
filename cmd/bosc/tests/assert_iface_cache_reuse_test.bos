@@ -1,0 +1,33 @@
+package main
+import "string"
+
+type greeter i64 {
+	greet(g *self) byte[] {
+		return "hey"
+	}
+}
+
+interface speaker {
+	greet(s *self) byte[]
+}
+
+fn try(a any) i64 {
+	var s speaker, var ok bool = a.(speaker)
+	if (ok) {
+		string.puts(s.greet())
+		string.putc(10)
+	} else {
+		string.puts("no")
+		string.putc(10)
+	}
+	return 0
+}
+
+fn main() i64 {
+	var g greeter = 1
+	var a any = &g
+	// First assertion: cache miss, allocates itab. Second: cache hit.
+	try(a)
+	try(a)
+	return 0
+}

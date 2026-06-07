@@ -1,0 +1,43 @@
+package main
+import "string"
+
+// T has a value-receiver method f and a pointer-receiver method g.
+type tt i64 {
+	f(self tt) byte[] {
+		return "f"
+	}
+	g(self *tt) byte[] {
+		return "g"
+	}
+}
+
+interface Vi {
+	f(self tt) byte[]
+}
+interface Pi {
+	g(self *tt) byte[]
+}
+
+fn report(label byte[], ok bool) i64 {
+	string.puts(label)
+	if (ok) { string.puts("Y") } else { string.puts("N") }
+	string.putc(10)
+	return 0
+}
+
+fn main() i64 {
+	var x tt = 5
+	// value-shape any: must pass .(Vi), fail .(Pi)
+	var av any = x
+	var v1 Vi, var ok1 bool = av.(Vi)
+	report("av.Vi=", ok1)
+	var p1 Pi, var ok2 bool = av.(Pi)
+	report("av.Pi=", ok2)
+	// pointer-shape any: must pass .(Pi), fail .(Vi)
+	var ap any = &x
+	var v2 Vi, var ok3 bool = ap.(Vi)
+	report("ap.Vi=", ok3)
+	var p2 Pi, var ok4 bool = ap.(Pi)
+	report("ap.Pi=", ok4)
+	return 0
+}

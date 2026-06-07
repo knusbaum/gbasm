@@ -1,0 +1,2 @@
+Compiling tests/variadic_two_err_test.bos
+Failed to parse: variadic parameter a must be the last parameter

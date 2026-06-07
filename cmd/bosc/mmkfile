@@ -38,6 +38,12 @@ file io_sys.bo : bas $RUNTIME/_io_sys/io_sys_linux.bs {
     ./bas -o io_sys.bo $RUNTIME/_io_sys/io_sys_linux.bs >/dev/null 2>&1
 }
 
+# The _iface runtime helper backs interface-to-interface type assertions.
+# Always linked (reachability drops it when unused).
+file iface.bo : bas $RUNTIME/_iface/iface_linux.bs {
+    ./bas -o iface.bo $RUNTIME/_iface/iface_linux.bs >/dev/null 2>&1
+}
+
 # Compile the Boson-source `builtin` package. It imports nothing, so it
 # gets an empty importcfg. Must be compiled before pair/io since those
 # may transitively depend on it.
@@ -84,6 +90,38 @@ file errors.bo : bas errors.bs {
     ./bas -o errors.bo errors.bs >/dev/null 2>&1
 }
 
+# Cross-package interface-assertion fixtures: a concrete type with a
+# method (geom.Point) and an interface in a separate package
+# (ifaces.Stringer). main asserts geom.Point against ifaces.Stringer.
+file geom.importcfg : builtin.bo {
+    cat > geom.importcfg <<EOF
+builtin=builtin.bo
+EOF
+}
+
+file geom.bs : bosc geom.importcfg $TESTPKGS/geom/geom.bos {
+    ./bosc -importcfg=geom.importcfg -o geom.bs $TESTPKGS/geom/geom.bos >/dev/null 2>&1
+}
+
+file geom.bo : bas geom.bs {
+    ./bas -o geom.bo geom.bs >/dev/null 2>&1
+}
+
+file ifaces.importcfg : builtin.bo geom.bo {
+    cat > ifaces.importcfg <<EOF
+builtin=builtin.bo
+geom=geom.bo
+EOF
+}
+
+file ifaces.bs : bosc ifaces.importcfg geom.bo $TESTPKGS/ifaces/ifaces.bos {
+    ./bosc -importcfg=ifaces.importcfg -o ifaces.bs $TESTPKGS/ifaces/ifaces.bos >/dev/null 2>&1
+}
+
+file ifaces.bo : bas ifaces.bs {
+    ./bas -o ifaces.bo ifaces.bs >/dev/null 2>&1
+}
+
 # Compile a package with intentionally-private declarations for visibility
 # negative tests.
 file visibility.importcfg : builtin.bo {
@@ -120,7 +158,7 @@ file io.bo : bas io.bs {
 #rm -f io.importcfg
 
 # Generate a project-wide importcfg.
-file test.importcfg : builtin.bo string.bo pair.bo io.bo io_sys.bo errors.bo visibility.bo {
+file test.importcfg : builtin.bo string.bo pair.bo io.bo io_sys.bo errors.bo visibility.bo iface.bo geom.bo ifaces.bo {
     cat > test.importcfg <<EOF
 builtin=builtin.bo
 string=string.bo
@@ -129,12 +167,15 @@ io=io.bo
 _io_sys=io_sys.bo
 errors=errors.bo
 visibility=visibility.bo
+_iface=iface.bo
+geom=geom.bo
+ifaces=ifaces.bo
 EOF
 }
 
 clean : {
     rm -f tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout *.importcfg
-    rm -f bosc bas bld string.bo init.bo heap.bo builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo errors.bo errors.bs visibility.bo visibility.bs test.importcfg
+    rm -f bosc bas bld string.bo init.bo heap.bo iface.bo builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo errors.bo errors.bs visibility.bo visibility.bs geom.bo geom.bs ifaces.bo ifaces.bs test.importcfg
 }
 
 go_tests {
@@ -148,7 +189,7 @@ test: go_tests bosc_tests {
 }
     
 
-'tests/(.*)_test.bos' : bosc bas bld init.bo heap.bo test.importcfg {
+'tests/(.*)_test.bos' : bosc bas bld init.bo heap.bo iface.bo test.importcfg {
     #    set -x
     #echo -e "\n\n############################ $target ############################"
     if [[ $target == *_err_test.bos ]]; then
@@ -216,7 +257,13 @@ test: go_tests bosc_tests {
     if grep -q '^import "visibility"' "$target"; then
         extra_bo="$extra_bo visibility.bo"
     fi
-    ./bld -o ${target}.o ${target}.bo builtin.bo string.bo init.bo heap.bo $extra_bo >${target}.bld.out 2>&1
+    if grep -q '^import "geom"' "$target"; then
+        extra_bo="$extra_bo geom.bo"
+    fi
+    if grep -q '^import "ifaces"' "$target"; then
+        extra_bo="$extra_bo ifaces.bo"
+    fi
+    ./bld -o ${target}.o ${target}.bo builtin.bo string.bo init.bo heap.bo iface.bo $extra_bo >${target}.bld.out 2>&1
     if [[ $? != 0 ]]; then
 		echo linker failed for ${target}:
 		cat ${target}.bld.out

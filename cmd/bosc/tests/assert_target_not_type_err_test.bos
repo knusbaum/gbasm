@@ -1,0 +1,8 @@
+package main
+
+fn main() i64 {
+	var n i64 = 1
+	var a any = n
+	var v notatype, var ok bool = a.(notatype)
+	return 0
+}

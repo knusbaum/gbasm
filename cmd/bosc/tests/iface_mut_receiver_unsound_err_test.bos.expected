@@ -1,0 +1,2 @@
+Compiling tests/iface_mut_receiver_unsound_err_test.bos
+Fatal: Type counter does not implement interface reader: method bump receiver has type *mut counter, expected *counter

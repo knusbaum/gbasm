@@ -1,0 +1,2 @@
+Compiling tests/variadic_not_last_err_test.bos
+Failed to parse: variadic parameter args must be the last parameter

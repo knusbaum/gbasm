@@ -1,0 +1,25 @@
+package main
+import "string"
+
+// m1: the comma-LHS multi-value re-assignment form `v, ok = x.(T)` to
+// pre-declared lvalues (distinct from the declaration form
+// `var v T, var ok bool = x.(T)`).
+fn main() i64 {
+	var m i64 = 42
+	var a any = m
+	var v i64 = 0
+	var ok bool
+	v, ok = a.(i64)
+	if (ok) { string.puti(v) } else { string.puti(99) }
+	string.putc(10)
+
+	// A failing assertion re-assigns both targets: ok=false. The source holds
+	// an i64, so asserting to byte misses.
+	var b any = m
+	var w byte = 7
+	var ok2 bool
+	w, ok2 = b.(byte)
+	if (ok2) { string.putc(w) } else { string.puts("miss") }
+	string.putc(10)
+	return 0
+}

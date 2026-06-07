@@ -1,0 +1,16 @@
+package main
+
+fn inner(args ...i64) {
+}
+
+fn outer(xs ...i64) {
+	// Mixing a plain element (99) with a spread (xs...) in the same variadic
+	// position is rejected: a `...` spread must be the only trailing variadic
+	// argument.
+	inner(99, xs...)
+}
+
+fn main() i64 {
+	outer(1, 2)
+	return 0
+}
