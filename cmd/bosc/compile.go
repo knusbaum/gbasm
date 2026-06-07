@@ -2184,7 +2184,17 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// cross-package import. Other packages can then declare
 		// 'mypkg.Name'-typed values, construct them via 'mypkg.Name{...}',
 		// and walk their fields.
-		fmt.Fprintf(of, "%sstruct %s {\n", pubPrefix(ast.IsPub), ast.TName)
+		// Method names ride on the opening line after the name (`struct Name
+		// m1 m2 {`) so cross-package importers can reconstruct the method
+		// set for compile-time method resolution. The method bodies are
+		// emitted as functions below; this only records their names.
+		fmt.Fprintf(of, "%sstruct %s", pubPrefix(ast.IsPub), ast.TName)
+		if methods, ok := c.TypeMethodsFor(ast.TName); ok {
+			for _, m := range methods {
+				fmt.Fprintf(of, " %s", m.Name)
+			}
+		}
+		fmt.Fprintf(of, " {\n")
 		for _, f := range ast.Fields {
 			fmt.Fprintf(of, "\t%s %s\n", f.Name, f.Type)
 		}
@@ -2511,7 +2521,17 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if i > 0 {
 				sig.WriteString(", ")
 			}
-			sig.WriteString(a.Type.String())
+			// Preserve the variadic marker across packages: a `...T`
+			// parameter desugars to `args T[]` in ast.Args, but importers
+			// must see it as variadic so zero-or-more trailing args at the
+			// call site type-check. Render the element type prefixed with
+			// `...` (the param's Type is the slice T[]; emit ...<element>).
+			if a.Variadic && a.Type.IsSlice() && a.Type.Element != nil {
+				sig.WriteString("...")
+				sig.WriteString(a.Type.Element.String())
+			} else {
+				sig.WriteString(a.Type.String())
+			}
 		}
 		sig.WriteString(") ")
 		sig.WriteString(ast.Return.String())
@@ -2916,6 +2936,23 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// stable storage for them at runtime).
 		name, hasName := ast.NamedTarget()
 		if !hasName {
+			// Function-scope `&"literal"`: the only address-of-literal form
+			// permitted at runtime. Materialize (once per distinct literal) a
+			// static 16-byte slice header {ptr -> bytes, len} and lea its
+			// address. The result is a pointer to a byte slice — stable,
+			// read-only, never-dies storage. Other `&literal` forms remain
+			// rejected by the default branch below.
+			if lit, ok := ast.Lit.(*Literal); ok {
+				if s, isStr := lit.Val.(string); isStr {
+					sym := c.StringSliceHeader(s)
+					c.MarkAddress(sym)
+					if dest.empty() {
+						dest = newSpot(of, c, c.Temp(), ast.ASTType(c))
+					}
+					fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, sym)
+					return dest
+				}
+			}
 			switch ast.Lit.(type) {
 			case *Index, *Dot:
 				if path, ok := FlowPathForExpr(ast.Lit); ok {
@@ -4005,6 +4042,12 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 	// using the newSpotWithReg function. If necessary, these are evicted for
 	// things like funcalls and mul ops
 	var argspots []spot
+	// coercedToInterface[i] is true for args handled by the inline
+	// interface-coercion block below. Their owned-source consumption is
+	// performed inline there; the post-arg move-marking loop must skip them
+	// because markMovedIfOwnedSource is not idempotent (a second call would
+	// observe the already-moved binding and spuriously error).
+	coercedToInterface := make([]bool, len(f.Args))
 	for i := 0; i < len(f.Args); i++ {
 		arg := f.Args[i]
 		param := d.Args[i].Type
@@ -4021,9 +4064,10 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		if shouldCoerceToInterface(c, param, argt) {
 			s := newSpot(of, c, c.Temp(), param)
 			emitInterfaceFatPtr(of, c, arg, param, argt, arg, s.ref, "")
-			if param.OwnedMask != 0 {
+			if param.HasOwned() {
 				markMovedIfOwnedSource(of, c, param, arg)
 			}
+			coercedToInterface[i] = true
 			argspots = append(argspots, s)
 			continue
 		}
@@ -4058,7 +4102,12 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		argspots = append(argspots, dest)
 	}
 	// Now that all argument values are compiled, mark any consumed owned variables.
+	// Args coerced to an interface parameter already had their owned source
+	// consumed inline above; re-marking them here would double-consume.
 	for i := 0; i < len(f.Args); i++ {
+		if coercedToInterface[i] {
+			continue
+		}
 		if d.Args[i].Type.HasOwned() {
 			markMovedIfOwnedSource(of, c, d.Args[i].Type, f.Args[i])
 		}
@@ -5232,9 +5281,36 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 	// Compile user args into temp spots. They go into rsi+ (index 1+);
 	// rdi (index 0) is reserved for the data pointer.
 	var argspots []spot
+	// coercedToInterface[i] marks args handled by the inline coercion block;
+	// their owned-source consumption happens inline, so the post-arg
+	// move-marking loop must skip them (markMovedIfOwnedSource is not
+	// idempotent — a second pass would observe the already-moved binding and
+	// spuriously error). Parallels the ordinary-call path in setupArgs.
+	coercedToInterface := make([]bool, len(callNode.Args))
 	for i, arg := range callNode.Args {
 		param := userParams[i].Type
 		argt := arg.ASTType(c)
+		argIdx := i + 1 // rsi=1, rdx=2, ...
+		if argIdx > 5 {
+			CompileErrorF(arg, "More than 5 user arguments not supported for interface methods")
+		}
+		checkAddressOfOwnedForDest(c, arg, param)
+		// Interface coercion at an interface-method call site: a concrete
+		// pointer or small value argument passed where the method declares an
+		// interface parameter must be wrapped into a fat pointer, exactly as
+		// the ordinary-call path does. Without this, passing e.g. a
+		// *mut counting_writer to a Formatter.format(w io.writer) param fails
+		// the plain coerceType check.
+		if shouldCoerceToInterface(c, param, argt) {
+			s := newSpot(of, c, c.Temp(), param)
+			emitInterfaceFatPtr(of, c, arg, param, argt, arg, s.ref, "")
+			if param.HasOwned() {
+				markMovedIfOwnedSource(of, c, param, arg)
+			}
+			coercedToInterface[i] = true
+			argspots = append(argspots, s)
+			continue
+		}
 		effective, reason := coerceType(c, param, argt)
 		if reason != coerceOK {
 			reportCoerceFailure(arg, param, argt, reason,
@@ -5243,10 +5319,6 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 		argt = effective
 		if param.HasOwned() {
 			checkOwnedSourceAvailable(c, arg)
-		}
-		argIdx := i + 1 // rsi=1, rdx=2, ...
-		if argIdx > 5 {
-			CompileErrorF(arg, "More than 5 user arguments not supported for interface methods")
 		}
 		var s spot
 		if argt.Size(c) == PTR_SIZE {
@@ -5265,8 +5337,13 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 		argspots = append(argspots, s)
 	}
 
-	// Mark owned moves after all args are compiled.
+	// Mark owned moves after all args are compiled. Args coerced to an
+	// interface parameter already consumed their owned source inline above;
+	// re-marking them here would double-consume.
 	for i, arg := range callNode.Args {
+		if coercedToInterface[i] {
+			continue
+		}
 		if userParams[i].Type.HasOwned() {
 			markMovedIfOwnedSource(of, c, userParams[i].Type, arg)
 		}

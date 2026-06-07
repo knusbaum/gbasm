@@ -1,0 +1,15 @@
+package main
+import "fmt"
+import "io"
+
+// Layer 5: %v dispatches to stringer.
+type word struct { s byte[] } {
+	string(w *word) byte[] { return w.s }
+}
+
+fn main() i64 {
+	var s byte[] = "hello-stringer"
+	var w word = word{s: s}
+	fmt.print("v=%v\n", &w)
+	return 0
+}

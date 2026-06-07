@@ -1,0 +1,13 @@
+package main
+import "fmt"
+import "io"
+
+// Layer 2: fmt.str writes a byte slice through an io.writer and returns the
+// (written, err) pair mirroring io.writer.write.
+fn main() i64 {
+	const n, var err = fmt.str(&io.STDOUT, "hello writer\n")
+	if (err != io.io_err.OK) { return 1 }
+	fmt.int(&io.STDOUT, n)
+	fmt.nl(&io.STDOUT)
+	return 0
+}

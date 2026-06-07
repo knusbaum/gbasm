@@ -1,0 +1,14 @@
+package main
+import "fmt"
+import "io"
+
+// Layer 2: fmt.int formats signed decimals through a writer.
+fn main() i64 {
+	fmt.int(&io.STDOUT, 0)
+	fmt.nl(&io.STDOUT)
+	fmt.int(&io.STDOUT, 42)
+	fmt.nl(&io.STDOUT)
+	fmt.int(&io.STDOUT, 0 - 1234)
+	fmt.nl(&io.STDOUT)
+	return 0
+}

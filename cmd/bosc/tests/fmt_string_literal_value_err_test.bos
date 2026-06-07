@@ -1,0 +1,11 @@
+package main
+import "fmt"
+
+// A bare (non-&) string literal at a `...any` variadic site is a slice VALUE.
+// Slices are 16 bytes and cannot be coerced into an interface by value, so
+// the call is rejected at compile time. The fix is to address the literal:
+// fmt.print("%s", &"hello") — see the function-scope &"literal" companion.
+fn main() i64 {
+	fmt.print("%s", "hello")
+	return 0
+}

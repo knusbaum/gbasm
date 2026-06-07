@@ -157,8 +157,28 @@ file io.bo : bas io.bs {
 }
 #rm -f io.importcfg
 
+# Compile the Boson-source `fmt` runtime package so the fmt tests under
+# cmd/bosc/tests can `import "fmt"`. It imports builtin, string, and io;
+# the _iface helper is pulled in implicitly via type-assertion lowerings
+# (and linked from iface.bo).
+file fmt.importcfg : builtin.bo string.bo io.bo {
+    cat > fmt.importcfg <<EOF
+builtin=builtin.bo
+string=string.bo
+io=io.bo
+EOF
+}
+
+file fmt.bs : bosc fmt.importcfg io.bo $RUNTIME/fmt/fmt.bos {
+    ./bosc -importcfg=fmt.importcfg -o fmt.bs $RUNTIME/fmt/fmt.bos >/dev/null 2>&1
+}
+
+file fmt.bo : bas fmt.bs {
+    ./bas -o fmt.bo fmt.bs >/dev/null 2>&1
+}
+
 # Generate a project-wide importcfg.
-file test.importcfg : builtin.bo string.bo pair.bo io.bo io_sys.bo errors.bo visibility.bo iface.bo geom.bo ifaces.bo {
+file test.importcfg : builtin.bo string.bo pair.bo io.bo io_sys.bo errors.bo visibility.bo iface.bo geom.bo ifaces.bo fmt.bo {
     cat > test.importcfg <<EOF
 builtin=builtin.bo
 string=string.bo
@@ -170,12 +190,13 @@ visibility=visibility.bo
 _iface=iface.bo
 geom=geom.bo
 ifaces=ifaces.bo
+fmt=fmt.bo
 EOF
 }
 
 clean : {
     rm -f tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout *.importcfg
-    rm -f bosc bas bld string.bo init.bo heap.bo iface.bo builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo errors.bo errors.bs visibility.bo visibility.bs geom.bo geom.bs ifaces.bo ifaces.bs test.importcfg
+    rm -f bosc bas bld string.bo init.bo heap.bo iface.bo builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo errors.bo errors.bs visibility.bo visibility.bs geom.bo geom.bs ifaces.bo ifaces.bs fmt.bo fmt.bs fmt.importcfg test.importcfg
 }
 
 go_tests {
@@ -189,7 +210,7 @@ test: go_tests bosc_tests {
 }
     
 
-'tests/(.*)_test.bos' : bosc bas bld init.bo heap.bo iface.bo test.importcfg {
+'tests/(.*)_test.bos' : bosc bas bld init.bo heap.bo iface.bo fmt.bo test.importcfg {
     #    set -x
     #echo -e "\n\n############################ $target ############################"
     if [[ $target == *_err_test.bos ]]; then
@@ -262,6 +283,12 @@ test: go_tests bosc_tests {
     fi
     if grep -q '^import "ifaces"' "$target"; then
         extra_bo="$extra_bo ifaces.bo"
+    fi
+    if grep -q '^import "fmt"' "$target"; then
+        extra_bo="$extra_bo fmt.bo"
+        # fmt composes with io; pull io in even if the test doesn't import it
+        # directly.
+        case "$extra_bo" in *io.bo*) ;; *) extra_bo="$extra_bo io.bo io_sys.bo";; esac
     fi
     ./bld -o ${target}.o ${target}.bo builtin.bo string.bo init.bo heap.bo iface.bo $extra_bo >${target}.bld.out 2>&1
     if [[ $? != 0 ]]; then

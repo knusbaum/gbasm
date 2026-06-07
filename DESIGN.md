@@ -87,6 +87,10 @@ Three orthogonal qualifiers can apply to types:
 - **`owned`** — compile-time ownership obligation that must be discharged before the variable goes out of scope. See [Ownership](#ownership).
 - **`const` / `var`** — binding mutability: whether the named binding itself can be rebound. Distinct from `mut`. Defaults: `const` for function parameters (use `var` to opt out), explicit on local declarations.
 
+### Type syntax: parenthesized groups
+
+The `[]` slice/array suffix binds tighter than the leading `*` pointer prefix, so `*byte[]` parses as a *slice of `*byte`* (`(*byte)[]`), not a pointer to a slice. To express a pointer to a slice — the type of `&s` where `s byte[]`, and of a function-scope `&"literal"` — wrap the inner type in parentheses: `*(byte[])` is a pointer to a byte slice, `*mut (byte[])` a write-through one. The parenthesized form is the exact inverse of `ASTType.String()`, which already emits `*(byte[])` for pointer-to-slice; `parseTypeName` accepts the group after the `*` prefixes and layers the outer pointer levels onto the inner type. This is what lets `%s`-style code name and dereference (`*p`) the pointer-to-slice that a `...any` string argument produces.
+
 ### Type aliases
 
 ```
@@ -297,7 +301,7 @@ Owned types are not allowed at file scope. A global never goes out of scope, so 
 
 ### Built-in Functions
 
-Built-ins are split into two groups: **compiler intrinsics** (lowered by bosc itself, not callable through a function pointer) and **runtime packages** (ordinary Boson packages that any program imports). The runtime packages are `string`, `io`, `_io_sys`, `_init`, `_heap`, `pair`, and `builtin`.
+Built-ins are split into two groups: **compiler intrinsics** (lowered by bosc itself, not callable through a function pointer) and **runtime packages** (ordinary Boson packages that any program imports). The runtime packages are `string`, `io`, `fmt`, `_io_sys`, `_init`, `_heap`, `_iface`, `pair`, and `builtin`.
 
 **Compiler intrinsics:**
 
@@ -354,7 +358,30 @@ The raw syscall wrappers, taking i64 fd values directly, live in `_io_sys`:
 | `_io_sys.open` | `(byte[] path, i64 flags, i64 mode) i64` | Raw `open(2)` syscall |
 | `_io_sys.close` | `(i64 fd) i64` | Raw `close(2)` syscall |
 
-The `_init` package provides `_init.start` (the ELF entry point) and `_init.index_oob` (called by bounds checks). The `_heap` package provides the bootstrap allocator (mmap-backed: each allocation is one mapping with a small size header, `free` calls `munmap`). The `pair` package exists as a minimal cross-package struct used by tests.
+The `_init` package provides `_init.start` (the ELF entry point) and `_init.index_oob` (called by bounds checks). The `_heap` package provides the bootstrap allocator (mmap-backed: each allocation is one mapping with a small size header, `free` calls `munmap`). The `_iface` package provides `assert_to`, the runtime helper backing interface-to-interface type assertion (lazy per-typedesc itab cache). The `pair` package exists as a minimal cross-package struct used by tests.
+
+**`fmt` package** — composable formatting, built on `io.writer` and runtime type assertion. Five layers, smallest first; all storage is caller-owned (no GC obligations in the public surface), and the only heap traffic is the lazy itab cache inside `%v` dispatch.
+
+*Layer 1 — raw conversions* render one value into the head of a caller-provided `mut byte[]` and return the byte count written (the rendered bytes are `out[0:k]`). No allocation, no I/O. Returning the count rather than a `byte[]` view is deliberate: Boson forbids returning a borrowed slice (a sub-slice of a slice parameter), so the caller slices its own buffer.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `fmt.itoa` | `(out mut byte[], n i64) i64` | Signed decimal; leading `-`. |
+| `fmt.utoa` | `(out mut byte[], n u64) i64` | Unsigned decimal. |
+| `fmt.htoa` | `(out mut byte[], n u64) i64` | Lowercase hex, no `0x` prefix. |
+| `fmt.n_digits` / `n_udigits` / `n_hex_digits` | `(n) i64` | Predicted byte counts (for truncation detection). |
+
+Truncation: if `out` is too small, the longest prefix that fits is written and the returned count equals `len(out)`; compare against the matching `n_*` helper to detect it.
+
+*Layer 2 — writer helpers* format one value into a stack scratch buffer and emit it through an `io.writer` in exactly one `write` call, returning the `(written, error)` pair that mirrors `io.writer.write`: `fmt.str`, `fmt.int`, `fmt.uint`, `fmt.hex` (`0x`-prefixed), `fmt.char`, `fmt.bool`, `fmt.nl`.
+
+*Layer 3 — `fmt.Builder`* is a bring-your-own-memory accumulator: `struct { buf mut byte[], pos i64, err_ error }`, constructed inline by struct literal (no constructor). Append methods (`str`/`int`/`uint`/`hex`/`char`/`bool`/`nl`) follow a latched-error pattern — the first append that would overflow sets `err_` to `io.io_err.ENOSPC` and every later append is a no-op; inspect `error()` once at the end. `bytes()` returns the borrowed view `buf[0:pos]`; `space()` is remaining capacity; `reset()` rewinds the cursor and clears the latched error. The append methods return nothing (not `*mut Builder`): Boson forbids returning the borrowed `*mut` receiver, so chaining is expressed as a sequence of statements. `fmt.BuilderWriter{b: &builder}` adapts a `*mut Builder` to the `*self`-shaped `io.writer` so a Builder can be a `printf`/`Formatter` sink.
+
+*Layer 4 — user-extension interfaces* `fmt.stringer { string(self *self) byte[] }` and `fmt.Formatter { format(self *self, w io.writer) error }`. A type renders under `%v` via `stringer` if it implements it (cheap, no writer); otherwise via `Formatter` (constructs into a writer). Both are discovered at runtime through interface assertion.
+
+*Layer 5 — variadic helpers* `fmt.print(format byte[], args ...any) i64, error` (to stdout) and `fmt.printf(w io.writer, format byte[], args ...any) i64, error`. Directives: `%d`→`i64`, `%u`→`u64`, `%x`→`u64` hex, `%s`→pointer-to-`byte[]` (`&name` or `&"literal"`), `%c`→`byte`, `%t`→`bool`, `%v`→`stringer` then `Formatter` (else a `%!v(?)` placeholder), `%%`→literal `%`. Matching is strict per directive: a type mismatch writes an inline `%!d(BADTYPE)`-style marker and latches a non-OK error but continues; an unknown verb (e.g. `%q`) consumes its arg, writes `%!q(BADTYPE)`, and latches the same error; an out-of-args slot writes `%!d(MISSING)`; surplus args are appended `%v`-style and latch a surplus error; a write failure stops immediately. The `BADTYPE` / `?` placeholders are fixed v1 markers: surfacing the arg's actual type name in the marker awaits a typedesc-name intrinsic that bosc does not yet expose to source (fmt proposal Open Question #6); until it lands the markers carry no type name. `Formatter` dispatch wraps the writer in a stack-allocated counting adapter so the returned byte total includes the Formatter's output.
+
+Because a slice (16 bytes) cannot be coerced into an interface by value, `byte[]` arguments at a `...any` call site must be addressed — `fmt.print("%s", &name)`. Function-scope `&"literal"` (below) supplies the literal form `fmt.print("%s", &"hello")`.
 
 `alloc(T)` is only valid for zero-initializable types. Types containing non-null pointers are not zero-initializable, so they must be constructed with `new(expr)` or some other initialized storage path.
 
@@ -1100,7 +1127,9 @@ In static-init context (see [Static Initializers](#static-initializers)) two mor
 - `&someGlobal` — pointer slot relocated to the named global.
 - `&SomeStruct{...}` — allocates an anonymous file-scope global to hold the struct literal's bytes, then relocates the pointer slot to it. Composes recursively: `foo{bar: &bar{inner: &inner{...}}}` produces one anonymous global per nested `&`.
 
-`&literal` at runtime is rejected with "cannot take the address of this expression at runtime; address-of-literal is only valid in static initializers" — there's no stable storage to point at outside file scope.
+Non-string `&literal` at runtime is rejected with "cannot take the address of this expression at runtime; address-of-literal is only valid in static initializers" — there's no stable storage to point at for an arbitrary expression outside file scope.
+
+**Function-scope `&"literal"` is the one exception.** Taking the address of a *string literal* at function scope is valid: `&"hello"` evaluates to a pointer to a 16-byte static slice header `{ptr -> bytes, len}` synthesized in read-only-style static memory (one header per distinct literal, identical literals shared). Its lifetime is forever and its storage is never written, so the result is a stable, never-dies pointer to a `byte[]` — exactly what a `...any` call site needs for a string argument (`fmt.print("%s", &"hello")`). The header rides the same anonymous-global machinery (`StringSliceHeader` / `WriteStrSliceHeaders` in bosc) that file-scope `&SomeStruct{...}` uses, emitted as a block-form `var` directive with a relocation to the underlying string constant. The result type is pointer-to-byte-slice, written `*(byte[])` (see [Type syntax: parenthesized groups](#type-syntax-parenthesized-groups)).
 
 ### Function pointers
 
@@ -1824,7 +1853,7 @@ Walks the AST and emits `.bs` assembly text. Key responsibilities:
 - **Spots and addressing**: The compiler's intermediate `spot{ref, t, nameIsAddress}` records both the bas-level name and whether that name resolves to a value (`local`-allocated scalar) or to a memory address (`bytes`-allocated chunk, or file-scope global). Indirection sites (`*p`, `arr[i]`, `slice[lo:hi]`) consult `spot.nameIsAddress` to decide whether they need to materialize the address into a register before further indirection. This abstracts away the distinction between register-resident and memory-resident sources — the same codegen path handles both.
 - **Control flow**: `if`/`else` and `for` lower to compare-and-jump sequences with generated labels (`_LABEL_for_N`, `_LABEL_break_N`, `_LABEL_cont_N`, `_LABEL_return_N`).
 - **Function calls**: Arguments are evaluated into temporaries, then moved into the ABI argument registers before `call`. The emitted `call` is always fully qualified (`pkg.fname`); for in-package calls the current package's name is prepended. Function-defined-in-source signatures are emitted as `type fn(arg-types) ret` directives so cross-package import works for Boson-defined packages, not just hand-written bas runtime packages.
-- **Address-of**: For `&x` where `x` is a named variable, the assembler `volatile x` directive is emitted (suppressed for memory-backed names where it's already true) to mark `x` as memory-resident, then `lea`. For `&arr[i]` and `&s.field` at runtime, the compiler delegates to the lvalue-walk machinery which already produces an address-bearing spot. For `&literal` at runtime, an error fires; the literal form is only valid in static-init.
+- **Address-of**: For `&x` where `x` is a named variable, the assembler `volatile x` directive is emitted (suppressed for memory-backed names where it's already true) to mark `x` as memory-resident, then `lea`. For `&arr[i]` and `&s.field` at runtime, the compiler delegates to the lvalue-walk machinery which already produces an address-bearing spot. For a function-scope `&"literal"`, a static slice header is synthesized once per distinct literal and the address `lea`'d. Any other `&literal` at runtime is an error; those forms are only valid in static-init.
 - **Struct access**: Field offsets are computed at compile time. Pointer-to-struct access auto-dereferences. For a small inner struct accessed via dot (e.g. `outer.middle.field`), the inner Dot returns a pointer to the struct rather than copying its bytes, so subsequent Dot/Index walks land on the right address.
 - **Slices**: A slice is two words (pointer and length). Indexing bounds-checks against the length word and computes `base + index * element_size`. Slice operations adjust both pointer and length.
 - **Bounds checking**: Array and slice accesses emit a compare and a conditional call to `_init.index_oob` if the index is out of range.
@@ -2258,7 +2287,10 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Cross-package struct types (`pair.pair`, `pair.pair{...}` literals) with auto-qualification of leaf type names at import time
 - Bosc-emitted function signatures (`type fn(...) ret`) so cross-package function calls work with Boson-source packages as well as hand-written bas runtime packages
 - `argv` passed to `main(args byte[][])` by the `_init.start` entry stub
-- `&arr[i]`, `&s.field` at runtime; `&literal` rejected at runtime with a directed error
+- `&arr[i]`, `&s.field` at runtime; function-scope `&"literal"` (static slice header, type `*(byte[])`); other `&literal` forms rejected at runtime with a directed error
+- Parenthesized type groups `*(byte[])` / `*mut (byte[])` for naming pointer-to-slice types
+- Cross-package struct methods: a struct's method set rides the `struct` directive (method-name list) into the `.bo` and is reconstructed on import, so methods on imported structs resolve at compile time (parallel to type-alias methods)
+- The `fmt` runtime package (five-layer formatting: raw conversions, writer helpers, `Builder`, `stringer`/`Formatter`, `print`/`printf`)
 - Register-scaled indexing into globals via `lea` materialization (no `[symbol + reg*scale]` SIB form exists on x86-64; bosc emits an `lea` to materialize the base, then `[reg + idx*scale]`)
 - Postfix chains compose: `a.b[i].c[lo:hi]` parses and codegens uniformly
 - Go-style automatic semicolon insertion (newline after a statement-ending token; suppressed inside `(...)` and `[...]`)
@@ -2292,7 +2324,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Stacked `owned *owned T` cannot have partial consumption (needs typestate).
 - No witnessed borrows or explicit escaping-reference mechanism.
 - True read-only `.rodata` segment split not yet done. String constants and other immutable data are tagged at the `o.Data` level but currently land in the writable `.data` LOAD segment. Hardware-enforced const requires splitting the ELF layout.
-- No deduplication of structurally-identical anonymous globals. Each `&literal` produces a fresh `__static_N`.
+- No deduplication of structurally-identical anonymous globals. Each non-string `&literal` produces a fresh `__static_N`. (Function-scope `&"literal"` headers *are* shared per distinct literal value within a compilation unit; cross-unit dedup of identical headers is not done.)
 - macOS support stubbed but not implemented.
 - Unused-mutability warning not implemented.
 

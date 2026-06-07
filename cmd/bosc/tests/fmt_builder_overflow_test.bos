@@ -1,0 +1,26 @@
+package main
+import "fmt"
+import "io"
+import "string"
+
+// Layer 3: the latched-error pattern. An append that would overflow the
+// backing buffer sets err_ to io.io_err.ENOSPC; every later append is a no-op
+// and error() reports the latched error. The bytes written before the
+// overflow remain valid.
+fn main() i64 {
+	var backing byte[4]
+	var b fmt.Builder = fmt.Builder{buf: backing[:], pos: 0, err_: io.io_err.OK}
+	b.str("ab")           // fits: pos=2
+	b.str("cdef")         // would need 4, only 2 left -> latches ENOSPC
+	b.str("zz")           // no-op (already latched)
+	if (b.error() == io.io_err.ENOSPC) {
+		string.puts("overflowed: ")
+	} else {
+		string.puts("UNEXPECTED: ")
+	}
+	string.puts(b.bytes())
+	string.puts(" pos=")
+	string.puti(len(b.bytes()))
+	string.putc(10)
+	return 0
+}

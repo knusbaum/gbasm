@@ -1,0 +1,14 @@
+package main
+import "fmt"
+import "io"
+
+// Layer 2: fmt.hex formats "0x"-prefixed lowercase hex through a writer.
+fn main() i64 {
+	fmt.hex(&io.STDOUT, u64(0))
+	fmt.nl(&io.STDOUT)
+	fmt.hex(&io.STDOUT, u64(255))
+	fmt.nl(&io.STDOUT)
+	fmt.hex(&io.STDOUT, u64(48879))
+	fmt.nl(&io.STDOUT)
+	return 0
+}

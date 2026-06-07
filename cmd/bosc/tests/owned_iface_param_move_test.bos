@@ -1,0 +1,31 @@
+package main
+
+import "string"
+
+// Regression for the double-move bug on an argument coerced to an `owned`
+// interface parameter. Passing `&x` (a concrete owned source) where the
+// callee declares `owned Describer` must consume x exactly once. Before the
+// fix, markMovedIfOwnedSource ran twice — inline in the interface-coercion
+// block and again in the post-arg loop — and the second pass observed the
+// already-moved binding and wrongly rejected the legal call.
+
+interface Describer {
+	describe(d *self) byte[]
+}
+
+type myint i64 {
+	describe(m *myint) byte[] {
+		return "myint"
+	}
+}
+
+// take receives ownership through the interface and discharges it.
+fn take(x owned Describer) {
+	dispose(x)
+}
+
+fn main() {
+	var x owned myint = 5
+	take(&x)
+	string.puts("ok\n")
+}

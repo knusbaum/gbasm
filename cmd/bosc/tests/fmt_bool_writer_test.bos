@@ -1,0 +1,12 @@
+package main
+import "fmt"
+import "io"
+
+// Layer 2: fmt.bool writes "true"/"false".
+fn main() i64 {
+	fmt.bool(&io.STDOUT, (1 == 1))
+	fmt.nl(&io.STDOUT)
+	fmt.bool(&io.STDOUT, (1 == 0))
+	fmt.nl(&io.STDOUT)
+	return 0
+}

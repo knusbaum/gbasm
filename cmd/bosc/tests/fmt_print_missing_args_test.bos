@@ -1,0 +1,16 @@
+package main
+import "fmt"
+import "io"
+import "string"
+
+// Layer 5: fewer args than directives — each missing slot renders a MISSING
+// marker, processing continues, and an error is latched.
+fn main() i64 {
+	const n, var err = fmt.print("a=%d b=%d c=%d\n", 1)
+	if (err != io.io_err.OK) {
+		string.puts("missing latched\n")
+	} else {
+		string.puts("NO ERROR (unexpected)\n")
+	}
+	return 0
+}

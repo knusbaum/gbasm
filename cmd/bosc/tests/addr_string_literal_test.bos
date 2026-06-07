@@ -1,0 +1,24 @@
+package main
+import "string"
+
+// Part A: function-scope `&"literal"` yields a pointer to a static byte
+// slice. Take its address, pass as a *(byte[]) parameter, dereference, and
+// print. The same literal used twice may share or duplicate the header; both
+// uses must work. A second, distinct literal exercises a separate header.
+fn emit(p *(byte[])) i64 {
+	string.puts(*p)
+	string.putc(10)
+	return 0
+}
+
+fn main() i64 {
+	emit(&"hello")
+	emit(&"world")
+	emit(&"hello")
+	// Also exercise &"literal" at a variadic ...any site via the assertion
+	// path is covered by fmt tests; here we pin the bare pointer form.
+	var p *(byte[]) = &"again"
+	string.puts(*p)
+	string.putc(10)
+	return 0
+}

@@ -1,0 +1,21 @@
+package main
+import "fmt"
+import "io"
+import "string"
+
+// Layer 5: printf into a BuilderWriter — formats into a caller-owned buffer
+// instead of straight to a file descriptor, then the accumulated bytes are
+// extracted and printed.
+fn main() i64 {
+	var backing byte[128]
+	var b fmt.Builder = fmt.Builder{buf: backing[:], pos: 0, err_: io.io_err.OK}
+	var bw fmt.BuilderWriter = fmt.BuilderWriter{b: &b}
+	const n, var err = fmt.printf(&bw, "name=%s n=%d\n", &"alice", 42)
+	if (err != io.io_err.OK) { string.puts("ERR\n"); return 1 }
+	string.puts("buffered: ")
+	string.puts(b.bytes())
+	string.puts("wrote=")
+	string.puti(n)
+	string.putc(10)
+	return 0
+}

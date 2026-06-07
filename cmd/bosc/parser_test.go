@@ -528,3 +528,52 @@ func TestParser(t *testing.T) {
 		})
 	}
 }
+
+// TestParseParenTypeGroup exercises the parenthesized type group form
+// (`*(byte[])`, `*mut (byte[])`). The parens make the leading pointer
+// prefixes bind to the whole group rather than to the slice element, so
+// `*(byte[])` is a pointer-to-slice (Indirection==1, Element is the byte
+// slice) — the inverse of `*byte[]`, which is a slice of byte-pointers
+// (Indirection==0, Element is a byte pointer).
+func TestParseParenTypeGroup(t *testing.T) {
+	nopos = true
+	defer func() { nopos = false }()
+	for _, tt := range []struct {
+		in   string
+		want ASTType
+	}{
+		{
+			// pointer to a byte slice.
+			in: "*(byte[])",
+			want: ASTType{
+				Indirection: 1,
+				Element:     &ASTType{Name: "byte"},
+			},
+		},
+		{
+			// write-through (mut) pointer to a byte slice: the mut bit lands
+			// on the outer pointer level (bit 1), not on the slice element.
+			in: "*mut (byte[])",
+			want: ASTType{
+				Indirection: 1,
+				MutMask:     1 << 1,
+				Element:     &ASTType{Name: "byte"},
+			},
+		},
+		{
+			// Contrast: without the parens, the same prefix binds to the
+			// element. `*byte[]` is a slice (Indirection==0) of byte pointers
+			// (Element.Indirection==1).
+			in: "*byte[]",
+			want: ASTType{
+				Element: &ASTType{Name: "byte", Indirection: 1},
+			},
+		},
+	} {
+		t.Run(tt.in, func(t *testing.T) {
+			p := NewParser("", strings.NewReader(tt.in))
+			got := mkTypename(p.parseTypeName())
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

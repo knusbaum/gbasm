@@ -1,0 +1,721 @@
+// Package fmt provides string formatting shaped to Boson's constraints: no
+// GC, immutable byte[] strings, and value-shape interface-coercion limits.
+//
+// Five layers, smallest first:
+//
+//   1. Raw conversions (itoa/utoa/htoa) write a single typed value into the
+//      head of a caller-provided mut byte[]. No allocation, no I/O.
+//   2. Writer helpers (str/int/uint/hex/char/bool/nl) format one value into a
+//      stack scratch buffer and emit it through an io.writer in one write.
+//   3. Builder is a bring-your-own-memory accumulator over a caller-supplied
+//      mut byte[], with append methods and a borrowed byte[] view.
+//   4. stringer and Formatter are the two user-extension "render me" hooks,
+//      discovered at runtime via interface assertion.
+//   5. print/printf are printf-style variadic helpers backed by per-arg type
+//      assertion.
+//
+// All storage is caller-owned. The only heap traffic is the lazy itab cache
+// built by interface assertion inside %v dispatch; in steady state it is
+// zero.
+package fmt
+
+import "string"
+import "io"
+
+// ---------------------------------------------------------------------------
+// Layer 1: raw conversions
+// ---------------------------------------------------------------------------
+
+// n_digits returns the number of bytes itoa(n) would write, including the
+// leading '-' for negatives.
+pub fn n_digits(n i64) i64 {
+	if (n == 0) { return 1 }
+	var count i64 = 0
+	var x i64 = n
+	if (x < 0) {
+		// Count the magnitude's digits without negating (negation of
+		// min-i64 overflows), then add one for the '-'.
+		return 1 + n_neg_magnitude_digits(x)
+	}
+	for (; x > 0; x = x / 10) {
+		count = count + 1
+	}
+	return count
+}
+
+// n_neg_magnitude_digits counts the decimal digits of the magnitude of a
+// negative i64 without negating it (which would overflow for min-i64).
+fn n_neg_magnitude_digits(n i64) i64 {
+	// n < 0. Reduce digit-by-digit using the negative remainder so the value
+	// never has to be negated.
+	var count i64 = 0
+	var x i64 = n
+	for (; x < 0; x = x / 10) {
+		count = count + 1
+	}
+	return count
+}
+
+// n_udigits returns the number of bytes utoa(n) would write.
+pub fn n_udigits(n u64) i64 {
+	if (n == 0) { return 1 }
+	var count i64 = 0
+	var x u64 = n
+	for (; x > 0; x = x / 10) {
+		count = count + 1
+	}
+	return count
+}
+
+// n_hex_digits returns the number of bytes htoa(n) would write (no 0x).
+pub fn n_hex_digits(n u64) i64 {
+	if (n == 0) { return 1 }
+	var count i64 = 0
+	var x u64 = n
+	for (; x > 0; x = x / 16) {
+		count = count + 1
+	}
+	return count
+}
+
+// itoa writes the canonical signed-decimal form of n into out[0..k] and
+// returns k (the byte count written). No NUL terminator; a leading '-' is
+// emitted for negatives. If out is too small the longest prefix that fits is
+// written and the returned count equals len(out) — compare against
+// n_digits(n) to detect truncation. The rendered bytes are out[0:k]; the
+// caller forms that slice from its own buffer.
+//
+// (DEVIATION from the proposal, which returned byte[]: Boson forbids
+// returning a borrowed slice — including a sub-slice of a slice parameter —
+// so the byte count is returned and the caller slices its own out buffer.)
+pub fn itoa(out mut byte[], n i64) i64 {
+	const need i64 = n_digits(n)
+	var cap i64 = len(out)
+	if (need <= cap) {
+		write_decimal(out, n, need)
+		return need
+	}
+	// Truncate: write the leading `cap` characters of the full rendering.
+	write_decimal_trunc(out, n, need, cap)
+	return cap
+}
+
+// write_decimal renders n into out using exactly `width` bytes (width ==
+// n_digits(n)); the buffer is known to be large enough.
+fn write_decimal(out mut byte[], n i64, width i64) {
+	if (n == 0) {
+		out[0] = 48        // '0'
+		return
+	}
+	var i i64 = width - 1
+	var x i64 = n
+	if (x < 0) {
+		// Emit digits from the negative magnitude using negative remainders
+		// so min-i64 is handled without negation.
+		for (; x < 0; x = x / 10) {
+			// Signed remainder via x - (x/10)*10; idiv truncates toward
+			// zero, so for x<0 this is <= 0. Negate to get the digit 0..9.
+			const rem i64 = 0 - (x - (x / 10) * 10)
+			out[i] = byte(48 + rem)
+			i = i - 1
+		}
+		out[0] = 45        // '-'
+		return
+	}
+	for (; x > 0; x = x / 10) {
+		const rem i64 = x - (x / 10) * 10
+		out[i] = byte(48 + rem)
+		i = i - 1
+	}
+}
+
+// write_decimal_trunc renders the full `width`-byte decimal form of n but
+// keeps only the leading `keep` bytes (keep < width). It builds the full
+// form into the buffer's tail region conceptually, but since the buffer is
+// short, it renders into a stack scratch and copies the prefix.
+fn write_decimal_trunc(out mut byte[], n i64, width i64, keep i64) {
+	var scratch byte[24]
+	var s mut byte[] = scratch[:]
+	// width <= 21 always fits in 24.
+	write_decimal(s, n, width)
+	var i i64 = 0
+	for (; i < keep; i = i + 1) {
+		out[i] = s[i]
+	}
+}
+
+// utoa writes the canonical unsigned-decimal form of n and returns the byte
+// count written. Same truncation contract as itoa (compare returned count
+// against n_udigits(n)).
+pub fn utoa(out mut byte[], n u64) i64 {
+	const need i64 = n_udigits(n)
+	var cap i64 = len(out)
+	if (need <= cap) {
+		write_udecimal(out, n, need)
+		return need
+	}
+	var scratch byte[24]
+	var s mut byte[] = scratch[:]
+	write_udecimal(s, n, need)
+	var i i64 = 0
+	for (; i < cap; i = i + 1) {
+		out[i] = s[i]
+	}
+	return cap
+}
+
+fn write_udecimal(out mut byte[], n u64, width i64) {
+	if (n == 0) {
+		out[0] = 48
+		return
+	}
+	var i i64 = width - 1
+	var x u64 = n
+	for (; x > 0; x = x / 10) {
+		const rem u64 = x - (x / 10) * 10
+		out[i] = byte(48 + i64(rem))
+		i = i - 1
+	}
+}
+
+// htoa writes the canonical lowercase-hex form of n with no "0x" prefix and
+// returns the byte count written. (The "0x" prefix is added by the Layer 2
+// hex writer.) Same truncation contract as itoa (compare returned count
+// against n_hex_digits(n)).
+pub fn htoa(out mut byte[], n u64) i64 {
+	const need i64 = n_hex_digits(n)
+	var cap i64 = len(out)
+	if (need <= cap) {
+		write_hex(out, n, need)
+		return need
+	}
+	var scratch byte[18]
+	var s mut byte[] = scratch[:]
+	write_hex(s, n, need)
+	var i i64 = 0
+	for (; i < cap; i = i + 1) {
+		out[i] = s[i]
+	}
+	return cap
+}
+
+fn write_hex(out mut byte[], n u64, width i64) {
+	if (n == 0) {
+		out[0] = 48
+		return
+	}
+	var i i64 = width - 1
+	var x u64 = n
+	for (; x > 0; x = x / 16) {
+		const d i64 = i64(x - (x / 16) * 16)
+		if (d < 10) {
+			out[i] = byte(48 + d)            // '0'..'9'
+		} else {
+			out[i] = byte(97 + (d - 10))     // 'a'..'f'
+		}
+		i = i - 1
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Layer 2: writer helpers
+// ---------------------------------------------------------------------------
+
+// str writes s to w verbatim. Returns (written, err) mirroring io.writer.write.
+pub fn str(w io.writer, s byte[]) i64, error {
+	const n, var err = w.write(s)
+	return n, err
+}
+
+// int formats n as signed decimal into a stack buffer and writes it once.
+pub fn int(w io.writer, n i64) i64, error {
+	var buf byte[24]
+	const m i64 = itoa(buf[:], n)
+	const k, var err = w.write(buf[0:m])
+	return k, err
+}
+
+// uint formats n as unsigned decimal and writes it once.
+pub fn uint(w io.writer, n u64) i64, error {
+	var buf byte[24]
+	const m i64 = utoa(buf[:], n)
+	const k, var err = w.write(buf[0:m])
+	return k, err
+}
+
+// hex formats n as "0x"-prefixed lowercase hex and writes it once.
+pub fn hex(w io.writer, n u64) i64, error {
+	var buf byte[24]
+	var b mut byte[] = buf[:]
+	b[0] = 48      // '0'
+	b[1] = 120     // 'x'
+	const m i64 = htoa(b[2:], n)
+	const total i64 = 2 + m
+	const k, var err = w.write(buf[0:total])
+	return k, err
+}
+
+// char writes the single byte c.
+pub fn char(w io.writer, c byte) i64, error {
+	var buf byte[1]
+	buf[0] = c
+	const k, var err = w.write(buf[:])
+	return k, err
+}
+
+// bool writes "true" or "false".
+pub fn bool(w io.writer, b bool) i64, error {
+	if (b) {
+		const k, var err = w.write("true")
+		return k, err
+	}
+	const k, var err = w.write("false")
+	return k, err
+}
+
+// nl writes a single newline.
+pub fn nl(w io.writer) i64, error {
+	const k, var err = w.write("\n")
+	return k, err
+}
+
+// ---------------------------------------------------------------------------
+// Layer 3: the Builder
+// ---------------------------------------------------------------------------
+
+// Builder is a bring-your-own-memory accumulator. The caller supplies the
+// backing buffer; the lifetime of bytes() is the lifetime of buf. Construct
+// inline with a struct literal — there is no constructor:
+//
+//     var backing byte[256]
+//     var b fmt.Builder = fmt.Builder{
+//         buf: backing[:], pos: 0, err_: io.io_err.OK }
+//
+// Append methods are statement-shaped (they return nothing) and follow a
+// latched-error pattern: the first append that would overflow the buffer
+// sets err_ to io.io_err.ENOSPC, and every subsequent append becomes a
+// no-op. Inspect error() once at the end.
+//
+// (DEVIATION from the proposal: the append methods return nothing rather
+// than *mut Builder. Boson forbids returning a borrowed pointer — including
+// the *mut Builder receiver — so the proposed `b.str(..).int(..)` chaining
+// is not expressible. Sequential statement calls are the sound equivalent.)
+pub type Builder struct {
+	buf  mut byte[]
+	pos  i64
+	err_ error
+} {
+	// str appends s, truncating nothing — if it would not fit, the latched
+	// error is set and nothing is written.
+	str(b *mut Builder, s byte[]) {
+		if (b.err_ != io.io_err.OK) { return }
+		const room i64 = len(b.buf) - b.pos
+		if (len(s) > room) {
+			b.err_ = io.io_err.ENOSPC
+			return
+		}
+		var i i64 = 0
+		for (; i < len(s); i = i + 1) {
+			b.buf[b.pos] = s[i]
+			b.pos = b.pos + 1
+		}
+	}
+
+	int(b *mut Builder, n i64) {
+		if (b.err_ != io.io_err.OK) { return }
+		const need i64 = n_digits(n)
+		const room i64 = len(b.buf) - b.pos
+		if (need > room) {
+			b.err_ = io.io_err.ENOSPC
+			return
+		}
+		write_decimal(b.buf[b.pos:], n, need)
+		b.pos = b.pos + need
+	}
+
+	uint(b *mut Builder, n u64) {
+		if (b.err_ != io.io_err.OK) { return }
+		const need i64 = n_udigits(n)
+		const room i64 = len(b.buf) - b.pos
+		if (need > room) {
+			b.err_ = io.io_err.ENOSPC
+			return
+		}
+		write_udecimal(b.buf[b.pos:], n, need)
+		b.pos = b.pos + need
+	}
+
+	hex(b *mut Builder, n u64) {
+		if (b.err_ != io.io_err.OK) { return }
+		const need i64 = 2 + n_hex_digits(n)
+		const room i64 = len(b.buf) - b.pos
+		if (need > room) {
+			b.err_ = io.io_err.ENOSPC
+			return
+		}
+		b.buf[b.pos] = 48          // '0'
+		b.buf[b.pos + 1] = 120     // 'x'
+		write_hex(b.buf[b.pos + 2:], n, need - 2)
+		b.pos = b.pos + need
+	}
+
+	char(b *mut Builder, c byte) {
+		if (b.err_ != io.io_err.OK) { return }
+		if (b.pos >= len(b.buf)) {
+			b.err_ = io.io_err.ENOSPC
+			return
+		}
+		b.buf[b.pos] = c
+		b.pos = b.pos + 1
+	}
+
+	bool(b *mut Builder, v bool) {
+		if (v) {
+			b.str("true")
+		} else {
+			b.str("false")
+		}
+	}
+
+	nl(b *mut Builder) {
+		b.str("\n")
+	}
+
+	// bytes returns the accumulated bytes as a borrowed view buf[0:pos].
+	bytes(b *Builder) byte[] {
+		return b.buf[0:b.pos]
+	}
+
+	// space returns the remaining unwritten capacity.
+	space(b *Builder) i64 {
+		return len(b.buf) - b.pos
+	}
+
+	// error returns the latched error (io.io_err.OK while clean).
+	error(b *Builder) error {
+		return b.err_
+	}
+
+	// reset rewinds the cursor and clears the latched error; buf is untouched.
+	reset(b *mut Builder) {
+		b.pos = 0
+		b.err_ = io.io_err.OK
+	}
+}
+
+// BuilderWriter adapts a *mut Builder to the *self-shaped io.writer
+// interface, so a Builder can be a printf/Formatter sink. Construct inline:
+//
+//     var bw fmt.BuilderWriter = fmt.BuilderWriter{b: &b}
+//     fmt.printf(bw, "x=%d\n", x)
+pub type BuilderWriter struct {
+	b *mut Builder
+} {
+	// write appends bs to the underlying Builder. Reading self.b yields the
+	// *mut Builder and the *mut str method is callable through it; the
+	// adapter struct itself is not mutated.
+	write(self *BuilderWriter, bs byte[]) i64, error {
+		const before i64 = self.b.pos
+		self.b.str(bs)
+		const after i64 = self.b.pos
+		return after - before, self.b.error()
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Layer 4: user-extension interfaces
+// ---------------------------------------------------------------------------
+
+// stringer is implemented by types that can render themselves as a borrowed
+// byte slice without constructing new storage (a self field, or a static
+// .rodata slice). Preferred over Formatter when both are available.
+pub interface stringer {
+	string(self *self) byte[]
+}
+
+// Formatter is implemented by types whose rendering must be constructed at
+// call time. format writes self into w and returns the first write error (or
+// io.io_err.OK).
+pub interface Formatter {
+	format(self *self, w io.writer) error
+}
+
+// ---------------------------------------------------------------------------
+// Layer 5: variadic helpers
+// ---------------------------------------------------------------------------
+
+// counting_writer wraps an io.writer and accumulates the byte count of every
+// write that passes through it. Used by %v Formatter dispatch so printf's
+// returned total includes bytes the Formatter wrote (format returns only an
+// error). Stack-allocated per printf call; no heap.
+type counting_writer struct {
+	inner io.writer
+	n     i64
+} {
+	write(self *mut counting_writer, bs byte[]) i64, error {
+		// Bind the interface-typed field to a local before dispatch — the
+		// compiler does not (yet) dispatch an interface method directly on a
+		// field-access expression receiver.
+		var inner io.writer = self.inner
+		const k, var err = inner.write(bs)
+		self.n = self.n + k
+		return k, err
+	}
+}
+
+// Boson has no `true`/`false` literals; booleans come from comparisons.
+// These two helpers name the constants for readability in the render paths.
+fn yes() bool { return (1 == 1) }
+fn no() bool { return (1 == 0) }
+
+// print formats to stdout. See printf for directive semantics.
+pub fn print(format byte[], args ...any) i64, error {
+	// &io.STDOUT coerces the global FD to the *self-shaped io.writer.
+	return printf(&io.STDOUT, format, args...)
+}
+
+// printf renders format into w, consuming one arg per directive. Directives:
+//
+//   %d  args[i].(i64)        signed decimal
+//   %u  args[i].(u64)        unsigned decimal
+//   %x  args[i].(u64)        "0x"-prefixed hex
+//   %s  args[i].(*(byte[]))  dereference and write bytes verbatim (strict)
+//   %c  args[i].(byte)       one byte
+//   %t  args[i].(bool)       "true"/"false"
+//   %v  stringer, then Formatter; else %!v(<type>) placeholder
+//   %%  literal '%'          (consumes no arg)
+//
+// Returns (written, err): written is total bytes successfully written; err is
+// the first non-OK condition (write failure, type mismatch, missing/surplus
+// arg). A write failure stops immediately; mismatch and missing-arg write an
+// inline marker, latch the error, and continue. Surplus args are appended
+// %v-style and latch a surplus error.
+pub fn printf(w io.writer, format byte[], args ...any) i64, error {
+	var total i64 = 0
+	var latched error = io.io_err.OK
+	var argi i64 = 0
+	const nargs i64 = len(args)
+	const flen i64 = len(format)
+	var i i64 = 0
+	for (; i < flen; i = i + 1) {
+		if (format[i] != 37) {            // not '%'
+			const k, var werr = wbyte(w, format[i])
+			total = total + k
+			if (werr != io.io_err.OK) { return total, werr }
+			continue
+		}
+		// format[i] == '%'. Look at the verb.
+		i = i + 1
+		if (i >= flen) {
+			// Trailing '%' with no verb: emit it literally.
+			const k, var werr = wbyte(w, 37)
+			total = total + k
+			if (werr != io.io_err.OK) { return total, werr }
+			break
+		}
+		const verb byte = format[i]
+		if (verb == 37) {                 // '%%'
+			const k, var werr = wbyte(w, 37)
+			total = total + k
+			if (werr != io.io_err.OK) { return total, werr }
+			continue
+		}
+		// All other verbs consume one arg.
+		if (argi >= nargs) {
+			const k, var stop bool, var werr error = wmissing(w, verb)
+			total = total + k
+			latched = io.io_err.EINVAL
+			if (stop) { return total, werr }
+			argi = argi + 1
+			continue
+		}
+		const a any = args[argi]
+		argi = argi + 1
+		const k, var stop bool, var werr error = render_one(w, verb, a)
+		total = total + k
+		if (stop) { return total, werr }
+		if (werr != io.io_err.OK) {
+			latched = werr
+		}
+	}
+	// Surplus args: append them %v-style, space-separated.
+	if (argi < nargs) {
+		for (; argi < nargs; argi = argi + 1) {
+			const ks, var serr = wbyte(w, 32)        // ' '
+			total = total + ks
+			if (serr != io.io_err.OK) { return total, serr }
+			const a any = args[argi]
+			const k, var stop bool, var werr error = render_v(w, a)
+			total = total + k
+			if (stop) { return total, werr }
+		}
+		latched = io.io_err.E2BIG          // "surplus args" sentinel
+	}
+	return total, latched
+}
+
+// wbyte writes a single byte and returns (written, err).
+fn wbyte(w io.writer, c byte) i64, error {
+	var buf byte[1]
+	buf[0] = c
+	const k, var err = w.write(buf[:])
+	return k, err
+}
+
+// wmissing emits a "%!<verb>(MISSING)" marker for an out-of-args directive.
+// Returns (written, stop, err): stop is true on a write failure.
+fn wmissing(w io.writer, verb byte) i64, bool, error {
+	var total i64 = 0
+	const k1, var e1 = w.write("%!")
+	total = total + k1
+	if (e1 != io.io_err.OK) { return total, yes(), e1 }
+	const k2, var e2 = wbyte(w, verb)
+	total = total + k2
+	if (e2 != io.io_err.OK) { return total, yes(), e2 }
+	const k3, var e3 = w.write("(MISSING)")
+	total = total + k3
+	if (e3 != io.io_err.OK) { return total, yes(), e3 }
+	return total, no(), io.io_err.OK
+}
+
+// wmismatch emits a "%!<verb>(...)" marker for a directive whose arg failed
+// its type assertion. Returns (written, stop, err).
+fn wmismatch(w io.writer, verb byte) i64, bool, error {
+	var total i64 = 0
+	const k1, var e1 = w.write("%!")
+	total = total + k1
+	if (e1 != io.io_err.OK) { return total, yes(), e1 }
+	const k2, var e2 = wbyte(w, verb)
+	total = total + k2
+	if (e2 != io.io_err.OK) { return total, yes(), e2 }
+	const k3, var e3 = w.write("(BADTYPE)")
+	total = total + k3
+	if (e3 != io.io_err.OK) { return total, yes(), e3 }
+	return total, no(), io.io_err.OK
+}
+
+// render_one renders a single directive's arg. Returns (written, stop, err):
+// stop signals a hard write failure that aborts printf. A type mismatch is
+// not a stop — it writes a marker, returns a non-OK err (latched by the
+// caller), and lets printf continue.
+fn render_one(w io.writer, verb byte, a any) i64, bool, error {
+	if (verb == 100) {                    // 'd'
+		var n i64, var ok bool = a.(i64)
+		if (ok) {
+			const k, var err = int(w, n)
+			return k, ferr_stop(err), err
+		}
+		return mismatch_result(w, verb)
+	}
+	if (verb == 117) {                    // 'u'
+		var n u64, var ok bool = a.(u64)
+		if (ok) {
+			const k, var err = uint(w, n)
+			return k, ferr_stop(err), err
+		}
+		return mismatch_result(w, verb)
+	}
+	if (verb == 120) {                    // 'x'
+		var n u64, var ok bool = a.(u64)
+		if (ok) {
+			const k, var err = hex(w, n)
+			return k, ferr_stop(err), err
+		}
+		return mismatch_result(w, verb)
+	}
+	if (verb == 115) {                    // 's'
+		// Accept both a read-only pointer-to-slice (&"literal", &constSlice)
+		// and a write-through one (&mutableVar) — `&` of a var carries the
+		// MUT_PTR shape, while a static string-literal header is a plain PTR.
+		// Assertion is shape-exact, so both shapes are tried.
+		var p *(byte[]), var ok bool = a.(*(byte[]))
+		if (ok) {
+			const k, var err = str(w, *p)
+			return k, ferr_stop(err), err
+		}
+		var pm *mut (byte[]), var okm bool = a.(*mut (byte[]))
+		if (okm) {
+			const k, var err = str(w, *pm)
+			return k, ferr_stop(err), err
+		}
+		return mismatch_result(w, verb)
+	}
+	if (verb == 99) {                     // 'c'
+		var c byte, var ok bool = a.(byte)
+		if (ok) {
+			const k, var err = char(w, c)
+			return k, ferr_stop(err), err
+		}
+		return mismatch_result(w, verb)
+	}
+	if (verb == 116) {                    // 't'
+		var v bool, var ok bool = a.(bool)
+		if (ok) {
+			const k, var err = bool(w, v)
+			return k, ferr_stop(err), err
+		}
+		return mismatch_result(w, verb)
+	}
+	if (verb == 118) {                    // 'v'
+		return render_v(w, a)
+	}
+	// Unknown verb: emit "%!<verb>(BADTYPE)" and latch.
+	return mismatch_result(w, verb)
+}
+
+// mismatch_result is the shared tail for a directive whose assertion failed.
+fn mismatch_result(w io.writer, verb byte) i64, bool, error {
+	const k, var stop bool, var err error = wmismatch(w, verb)
+	if (stop) {
+		return k, yes(), err
+	}
+	// Not a write failure; report a non-OK error so printf latches it, but
+	// do not stop.
+	return k, no(), io.io_err.EINVAL
+}
+
+// ferr_stop maps a writer error to the printf "stop" flag: any non-OK write
+// result aborts further processing.
+fn ferr_stop(err error) bool {
+	if (err != io.io_err.OK) {
+		return yes()
+	}
+	return no()
+}
+
+// render_v handles %v: try stringer, then Formatter, else a placeholder.
+fn render_v(w io.writer, a any) i64, bool, error {
+	var s stringer, var ok bool = a.(stringer)
+	if (ok) {
+		const k, var err = str(w, s.string())
+		return k, ferr_stop(err), err
+	}
+	var f Formatter, var ok2 bool = a.(Formatter)
+	if (ok2) {
+		// Wrap w so the Formatter's writes are counted into printf's total.
+		var cw counting_writer = counting_writer{inner: w, n: 0}
+		const err error = f.format(&cw)
+		if (err != io.io_err.OK) {
+			return cw.n, yes(), err
+		}
+		return cw.n, no(), io.io_err.OK
+	}
+	// Neither: emit "%!v(<type>)". A readable per-value type name is not
+	// expressible from Boson today (the typedesc name field is not surfaced
+	// to source), so the placeholder uses a fixed marker.
+	const k, var stop bool, var err error = wfallback(w)
+	if (stop) {
+		return k, yes(), err
+	}
+	return k, no(), io.io_err.EINVAL
+}
+
+// wfallback emits the "%!v(?)" placeholder for a %v arg implementing neither
+// stringer nor Formatter.
+fn wfallback(w io.writer) i64, bool, error {
+	const k, var err = w.write("%!v(?)")
+	if (err != io.io_err.OK) {
+		return k, yes(), err
+	}
+	return k, no(), io.io_err.OK
+}

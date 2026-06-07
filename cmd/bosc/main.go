@@ -297,6 +297,7 @@ func main() {
 		// }
 		actx.WriteVtables(of)
 		actx.WriteStrings(of)
+		actx.WriteStrSliceHeaders(of)
 		io.Copy(of, &bs)
 	}
 }

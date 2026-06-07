@@ -1,0 +1,2 @@
+Compiling tests/fmt_string_literal_value_err_test.bos
+Fatal: Cannot convert value of type byte[] to interface any; use a pointer instead

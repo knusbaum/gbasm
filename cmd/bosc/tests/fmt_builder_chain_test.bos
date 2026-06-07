@@ -1,0 +1,32 @@
+package main
+import "fmt"
+import "io"
+import "string"
+
+// Layer 3: a sequence of Builder appends over a stack buffer, then extract
+// the accumulated bytes. (The Builder is non-chaining in this implementation
+// — see the fmt DEVIATION note — so the "chain" is a sequence of statements.)
+fn main() i64 {
+	var backing byte[256]
+	var b fmt.Builder = fmt.Builder{buf: backing[:], pos: 0, err_: io.io_err.OK}
+	b.str("x=")
+	b.int(0 - 5)
+	b.str(" h=")
+	b.hex(u64(255))
+	b.str(" u=")
+	b.uint(u64(42))
+	b.str(" c=")
+	b.char(byte(90))   // Z
+	b.str(" b=")
+	b.bool((1 == 1))
+	b.nl()
+	if (b.error() != io.io_err.OK) {
+		string.puts("ERR\n")
+		return 1
+	}
+	string.puts(b.bytes())
+	string.puts("len=")
+	string.puti(len(b.bytes()))
+	string.putc(10)
+	return 0
+}

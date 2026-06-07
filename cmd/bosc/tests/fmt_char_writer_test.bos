@@ -1,0 +1,12 @@
+package main
+import "fmt"
+import "io"
+
+// Layer 2: fmt.char writes a single byte.
+fn main() i64 {
+	fmt.char(&io.STDOUT, byte(72))    // H
+	fmt.char(&io.STDOUT, byte(105))   // i
+	fmt.char(&io.STDOUT, byte(33))    // !
+	fmt.nl(&io.STDOUT)
+	return 0
+}

@@ -775,11 +775,16 @@ func main() {
 					fmt.Printf("Fatal: struct directive: missing '{' on the same line, got: %q\n", line)
 					os.Exit(1)
 				}
-				sname := strings.TrimSpace(rest[:openIdx])
-				if sname == "" {
+				// The pre-'{' segment is `Name [method1 method2 ...]` — the
+				// first token is the struct name; any trailing tokens are
+				// method names recorded for cross-package method resolution.
+				header := strings.Fields(strings.TrimSpace(rest[:openIdx]))
+				if len(header) == 0 {
 					fmt.Printf("Fatal: struct directive: missing name before '{'\n")
 					os.Exit(1)
 				}
+				sname := header[0]
+				methodNames := header[1:]
 				var fields []gbasm.FieldShape
 				for {
 					if !scanner.Scan() {
@@ -808,7 +813,7 @@ func main() {
 					}
 					fields = append(fields, gbasm.FieldShape{Name: fname, Type: ftype})
 				}
-				if err := o.AddStruct(sname, fields, isPub); err != nil {
+				if err := o.AddStruct(sname, fields, methodNames, isPub); err != nil {
 					fmt.Printf("Fatal: struct %s: %s\n", sname, err)
 					os.Exit(1)
 				}

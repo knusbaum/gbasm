@@ -1,0 +1,2 @@
+Compiling tests/owned_iface_param_move_err_test.bos
+Fatal: Cannot move "x": it was already moved

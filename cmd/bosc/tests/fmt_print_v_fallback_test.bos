@@ -1,0 +1,12 @@
+package main
+import "fmt"
+
+// Layer 5: %v on a value implementing neither stringer nor Formatter falls
+// back to the placeholder marker.
+type plain struct { a i64, b i64 }
+
+fn main() i64 {
+	var p plain = plain{a: 1, b: 2}
+	fmt.print("got %v end\n", &p)
+	return 0
+}

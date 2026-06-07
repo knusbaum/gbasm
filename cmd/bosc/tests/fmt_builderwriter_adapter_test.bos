@@ -1,0 +1,22 @@
+package main
+import "fmt"
+import "io"
+import "string"
+
+// Layer 3: BuilderWriter adapts a *mut Builder to the io.writer interface, so
+// the Builder can be a printf sink. The adapter's *self read of its *mut
+// Builder field and forward through is the load-bearing pattern.
+fn main() i64 {
+	var backing byte[128]
+	var b fmt.Builder = fmt.Builder{buf: backing[:], pos: 0, err_: io.io_err.OK}
+	var bw fmt.BuilderWriter = fmt.BuilderWriter{b: &b}
+	const n, var err = fmt.str(&bw, "via adapter ")
+	if (err != io.io_err.OK) { return 1 }
+	fmt.int(&bw, 7)
+	string.puts(b.bytes())
+	string.putc(10)
+	string.puts("first write returned ")
+	string.puti(n)
+	string.putc(10)
+	return 0
+}

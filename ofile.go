@@ -145,6 +145,10 @@ type StructShape struct {
 	Name   string
 	IsPub  bool
 	Fields []FieldShape
+	// MethodNames lists the bare method names declared on the struct so a
+	// cross-package importer can reconstruct the method table from the
+	// already-imported function records (parallel to TypeAliasShape).
+	MethodNames []string
 }
 
 type FieldShape struct {
@@ -259,14 +263,14 @@ func (o *OFile) AddValues(name, tagType string, cases []ValuesCaseShape, project
 
 // AddStruct registers a Boson struct definition for export. Returns
 // an error if the name is already in use by any kind of declaration.
-func (o *OFile) AddStruct(name string, fields []FieldShape, isPub bool) error {
+func (o *OFile) AddStruct(name string, fields []FieldShape, methodNames []string, isPub bool) error {
 	if o.Structs[name] != nil {
 		return fmt.Errorf("Struct %s already declared.", name)
 	}
 	if o.Vars[name] != nil || o.Data[name] != nil || o.Funcs[name] != nil {
 		return fmt.Errorf("Name %s already declared.", name)
 	}
-	o.Structs[name] = &StructShape{Name: name, IsPub: isPub, Fields: fields}
+	o.Structs[name] = &StructShape{Name: name, IsPub: isPub, Fields: fields, MethodNames: methodNames}
 	return nil
 }
 

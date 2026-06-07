@@ -1,0 +1,47 @@
+package main
+import "fmt"
+import "string"
+
+// Layer 1: itoa renders signed decimals into a caller buffer, returning the
+// byte count. Covers zero, positive, negative, and the min-i64 edge, plus
+// the truncation contract and n_digits.
+fn show(n i64) i64 {
+	var buf byte[32]
+	const k i64 = fmt.itoa(buf[:], n)
+	string.puts(buf[0:k])
+	string.puts(" (")
+	string.puti(fmt.n_digits(n))
+	string.puts(")\n")
+	return 0
+}
+
+fn main() i64 {
+	show(0)
+	show(7)
+	show(0 - 7)
+	show(12345)
+	show(0 - 9223372036854775808)   // min i64
+	// Truncation: a 3-byte buffer can hold only the first 3 chars of "12345".
+	var small byte[3]
+	const k i64 = fmt.itoa(small[:], 12345)
+	string.puts(small[0:k])
+	string.puts(" trunc=")
+	string.puti(k)
+	string.putc(10)
+	// Negative truncation: the leading '-' counts toward the kept prefix, so
+	// a 3-byte buffer of "-12345" keeps "-12" (k=3), and a 1-byte buffer keeps
+	// just "-" (k=1). Exercises write_decimal_trunc on the negative path.
+	var negsmall byte[3]
+	const k2 i64 = fmt.itoa(negsmall[:], 0 - 12345)
+	string.puts(negsmall[0:k2])
+	string.puts(" trunc=")
+	string.puti(k2)
+	string.putc(10)
+	var neg1 byte[1]
+	const k3 i64 = fmt.itoa(neg1[:], 0 - 7)
+	string.puts(neg1[0:k3])
+	string.puts(" trunc=")
+	string.puti(k3)
+	string.putc(10)
+	return 0
+}

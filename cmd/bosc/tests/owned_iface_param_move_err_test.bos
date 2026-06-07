@@ -1,0 +1,29 @@
+package main
+
+import "string"
+
+// Negative companion to owned_iface_param_move_test: once `&x` is consumed
+// by an `owned Describer` parameter, x is moved. A second move (a second
+// take(&x)) must be rejected — proving the first call really consumed the
+// source rather than silently double-marking it.
+
+interface Describer {
+	describe(d *self) byte[]
+}
+
+type myint i64 {
+	describe(m *myint) byte[] {
+		return "myint"
+	}
+}
+
+fn take(x owned Describer) {
+	dispose(x)
+}
+
+fn main() {
+	var x owned myint = 5
+	take(&x)
+	take(&x)
+	string.puts("unreachable\n")
+}

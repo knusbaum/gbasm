@@ -1,0 +1,22 @@
+package main
+import "fmt"
+import "string"
+
+// Layer 5: shape constraints on %v over value-shape args. The stringer
+// interface declares a *self receiver, so a by-value arg (here a small
+// 8-byte type that fits inline in `any`) cannot satisfy it — `%v` falls
+// straight to the `%!v(?)` placeholder. Passing the same type by reference
+// (`&x`) presents a pointer shape and dispatches to the stringer.
+type label i64 {
+	string(l *label) byte[] { return "L" }
+}
+
+fn main() i64 {
+	var l label = 5
+	// By value: 8-byte value coerces into `any` inline, but the value shape
+	// cannot satisfy the *self-receiver stringer → placeholder.
+	fmt.print("byval=%v\n", l)
+	// By reference: pointer shape dispatches to stringer.
+	fmt.print("byref=%v\n", &l)
+	return 0
+}

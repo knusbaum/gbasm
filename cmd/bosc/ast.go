@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"io"
 	"reflect"
@@ -95,6 +96,13 @@ type Context struct {
 
 	// Keeps the strings to be written as data items later.
 	strngs map[string]string
+
+	// strSliceHeaders maps a string literal value to the symbol name of a
+	// static 16-byte slice header {ptr -> __bstrN, len} synthesized for a
+	// function-scope `&"literal"`. The header lives in read-only static
+	// memory forever; `&"literal"` evaluates to a pointer to it. Emitted by
+	// WriteStrSliceHeaders after all functions are compiled.
+	strSliceHeaders map[string]string
 }
 
 func NewContext() *Context {
@@ -112,8 +120,9 @@ func NewContext() *Context {
 		interfaceDecls: make(map[string]*InterfaceDecl),
 		valuesDecls:    make(map[string]*ValuesDecl),
 		typeMethods:    make(map[string][]*FuncDecl),
-		vtables:        make(map[string]vtableSpec),
-		strngs:         make(map[string]string),
+		vtables:         make(map[string]vtableSpec),
+		strngs:          make(map[string]string),
+		strSliceHeaders: make(map[string]string),
 	}
 }
 
@@ -1136,6 +1145,22 @@ func (c *Context) Import(importKey, path string) error {
 		}
 		qname := o.Pkgname + "." + sh.Name
 		c.DefineStruct(qname, &StructDecl{TName: qname, Fields: fields})
+		// Reconstruct method FuncDecls from the already-imported function
+		// table so cross-package method resolution (MethodForType) works on
+		// imported structs, mirroring the type-alias path below.
+		if len(sh.MethodNames) > 0 {
+			pkgFuncs := c.imports[o.Pkgname]
+			fds := make([]*FuncDecl, 0, len(sh.MethodNames))
+			for _, mn := range sh.MethodNames {
+				key := sh.Name + "." + mn
+				if fd, ok := pkgFuncs[key]; ok {
+					clone := *fd
+					clone.Name = mn
+					fds = append(fds, &clone)
+				}
+			}
+			c.DefineTypeMethods(qname, fds)
+		}
 	}
 	for _, ta := range o.TypeAliases {
 		if !ta.IsPub {
@@ -1300,6 +1325,43 @@ func (c *Context) String(s string) string {
 		c.strngs[s] = r
 	}
 	return r
+}
+
+// StringSliceHeader returns the symbol name of a static 16-byte slice
+// header for the string literal s, registering one (and the backing string
+// constant) on first request. The header is `{ptr -> bytes, len(s)}`; its
+// address is a stable, read-only, never-dies pointer to a byte slice —
+// exactly what function-scope `&"literal"` needs. Identical literals share
+// one header.
+func (c *Context) StringSliceHeader(s string) string {
+	if c.parent != nil {
+		return c.parent.StringSliceHeader(s)
+	}
+	if r, ok := c.strSliceHeaders[s]; ok {
+		return r
+	}
+	// Ensure the backing byte constant exists.
+	c.String(s)
+	r := fmt.Sprintf("__bstrslice%d", len(c.strSliceHeaders))
+	c.strSliceHeaders[s] = r
+	return r
+}
+
+// WriteStrSliceHeaders emits the static slice headers registered by
+// StringSliceHeader. Each is a 16-byte payload — 8 bytes relocated to the
+// string constant, then the little-endian length — emitted via the same
+// block-form `var` directive the file-scope `&literal` anon-globals use.
+// The storage is statically initialized and never written at runtime, so it
+// is effectively read-only; using `var` keeps it on the existing
+// reloc-bearing emission path (the `data` directive has no block form). Must
+// run after WriteStrings so the referenced __bstrN constants are declared.
+func (c *Context) WriteStrSliceHeaders(of io.Writer) {
+	for k, sym := range c.strSliceHeaders {
+		strSym := c.String(k)
+		payload := make([]byte, 16)
+		binary.LittleEndian.PutUint64(payload[8:], uint64(len(k)))
+		emitVarBlock(of, sym, byteSliceASTType().String(), payload, []relocSpec{{Offset: 0, Symbol: strSym, Addend: 0}}, false)
+	}
 }
 
 func (c *Context) WriteStrings(of io.Writer) {
@@ -1941,6 +2003,15 @@ func mkTypename(n *Node) ASTType {
 	// don't currently support `fn(...)[]`); the caller's grammar makes
 	// that unreachable since parseTypeName returns immediately after
 	// reading the fn form.
+	// Parenthesized type group sentinel: parseTypeName already assembled
+	// the full ASTType (inner type wrapped in outer pointer levels) and
+	// stashed it in n.prebuilt. Return it verbatim.
+	if n.sval == "<prebuilt>" {
+		if n.prebuilt == nil {
+			ParseErrorF(n, "internal: <prebuilt> type node missing its payload")
+		}
+		return *n.prebuilt
+	}
 	if n.sval == "fn" {
 		nargs := int(n.ival)
 		var sig FuncSig

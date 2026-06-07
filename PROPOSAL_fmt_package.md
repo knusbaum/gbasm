@@ -438,8 +438,9 @@ and falls back to `Formatter`:
 2. `args[i].(Formatter)` succeeds → call `f.format(w)`. The type
    handles its own scratch-buffer management and may issue multiple
    writes.
-3. Neither matches → render a fallback placeholder like
-   `%!v(<type-name>)`.
+3. Neither matches → render the fallback placeholder `%!v(?)` (see
+   the [v1 marker text note](#format-directives-v1) on why the
+   placeholder carries no type name yet).
 
 The order is fixed: stringer wins when both are implemented. The
 rationale is that `stringer` is strictly cheaper (no writer
@@ -507,15 +508,24 @@ have the same format-string semantics.
 
 Each non-`%%` directive consumes one arg from `args`. Strict
 per-directive matching: `%d` only accepts `i64`. If the assertion
-fails, the renderer writes an inline error marker like
-`%!d(typename=value-or-placeholder)` and continues. This mirrors
-Go's behavior — surfaces the bug at the right spot without aborting
-the whole call.
+fails, the renderer writes an inline error marker and continues.
+This mirrors Go's behavior — surfaces the bug at the right spot
+without aborting the whole call.
+
+**v1 marker text.** The mismatch marker is `%!<verb>(BADTYPE)` and
+the `%v` fallback marker is `%!v(?)`. The fixed `BADTYPE` / `?`
+placeholders stand in for a per-value type name: surfacing the
+arg's actual type name (so the marker reads, e.g.,
+`%!d(myStruct=...)`) requires a typedesc-name intrinsic that does
+not yet exist in source — Boson does not surface the typedesc name
+field to user code today. That intrinsic is tracked as
+[Open Question #6](#6-reflection-shaped-runtime-apis); until it
+lands, the markers carry no type name. An unknown verb (e.g. `%q`) consumes its arg, writes
+`%!q(BADTYPE)`, and latches `EINVAL` exactly like a type mismatch.
 
 `%v`'s fallback (neither `stringer` nor `Formatter` implemented)
-also writes an inline marker: `%!v(<type-name>)`. The type name
-comes from the source typedesc's name field (Layer 1 of the
-variadics+assertion proposal records this).
+writes the inline marker `%!v(?)`, per the same v1-marker note
+above.
 
 **`Formatter` dispatch and the byte count.** `Formatter.format`
 returns `error` only — no byte count. To keep `printf`'s
@@ -550,7 +560,7 @@ interface entry (e.g., `var x any = small_value`) won't satisfy a
 `*self`-receiver interface — the receiver shape derived from the
 source's empty constructor stack is value, but the interface
 requires a pointer-receiver. So `%v` over a by-value arg falls
-straight to the `%!v(<type-name>)` placeholder, even if the type
+straight to the `%!v(?)` placeholder, even if the type
 implements `format(*self, ...)`. Users wanting `%v` dispatch on a
 small value type pass it by reference: `fmt.print("%v", &x)`. All
 examples in this proposal follow that convention.
@@ -753,7 +763,7 @@ Layer 5:
   arg whose `format` writes K bytes; the printf return total
   must include those K bytes (verifies the counting-writer wrap).
 - `fmt_print_v_fallback_test.bos` — `%v` with neither, falls back
-  to `%!v(<typename>)`.
+  to `%!v(?)`.
 - `fmt_printf_writer_test.bos` — explicit writer variant.
 - `fmt_printf_builder_test.bos` — printf to a BuilderWriter.
 - `fmt_print_mismatch_test.bos` — `%d` against a `byte` arg → inline

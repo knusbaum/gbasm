@@ -1,0 +1,10 @@
+package main
+import "fmt"
+
+// Layer 5: print of a plain literal with no directives.
+fn main() i64 {
+	fmt.print("hello\n")
+	fmt.print("no newline here -- ")
+	fmt.print("continued\n")
+	return 0
+}

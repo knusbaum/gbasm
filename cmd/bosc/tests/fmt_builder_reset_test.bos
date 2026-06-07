@@ -1,0 +1,22 @@
+package main
+import "fmt"
+import "io"
+import "string"
+
+// Layer 3: reset rewinds the cursor and clears the latched error so one
+// backing buffer can be reused across iterations of a loop.
+fn main() i64 {
+	var backing byte[64]
+	var b fmt.Builder = fmt.Builder{buf: backing[:], pos: 0, err_: io.io_err.OK}
+	var i i64 = 0
+	for (i = 0; i < 3; i = i + 1) {
+		b.reset()
+		b.str("row ")
+		b.int(i)
+		b.str(": ")
+		b.uint(u64(i * 100))
+		string.puts(b.bytes())
+		string.putc(10)
+	}
+	return 0
+}

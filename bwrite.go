@@ -641,6 +641,14 @@ func writeStructs(w io.Writer, ss map[string]*StructShape) error {
 				return err
 			}
 		}
+		if err := writeSize(w, len(s.MethodNames)); err != nil {
+			return err
+		}
+		for _, mn := range s.MethodNames {
+			if err := writeString(w, mn); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -676,7 +684,19 @@ func readStructs(r io.Reader) (map[string]*StructShape, error) {
 			}
 			fields[j] = FieldShape{Name: fName, Type: fType}
 		}
-		m[name] = &StructShape{Name: name, IsPub: isPub, Fields: fields}
+		nMethods, err := readSize(r)
+		if err != nil {
+			return nil, err
+		}
+		methodNames := make([]string, nMethods)
+		for j := 0; j < nMethods; j++ {
+			mn, err := readString(r)
+			if err != nil {
+				return nil, err
+			}
+			methodNames[j] = mn
+		}
+		m[name] = &StructShape{Name: name, IsPub: isPub, Fields: fields, MethodNames: methodNames}
 	}
 	return m, nil
 }

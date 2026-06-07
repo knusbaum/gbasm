@@ -1,0 +1,16 @@
+package main
+import "fmt"
+import "io"
+
+// Layer 4: a user type implementing stringer renders via %v dispatch through
+// a runtime interface assertion.
+type planet struct { name byte[] } {
+	string(p *planet) byte[] { return p.name }
+}
+
+fn main() i64 {
+	var n byte[] = "mars"
+	var pl planet = planet{name: n}
+	fmt.print("planet is %v\n", &pl)
+	return 0
+}

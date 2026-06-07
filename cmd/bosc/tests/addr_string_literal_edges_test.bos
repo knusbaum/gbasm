@@ -1,0 +1,34 @@
+package main
+import "string"
+
+// Edge cases for function-scope `&"literal"`:
+//   - `&""` (empty literal) → a pointer to an empty (len 0) byte slice; safe
+//     to deref and print (writes nothing).
+//   - `&"lit"` returned from a function → the static header lives forever, so
+//     returning it is not an escape error.
+//   - `&"lit"` stored in a struct field of type *(byte[]).
+
+type holder struct { p *(byte[]) }
+
+// Returning a `&"literal"` pointer is legal — the header is static.
+fn make_greeting() *(byte[]) {
+	return &"greeting"
+}
+
+fn main() i64 {
+	// Empty literal: deref + print writes zero bytes; print a marker after.
+	var e *(byte[]) = &""
+	string.puts(*e)
+	string.puts("[empty]\n")
+
+	// Returned static pointer.
+	var g *(byte[]) = make_greeting()
+	string.puts(*g)
+	string.putc(10)
+
+	// Stored in a struct field.
+	var h holder = holder{p: &"stored"}
+	string.puts(*h.p)
+	string.putc(10)
+	return 0
+}

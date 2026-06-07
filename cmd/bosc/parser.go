@@ -206,7 +206,11 @@ type Node struct {
 	// `{ field: val, ... }` literals whose type is inferred from
 	// context.
 	typeIdent *Node
-	p         position
+	// prebuilt carries an already-assembled ASTType for the
+	// "<prebuilt>" n_typename sentinel produced by a parenthesized type
+	// group (`*(byte[])`). mkTypename returns it verbatim. Nil otherwise.
+	prebuilt *ASTType
+	p        position
 }
 
 func NewParser(fname string, r io.Reader) *Parser {
@@ -221,9 +225,24 @@ func (p *Parser) ParseFunctype() (FuncDecl, error) {
 	p.expect(tok_fn)
 	p.expect(tok_lparen)
 	var args []Binding
+	isVariadic := false
 	for p.current().t != tok_rparen {
+		// A leading `...` marks this (necessarily last) parameter as
+		// variadic. The rendered signature emits `...<element>`; here we
+		// parse the element type and re-wrap it as the slice the body sees,
+		// setting Variadic so call sites accept zero-or-more trailing args.
+		variadic := false
+		if p.current().t == tok_ellipsis {
+			p.advance()
+			variadic = true
+		}
 		t := mkTypename(p.parseTypeName())
-		b := Binding{Type: t}
+		if variadic {
+			elem := t
+			t = ASTType{Element: &elem}
+			isVariadic = true
+		}
+		b := Binding{Type: t, Variadic: variadic}
 		args = append(args, b)
 		if p.current().t == tok_comma {
 			p.advance()
@@ -235,8 +254,9 @@ func (p *Parser) ParseFunctype() (FuncDecl, error) {
 		rettype = mkTypename(p.parseTypeName())
 	}
 	return FuncDecl{
-		Args:   args,
-		Return: rettype,
+		Args:     args,
+		Return:   rettype,
+		Variadic: isVariadic,
 	}, nil
 }
 
@@ -519,6 +539,41 @@ func (p *Parser) parseTypeName() *Node {
 			ival: uint64(len(argTypes)),
 			args: args,
 		}
+	}
+
+	// Parenthesized type group: `(T)`. The only reason to write one is to
+	// make the leading `*` prefixes bind to the whole group rather than to
+	// the base type — e.g. `*(byte[])` is a pointer to a byte slice, as
+	// opposed to `*byte[]` which is a slice of byte-pointers. The inner type
+	// is parsed recursively; the accumulated outer indirection / mut / owned
+	// / nullable masks are then layered on top of the inner ASTType. This is
+	// the inverse of ASTType.String(), which already emits `*(byte[])` for
+	// pointer-to-slice. Without it, such types are constructible (`&s` where
+	// `s byte[]`) but not nameable, which blocks `%s`-style assertions and
+	// the `*(byte[])` parameter form.
+	if c.t == tok_lparen {
+		parenPos := c.p
+		p.advance()
+		innerNode := p.parseTypeName()
+		p.expect(tok_rparen)
+		inner := mkTypename(innerNode)
+		// Layer the outer pointer levels (collected above) on top of the
+		// inner type. Each `*` shifts the inner's existing mut/owned/nil
+		// bits up one position, then sets the new outer level's bits from
+		// the masks parseTypeName accumulated for that level.
+		built := inner
+		for i := 0; i < int(indirection); i++ {
+			built.MutMask <<= 1
+			built.OwnedMask <<= 1
+			built.NilMask <<= 1
+			built.Indirection++
+		}
+		// Apply the outer-level qualifier bits the prefix loop recorded.
+		// indirection masks occupy bits [0..indirection]; merge them in.
+		built.MutMask |= mutmask
+		built.OwnedMask |= ownedmask
+		built.NilMask |= nilmask
+		return &Node{t: n_typename, p: parenPos, sval: "<prebuilt>", prebuilt: &built}
 	}
 
 	if c.t != tok_ident {

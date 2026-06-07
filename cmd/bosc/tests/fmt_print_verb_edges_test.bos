@@ -1,0 +1,29 @@
+package main
+import "fmt"
+import "io"
+import "string"
+
+// Layer 5 directive-parser edge cases:
+//   - `%%` alone → one literal `%`
+//   - a trailing bare `%` as the final byte of the format → emitted
+//     literally, consumes no arg
+//   - an unknown verb (`%q`) → consumes an arg, writes `%!q(BADTYPE)`,
+//     latches EINVAL but keeps rendering the rest
+fn main() i64 {
+	// `%%` alone.
+	fmt.print("%%")
+	string.putc(10)
+	// trailing bare `%` in final position (no following byte).
+	fmt.print("end%")
+	string.putc(10)
+	// unknown verb consumes its arg and writes a marker; the trailing text
+	// after it still renders, proving processing continued.
+	const n, var err = fmt.print("a%qb=%d", 7, 9)
+	string.putc(10)
+	if (err != io.io_err.OK) {
+		string.puts("q latched\n")
+	} else {
+		string.puts("NO ERROR (unexpected)\n")
+	}
+	return 0
+}

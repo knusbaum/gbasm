@@ -1,0 +1,20 @@
+package main
+import "fmt"
+import "io"
+
+// Layer 4: a type implementing BOTH stringer and Formatter renders via
+// stringer under %v — stringer wins the preference order.
+type tag struct { label byte[] } {
+	string(t *tag) byte[] { return t.label }
+	format(t *tag, w io.writer) error {
+		const _, var err = w.write("FORMATTER")
+		return err
+	}
+}
+
+fn main() i64 {
+	var l byte[] = "STRINGER"
+	var t tag = tag{label: l}
+	fmt.print("got %v\n", &t)
+	return 0
+}

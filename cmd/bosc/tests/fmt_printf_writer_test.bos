@@ -1,0 +1,10 @@
+package main
+import "fmt"
+import "io"
+
+// Layer 5: printf with an explicit io.writer.
+fn main() i64 {
+	fmt.printf(&io.STDOUT, "x=%d y=%d\n", 3, 4)
+	fmt.printf(&io.STDERR, "to stderr: %d\n", 99)
+	return 0
+}

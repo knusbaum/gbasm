@@ -1,0 +1,14 @@
+package main
+import "fmt"
+import "io"
+
+// Layer 2: fmt.uint formats unsigned decimals through a writer.
+fn main() i64 {
+	fmt.uint(&io.STDOUT, u64(0))
+	fmt.nl(&io.STDOUT)
+	fmt.uint(&io.STDOUT, u64(99))
+	fmt.nl(&io.STDOUT)
+	fmt.uint(&io.STDOUT, u64(18446744073709551615))
+	fmt.nl(&io.STDOUT)
+	return 0
+}
