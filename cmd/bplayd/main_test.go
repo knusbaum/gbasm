@@ -19,6 +19,7 @@ func TestValidateRuntimeBundle(t *testing.T) {
 		"builtin": "builtin.bo",
 		"string":  "string.bo",
 		"io":      "io.bo",
+		"fmt":     "fmt.bo",
 	})
 
 	info, err := validateRuntimeBundle(root)
@@ -38,6 +39,7 @@ func TestValidateRuntimeBundleRejectsInternalImportcfgEntry(t *testing.T) {
 		"builtin": "builtin.bo",
 		"string":  "string.bo",
 		"io":      "io.bo",
+		"fmt":     "fmt.bo",
 		"_io_sys": "_io_sys.bo",
 	})
 
@@ -52,6 +54,7 @@ func TestValidateRuntimeBundleRejectsMissingObject(t *testing.T) {
 		"builtin": "builtin.bo",
 		"string":  "string.bo",
 		"io":      "io.bo",
+		"fmt":     "fmt.bo",
 	})
 	if err := os.Remove(filepath.Join(root, "objects", "io.bo")); err != nil {
 		t.Fatal(err)
@@ -68,6 +71,7 @@ func TestCommandPlan(t *testing.T) {
 		"builtin": "builtin.bo",
 		"string":  "string.bo",
 		"io":      "io.bo",
+		"fmt":     "fmt.bo",
 	})
 	bundle, err := validateRuntimeBundle(root)
 	if err != nil {
@@ -86,9 +90,11 @@ func TestCommandPlan(t *testing.T) {
 		filepath.Join(root, "objects", "builtin.bo"),
 		filepath.Join(root, "objects", "string.bo"),
 		filepath.Join(root, "objects", "io.bo"),
+		filepath.Join(root, "objects", "fmt.bo"),
 		filepath.Join(root, "objects", "_io_sys.bo"),
 		filepath.Join(root, "objects", "_heap.bo"),
 		filepath.Join(root, "objects", "_init.bo"),
+		filepath.Join(root, "objects", "_iface.bo"),
 	}
 	if !reflect.DeepEqual(plan.Bld.Argv, wantBld) {
 		t.Fatalf("bld argv\n got: %#v\nwant: %#v", plan.Bld.Argv, wantBld)
@@ -357,7 +363,7 @@ func writeTestBundle(t *testing.T, imports map[string]string) string {
 		}
 	}
 	var cfg bytes.Buffer
-	for _, pkg := range []string{"builtin", "string", "io", "_io_sys"} {
+	for _, pkg := range []string{"builtin", "string", "io", "fmt", "_io_sys", "_iface"} {
 		name, ok := imports[pkg]
 		if !ok {
 			continue

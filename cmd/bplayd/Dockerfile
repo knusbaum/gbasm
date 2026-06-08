@@ -11,12 +11,13 @@ RUN go build -o /out/bld ./cmd/bld
 
 RUN set -eux; \
     bundle=/out/playground; \
-    mkdir -p "$bundle/objects" /tmp/bplay-build/builtin /tmp/bplay-build/io; \
+    mkdir -p "$bundle/objects" /tmp/bplay-build/builtin /tmp/bplay-build/io /tmp/bplay-build/fmt; \
     /out/bosc -importcfg=/dev/null -o /tmp/bplay-build/builtin/builtin.bs runtime/builtin/builtin.bos; \
     /out/bas -o "$bundle/objects/builtin.bo" /tmp/bplay-build/builtin/builtin.bs; \
     /out/bas -o "$bundle/objects/_init.bo" runtime/_init/init_linux.bs; \
     /out/bas -o "$bundle/objects/_heap.bo" runtime/_heap/heap_linux.bs; \
     /out/bas -o "$bundle/objects/_io_sys.bo" runtime/_io_sys/io_sys_linux.bs; \
+    /out/bas -o "$bundle/objects/_iface.bo" runtime/_iface/iface_linux.bs; \
     /out/bas -o "$bundle/objects/string.bo" runtime/string/string.bs runtime/string/puts_linux.bs; \
     printf 'builtin=%s\nstring=%s\n_io_sys=%s\n' \
       "$bundle/objects/builtin.bo" \
@@ -25,7 +26,14 @@ RUN set -eux; \
       > /tmp/bplay-build/io/importcfg; \
     /out/bosc -importcfg=/tmp/bplay-build/io/importcfg -o /tmp/bplay-build/io/io.bs runtime/io/io.bos; \
     /out/bas -o "$bundle/objects/io.bo" /tmp/bplay-build/io/io.bs; \
-    printf 'builtin=/usr/local/lib/boson/playground/objects/builtin.bo\nstring=/usr/local/lib/boson/playground/objects/string.bo\nio=/usr/local/lib/boson/playground/objects/io.bo\n' \
+    printf 'builtin=%s\nstring=%s\nio=%s\n' \
+      "$bundle/objects/builtin.bo" \
+      "$bundle/objects/string.bo" \
+      "$bundle/objects/io.bo" \
+      > /tmp/bplay-build/fmt/importcfg; \
+    /out/bosc -importcfg=/tmp/bplay-build/fmt/importcfg -o /tmp/bplay-build/fmt/fmt.bs runtime/fmt/fmt.bos; \
+    /out/bas -o "$bundle/objects/fmt.bo" /tmp/bplay-build/fmt/fmt.bs; \
+    printf 'builtin=/usr/local/lib/boson/playground/objects/builtin.bo\nstring=/usr/local/lib/boson/playground/objects/string.bo\nio=/usr/local/lib/boson/playground/objects/io.bo\nfmt=/usr/local/lib/boson/playground/objects/fmt.bo\n' \
       > "$bundle/importcfg"
 
 FROM golang:latest
