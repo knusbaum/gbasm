@@ -793,6 +793,114 @@ aliasing under a checked contract, and would also need to carry the
 contract through the runtime-itab assertion/type-switch path — is
 deferred to [Future extensions](#future-extensions).
 
+#### Why coarse-and-loud, not a marker or a per-method exclusion
+
+Two finer-grained designs were considered and rejected, both for UX
+rather than soundness:
+
+- **A visible `borrowed`-return marker on the signature.** The marker
+  carries no semantics the compiler doesn't already infer, so it can
+  only fail one of two ways, both worse than just rejecting the
+  coercion: if you forget it, compilation fails demanding you add it;
+  once added, the coercion *still* fails because the interface needs a
+  non-borrowing method. The marker is pure ceremony inserted *before*
+  the error you actually needed. Better to emit that error directly.
+
+- **A per-method exclusion** (exclude only borrowing methods from the
+  interface machinery, let the type otherwise be an interface). This is
+  more expressive — a type stays usable as an interface for its
+  non-borrowing methods — but it is both *more work* and *still spooky*.
+  More work because a sound version needs **two** coordinated changes,
+  not one: excluding borrowing methods from the runtime typedesc method
+  table is not enough, because static coercion does not consult that
+  table — `__vtable_T__I` is built from *direct* method relocations
+  (`ast.go:670`, via `WriteVtables`), and static conformance is decided
+  by `TypeSatisfiesInterfaceAs` (`ast.go:553`), which matches by
+  name/signature/receiver only and has no aliasing-awareness. So a
+  table-only exclusion still lets `var x Byter = b` wire a direct reloc
+  to the borrowing `bytes` when `Byter` *requires* `bytes` — a static
+  hole. A correct per-method exclusion therefore also has to teach the
+  static conformance predicate to treat a borrowing method as a
+  non-match. Still spooky even when done correctly: because the type
+  *can* still become an interface for its other methods, `var a any = b`
+  compiles (a `any` requires no methods), and only `a.(Byter)` fails at
+  runtime because `bytes` was excluded from the table. An innocuous body
+  edit that turns a method into a borrowing one would break a
+  previously-working dynamic cast far from the edit, with no
+  compile-time signal.
+
+The coarse rule trades expressiveness for a property worth more here:
+**every conformance-affecting change fails loudly, at compile time, at
+a coercion site that exists in the source.** Because the rule rejects
+*entering the interface world at all* — including the `var a any = b`
+coercion the per-method variant let through — there is no surviving
+dynamic path and therefore no runtime conformance surprise. The cost
+is bluntness: a borrowing method disqualifies its whole type from
+*every* interface, including ones that don't use it (a `Builder` that
+was an `io.writer` via `write` stops being one the moment a borrowing
+`bytes` is added). That is acceptable precisely because the failure is
+loud and directed — see the diagnostic below — and because the
+expressive form (option (b)) remains available as a future upgrade
+that lifts the restriction without changing this rule's call sites.
+
+#### Diagnostic
+
+The quality of this rule's UX is the diagnostic. When
+`validateInterfaceCoercion` rejects a coercion under this clause, it
+must not say merely "Builder does not satisfy io.writer" — that reads
+as a non-sequitur when the interface in question does not even mention
+the offending method. It must instead enumerate the type's
+borrow-returning methods, point at each definition, and explain the
+whole-type rule. Shape:
+
+```
+error: cannot use `Builder` as interface `io.writer` here
+  `Builder` is concrete-only: it has a method that returns a borrow,
+  and a borrow-returning method cannot be dispatched through an
+  interface (dispatch cannot track the borrow's lifetime). A type with
+  any such method cannot be coerced to any interface — not even `any`.
+
+  borrow-returning method(s) on `Builder`:
+    bytes(b *Builder) byte[]   — returns a borrow of its receiver
+        defined at builder.bos:42
+
+  fix: call `bytes` directly on a concrete `Builder`, or change `bytes`
+       so it does not return a borrow, to make `Builder` interface-eligible.
+  (coercion required here →)  var w io.writer = b
+```
+
+The enumeration walks the concrete type's full method set (the same
+`c.TypeMethodsFor` walk the guard already performs), reporting each
+method whose `alias_set` is non-empty and a short rendering of *what*
+it borrows (receiver and/or which parameter, from the inferred
+`ReturnAliases`).
+
+**Source position, and the imported-type gap.** For a **locally**
+defined type the method's `FuncDecl` carries a usable position
+(`FuncDecl.p` / `Pos()`, set during `ToAST`), so "defined at
+file:line" is exact. For an **imported** type the position is *not*
+available as the code stands: the importer rebuilds method
+`FuncDecl`s via `parseFuncType`, which sets no position
+(`ast.go:1116`–`1131`, `parser.go:256`), so the enumeration has no
+line to print. Two ways to handle it, both acceptable:
+
+- **Degrade gracefully (minimum):** for an imported method render
+  "defined in package `<pkg>`" with no line. The diagnostic still
+  names the offending method and the rule; it just can't point at the
+  source line the consumer doesn't have.
+- **Plumb the site (better):** the `.bo` already carries `SrcFile` /
+  `SrcLine` on `gbasm.Function` (`function.go:737`, serialized in
+  `bwrite.go`). A small importer change threading those onto the
+  rebuilt `FuncDecl`'s position would give exact "defined at
+  file:line" for imported types too, mirroring how `ReturnAliases`
+  itself is plumbed across the boundary. Recommended but not required
+  for v1.
+
+Naming the methods (and, where available, their definition sites) is
+what turns an accidental borrow-introducing edit into an immediately
+actionable error pointing back at the edit, rather than a confusing
+rejection at an unrelated coercion.
+
 ### Variadic parameters
 
 `ReturnAliases` is positional: slot `s` aliases formal parameter index
@@ -1019,6 +1127,20 @@ package boundary.
     and globals.go never calls `emitInterfaceFatPtr`, so a file-scope
     `var g SomeIface = …` is not expressible and cannot bypass the
     guard.
+  - **Directed rejection diagnostic.** On rejection the guard must
+    enumerate the concrete type's borrow-returning methods (each method
+    whose `alias_set` is non-empty), with each method's source position
+    and a short rendering of what it borrows, and explain the
+    whole-type "concrete-only" rule — *not* emit a bare "does not
+    satisfy" message, which is a non-sequitur when the target interface
+    does not mention the offending method. See
+    [Diagnostic](#diagnostic). For a locally-defined type the method
+    positions come from the `FuncDecl`s the `TypeMethodsFor`
+    enumeration already walks; for an **imported** type the rebuilt
+    `FuncDecl` carries no position, so the diagnostic either degrades
+    to "defined in package X" or (recommended) the importer is extended
+    to thread the `.bo`'s `SrcFile`/`SrcLine` (`function.go:737`) onto
+    the rebuilt decl — see [Diagnostic](#diagnostic).
 - **`cmd/bas/main.go`**: a new `retaliases` prefix branch beside the
   `type` handler at `:982`. Unlike `type` (raw-string store), it parses
   `<slot>: <idx>...` structurally and accumulates one entry per slot
@@ -1094,10 +1216,27 @@ Negative (still rejected, now at the *caller*):
   method; rejected at the coercion site
   ([Interface-method dispatch](#interface-method-dispatch)). Verifies
   the coercion guard fires and the vtable-dispatch borrow hole is
-  closed. A companion positive assertion (concrete `v.method()` on the
-  same type still compiles and runs) belongs in
+  closed. The `.expected` must assert the **directed diagnostic** names
+  the offending method and its definition site (see
+  [Diagnostic](#diagnostic)) — a bare "does not satisfy" message is a
+  test failure, since the whole point of the rule's UX is naming the
+  borrowing method. A companion positive assertion (concrete
+  `v.method()` on the same type still compiles and runs) belongs in
   `retalias_struct_ctor_test.bos` or a sibling, confirming the
   exclusion is at the coercion, not at the body.
+- `retalias_iface_coerce_unrelated_err_test.bos` — the bluntness case:
+  a type with a non-borrowing method that legitimately satisfies some
+  interface (e.g. an `io.writer`-shaped `write`), *plus* an unrelated
+  borrowing accessor, coerced to that interface. Rejected, and the
+  diagnostic must explain the whole-type rule (the interface does not
+  mention the borrowing method) rather than reading as a non-sequitur.
+  Pins the diagnostic's handling of the coarse rule's main sharp edge.
+- `retalias_iface_coerce_imported_err_test.bos` — a borrowing-method
+  type defined in an **imported** package, coerced to an interface in
+  the consumer. Rejected; pins the imported-type diagnostic rendering
+  (degraded "defined in package X" or, if the position-plumbing step
+  is implemented, the exact site). The other coercion `_err_test`s use
+  local types and would not catch a regression in the imported path.
 - `retalias_iface_coerce_any_err_test.bos` — the same borrowing-method
   type coerced to the **zero-method `any`** interface (`var a any =
   thing`); rejected. Verifies the widened guard runs for the `any`
