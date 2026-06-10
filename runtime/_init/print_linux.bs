@@ -1,11 +1,19 @@
-package string
+package _init
 
-// Parameters to functions are passed in the registers rdi, rsi, rdx, rcx, r8, r9
-// Functions preserve the registers rbx, rsp, rbp, r12, r13, r14, and r15;
-// while rax, rdi, rsi, rdx, rcx, r8, r9, r10, r11 are scratch registers.
+// Minimal stdout/formatting primitives needed by the runtime's own entry
+// and trap-handler code (start, index_oob, nil_assert). These are NOT
+// user-facing: `_init` is an internal package and cannot be imported from
+// Boson source. End-user code formats output through the `fmt` package.
+//
+// Only the closure the runtime actually uses lives here — puts, puti, and
+// their helpers (strlen, itoa, uitoa, ucountdigits). The fuller historical
+// surface (putc, putb, exit) lives in the test fixture package, not in the
+// shipped runtime.
 
-// strlen(ptr *byte) i64 — internal helper, not exposed to Boson.
-// Returns the length of a null-terminated byte string.
+// Parameters are passed in rdi, rsi, rdx, rcx, r8, r9. Functions preserve
+// rbx, rsp, rbp, r12-r15; rax, rdi, rsi, rdx, rcx, r8, r9, r10, r11 are scratch.
+
+// strlen(ptr *byte) i64 — length of a null-terminated byte string.
 function strlen
 	prologue
 	mov rax -1
@@ -20,7 +28,7 @@ label loop
 	ret
 
 // ucountdigits(i uint64) -> uint64
-// Determines the minimum number of characters needed to represent i.
+// Minimum number of characters needed to represent i.
 function ucountdigits
 	mov rcx 0
 	mov rdx 0
@@ -39,7 +47,6 @@ label loop
 label end
 	mov rax rcx
 	ret
-
 
 // uitoa(i uint64, b *byte) — write decimal digits of i into buffer at b (null-terminated).
 function uitoa
@@ -82,19 +89,27 @@ label skipconvert
 	epilogue
 	ret
 
-// putb(i byte) void — print byte value as a decimal integer.
-pub function putb
-	type fn(byte) void
-	jmp puti
+// puts(s byte[]) void — print a byte slice to stdout via write(2).
+function puts
+	prologue
+
+	mov rsi [rdi]
+	mov rdx [rdi+8]
+
+	mov rax 0x1
+	mov rdi 1
+	syscall
+
+	epilogue
+	ret
 
 // puti(i i64) void — print a 64-bit signed integer to stdout.
-
+//
 // Stack layout after sub rsp 48:
 //   [rsp+0 .. rsp+23]  number string buffer (24 bytes, enough for any i64)
 //   [rsp+24.. rsp+31]  slice header: data pointer
 //   [rsp+32.. rsp+39]  slice header: length
-pub function puti
-	type fn(i64) void
+function puti
 	prologue
 	sub rsp 48
 
@@ -116,32 +131,6 @@ pub function puti
 
 	// Call puts with a pointer to the slice header.
 	lea rdi [rsp+24]
-	call puts
-
-	epilogue
-	ret
-
-// putc(c byte) void — print a single byte as a character.
-
-// Stack layout after sub rsp 24:
-//   [rsp+0 .. rsp+7]   character stored as 64-bit (only low byte used by write)
-//   [rsp+8 .. rsp+15]  slice header: data pointer
-//   [rsp+16.. rsp+23]  slice header: length
-pub function putc
-	type fn(byte) void
-	prologue
-	sub rsp 24
-
-	// Store rdi at [rsp]; the low byte is the character.
-	// The write syscall will only write slice.len = 1 byte from this address.
-	mov [rsp] rdi
-
-	// Build slice header: ptr at [rsp+8], len at [rsp+16].
-	mov qword[rsp+8] rsp
-	mov qword[rsp+16] 1
-
-	// Call puts with a pointer to the slice header.
-	lea rdi [rsp+8]
 	call puts
 
 	epilogue

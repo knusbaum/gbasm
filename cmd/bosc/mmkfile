@@ -20,12 +20,15 @@ RUNTIME=../../runtime
 # layout never tempts users into importing them from production code.
 TESTPKGS=testpkgs
 
-file string.bo : bas $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs {
-    ./bas -o string.bo $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs >/dev/null 2>&1
+# Test-fixture `string` package (puts/puti/putc/putb/exit). Lives under
+# testpkgs/ — NOT in the shipped runtime — so language tests can print
+# without pulling in the standard library. See testpkgs/string/string.bs.
+file string.bo : bas $TESTPKGS/string/puts_linux.bs $TESTPKGS/string/string.bs {
+    ./bas -o string.bo $TESTPKGS/string/puts_linux.bs $TESTPKGS/string/string.bs >/dev/null 2>&1
 }
 
-file init.bo : bas $RUNTIME/_init/init_linux.bs {
-    ./bas -o init.bo $RUNTIME/_init/init_linux.bs >/dev/null 2>&1
+file init.bo : bas $RUNTIME/_init/init_linux.bs $RUNTIME/_init/print_linux.bs {
+    ./bas -o init.bo $RUNTIME/_init/init_linux.bs $RUNTIME/_init/print_linux.bs >/dev/null 2>&1
 }
 
 file heap.bo : bas $RUNTIME/_heap/heap_linux.bs {

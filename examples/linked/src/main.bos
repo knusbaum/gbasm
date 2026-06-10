@@ -1,6 +1,7 @@
 package main
 
-import "string"
+import "io"
+import "fmt"
 
 type node struct {
 	val i64
@@ -24,15 +25,15 @@ fn list_append(l *mut node, val i64) {
 
 fn list_print(l *node) {
 	var curr *?node = l
-	string.puts("[")
+	fmt.str(&io.STDOUT, "[")
 	for(; curr != nil; curr = curr?.next) {
 		var cur *node = curr?
-		string.puti(cur.val)
+		fmt.int(&io.STDOUT, cur.val)
 		if(cur.next != nil) {
-			string.puts(", ")
+			fmt.str(&io.STDOUT, ", ")
 		}
 	}
-	string.puts("]\n")
+	fmt.str(&io.STDOUT, "]\n")
 }
 
 fn list_destroy(l owned *owned mut node) {

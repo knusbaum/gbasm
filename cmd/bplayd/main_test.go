@@ -17,7 +17,6 @@ import (
 func TestValidateRuntimeBundle(t *testing.T) {
 	root := writeTestBundle(t, map[string]string{
 		"builtin": "builtin.bo",
-		"string":  "string.bo",
 		"io":      "io.bo",
 		"fmt":     "fmt.bo",
 	})
@@ -37,7 +36,6 @@ func TestValidateRuntimeBundle(t *testing.T) {
 func TestValidateRuntimeBundleRejectsInternalImportcfgEntry(t *testing.T) {
 	root := writeTestBundle(t, map[string]string{
 		"builtin": "builtin.bo",
-		"string":  "string.bo",
 		"io":      "io.bo",
 		"fmt":     "fmt.bo",
 		"_io_sys": "_io_sys.bo",
@@ -52,7 +50,6 @@ func TestValidateRuntimeBundleRejectsInternalImportcfgEntry(t *testing.T) {
 func TestValidateRuntimeBundleRejectsMissingObject(t *testing.T) {
 	root := writeTestBundle(t, map[string]string{
 		"builtin": "builtin.bo",
-		"string":  "string.bo",
 		"io":      "io.bo",
 		"fmt":     "fmt.bo",
 	})
@@ -69,7 +66,6 @@ func TestValidateRuntimeBundleRejectsMissingObject(t *testing.T) {
 func TestCommandPlan(t *testing.T) {
 	root := writeTestBundle(t, map[string]string{
 		"builtin": "builtin.bo",
-		"string":  "string.bo",
 		"io":      "io.bo",
 		"fmt":     "fmt.bo",
 	})
@@ -88,7 +84,6 @@ func TestCommandPlan(t *testing.T) {
 	wantBld := []string{
 		"/tools/bld", "-o", filepath.Join(workdir, "main"), filepath.Join(workdir, "main.bo"),
 		filepath.Join(root, "objects", "builtin.bo"),
-		filepath.Join(root, "objects", "string.bo"),
 		filepath.Join(root, "objects", "io.bo"),
 		filepath.Join(root, "objects", "fmt.bo"),
 		filepath.Join(root, "objects", "_io_sys.bo"),
@@ -227,7 +222,7 @@ func TestStaticAssetRoute(t *testing.T) {
 func TestRunEndpointHelloIfToolchainBuilt(t *testing.T) {
 	state := newBuiltToolchainStateOrSkip(t)
 
-	body := bytes.NewBufferString(`{"source":"package main\n\nimport \"string\"\n\nfn main() {\n\tstring.puts(\"hello\\n\")\n}\n"}`)
+	body := bytes.NewBufferString(`{"source":"package main\n\nimport \"fmt\"\n\nfn main() {\n\tfmt.print(\"hello\\n\")\n}\n"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/run", body)
 	rec := httptest.NewRecorder()
 	state.handleRun(rec, req)
@@ -273,7 +268,7 @@ func TestRunEndpointRejectsDirectIOSysImportIfToolchainBuilt(t *testing.T) {
 func TestRunEndpointRunnerModeHelloIfBuilt(t *testing.T) {
 	state := newBuiltRunnerStateOrSkip(t)
 
-	body := bytes.NewBufferString(`{"source":"package main\n\nimport \"string\"\n\nfn main() {\n\tstring.puts(\"hello runner\\n\")\n}\n"}`)
+	body := bytes.NewBufferString(`{"source":"package main\n\nimport \"fmt\"\n\nfn main() {\n\tfmt.print(\"hello runner\\n\")\n}\n"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/run", body)
 	rec := httptest.NewRecorder()
 	state.handleRun(rec, req)
@@ -363,7 +358,7 @@ func writeTestBundle(t *testing.T, imports map[string]string) string {
 		}
 	}
 	var cfg bytes.Buffer
-	for _, pkg := range []string{"builtin", "string", "io", "fmt", "_io_sys", "_iface"} {
+	for _, pkg := range []string{"builtin", "io", "fmt", "_io_sys", "_iface"} {
 		name, ok := imports[pkg]
 		if !ok {
 			continue

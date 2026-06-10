@@ -396,7 +396,6 @@ type runtimeObject struct {
 
 var runtimeObjects = []runtimeObject{
 	{Package: "builtin", Filename: "builtin.bo"},
-	{Package: "string", Filename: "string.bo"},
 	{Package: "io", Filename: "io.bo"},
 	{Package: "fmt", Filename: "fmt.bo"},
 	{Package: "_io_sys", Filename: "_io_sys.bo", Internal: true},

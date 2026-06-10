@@ -12,7 +12,6 @@
 package io
 
 import "_io_sys"
-import "string"
 
 // Flags for open(). These correspond to the O_* constants in <fcntl.h> on
 // Linux x86-64. Combine with bitwise OR for multi-flag values.

@@ -1,7 +1,8 @@
 package main
 
-import "string"
+import "io"
+import "fmt"
 
 fn main() {
-	string.puts("Hello from the mmk-built example.\n")
+	fmt.str(&io.STDOUT, "Hello from the mmk-built example.\n")
 }

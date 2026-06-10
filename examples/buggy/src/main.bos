@@ -1,6 +1,7 @@
 package main
 
-import "string"
+import "io"
+import "fmt"
 import "src/subpkg"
 
 type strerr struct{ err byte[] } {
@@ -26,7 +27,7 @@ fn blowstack() {
 
 fn main(args byte[][]) {	
 	const e = do_a_thing()
-	string.puts(e.message())
+	fmt.str(&io.STDOUT, e.message())
 	e.destroy()
 
 	subpkg.x = subpkg.x + 10
@@ -36,5 +37,5 @@ fn main(args byte[][]) {
 	subpkg.do_something_else()
 	subpkg.do_something_else()
 	subpkg.do_something_else()
-	string.puti(subpkg.x) // why is this fine
+	fmt.int(&io.STDOUT, subpkg.x) // why is this fine
 }

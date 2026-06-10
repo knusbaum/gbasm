@@ -1,12 +1,12 @@
 package main
 
 import "io"
-import "string"
+import "fmt"
 
 fn perror(err error) {
-	string.puts("ERROR: ")
-	string.puts(err.message())
-	string.puts("\n")
+	fmt.str(&io.STDOUT, "ERROR: ")
+	fmt.str(&io.STDOUT, err.message())
+	fmt.str(&io.STDOUT, "\n")
 }
 
 fn main(args byte[][]) {
@@ -16,15 +16,15 @@ fn main(args byte[][]) {
 			perror(err)
 			return
 		}
-		string.puts("Done.\n")
+		fmt.str(&io.STDOUT, "Done.\n")
 		return
 	}
 	for(var i i64 = 1; i < len(args); i = i + 1) {
 		const f, var openerr = io.open(args[i], io.O_CREAT | io.O_RDONLY, 0o660)
 		if (openerr != io.io_err.OK) {
-			string.puts("While opening ")
-			string.puts(args[i])
-			string.puts("\n")
+			fmt.str(&io.STDOUT, "While opening ")
+			fmt.str(&io.STDOUT, args[i])
+			fmt.str(&io.STDOUT, "\n")
 			perror(openerr)
 			dispose(f) // Interesting we can't coherently dispose f close(f) feels wrong here.
 			return
@@ -37,5 +37,5 @@ fn main(args byte[][]) {
 		}
 		f.close()
 	}
-	string.puts("Done.\n")
+	fmt.str(&io.STDOUT, "Done.\n")
 }

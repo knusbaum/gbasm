@@ -40,11 +40,10 @@ bplay-runner { go build ./cmd/bplay-runner }
 
 include ./boson.mmk
 
-playground-runtime : target/builtin.bo target/string.bo target/io.bo target/fmt.bo target/_io_sys.bo target/_heap.bo target/_init.bo target/_iface.bo {
+playground-runtime : target/builtin.bo target/io.bo target/fmt.bo target/_io_sys.bo target/_heap.bo target/_init.bo target/_iface.bo {
     set -e
     mkdir -p "$PLAYGROUND_BUNDLE/objects"
     cp target/builtin.bo "$PLAYGROUND_BUNDLE/objects/builtin.bo"
-    cp target/string.bo "$PLAYGROUND_BUNDLE/objects/string.bo"
     cp target/io.bo "$PLAYGROUND_BUNDLE/objects/io.bo"
     cp target/fmt.bo "$PLAYGROUND_BUNDLE/objects/fmt.bo"
     cp target/_io_sys.bo "$PLAYGROUND_BUNDLE/objects/_io_sys.bo"
@@ -53,7 +52,6 @@ playground-runtime : target/builtin.bo target/string.bo target/io.bo target/fmt.
     cp target/_iface.bo "$PLAYGROUND_BUNDLE/objects/_iface.bo"
     cat > "$PLAYGROUND_BUNDLE/importcfg" <<EOF
 builtin=$PLAYGROUND_BUNDLE_PREFIX/objects/builtin.bo
-string=$PLAYGROUND_BUNDLE_PREFIX/objects/string.bo
 io=$PLAYGROUND_BUNDLE_PREFIX/objects/io.bo
 fmt=$PLAYGROUND_BUNDLE_PREFIX/objects/fmt.bo
 EOF

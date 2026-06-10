@@ -1,6 +1,7 @@
 package main
 
-import "string"
+import "io"
+import "fmt"
 
 interface helloer {
 	hello(h *self)
@@ -8,19 +9,19 @@ interface helloer {
 
 type thingy i64 {
 	hello(t *thingy) {
-		string.puts("hello, thingy: ")
-		string.puti(i64(*t))
-		string.puts("\n")
+		fmt.str(&io.STDOUT, "hello, thingy: ")
+		fmt.int(&io.STDOUT, i64(*t))
+		fmt.str(&io.STDOUT, "\n")
 	}
 }
 
 type other_thingy struct{ x i64, y i64} {
 	hello(o *other_thingy) {
-		string.puts("hello, other thingy. x: ")
-		string.puti(o.x)
-		string.puts(", y: ")
-		string.puti(o.y)
-		string.puts("\n")
+		fmt.str(&io.STDOUT, "hello, other thingy. x: ")
+		fmt.int(&io.STDOUT, o.x)
+		fmt.str(&io.STDOUT, ", y: ")
+		fmt.int(&io.STDOUT, o.y)
+		fmt.str(&io.STDOUT, "\n")
 	}
 }
 

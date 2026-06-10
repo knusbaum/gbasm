@@ -24,13 +24,15 @@ test: go_tests bas_tests {
 }
 
 RUNTIME=../../runtime
+# Shared test-fixture `string` package (kept out of the shipped runtime).
+STRINGFIXTURE=../bosc/testpkgs/string
 
-file string.bo : bas $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs {
-    ./bas -o string.bo $RUNTIME/string/puts_linux.bs $RUNTIME/string/string.bs >/dev/null 2>&1
+file string.bo : bas $STRINGFIXTURE/puts_linux.bs $STRINGFIXTURE/string.bs {
+    ./bas -o string.bo $STRINGFIXTURE/puts_linux.bs $STRINGFIXTURE/string.bs >/dev/null 2>&1
 }
 
-file init.bo : bas $RUNTIME/_init/init_linux.bs {
-    ./bas -o init.bo $RUNTIME/_init/init_linux.bs >/dev/null 2>&1
+file init.bo : bas $RUNTIME/_init/init_linux.bs $RUNTIME/_init/print_linux.bs {
+    ./bas -o init.bo $RUNTIME/_init/init_linux.bs $RUNTIME/_init/print_linux.bs >/dev/null 2>&1
 }
 
 'tests/(.*)_test.bs' : bas bld init.bo string.bo {

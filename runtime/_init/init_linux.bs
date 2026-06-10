@@ -56,7 +56,7 @@ label argv_loop
 
 	// strlen(argv[i]) -> rax. strlen preserves r12..r15 and rbp via its
 	// prologue/epilogue, so our walking state survives the call.
-	call string.strlen
+	call strlen
 
 	// inner[i].ptr = argv[i], inner[i].len = strlen result.
 	mov rdx [r15]
@@ -91,19 +91,19 @@ pub function index_oob
 
 
 	lea rdi ioob
-	call string.puts
+	call puts
 
 	pop rdi
-	call string.puti
+	call puti
 
 	lea rdi ioob2
-	call string.puts
+	call puts
 
 	pop rdi
-	call string.puti
+	call puti
 
 	lea rdi ioob3
-	call string.puts
+	call puts
 
 	mov rdi 1
 	mov rax 0x3C
@@ -115,7 +115,7 @@ pub function nil_assert
 	prologue
 
 	lea rdi nilassert
-	call string.puts
+	call puts
 
 	mov rdi 1
 	mov rax 0x3C
