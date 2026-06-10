@@ -798,13 +798,23 @@ deferred to [Future extensions](#future-extensions).
 Two finer-grained designs were considered and rejected, both for UX
 rather than soundness:
 
-- **A visible `borrowed`-return marker on the signature.** The marker
-  carries no semantics the compiler doesn't already infer, so it can
-  only fail one of two ways, both worse than just rejecting the
-  coercion: if you forget it, compilation fails demanding you add it;
-  once added, the coercion *still* fails because the interface needs a
-  non-borrowing method. The marker is pure ceremony inserted *before*
-  the error you actually needed. Better to emit that error directly.
+- **A visible `borrowed`-return marker on the signature, offered as an
+  interface-eligibility gate.** As a *gate* — a marker you write to make
+  the coercion go through — it carries no power the compiler doesn't
+  already have, because under option (a) the whole-type rule rejects the
+  coercion regardless of whether the marker is present. So it can only
+  fail one of two ways, both worse than just rejecting the coercion: if
+  you forget it, compilation fails demanding you add it; once added, the
+  coercion *still* fails because the interface needs a non-borrowing
+  method. As an eligibility gate the marker is pure ceremony inserted
+  *before* the error you actually needed; better to emit that error
+  directly. (This rejection is narrow: it condemns the marker *as a
+  coercion-enabling gate*, not the documentation-assertion syntax the
+  Non-goals and Future Extensions endorse. An assertion never claims to
+  enable a coercion — it pins intent at a chosen API boundary and checks
+  it against the inferred fact, catching drift at a site the author
+  picks. That is a different thing from a gate, and option (a) does not
+  argue against it.)
 
 - **A per-method exclusion** (exclude only borrowing methods from the
   interface machinery, let the type otherwise be an interface). This is
