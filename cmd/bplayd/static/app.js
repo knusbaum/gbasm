@@ -1,9 +1,9 @@
 const defaultSource = `package main
 
-import "string"
+import "fmt"
 
 fn main() {
-\tstring.puts("hello from Boson\\n")
+\tfmt.print("hello from Boson\\n")
 }
 `;
 
