@@ -2,12 +2,13 @@ package main
 import "fmt"
 import "string"
 
-// Layer 1: utoa renders unsigned decimals. Covers zero, a mid value, a large
-// value above the i64 range, the truncation contract, and n_udigits.
+// Layer 1: utoa renders unsigned decimals and returns a sub-slice of the
+// caller buffer. Covers zero, a mid value, a large value above the i64
+// range, the truncation contract, and n_udigits.
 fn show(n u64) i64 {
 	var buf byte[32]
-	const k i64 = fmt.utoa(buf[:], n)
-	string.puts(buf[0:k])
+	const s byte[] = fmt.utoa(buf[:], n)
+	string.puts(s)
 	string.puts(" (")
 	string.puti(fmt.n_udigits(n))
 	string.puts(")\n")
@@ -19,10 +20,10 @@ fn main() i64 {
 	show(u64(12345))
 	show(u64(18446744073709551615))   // max u64
 	var small byte[2]
-	const k i64 = fmt.utoa(small[:], u64(12345))
-	string.puts(small[0:k])
+	const s1 byte[] = fmt.utoa(small[:], u64(12345))
+	string.puts(s1)
 	string.puts(" trunc=")
-	string.puti(k)
+	string.puti(len(s1))
 	string.putc(10)
 	return 0
 }

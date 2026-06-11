@@ -362,7 +362,7 @@ The `_init` package provides `_init.start` (the ELF entry point) and `_init.inde
 
 **`fmt` package** — composable formatting, built on `io.writer` and runtime type assertion. Five layers, smallest first; all storage is caller-owned (no GC obligations in the public surface), and the only heap traffic is the lazy itab cache inside `%v` dispatch.
 
-*Layer 1 — raw conversions* render one value into the head of a caller-provided `mut byte[]` and return the byte count written (the rendered bytes are `out[0:k]`). No allocation, no I/O. (Returning the count is a historical API shape from before return-alias inference made returning a sub-slice of a parameter legal; the count form remains because it composes with the Builder's cursor arithmetic.)
+*Layer 1 — raw conversions* render one value into the head of a caller-provided `mut byte[]` and return the rendered bytes as a sub-slice of that buffer (`out[0:k]`, a borrow of the `out` parameter made legal by return-alias inference). No allocation, no I/O. The caller reads the result's `len` for the byte count and compares it against `n_digits`/`n_udigits`/`n_hex_digits` to detect truncation.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|

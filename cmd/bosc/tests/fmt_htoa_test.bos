@@ -2,12 +2,13 @@ package main
 import "fmt"
 import "string"
 
-// Layer 1: htoa renders lowercase hex with no 0x prefix. Covers zero, a value
-// spanning the 9/a boundary, max u64, truncation, and n_hex_digits.
+// Layer 1: htoa renders lowercase hex with no 0x prefix and returns a
+// sub-slice of the caller buffer. Covers zero, the 9/a boundary, max u64,
+// truncation, and n_hex_digits.
 fn show(n u64) i64 {
 	var buf byte[32]
-	const k i64 = fmt.htoa(buf[:], n)
-	string.puts(buf[0:k])
+	const s byte[] = fmt.htoa(buf[:], n)
+	string.puts(s)
 	string.puts(" (")
 	string.puti(fmt.n_hex_digits(n))
 	string.puts(")\n")
@@ -20,18 +21,18 @@ fn main() i64 {
 	show(u64(4096))
 	show(u64(18446744073709551615))   // max u64 -> ffffffffffffffff
 	var small byte[2]
-	const k i64 = fmt.htoa(small[:], u64(65535))   // ffff, truncated to ff
-	string.puts(small[0:k])
+	const s1 byte[] = fmt.htoa(small[:], u64(65535))   // ffff, truncated to ff
+	string.puts(s1)
 	string.puts(" trunc=")
-	string.puti(k)
+	string.puti(len(s1))
 	string.putc(10)
 	// Wider truncation: 0xdeadbeef (8 hex digits) into a 3-byte buffer keeps
-	// the leading "dea" (k=3).
+	// the leading "dea" (len 3).
 	var small3 byte[3]
-	const k2 i64 = fmt.htoa(small3[:], u64(3735928559))   // 0xdeadbeef -> dea
-	string.puts(small3[0:k2])
+	const s2 byte[] = fmt.htoa(small3[:], u64(3735928559))   // 0xdeadbeef -> dea
+	string.puts(s2)
 	string.puts(" trunc=")
-	string.puti(k2)
+	string.puti(len(s2))
 	string.putc(10)
 	return 0
 }

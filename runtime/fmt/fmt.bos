@@ -77,26 +77,23 @@ pub fn n_hex_digits(n u64) i64 {
 	return count
 }
 
-// itoa writes the canonical signed-decimal form of n into out[0..k] and
-// returns k (the byte count written). No NUL terminator; a leading '-' is
-// emitted for negatives. If out is too small the longest prefix that fits is
-// written and the returned count equals len(out) — compare against
-// n_digits(n) to detect truncation. The rendered bytes are out[0:k]; the
-// caller forms that slice from its own buffer.
-//
-// (DEVIATION from the proposal, which returned byte[]: Boson forbids
-// returning a borrowed slice — including a sub-slice of a slice parameter —
-// so the byte count is returned and the caller slices its own out buffer.)
-pub fn itoa(out mut byte[], n i64) i64 {
+// itoa writes the canonical signed-decimal form of n into the head of out
+// and returns the rendered bytes as a sub-slice of out (`out[0:k]`). No NUL
+// terminator; a leading '-' is emitted for negatives. If out is too small
+// the longest prefix that fits is written and the returned slice is the
+// whole of out (len == len(out)) — compare len against n_digits(n) to detect
+// truncation. The result borrows out, so it stays valid as long as the
+// caller's buffer does (the return-alias inference records this).
+pub fn itoa(out mut byte[], n i64) byte[] {
 	const need i64 = n_digits(n)
 	var cap i64 = len(out)
 	if (need <= cap) {
 		write_decimal(out, n, need)
-		return need
+		return out[0:need]
 	}
 	// Truncate: write the leading `cap` characters of the full rendering.
 	write_decimal_trunc(out, n, need, cap)
-	return cap
+	return out[0:cap]
 }
 
 // write_decimal renders n into out using exactly `width` bytes (width ==
@@ -143,15 +140,15 @@ fn write_decimal_trunc(out mut byte[], n i64, width i64, keep i64) {
 	}
 }
 
-// utoa writes the canonical unsigned-decimal form of n and returns the byte
-// count written. Same truncation contract as itoa (compare returned count
-// against n_udigits(n)).
-pub fn utoa(out mut byte[], n u64) i64 {
+// utoa writes the canonical unsigned-decimal form of n and returns the
+// rendered bytes as a sub-slice of out. Same truncation contract as itoa
+// (compare len against n_udigits(n)).
+pub fn utoa(out mut byte[], n u64) byte[] {
 	const need i64 = n_udigits(n)
 	var cap i64 = len(out)
 	if (need <= cap) {
 		write_udecimal(out, n, need)
-		return need
+		return out[0:need]
 	}
 	var scratch byte[24]
 	var s mut byte[] = scratch[:]
@@ -160,7 +157,7 @@ pub fn utoa(out mut byte[], n u64) i64 {
 	for (; i < cap; i = i + 1) {
 		out[i] = s[i]
 	}
-	return cap
+	return out[0:cap]
 }
 
 fn write_udecimal(out mut byte[], n u64, width i64) {
@@ -178,15 +175,15 @@ fn write_udecimal(out mut byte[], n u64, width i64) {
 }
 
 // htoa writes the canonical lowercase-hex form of n with no "0x" prefix and
-// returns the byte count written. (The "0x" prefix is added by the Layer 2
-// hex writer.) Same truncation contract as itoa (compare returned count
-// against n_hex_digits(n)).
-pub fn htoa(out mut byte[], n u64) i64 {
+// returns the rendered bytes as a sub-slice of out. (The "0x" prefix is
+// added by the Layer 2 hex writer.) Same truncation contract as itoa
+// (compare len against n_hex_digits(n)).
+pub fn htoa(out mut byte[], n u64) byte[] {
 	const need i64 = n_hex_digits(n)
 	var cap i64 = len(out)
 	if (need <= cap) {
 		write_hex(out, n, need)
-		return need
+		return out[0:need]
 	}
 	var scratch byte[18]
 	var s mut byte[] = scratch[:]
@@ -195,7 +192,7 @@ pub fn htoa(out mut byte[], n u64) i64 {
 	for (; i < cap; i = i + 1) {
 		out[i] = s[i]
 	}
-	return cap
+	return out[0:cap]
 }
 
 fn write_hex(out mut byte[], n u64, width i64) {
@@ -229,16 +226,16 @@ pub fn str(w io.writer, s byte[]) i64, error {
 // int formats n as signed decimal into a stack buffer and writes it once.
 pub fn int(w io.writer, n i64) i64, error {
 	var buf byte[24]
-	const m i64 = itoa(buf[:], n)
-	const k, var err = w.write(buf[0:m])
+	const s byte[] = itoa(buf[:], n)
+	const k, var err = w.write(s)
 	return k, err
 }
 
 // uint formats n as unsigned decimal and writes it once.
 pub fn uint(w io.writer, n u64) i64, error {
 	var buf byte[24]
-	const m i64 = utoa(buf[:], n)
-	const k, var err = w.write(buf[0:m])
+	const s byte[] = utoa(buf[:], n)
+	const k, var err = w.write(s)
 	return k, err
 }
 
@@ -248,9 +245,8 @@ pub fn hex(w io.writer, n u64) i64, error {
 	var b mut byte[] = buf[:]
 	b[0] = 48      // '0'
 	b[1] = 120     // 'x'
-	const m i64 = htoa(b[2:], n)
-	const total i64 = 2 + m
-	const k, var err = w.write(buf[0:total])
+	const digits byte[] = htoa(b[2:], n)
+	const k, var err = w.write(buf[0:2 + len(digits)])
 	return k, err
 }
 
