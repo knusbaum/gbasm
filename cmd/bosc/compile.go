@@ -2165,6 +2165,102 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 	panic(fmt.Sprintf("(LVAL) FALLTHROUGH: %#v\n", a))
 }
 
+// compileFunctionBody emits a function's parameter setup, prologue,
+// body, and epilogue. It is the flow-bearing core of the *FuncDecl case,
+// factored out so it can be run either for real (emitting to the .bs
+// writer) or as a standalone borrow analysis (run to a discard writer to
+// compute a function's return-alias summary without producing code).
+// It assumes c is the function's own (sub)context with retlab pushed; it
+// does NOT emit the `function`/`type`/`retaliases` preamble (the caller
+// owns that) and does NOT itself compute the alias summary.
+func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string) {
+	// Collect any memBacked-by-value params that need a prologue
+	// spill: argi puts the arg in a (sub-)register, but the body
+	// addresses fields via [name+offset] which requires a memory
+	// base. For these params we declare a stack slot and receive
+	// the value in a temporary register named __arg_<name>, then
+	// spill register → stack after the prologue.
+	type pendingSpill struct {
+		name string
+		size int
+	}
+	var spills []pendingSpill
+	for i, a := range ast.Args {
+		// memBacked params narrower than a pointer (1/2/4 bytes)
+		// need a stack slot for [name+offset] field reads to land
+		// somewhere addressable; the arg arrives in a sub-register
+		// (DIL/DI/EDI...), which isn't a legal memory base on
+		// x86-64. Spill it after the prologue. 8-byte memBacked
+		// params already work through the older argi-into-RDI path
+		// because RDI is a legal base register, and the existing
+		// eviction logic in bas spills it to the reserved stack
+		// offset on demand.
+		if a.Type.Indirection == 0 && typeIsMemoryBacked(c, a.Type) && a.Type.Size(c) < PTR_SIZE {
+			sz := a.Type.Size(c)
+			fmt.Fprintf(of, "\tbytes %s %d\n", a.Name, sz)
+			fmt.Fprintf(of, "\targi __arg_%s %d %d\n", a.Name, i, sz*8)
+			spills = append(spills, pendingSpill{name: a.Name, size: sz})
+		} else {
+			fmt.Fprintf(of, "\targi %s %d %d\n", a.Name, i, a.Type.Size(c)*8)
+		}
+		c.BindVar(ast, a.Name, a.Type, a.IsConst)
+		if a.Type.Indirection > 0 && !a.Type.HasOwned() {
+			c.SetBorrowedBinding(a.Name, true)
+		}
+		if a.Type.Indirection > 0 {
+			c.PointerFlow().AssignPointer(flow.Binding(a.Name), c.PointerFlow().NewObject(flow.Binding(a.Name)))
+		} else if a.Type.IsSlice() && !a.Type.HasOwned() {
+			// Borrowed slice parameter: register an OriginBorrowed origin
+			// so the unified escape predicate (CheckStructFieldEscape and
+			// checkSliceEscape) recognizes the binding as having a
+			// borrowed root. Mirrors NewLocalOrigin's role for stack-
+			// allocated value bindings.
+			pexpr := c.PointerFlow().NewBorrowedOrigin(flow.Binding(a.Name))
+			c.PointerFlow().AssignPointer(flow.Binding(a.Name), pexpr)
+		} else if a.Type.Indirection == 0 && !a.Type.HasOwned() {
+			// By-value struct parameter: seed each slice/pointer field as a
+			// borrowed view of caller storage (rooted at the param), so a
+			// returned struct param / field is recognized as aliasing the
+			// parameter. The tracker modeled nothing here before.
+			if _, isStruct := structDeclForType(c, a.Type); isStruct {
+				seedStructParamFieldProvenance(c, a.Name, VarFlowPath(a.Name), a.Type)
+			}
+		}
+	}
+	fmt.Fprintf(of, "\n\tprologue\n\n")
+	// Spill memBacked-by-value param registers into their stack
+	// slots. This happens after the prologue so RBP/RSP are set
+	// up, and before the body so [name+offset] reads see the
+	// expected bits.
+	for _, s := range spills {
+		switch s.size {
+		case 1:
+			fmt.Fprintf(of, "\tmov byte[%s] __arg_%s\n", s.name, s.name)
+		case 2:
+			fmt.Fprintf(of, "\tmov word[%s] __arg_%s\n", s.name, s.name)
+		case 4:
+			fmt.Fprintf(of, "\tmov dword[%s] __arg_%s\n", s.name, s.name)
+		case 8:
+			fmt.Fprintf(of, "\tmov qword[%s] __arg_%s\n", s.name, s.name)
+		}
+		fmt.Fprintf(of, "\tforget __arg_%s\n", s.name)
+	}
+	if len(spills) > 0 {
+		fmt.Fprintf(of, "\n")
+	}
+	compileTop(of, c, ast.Body, nullspot)
+	for _, name := range c.UnconsumedOwned() {
+		CompileErrorF(ast, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
+	}
+	if ast.Name == "main" {
+		note(of, "\n\t// default return 0 from main\n")
+		fmt.Fprintf(of, "\tmov rax 0\n")
+	}
+	fmt.Fprintf(of, "\n\tlabel %s\n", retlab)
+	fmt.Fprintf(of, "\tepilogue\n")
+	fmt.Fprintf(of, "\tret\n\n")
+}
+
 func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	defer func() {
 		if e := recover(); e != nil {
@@ -2738,91 +2834,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			fmt.Fprintf(of, "\n")
 		}
-		// Collect any memBacked-by-value params that need a prologue
-		// spill: argi puts the arg in a (sub-)register, but the body
-		// addresses fields via [name+offset] which requires a memory
-		// base. For these params we declare a stack slot and receive
-		// the value in a temporary register named __arg_<name>, then
-		// spill register → stack after the prologue.
-		type pendingSpill struct {
-			name string
-			size int
-		}
-		var spills []pendingSpill
-		for i, a := range ast.Args {
-			// memBacked params narrower than a pointer (1/2/4 bytes)
-			// need a stack slot for [name+offset] field reads to land
-			// somewhere addressable; the arg arrives in a sub-register
-			// (DIL/DI/EDI...), which isn't a legal memory base on
-			// x86-64. Spill it after the prologue. 8-byte memBacked
-			// params already work through the older argi-into-RDI path
-			// because RDI is a legal base register, and the existing
-			// eviction logic in bas spills it to the reserved stack
-			// offset on demand.
-			if a.Type.Indirection == 0 && typeIsMemoryBacked(c, a.Type) && a.Type.Size(c) < PTR_SIZE {
-				sz := a.Type.Size(c)
-				fmt.Fprintf(of, "\tbytes %s %d\n", a.Name, sz)
-				fmt.Fprintf(of, "\targi __arg_%s %d %d\n", a.Name, i, sz*8)
-				spills = append(spills, pendingSpill{name: a.Name, size: sz})
-			} else {
-				fmt.Fprintf(of, "\targi %s %d %d\n", a.Name, i, a.Type.Size(c)*8)
-			}
-			c.BindVar(ast, a.Name, a.Type, a.IsConst)
-			if a.Type.Indirection > 0 && !a.Type.HasOwned() {
-				c.SetBorrowedBinding(a.Name, true)
-			}
-			if a.Type.Indirection > 0 {
-				c.PointerFlow().AssignPointer(flow.Binding(a.Name), c.PointerFlow().NewObject(flow.Binding(a.Name)))
-			} else if a.Type.IsSlice() && !a.Type.HasOwned() {
-				// Borrowed slice parameter: register an OriginBorrowed origin
-				// so the unified escape predicate (CheckStructFieldEscape and
-				// checkSliceEscape) recognizes the binding as having a
-				// borrowed root. Mirrors NewLocalOrigin's role for stack-
-				// allocated value bindings.
-				pexpr := c.PointerFlow().NewBorrowedOrigin(flow.Binding(a.Name))
-				c.PointerFlow().AssignPointer(flow.Binding(a.Name), pexpr)
-			} else if a.Type.Indirection == 0 && !a.Type.HasOwned() {
-				// By-value struct parameter: seed each slice/pointer field as a
-				// borrowed view of caller storage (rooted at the param), so a
-				// returned struct param / field is recognized as aliasing the
-				// parameter. The tracker modeled nothing here before.
-				if _, isStruct := structDeclForType(c, a.Type); isStruct {
-					seedStructParamFieldProvenance(c, a.Name, VarFlowPath(a.Name), a.Type)
-				}
-			}
-		}
-		fmt.Fprintf(of, "\n\tprologue\n\n")
-		// Spill memBacked-by-value param registers into their stack
-		// slots. This happens after the prologue so RBP/RSP are set
-		// up, and before the body so [name+offset] reads see the
-		// expected bits.
-		for _, s := range spills {
-			switch s.size {
-			case 1:
-				fmt.Fprintf(of, "\tmov byte[%s] __arg_%s\n", s.name, s.name)
-			case 2:
-				fmt.Fprintf(of, "\tmov word[%s] __arg_%s\n", s.name, s.name)
-			case 4:
-				fmt.Fprintf(of, "\tmov dword[%s] __arg_%s\n", s.name, s.name)
-			case 8:
-				fmt.Fprintf(of, "\tmov qword[%s] __arg_%s\n", s.name, s.name)
-			}
-			fmt.Fprintf(of, "\tforget __arg_%s\n", s.name)
-		}
-		if len(spills) > 0 {
-			fmt.Fprintf(of, "\n")
-		}
-		compileTop(of, c, ast.Body, nullspot)
-		for _, name := range c.UnconsumedOwned() {
-			CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
-		}
-		if ast.Name == "main" {
-			note(of, "\n\t// default return 0 from main\n")
-			fmt.Fprintf(of, "\tmov rax 0\n")
-		}
-		fmt.Fprintf(of, "\n\tlabel %s\n", retlab)
-		fmt.Fprintf(of, "\tepilogue\n")
-		fmt.Fprintf(of, "\tret\n\n")
+		compileFunctionBody(of, c, ast, retlab)
 		return nullspot
 	case *Block:
 		sc := c.SubContext()
