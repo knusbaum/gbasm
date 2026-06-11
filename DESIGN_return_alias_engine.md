@@ -186,29 +186,57 @@ the safety net for the rebuild.
 
 ## Task status
 
-1. **Gap 1: seed struct/array param field provenance** — DONE (in checkpoint).
-2. **Analysis-mode driver: run real borrow analysis standalone** — in progress.
-   Factor the `FuncDecl` case into "set up params + run body" (callable
-   to-discard) vs. directive emission; instrument `Return` to accumulate
-   the summary into a context-held accumulator when analysing.
-3. **Summary = query tracker provenance at returns** — replaces the
-   classify walk; delete the approximation.
-4. **Interprocedural summaries: dependency-order driver + SCC fixpoint** —
-   call-graph build, Tarjan SCC, reverse-topo processing, fixpoint for
-   cycles, Gap 2 call-result provenance from summaries.
-5. **Checks vs emission** — with fail-fast + dependency order, no
-   error-gating needed; only the in-fixpoint check deferral. (The
-   annotated-IR endpoint where codegen recomputes nothing is a documented
-   follow-up, not required.)
-6. **Verify** — full bosc+bas+go green; all known holes correct on the new
-   engine (reassignment, branch-merge, struct-through-call, struct-param
-   return, nested-literal-from-call, the a/b cycle); guard + transport +
-   bdump intact; re-run the correctness + completeness adversarial
+1. **Gap 1: seed struct/array param field provenance** — DONE
+   (`seedStructParamFieldProvenance`, commit `ee64ad1`).
+2. **Analysis-mode driver** — DONE (`2ad2d55`). `compileFunctionBody` is
+   the extracted flow-bearing core of the `*FuncDecl` case;
+   `analyzeFunctionAliases` runs it to `io.Discard` in an isolated state
+   (fresh flow state + snapshot/restore of root `addressNames` and
+   `anonGlobals` — the analysis run otherwise leaked `MarkAddress` marks,
+   making real codegen skip `volatile` directives: silently wrong code).
+3. **Summary = tracker query** — DONE (`2ad2d55`).
+   `captureReturnAliases` hooks the `*Return` case (ordered AFTER the
+   per-site escape checks, so precise local diagnostics fire first; its
+   own local-reject backstops locals arriving through a call boundary).
+   `returnExprParamAliases` reads: the expression's tracked origin (+
+   join expansion); a pointer-rooted-view fallback (`s.buf` through a
+   borrowed receiver); and for aggregates the union of field origins,
+   routing returned literals/calls through the SAME transitions the
+   assignment path runs against a synthetic binding. Direct reads apply
+   to view-shaped slots only (a scalar copied out of a borrowed struct
+   records nothing). The entire classify/thread approximation was
+   deleted. Tracker completions: `recordStructLiteralFieldFacts` now
+   records struct-typed fields sourced from a call/symbol;
+   `argAliasProvenance` lets a struct-valued symbol argument contribute
+   its FIELD-origin union to call expansion.
+4. **Cycle fixpoint** — DONE (`64315e2`), as demand-driven fixpoint
+   rather than an explicit Tarjan/topo pre-pass: re-entry returns the
+   member's ∅-seeded PROVISIONAL and taints the consuming subtree;
+   tainted results are not memoized; the outermost tainted entry
+   iterates over the monotone per-slot union until stable, then
+   memoizes only itself (breaking the cycle for every other member,
+   which then computes precisely). The a/b example converges to [[0]]
+   for both; a 2-param self-recursion returning only param 0 infers
+   {0}, not the old conservative {0,1}.
+5. **Checks vs emission** — RESOLVED BY ARCHITECTURE, no gating built.
+   bosc aborts on the first `CompileErrorF`, so an invalid dependency
+   errors during its (demanded) analysis run and the real codegen never
+   re-reports — verified in both declaration orders, with the error
+   correctly attributed to the callee's body. In-fixpoint checks are
+   sound because iteration is monotone: an early iteration sees a
+   SUBSET of the converged alias sets, so any early reject is also a
+   converged reject (fail-fast just fires sooner), and the final
+   iteration re-runs all checks against the converged state. A valid
+   function's checks simply run twice (analysis + codegen), emitting
+   nothing; the annotated-IR endpoint where codegen recomputes nothing
+   remains the documented follow-up.
+6. **Verify** — full bosc+bas+go green; all known holes correct on the
+   new engine; re-run the correctness + completeness adversarial
    reviewers to convergence.
 
 ## Verification baselines
 
-Checkpoint suites: **bosc 487, bas 41, Go units** — all green. Run with
-`cd cmd/bosc && rm -f bosc && /home/kjn/go/bin/mmk test` (≈ a few min),
-`cd cmd/bas && rm -f bas && /home/kjn/go/bin/mmk test`, `go test ./...`.
-Keep this green at every step.
+Engine-complete suites: **bosc 488, bas 41, Go units** — all green. Run
+with `cd cmd/bosc && rm -f bosc && /home/kjn/go/bin/mmk test` (≈ a few
+min), `cd cmd/bas && rm -f bas && /home/kjn/go/bin/mmk test`,
+`go test ./...`. Keep this green at every step.
