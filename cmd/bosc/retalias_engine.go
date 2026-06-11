@@ -85,9 +85,12 @@ func aliasSet(c *Context, f *FuncDecl) [][]int {
 	}
 	inProgress := c.aliasInProgressSet()
 	if inProgress[f] {
-		// Cycle re-entry: hand back the provisional and mark the
-		// consuming subtree tainted.
-		root.aliasTaint++
+		// Cycle re-entry: hand back the provisional and record the
+		// dependency in every active analysis frame (each enclosing
+		// activation's result now depends on f's not-yet-final value).
+		for _, frame := range root.aliasDepStack {
+			frame[f] = true
+		}
 		if prov, ok := root.aliasProvisional[f]; ok {
 			return prov
 		}
@@ -102,33 +105,68 @@ func aliasSet(c *Context, f *FuncDecl) [][]int {
 	}
 
 	for {
-		taintBefore := root.aliasTaint
+		// Fresh dependency frame per iteration: deps from a previous
+		// iteration may have finalized since.
+		frame := make(map[*FuncDecl]bool)
+		root.aliasDepStack = append(root.aliasDepStack, frame)
 		res := analyzeFunctionAliases(c, f)
-		tainted := root.aliasTaint > taintBefore
+		root.aliasDepStack = root.aliasDepStack[:len(root.aliasDepStack)-1]
 
-		if !tainted {
-			// No cycle below: the result is final.
+		// A dependency matters only if it is on a function whose summary
+		// is STILL provisional: f's own provisional (self-recursion /
+		// f's cycle), or another in-progress function's. Dependencies on
+		// since-finalized functions are resolved.
+		selfDep := frame[f]
+		othersPending := false
+		for d := range frame {
+			if d == f {
+				continue
+			}
+			if !d.AliasesComputed {
+				othersPending = true
+			}
+		}
+		// Propagate still-pending deps (incl. f's own, which is pending
+		// from an ANCESTOR's perspective until f memoizes) to the
+		// enclosing frame so ancestors know what their result rests on.
+		if len(root.aliasDepStack) > 0 {
+			parent := root.aliasDepStack[len(root.aliasDepStack)-1]
+			for d := range frame {
+				if !d.AliasesComputed {
+					parent[d] = true
+				}
+			}
+		}
+
+		if !selfDep && !othersPending {
+			// The result rests only on finalized facts: it is final,
+			// regardless of stack depth. (This is what keeps deep demand
+			// chains linear — a non-cycle ancestor of a converged cycle
+			// memoizes on its first pass.)
 			delete(root.aliasProvisional, f)
 			f.ReturnAliases = res
 			f.AliasesComputed = true
 			return res
 		}
 
-		// Cycle-tainted. Fold this iteration into the monotone union.
+		// The result depends on a provisional. Fold this iteration into
+		// f's monotone union.
 		prev := root.aliasProvisional[f]
 		next := unionAliases(prev, res)
 		if !aliasesEqual(prev, next) {
 			// Still growing: update the provisional and iterate (the
-			// re-analysis re-runs the whole in-cycle subtree against the
-			// larger provisional).
+			// re-analysis re-runs the in-cycle subtree against the larger
+			// provisional).
 			root.aliasProvisional[f] = next
 			continue
 		}
 
-		// Union stable. If this is the OUTERMOST in-progress analysis, the
-		// fixpoint has converged: memoize. Otherwise leave the provisional
-		// for the outer entry's iteration and return without memoizing.
-		if len(inProgress) == 1 {
+		// Union stable. If the only pending dependency is f ITSELF, the
+		// cycle through f has converged: memoize at any depth. If another
+		// in-progress function's provisional was consumed, f sits inside
+		// an ANCESTOR's cycle — leave the provisional for the ancestor's
+		// iteration and return without memoizing.
+		if !othersPending {
 			delete(root.aliasProvisional, f)
 			f.ReturnAliases = next
 			f.AliasesComputed = true
@@ -217,10 +255,23 @@ func analyzeFunctionAliases(c *Context, f *FuncDecl) [][]int {
 	}
 	savedAnonGlobals := root.anonGlobals
 	savedAnonCount := root.anonGlobalCount
+	// Root checker facts: Set{NullFact,OwnedFieldConsumed,Borrowed,Moved}
+	// write into the DECLARING context's checker — for a global binding,
+	// the root. An analysis run that narrows a global's nullability (or
+	// consumes/moves it) must not leak that fact into the live compile:
+	// the caller would then deref the nullable global unchecked.
+	savedNull := cloneStringMap(root.checker.nullFacts)
+	savedOwnedFields := cloneBoolMap(root.checker.ownedFieldFacts)
+	savedBorrowed := cloneBoolMap(root.checker.borrowedBindings)
+	savedMoved := cloneBoolMap(root.checker.movedBindings)
 	defer func() {
 		root.addressNames = savedAddrs
 		root.anonGlobals = savedAnonGlobals
 		root.anonGlobalCount = savedAnonCount
+		root.checker.nullFacts = savedNull
+		root.checker.ownedFieldFacts = savedOwnedFields
+		root.checker.borrowedBindings = savedBorrowed
+		root.checker.movedBindings = savedMoved
 	}()
 	fc := root.SubContext()
 	fc.aliasCapture = capture
@@ -327,11 +378,15 @@ func returnExprParamAliases(c *Context, f *FuncDecl, expr AST, slotType ASTType)
 		}
 	}
 
-	// Reads 1+2 only apply to VIEW-shaped slots (slice/pointer): a scalar
-	// return (`return b.val` where val is an i64) copies the value out —
-	// no aliasing, nothing to record, even when the source is borrowed.
+	// Reads 1+2 only apply to VIEW-shaped slots: a scalar return
+	// (`return b.val` where val is an i64) copies the value out — no
+	// aliasing, nothing to record, even when the source is borrowed.
+	// Slices, pointers, AND interfaces are views: an interface value
+	// wrapping a borrowed pointer (`return b` into a Getter slot)
+	// aliases whatever the pointer borrows — the fat pointer's data word
+	// IS the borrowed pointer.
 	rt := c.ResolveUnderlying(slotType)
-	slotIsView := rt.Indirection > 0 || rt.IsSlice()
+	slotIsView := rt.Indirection > 0 || rt.IsSlice() || c.IsInterfaceType(rt)
 
 	if slotIsView {
 		// Read 1: the expression's own tracked origin.
@@ -340,13 +395,35 @@ func returnExprParamAliases(c *Context, f *FuncDecl, expr AST, slotType ASTType)
 			record(ptr.Origin)
 		}
 
-		// Read 2: pointer-rooted field/sub-slice views. readProvenancePath
-		// leaves these opaque (a pointer root), but the view's backing is
-		// whatever the root pointer borrows.
-		if !ptr.KnownOrigin {
+		// Read 2: rooted field/sub-slice views whose precise path fact is
+		// unknown.
+		//  - Pointer root: readProvenancePath leaves these opaque, but the
+		//    view's backing is whatever the root pointer borrows.
+		//  - Struct-binding root: the precise field fact may be missing
+		//    (e.g. the binding was initialized from a call, whose borrow
+		//    lives on the coarse __callret sentinel, not the named field).
+		//    Conservatively the view borrows the union of the binding's
+		//    escaping field origins — sound (over-records); a local field
+		//    origin surfaces and rejects.
+		// Slice/pointer slots ONLY: an interface value READ OUT of a field
+		// is a copy of a fat pointer, not a view into the root — its data
+		// word's provenance was recorded at its own coercion site. Treating
+		// it as borrowing the root over-rejects (e.g. Builder.error()
+		// returning the err_ field). Interface slots still get read 1: a
+		// borrowed pointer COERCED to an interface at the return is the
+		// expression's own tracked origin.
+		if !ptr.KnownOrigin && (rt.Indirection > 0 || rt.IsSlice()) {
 			if root, ok := lvalueRootSymbolName(expr); ok && !c.IsGlobalBinding(root) {
-				if t, exists := c.TypeForVar(root); exists && t.Indirection > 0 && c.IsBorrowedBinding(root) {
-					record(flow.Origin(root))
+				if t, exists := c.TypeForVar(root); exists {
+					if t.Indirection > 0 && c.IsBorrowedBinding(root) {
+						record(flow.Origin(root))
+					} else if t.Indirection == 0 && !t.IsSlice() {
+						if _, isStruct := structDeclForType(c, t); isStruct {
+							for _, origin := range c.PointerFlow().FieldOrigins(flow.Binding(root)) {
+								record(origin)
+							}
+						}
+					}
 				}
 			}
 		}
@@ -356,9 +433,24 @@ func returnExprParamAliases(c *Context, f *FuncDecl, expr AST, slotType ASTType)
 	if rt.Indirection == 0 && !rt.IsSlice() {
 		if _, isStruct := structDeclForType(c, rt); isStruct {
 			switch v := unwrapReturnExpr(expr).(type) {
+			case *Deref:
+				// `return *p` — the returned struct COPY's slice/pointer
+				// fields still point at whatever p's pointee's fields point
+				// at. Field-level provenance behind a pointer is not
+				// tracked, so conservatively the copy borrows p itself: the
+				// caller must keep p's referent alive as long as the copy's
+				// views are used. Sound (over-records); precise per-field
+				// through-pointer provenance is a documented tracker gap.
+				if dp := pointerExprForAST(c, v.Val, ""); dp.KnownOrigin {
+					record(dp.Origin)
+				} else if root, ok := lvalueRootSymbolName(v.Val); ok && !c.IsGlobalBinding(root) {
+					if t, exists := c.TypeForVar(root); exists && t.Indirection > 0 && c.IsBorrowedBinding(root) {
+						record(flow.Origin(root))
+					}
+				}
 			case *Symbol:
 				if !c.IsGlobalBinding(v.Name) {
-					for _, origin := range c.PointerFlow().EscapingFieldOrigins(flow.Binding(v.Name)) {
+					for _, origin := range c.PointerFlow().FieldOrigins(flow.Binding(v.Name)) {
 						record(origin)
 					}
 				}
@@ -373,7 +465,7 @@ func returnExprParamAliases(c *Context, f *FuncDecl, expr AST, slotType ASTType)
 				} else {
 					recordStructCallResultAtPath(c, synth, slotType, v.(*Funcall))
 				}
-				for _, origin := range c.PointerFlow().EscapingFieldOrigins(flow.Binding(synth)) {
+				for _, origin := range c.PointerFlow().FieldOrigins(flow.Binding(synth)) {
 					record(origin)
 				}
 				c.PointerFlow().ForgetFieldPointers(flow.Binding(synth))
@@ -420,6 +512,24 @@ func lvalueRootSymbolName(expr AST) (string, bool) {
 			return "", false
 		}
 	}
+}
+
+// cloneStringMap copies a map[string]NullState.
+func cloneStringMap(m map[string]NullState) map[string]NullState {
+	out := make(map[string]NullState, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+// cloneBoolMap copies a map[string]bool.
+func cloneBoolMap(m map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // paramIsVariadic reports whether param index idx is f's variadic

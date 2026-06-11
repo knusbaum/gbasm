@@ -1,0 +1,2 @@
+Compiling tests/retalias_multiret_destructure_local_err_test.bos
+Fatal: Borrowed slice escapes through return

@@ -2,7 +2,7 @@ package main
 
 // Hole A, sentinel reject path: a struct returned from a call BOUND TO A VAR
 // (`var b B = mk(loc[:])`), then returned. Unlike the direct
-// `return mk(loc[:])` form (caught by classifyCallExpansion), the call result
+// `return mk(loc[:])` form (caught by the engine's call-expansion read), the call result
 // here has no single origin — its borrow lives in a field. The fix records
 // that borrowed-argument provenance onto b's synthetic field key, so a LOCAL
 // argument surfaces at `return b` via CheckStructFieldEscapeLocal exactly as

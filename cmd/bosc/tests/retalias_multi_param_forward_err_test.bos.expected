@@ -1,0 +1,2 @@
+Compiling tests/retalias_multi_param_forward_err_test.bos
+Fatal: Borrowed slice escapes through return

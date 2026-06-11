@@ -1,0 +1,2 @@
+Compiling tests/retalias_struct_deref_return_local_err_test.bos
+Fatal: Borrowed slice escapes through return

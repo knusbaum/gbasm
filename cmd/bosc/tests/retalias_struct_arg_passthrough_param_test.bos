@@ -1,0 +1,22 @@
+package main
+
+import "string"
+
+// Positive: a struct value whose field borrows a PARAM, passed through a
+// call whose return aliases the argument — the borrow is recorded
+// transitively (build infers [[0]]) and the caller uses the view within
+// the param's lifetime.
+type B struct { buf byte[] }
+fn pass(b B) B { return b }
+fn build(p byte[]) B {
+	var b B
+	b.buf = p
+	return pass(b)
+}
+fn main() i64 {
+	var data byte[] = "xyz"
+	var r B = build(data)
+	string.puts(r.buf)
+	string.puts("\n")
+	return 0
+}

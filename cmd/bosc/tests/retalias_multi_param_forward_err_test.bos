@@ -1,0 +1,17 @@
+package main
+
+// B1 regression: a forwarding function must record the FULL multi-param
+// union ([[0,1]]), so a local in either slot rejects through the chain.
+fn yes() bool { return (1 == 1) }
+fn pick(a byte[], b byte[], u bool) byte[] {
+	if (u) {
+		return a
+	}
+	return b
+}
+fn fwd(x byte[], y byte[], f bool) byte[] { return pick(x, y, f) }
+fn caller(s byte[]) byte[] {
+	var l byte[16]
+	return fwd(s, l[0:8], yes())
+}
+fn main() i64 { return 0 }

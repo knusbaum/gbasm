@@ -1,0 +1,18 @@
+package main
+
+// S1 regression: `return *p` copies a struct whose views still point at
+// the pointee's backing — the copy conservatively borrows p, so a local
+// behind the chain rejects.
+type B struct { buf byte[] }
+fn get(p *B) B { return *p }
+fn use(p *B) byte[] {
+	const b B = get(p)
+	return b.buf
+}
+fn boom() byte[] {
+	var l byte[16]
+	var b B
+	b.buf = l[:]
+	return use(&b)
+}
+fn main() i64 { return 0 }

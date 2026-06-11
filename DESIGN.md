@@ -227,7 +227,7 @@ fn close(fd owned i64) {          // owned parameter — moves the obligation
 }
 ```
 
-Pointer parameters without `owned` are non-escaping borrows by default. The callee may read or write through the pointer according to the pointer's `mut` bits, and may forward it to other non-owning calls, but may not return it or store it somewhere that outlives the call. See [Borrowing](#borrowing).
+Pointer parameters without `owned` are borrows by default. The callee may read or write through the pointer according to the pointer's `mut` bits, may forward it to other non-owning calls, and may return it (or a view derived from it) — the compiler infers which parameters each return slot may alias and the caller's borrow tracking picks up the obligation. A borrow may not be stored somewhere that outlives the call. See [Borrowing](#borrowing).
 
 Arguments follow the System V AMD64 ABI: the first six integer/pointer arguments go in RDI, RSI, RDX, RCX, R8, R9; additional arguments go on the stack. The single-value return goes in RAX.
 
@@ -362,7 +362,7 @@ The `_init` package provides `_init.start` (the ELF entry point) and `_init.inde
 
 **`fmt` package** — composable formatting, built on `io.writer` and runtime type assertion. Five layers, smallest first; all storage is caller-owned (no GC obligations in the public surface), and the only heap traffic is the lazy itab cache inside `%v` dispatch.
 
-*Layer 1 — raw conversions* render one value into the head of a caller-provided `mut byte[]` and return the byte count written (the rendered bytes are `out[0:k]`). No allocation, no I/O. Returning the count rather than a `byte[]` view is deliberate: Boson forbids returning a borrowed slice (a sub-slice of a slice parameter), so the caller slices its own buffer.
+*Layer 1 — raw conversions* render one value into the head of a caller-provided `mut byte[]` and return the byte count written (the rendered bytes are `out[0:k]`). No allocation, no I/O. (Returning the count is a historical API shape from before return-alias inference made returning a sub-slice of a parameter legal; the count form remains because it composes with the Builder's cursor arithmetic.)
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
@@ -930,43 +930,58 @@ fn forward(n *node) i64 {
 }
 ```
 
-But a borrowed pointer may not be stored or returned:
+A borrowed pointer may not be STORED somewhere that outlives the call:
 
 ```
 var saved *?node
 
-fn bad_return(n *node) *node {
-    return n                // COMPILE ERROR: borrowed pointer escapes
-}
-
 fn bad_global(n *node) {
     saved = n               // COMPILE ERROR: borrowed pointer escapes
 }
+```
 
-type holder struct {
-    n *?node
+But a borrowed pointer (or slice, or an aggregate whose fields borrow one)
+MAY be **returned**. The compiler infers, per function, which parameters
+each return slot may alias — the *return alias set* — records it in the
+object file (the `retaliases` directive), and propagates it at every call
+site, so the caller's own borrow tracking extends across the call:
+
+```
+fn id(n *node) *node {
+    return n                // OK: id's return aliases parameter 0
 }
 
-fn bad_field(n *node) {
-    var h holder
-    h.n = n                 // COMPILE ERROR: borrowed pointer escapes
+fn first_word(s byte[]) byte[] {
+    return s[0:1]           // OK: a sub-slice of the parameter
 }
 
-fn bad_literal(n *node) {
-    var h holder = holder{n: n}  // COMPILE ERROR
+fn new_builder(buf mut byte[]) Builder {
+    return Builder{buf: buf, pos: 0}   // OK: the struct's field borrows buf
+}
+
+fn caller() *node {
+    var local node
+    return id(&local)       // COMPILE ERROR: the local escapes THROUGH id
 }
 ```
 
-Local pointer aliases preserve borrowed provenance:
+The lifetime obligation moves to the caller: the returned view must not
+outlive the argument it aliases, and a *local* reaching a returned slot —
+directly or through any chain of calls — is still rejected. The inference
+is automatic (no syntax), interprocedural (summaries travel through `.bo`
+files for cross-package calls), and handles recursion by fixpoint. One
+consequence for interfaces: a concrete type with any borrow-returning
+method cannot be coerced to ANY interface (including `any`), because
+dynamic dispatch cannot track the borrow — see the directed diagnostic
+the compiler emits at such a coercion.
 
-```
-fn bad_alias(n *node) *node {
-    var alias *node = n
-    return alias            // COMPILE ERROR: alias is also borrowed
-}
-```
+Local pointer aliases preserve borrowed provenance (an alias of a borrow
+is the same borrow, recorded the same way in the alias set).
 
-This is intentionally not a full Rust-style borrow checker. The first rule is simpler: borrowed pointer parameters are call-local capabilities. They can be used and forwarded, but not persisted.
+This is intentionally not a full Rust-style borrow checker: there are no
+lifetime parameters and no user-facing annotations. Borrowed parameters
+are capabilities that may be used, forwarded, and returned-with-tracking —
+but never persisted into storage that outlives their source.
 
 ### Borrowing and ownership cleanup
 
@@ -1925,6 +1940,7 @@ function add
 | `package` | `package name` | Sets file/package identity. Used to qualify defined symbols and bare-name relocations. |
 | `function` | `function name` | Begins a function definition |
 | `type` | `type fn(...) ret` | Annotates function signature (informational; consumed by importers) |
+| `retaliases` | `retaliases <slot>: <idx> ...` | Records the function's inferred return alias set: return slot `<slot>` may alias the parameters at the listed indices. Emitted by bosc per non-empty slot; parsed by bas into `Function.ReturnAliases`; serialized through the `.bo` so cross-package callers' borrow tracking extends across the call. Absent ⇒ all slots alias nothing. |
 | `data` | `data name type "..."` | Global immutable data (e.g., string constants emitted by bosc). Stored in `o.Data`. |
 | `var` | `var name type "..."` | Global writable data (string-literal payload form). Stored in `o.Vars`. |
 | `var` (size) | `var name type N` | Global writable data, N zero-filled bytes (uninitialized). |

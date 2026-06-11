@@ -1,0 +1,14 @@
+package main
+
+// A struct VALUE passed through a call carries its borrows in its fields
+// (argAliasProvenance). A local-borrowing field must reject when the
+// callee's return aliases the struct argument.
+type B struct { buf byte[] }
+fn pass(b B) B { return b }
+fn leak() B {
+	var loc byte[16]
+	var b B
+	b.buf = loc[:]
+	return pass(b)
+}
+fn main() i64 { return 0 }

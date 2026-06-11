@@ -1,0 +1,13 @@
+package main
+
+// B2 regression: destructuring a multi-return call must propagate the
+// callee's per-slot alias provenance — a local through slot 0 rejects.
+fn mkslice(s byte[]) byte[], i64 {
+	return s[0:4], 7
+}
+fn caller() byte[] {
+	var l byte[16]
+	var v byte[], var n i64 = mkslice(l[0:8])
+	return v
+}
+fn main() i64 { return 0 }

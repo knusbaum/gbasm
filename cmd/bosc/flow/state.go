@@ -714,6 +714,36 @@ func (s *State) EscapingFieldOrigins(name Binding) []Origin {
 	return out
 }
 
+// FieldOrigins returns every known field origin under "name." with NO
+// escape-restriction filter. The return-alias summary engine uses this:
+// its classifier needs origins whose borrowed-ness lives on the BINDING
+// flag rather than the origin kind (a pointer parameter's origin is
+// registered via NewObject with no origin-kind entry), which the
+// kind-filtered EscapingFieldOrigins drops. The caller is responsible for
+// classifying each origin (local → reject, borrowed → record, else pass).
+func (s *State) FieldOrigins(name Binding) []Origin {
+	if s == nil {
+		return nil
+	}
+	prefix := string(name) + "."
+	seen := make(map[Origin]bool)
+	var out []Origin
+	for k, ptr := range s.fieldPointers {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		if !ptr.KnownOrigin {
+			continue
+		}
+		if seen[ptr.Origin] {
+			continue
+		}
+		seen[ptr.Origin] = true
+		out = append(out, ptr.Origin)
+	}
+	return out
+}
+
 // CheckStructFieldEscapeLocal is the local-only counterpart of
 // CheckStructFieldEscape: it reports an escape only for a field whose
 // origin is OriginLocal (genuinely stack-bound storage). OriginBorrowed

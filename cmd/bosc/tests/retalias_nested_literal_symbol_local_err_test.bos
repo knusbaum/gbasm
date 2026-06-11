@@ -1,0 +1,15 @@
+package main
+
+// A struct-typed field of a returned literal sourced from a SYMBOL
+// (recordStructLiteralFieldFacts' Symbol arm / CopyFieldPointersUnderPath):
+// a local-borrowing nested struct must reject.
+type B struct { buf byte[] }
+type Outer struct { inner B }
+fn wrap(b B) Outer { return Outer{inner: b} }
+fn leak() Outer {
+	var loc byte[16]
+	var b B
+	b.buf = loc[:]
+	return Outer{inner: b}
+}
+fn main() i64 { return 0 }

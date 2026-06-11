@@ -1,0 +1,17 @@
+package main
+
+// S2 regression: an interface-typed return wrapping a borrowed pointer
+// records the alias (as_getter infers [[0]]), so coercing a LOCAL's
+// address through the chain rejects.
+type box struct { val i64 } {
+	get(b *box) i64 { return b.val }
+}
+interface Getter {
+	get(s *self) i64
+}
+fn as_getter(b *box) Getter { return b }
+fn leak() Getter {
+	var local box = box{val: 3}
+	return as_getter(&local)
+}
+fn main() i64 { return 0 }

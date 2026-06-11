@@ -1,0 +1,2 @@
+Compiling tests/retalias_nested_literal_symbol_local_err_test.bos
+Fatal: Borrowed slice escapes through return

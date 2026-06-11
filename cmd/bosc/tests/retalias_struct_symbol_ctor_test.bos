@@ -5,7 +5,7 @@ import "string"
 // A struct built BY VALUE (a Symbol), not a struct literal: `var b Builder;
 // b.buf = buf; return b`. The borrowed parameter is stored into a field via
 // ASSIGNMENT, then the struct symbol is returned by value. This exercises
-// the 5th return site (CheckStructFieldEscapeLocal over a returned struct
+// the struct-symbol return shape (CheckStructFieldEscapeLocal over a returned struct
 // symbol) AND guards that struct-field-via-assignment provenance is recorded
 // during inference. new_builder must infer ReturnAliases=[[0]]; the caller's
 // borrowed view into its own buffer must be live so the writes are visible.

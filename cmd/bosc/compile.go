@@ -1476,13 +1476,16 @@ func funcallResultOrigin(c *Context, call *Funcall, assignedName string) (flow.P
 		}
 		return flow.PointerExpr{}, false
 	}
-	// Transient: return the most-restrictive contributor's origin. Prefer a
-	// local contributor (the strongest escape), then any escape-restricted
-	// (borrowed) contributor, else the first known origin.
-	var firstKnown flow.PointerExpr
-	var firstRestricted flow.PointerExpr
-	haveKnown := false
-	haveRestricted := false
+	// Transient: JOIN all contributors so every one survives into the
+	// consumer. A local contributor still dominates (JoinOrigins is
+	// most-restrictive-first), and a multi-borrowed union becomes a join
+	// origin whose members the consumers expand (JoinMembers) — the
+	// summary capture records EVERY contributing param, and an escape
+	// check sees the most-restrictive member. Returning only one
+	// contributor here under-recorded the alias set (`fwd(x,y){return
+	// pick(x,y,f)}` inferred [[0]] instead of [[0,1]]), letting a local
+	// in the dropped slot escape through the forwarding chain.
+	var merged flow.PointerExpr
 	for _, p := range params {
 		if p < 0 || p >= len(args) {
 			continue
@@ -1491,23 +1494,17 @@ func funcallResultOrigin(c *Context, call *Funcall, assignedName string) (flow.P
 		if !ap.KnownOrigin {
 			continue
 		}
-		if !haveKnown {
-			firstKnown = ap
-			haveKnown = true
+		if !merged.KnownOrigin {
+			merged = ap
+			continue
 		}
-		if c.PointerFlow().OriginKindOf(ap.Origin) == flow.OriginLocal {
-			return ap, true
+		if merged.Origin == ap.Origin {
+			continue
 		}
-		if !haveRestricted && c.PointerFlow().IsEscapeRestricted(ap.Origin) {
-			firstRestricted = ap
-			haveRestricted = true
-		}
+		merged = c.PointerFlow().JoinOrigins(merged, ap)
 	}
-	if haveRestricted {
-		return firstRestricted, true
-	}
-	if haveKnown {
-		return firstKnown, true
+	if merged.KnownOrigin {
+		return merged, true
 	}
 	return flow.PointerExpr{}, false
 }
@@ -2717,6 +2714,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 					c.PointerFlow().AssignPointer(flow.Binding(b.Name), pexpr)
 				}
 			}
+			// Propagate the callee's per-slot alias provenance onto the
+			// destructured binding: slot i of a multi-return call may alias
+			// the call's arguments per the callee's summary, and dropping
+			// that fact here let `return v` escape a local through the
+			// destructuring uncaught.
+			recordMultiReturnSlotProvenance(c, b.Name, bindType, ast.Init, i)
 			offset, _ := initDecl.ByteOffset(c, field.Name)
 			if rebind {
 				existingType := c.bindings[b.Name]
@@ -2801,6 +2804,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				pexpr := c.PointerFlow().NewLocalOrigin(flow.Binding(sym.Name))
 				c.PointerFlow().AssignPointer(flow.Binding(sym.Name), pexpr)
 			}
+			// Then override with the callee's real per-slot alias provenance
+			// when the RHS is a resolvable call: slot i may alias the call's
+			// arguments per the callee's summary, and dropping the fact let
+			// a destructured borrowed/local view escape uncaught.
+			recordMultiReturnSlotProvenance(c, sym.Name, declType, ast.Init, i)
 		}
 		srcSpot.free(of)
 		return nullspot

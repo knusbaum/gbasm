@@ -21,6 +21,19 @@ borrowed-view case moves to `Formatter`. Lifting the restriction for
 borrowed-field stringers under a checked contract is **option (b)**,
 documented future work.
 
+> **Engine supersession note.** The *inference mechanics* described in
+> this proposal (the demand-driven walk, `classify*` per-shape
+> classification, the conservative cycle self-alias, and related
+> pseudocode) describe the FIRST engine, which was replaced. The
+> implemented engine runs the real borrow analysis to a discard writer
+> and queries the flow tracker's provenance at each return, with cycles
+> resolved by a converging fixpoint — see
+> **`DESIGN_return_alias_engine.md`**, which supersedes this proposal's
+> mechanics sections. The proposal's GOALS, feature semantics (what is
+> recorded/rejected), interface guard, transport (`retaliases` /
+> `ReturnAliases`), diagnostics, and test obligations remain
+> authoritative.
+
 ## Summary
 
 Today the borrow checker rejects any function that returns a borrowed
@@ -1387,12 +1400,17 @@ return (the `fieldPointers` path machinery already exists in
 `flow/state.go`); it's more bookkeeping in the inference and a richer
 `.bo` encoding. Deferred unless a concrete case bites.
 
-### 2. SCC fixpoint vs conservative self-alias
+### 2. SCC fixpoint vs conservative self-alias — RESOLVED
 
-The cycle rule over-approximates recursive functions. Worth measuring
-whether any real recursive code returns parameter aliases and suffers.
-If not, the conservative rule stands; if so, an SCC-local fixpoint is a
-localized upgrade.
+**Closed: the fixpoint is implemented** (see `DESIGN_return_alias_engine.md`).
+Cycle re-entry returns a ∅-seeded provisional; the consuming subtree's
+dependencies are tracked per analysis frame; results resting only on
+finalized facts memoize at any depth (keeping deep demand chains linear);
+the cycle root iterates a monotone per-slot union to convergence. Mutual
+recursion converges to the precise per-slot set (e.g. a 2-param
+self-recursion returning only param 0 infers `{0}`, not the conservative
+`{0,1}`). Pinned by the `mutual recursion`/`3-member cycle`/`cycle member
+after convergence` unit cases and `retalias_mutual_recursion_test.bos`.
 
 ### 3. Interaction with `owned` parameters
 

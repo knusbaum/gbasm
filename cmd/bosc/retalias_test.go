@@ -101,6 +101,100 @@ fn weird(s byte[], t byte[], n i64) byte[] {
 			want: [][]int{{0}},
 		},
 		{
+			// 3-member cycle: a→b→c→a must converge (dep-frame fixpoint),
+			// and a post-convergence caller computes precisely against the
+			// memoized members (cycle3_user is checked below in its own
+			// case).
+			name: "3-member cycle converges",
+			body: `
+fn c3a(x byte[], n i64) byte[] {
+	if (n > 0) {
+		return c3b(x, n - 1)
+	}
+	return x[0:1]
+}
+fn c3b(x byte[], n i64) byte[] { return c3c(x, n) }
+fn c3c(x byte[], n i64) byte[] { return c3a(x, n) }`,
+			fn:   "c3a",
+			want: [][]int{{0}},
+		},
+		{
+			// Cycle member demanded AFTER the cycle root converged: must
+			// compute precisely against the memoized root, no iteration.
+			name: "cycle member after convergence",
+			body: `
+fn c4a(x byte[], n i64) byte[] {
+	if (n > 0) {
+		return c4b(x, n - 1)
+	}
+	return x[0:1]
+}
+fn c4b(x byte[], n i64) byte[] { return c4a(x, n) }
+fn c4user(s byte[]) byte[] { return c4b(s, 2) }`,
+			fn:   "c4user",
+			want: [][]int{{0}},
+		},
+		{
+			// B1 regression: a forwarding function over a multi-param
+			// callee records the FULL union, not one contributor.
+			name: "multi-param forwarding records full union",
+			body: `
+fn yes2() bool { return (1 == 1) }
+fn pick2(a byte[], b byte[], u bool) byte[] {
+	if (u) {
+		return a
+	}
+	return b
+}
+fn fwd2(x byte[], y byte[], f bool) byte[] { return pick2(x, y, f) }`,
+			fn:   "fwd2",
+			want: [][]int{{0, 1}},
+		},
+		{
+			// B2 regression: a multi-return slot destructured into a
+			// binding carries the callee's per-slot provenance.
+			name: "multiret destructured slot records param",
+			body: `
+fn mk2(s byte[]) byte[], i64 {
+	return s[0:4], 7
+}
+fn take2(s byte[]) byte[] {
+	var v byte[], var n i64 = mk2(s)
+	return v
+}`,
+			fn:   "take2",
+			want: [][]int{{0}},
+		},
+		{
+			// S1 regression: `return *p` (aggregate deref) conservatively
+			// borrows p; the chained field view records transitively.
+			name: "struct deref return borrows pointer",
+			body: `
+type DB struct { buf byte[] }
+fn get2(p *DB) DB { return *p }
+fn use2(p *DB) byte[] {
+	const b DB = get2(p)
+	return b.buf
+}`,
+			fn:   "use2",
+			want: [][]int{{0}},
+		},
+		{
+			// S2 regression: an interface-typed return wrapping a borrowed
+			// pointer records the alias.
+			name: "interface return records borrowed pointer",
+			body: `
+type GB struct { val i64 } {
+	get(b *GB) i64 { return b.val }
+}
+interface G2 {
+	get(s *self) i64
+}
+fn as_g2(b *GB) G2 { return b }`,
+			fn:   "as_g2",
+			want: [][]int{{0}},
+		},
+		{
 			name: "slice passthrough",
 			body: `fn id(s byte[]) byte[] { return s }`,
 			fn:   "id",
@@ -187,7 +281,7 @@ fn outer(p byte[]) B { return mk(p) }`,
 		{
 			// Hole A, sentinel path: a struct returned from a call BOUND TO A
 			// VAR then returned (`var b B = mk(p); return b`). The direct form
-			// (`return mk(p)`) goes through classifyCallExpansion; this var-
+			// (`return mk(p)`) goes through the engine's call-expansion read; this var-
 			// bound form has no single Origin, so recordStructReturnCallFieldFacts
 			// records the borrowed-argument provenance onto b's sentinel field
 			// key, which EscapingFieldOrigins then classifies. Before the fix
@@ -217,7 +311,7 @@ fn outer(p byte[]) B { var b B; b = mk(p); return b }`,
 			// Hole B: two DIFFERENT borrowed params merged into one struct
 			// FIELD across an if must record BOTH (the field union), matching
 			// the top-level binding merge. mergeFieldPointerExpr synthesizes a
-			// join origin and classifyStructSymbol expands its members. Before
+			// join origin and the engine's field-origin read expands its members. Before
 			// the fix the field merge dropped one param (recorded [[0]] or
 			// [[1]] depending on branch order), under-recording the borrow — a
 			// use-after-free when a local sits in the dropped slot.

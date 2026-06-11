@@ -94,11 +94,16 @@ type Context struct {
 	// (∅-seeded, growing monotonically across fixpoint iterations)
 	// instead of a final answer. Root-only.
 	aliasProvisional map[*FuncDecl][][]int
-	// aliasTaint counts provisional-summary consumptions. An analysis
-	// subtree that consumed any provisional is cycle-tainted: its result
-	// must not be memoized (it may reflect a not-yet-converged value);
-	// the outermost tainted entry iterates instead. Root-only.
-	aliasTaint int
+	// aliasDepStack tracks, per active aliasSet analysis (one frame per
+	// activation/iteration), WHICH in-progress functions' provisional
+	// summaries the analysis consumed. A frame's dependencies decide
+	// memoizability: a result that depended only on the function's OWN
+	// provisional (or on since-finalized functions) is final and can be
+	// memoized at any stack depth — this is what keeps a deep demand
+	// chain over a recursive callee linear instead of exponential (each
+	// non-cycle ancestor memoizes on its first pass once the cycle root
+	// below it has finalized). Root-only.
+	aliasDepStack []map[*FuncDecl]bool
 	// aliasCapture, when non-nil, marks this compile as an analysis run:
 	// compileFunctionBody is executing to a discard writer purely to
 	// compute a return-alias summary, and the *Return case records each

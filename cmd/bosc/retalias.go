@@ -133,7 +133,7 @@ func argAliasProvenance(c *Context, arg AST) flow.PointerExpr {
 		if t, exists := c.TypeForVar(sym.Name); exists && t.Indirection == 0 && !t.IsSlice() {
 			if _, isStruct := structDeclForType(c, t); isStruct {
 				var merged flow.PointerExpr
-				for _, origin := range c.PointerFlow().EscapingFieldOrigins(flow.Binding(sym.Name)) {
+				for _, origin := range c.PointerFlow().FieldOrigins(flow.Binding(sym.Name)) {
 					op := flow.PointerExpr{KnownOrigin: true, Origin: origin}
 					if !merged.KnownOrigin {
 						merged = op
@@ -148,6 +148,61 @@ func argAliasProvenance(c *Context, arg AST) flow.PointerExpr {
 		}
 	}
 	return ap
+}
+
+// recordMultiReturnSlotProvenance propagates a multi-return call's
+// per-slot alias provenance onto a destructured binding. Without this,
+// `var v byte[], var n i64 = mkslice(loc[:])` bound v with NO provenance —
+// the callee's summary said slot 0 aliases its param, but the destructuring
+// dropped the fact, so `return v` escaped a local uncaught.
+//
+// For a slice/pointer slot the merged contributing-argument origin is
+// assigned to the binding directly; for a struct-valued slot it lands on
+// the binding's __callret sentinel (same shape as the single-return
+// struct-call path).
+func recordMultiReturnSlotProvenance(c *Context, dest string, destType ASTType, init AST, slot int) {
+	call, ok := init.(*Funcall)
+	if !ok {
+		return
+	}
+	callee, args := resolveCalleeForAlias(c, call)
+	if callee == nil {
+		return
+	}
+	aliases := aliasSet(c, callee)
+	if slot < 0 || slot >= len(aliases) || len(aliases[slot]) == 0 {
+		return
+	}
+	var merged flow.PointerExpr
+	for _, p := range aliases[slot] {
+		if p < 0 || p >= len(args) {
+			continue
+		}
+		ap := argAliasProvenance(c, args[p])
+		if !ap.KnownOrigin {
+			continue
+		}
+		if !merged.KnownOrigin {
+			merged = ap
+			continue
+		}
+		if merged.Origin == ap.Origin {
+			continue
+		}
+		merged = c.PointerFlow().JoinOrigins(merged, ap)
+	}
+	if !merged.KnownOrigin {
+		return
+	}
+	rt := c.ResolveUnderlying(destType)
+	if rt.Indirection > 0 || rt.IsSlice() {
+		c.PointerFlow().AssignPointer(flow.Binding(dest), merged)
+		return
+	}
+	if _, isStruct := structDeclForType(c, rt); isStruct {
+		key := fmt.Sprintf("%s.%s", dest, structReturnAliasFieldKey)
+		c.PointerFlow().SetPathPointer(key, merged)
+	}
 }
 
 // recordStructCallResultAtPath records a struct-by-value call result's

@@ -166,9 +166,20 @@ this fixpoint.
 ## What gets deleted vs kept
 
 **Delete:** `retalias.go`'s `classify*` / `thread*` walk, `aliasRootSymbol`,
-the `__callret` sentinel + `recordStructReturnCallFieldFacts`-as-hack
-(call-result provenance becomes summary-driven), the conservative
-self-alias cycle shortcut.
+the conservative self-alias cycle shortcut. (All deleted.)
+
+**Retained with a corrected role — the `__callret` sentinel.** The plan
+said "the sentinel hack gets replaced by a summary-driven record"; what
+shipped is the sentinel MECHANISM retained but FED FROM THE REAL SUMMARY
+(`recordStructCallResultAtPath` expands `aliasSet(callee)` onto the call's
+argument origins and records the joined result at `<dest>.__callret`).
+The sentinel survives because alias sets are slot-coarse — they name a
+param, not a destination FIELD, so the borrow cannot be attributed to a
+named field path; one synthetic sub-key under the destination's prefix
+carries it, and both consumers (the live per-site local reject and the
+engine's field-origin read) are prefix-scans that see it uniformly. The
+"hack" part (being fed by the approximation) is gone; the storage shape
+remains.
 
 **Keep:** `FuncDecl.ReturnAliases [][]int` + `AliasesComputed`, `Function.
 ReturnAliases` + `.bs`/`.bo` serialization, the `retaliases` bas
