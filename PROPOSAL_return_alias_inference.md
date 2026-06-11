@@ -128,10 +128,8 @@ storage belongs to the caller and outlives the call.
 ## Non-goals
 
 - **No user-facing syntax.** No `from`/`borrows`/lifetime annotations.
-  This was explicitly considered and rejected in favor of inference.
-  (If a future need arises — e.g. declaring intent at an API boundary
-  for documentation — syntax can be layered on; the inferred fact is
-  what it would have to agree with.)
+  The relationship is fully inferred; syntax was explicitly considered
+  and rejected.
 - **No field-level precision in v1.** `new_builder(buf) Builder` infers
   "some slice/pointer field of the returned Builder may alias `buf`,"
   not "specifically `Builder.buf` aliases `buf`." The coarser fact is
@@ -798,23 +796,15 @@ deferred to [Future extensions](#future-extensions).
 Two finer-grained designs were considered and rejected, both for UX
 rather than soundness:
 
-- **A visible `borrowed`-return marker on the signature, offered as an
-  interface-eligibility gate.** As a *gate* — a marker you write to make
-  the coercion go through — it carries no power the compiler doesn't
-  already have, because under option (a) the whole-type rule rejects the
+- **A visible `borrowed`-return marker on the signature.** A marker you
+  write to make the coercion go through carries no power the compiler
+  doesn't already have: under option (a) the whole-type rule rejects the
   coercion regardless of whether the marker is present. So it can only
   fail one of two ways, both worse than just rejecting the coercion: if
   you forget it, compilation fails demanding you add it; once added, the
   coercion *still* fails because the interface needs a non-borrowing
-  method. As an eligibility gate the marker is pure ceremony inserted
-  *before* the error you actually needed; better to emit that error
-  directly. (This rejection is narrow: it condemns the marker *as a
-  coercion-enabling gate*, not the documentation-assertion syntax the
-  Non-goals and Future Extensions endorse. An assertion never claims to
-  enable a coercion — it pins intent at a chosen API boundary and checks
-  it against the inferred fact, catching drift at a site the author
-  picks. That is a different thing from a gate, and option (a) does not
-  argue against it.)
+  method. The marker is pure ceremony inserted *before* the error you
+  actually needed; better to emit that error directly.
 
 - **A per-method exclusion** (exclude only borrowing methods from the
   interface machinery, let the type otherwise be an interface). This is
@@ -1318,10 +1308,6 @@ to become human-visible.
 
 - **Field-level alias precision** (Open Question 1).
 - **SCC fixpoint** for recursive precision (Open Question 2).
-- **Optional surface syntax** as an *assertion* that the compiler
-  checks against the inferred fact — for API authors who want the
-  lifetime contract written at the boundary. Only worth it if the
-  inferred-only model proves to hide too much at package boundaries.
 - **Interface-dispatched return aliasing (option (b), the precise
   upgrade).** v1 (option (a)) forbids coercing a borrowing-method type
   to *any* interface at all
