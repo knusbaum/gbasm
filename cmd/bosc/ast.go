@@ -84,10 +84,21 @@ type Context struct {
 
 	// aliasInProgress is the cycle guard for return-parameter alias
 	// inference (alias_set). Keyed on the FuncDecl currently being
-	// inferred; re-entry (direct/mutual recursion) is detected here and
-	// resolved with a conservative self-alias. Lives on the root context
-	// only (lazily created), reached via aliasRoot().
+	// analyzed; re-entry (direct/mutual recursion) is detected here and
+	// resolved by returning the member's provisional summary, with the
+	// outermost SCC entry iterating to a fixpoint. Lives on the root
+	// context only (lazily created).
 	aliasInProgress map[*FuncDecl]bool
+	// aliasProvisional holds in-flight summaries for functions on a
+	// recursion cycle: a re-entered member returns its provisional
+	// (∅-seeded, growing monotonically across fixpoint iterations)
+	// instead of a final answer. Root-only.
+	aliasProvisional map[*FuncDecl][][]int
+	// aliasTaint counts provisional-summary consumptions. An analysis
+	// subtree that consumed any provisional is cycle-tainted: its result
+	// must not be memoized (it may reflect a not-yet-converged value);
+	// the outermost tainted entry iterates instead. Root-only.
+	aliasTaint int
 	// aliasCapture, when non-nil, marks this compile as an analysis run:
 	// compileFunctionBody is executing to a discard writer purely to
 	// compute a return-alias summary, and the *Return case records each

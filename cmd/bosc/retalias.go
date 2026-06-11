@@ -31,28 +31,6 @@ func (c *Context) aliasInProgressSet() map[*FuncDecl]bool {
 	return root.aliasInProgress
 }
 
-// conservativeSelfAlias produces the over-approximation used when a cycle
-// is detected: every return slot may alias every non-variadic parameter.
-// Sound (only ever widens the alias set); the SCC-fixpoint driver replaces
-// this with the converged precise answer.
-func conservativeSelfAlias(f *FuncDecl) [][]int {
-	nslots := returnSlotCount(f.Return)
-	var params []int
-	for i := range f.Args {
-		if f.Variadic && i == len(f.Args)-1 {
-			continue
-		}
-		params = append(params, i)
-	}
-	out := make([][]int, nslots)
-	for s := range out {
-		cp := make([]int, len(params))
-		copy(cp, params)
-		out[s] = cp
-	}
-	return out
-}
-
 // returnSlotCount returns the number of return slots for a function's
 // declared return type. A multi-return signature carries its value types
 // in Return.AnonFields with MultiReturn=true; a single non-void return is

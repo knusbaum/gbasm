@@ -1,0 +1,30 @@
+package main
+
+import "string"
+
+// Mutual recursion through a borrowed pointer (the design note's worked
+// example). The cycle fixpoint converges both summaries to {param 0}, so
+// the returned pointer is correctly tracked as aliasing the caller's x —
+// and the program runs: count_down/step decrement x to 10 and return a
+// pointer to it, which main dereferences.
+fn count_down(x *mut i64) *mut i64 {
+	if (*x < 10) {
+		return x
+	}
+	return step(x)
+}
+
+fn step(x *mut i64) *mut i64 {
+	*x = *x - 1
+	return count_down(x)
+}
+
+fn main() i64 {
+	var v i64 = 14
+	var p *mut i64 = count_down(&v)
+	string.puti(*p)
+	string.puts("\n")
+	string.puti(v)
+	string.puts("\n")
+	return 0
+}

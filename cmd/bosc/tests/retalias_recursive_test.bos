@@ -2,11 +2,11 @@ package main
 
 import "string"
 
-// A recursive function returning a parameter alias. The cycle guard
-// returns a conservative self-alias (the recursive result is assumed to
-// alias every parameter position); unioned with the base case, that yields
-// ReturnAliases=[[0]]. The conservative set still permits correct caller
-// use: drop walks to the first space, returning a sub-slice of s.
+// A recursive function returning a parameter alias. The cycle fixpoint
+// converges on the precise per-slot union of the base and recursive
+// cases — here {param 0} — and the caller-side propagation still permits
+// correct use: drop_spaces walks to the first non-space, returning a
+// sub-slice of s.
 fn drop_spaces(s byte[]) byte[] {
 	if (len(s) == 0) {
 		return s

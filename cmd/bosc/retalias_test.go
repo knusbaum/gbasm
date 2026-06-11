@@ -67,6 +67,40 @@ func TestReturnAliasInference(t *testing.T) {
 			want: [][]int{{0}},
 		},
 		{
+			// Mutual recursion: the cycle fixpoint must converge to the
+			// precise {param 0} for the entry member (the design note's
+			// worked example), not a conservative all-params set.
+			name: "mutual recursion fixpoint converges to param 0",
+			body: `
+fn a_fn(x *mut i64) *mut i64 {
+	if (*x < 10) {
+		return b_fn(x)
+	}
+	return x
+}
+fn b_fn(x *mut i64) *mut i64 {
+	*x = *x - 1
+	return a_fn(x)
+}`,
+			fn:   "a_fn",
+			want: [][]int{{0}},
+		},
+		{
+			// Fixpoint PRECISION: a 2-param self-recursive function that
+			// only ever returns param 0 must infer {0}, not the
+			// conservative {0,1} the old cycle shortcut produced.
+			name: "recursive 2-param infers only the returned param",
+			body: `
+fn weird(s byte[], t byte[], n i64) byte[] {
+	if (n > 0) {
+		return weird(s, t, n - 1)
+	}
+	return s[0:1]
+}`,
+			fn:   "weird",
+			want: [][]int{{0}},
+		},
+		{
 			name: "slice passthrough",
 			body: `fn id(s byte[]) byte[] { return s }`,
 			fn:   "id",

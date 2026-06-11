@@ -44,12 +44,27 @@ func (c *Context) captureState() *aliasCaptureState {
 // first demand by running the real borrow analysis over f's body to a
 // discard writer. Memoized via f.AliasesComputed. Imported FuncDecls arrive
 // with AliasesComputed=true (the importer attaches the deserialized fact),
-// so cross-package lookups never walk a body.
+// so cross-package lookups never walk a body. (The cross-package import
+// graph is a DAG, so cycles only occur within one compilation unit.)
 //
-// Cycles (direct or mutual recursion) are detected via the in-progress
-// guard and resolved with a conservative self-alias (the recursive call's
-// result is assumed to alias every non-variadic parameter). The full SCC
-// fixpoint replaces this conservatism in the dependency-ordered driver.
+// Cycles (direct or mutual recursion) are resolved by FIXPOINT, not
+// conservatism. On re-entry of an in-progress function, the member's
+// PROVISIONAL summary (∅-seeded) is returned and the consumption is
+// counted (aliasTaint). A computation that consumed any provisional is
+// cycle-tainted: its result is not memoized. The outermost tainted entry
+// iterates — re-running its analysis with its provisional updated to the
+// monotone union of iterations — until the union stops growing (the
+// lattice is sets of param indices, finite and only growing, so this
+// terminates). Only the outermost entry memoizes itself; the cycle is
+// then broken for every other member (their next demand sees a memoized
+// callee and computes precisely, no iteration needed).
+//
+// Worked example (DESIGN_return_alias_engine.md): mutual recursion
+//   fn a(x *mut i64) *mut i64 { if (*x < 10) { return b(x) } return x }
+//   fn b(x *mut i64) *mut i64 { *x = *x - 1; return a(x) }
+// iter1: analyze(a): b consumes prov(a)=∅ → b=∅; a = {x} ∪ ∅ = {0}
+// iter2: analyze(a): b consumes prov(a)={0} → b={0}; a = {0} ∪ {0} = {0}
+// stable → a memoized [[0]]; b later computes [[0]] against memoized a.
 func aliasSet(c *Context, f *FuncDecl) [][]int {
 	if f == nil {
 		return nil
@@ -64,16 +79,102 @@ func aliasSet(c *Context, f *FuncDecl) [][]int {
 		return nil
 	}
 
+	root := c
+	for root.parent != nil {
+		root = root.parent
+	}
 	inProgress := c.aliasInProgressSet()
 	if inProgress[f] {
-		return conservativeSelfAlias(f)
+		// Cycle re-entry: hand back the provisional and mark the
+		// consuming subtree tainted.
+		root.aliasTaint++
+		if prov, ok := root.aliasProvisional[f]; ok {
+			return prov
+		}
+		empty := make([][]int, returnSlotCount(f.Return))
+		return empty
 	}
 	inProgress[f] = true
 	defer delete(inProgress, f)
 
-	f.ReturnAliases = analyzeFunctionAliases(c, f)
-	f.AliasesComputed = true
-	return f.ReturnAliases
+	if root.aliasProvisional == nil {
+		root.aliasProvisional = make(map[*FuncDecl][][]int)
+	}
+
+	for {
+		taintBefore := root.aliasTaint
+		res := analyzeFunctionAliases(c, f)
+		tainted := root.aliasTaint > taintBefore
+
+		if !tainted {
+			// No cycle below: the result is final.
+			delete(root.aliasProvisional, f)
+			f.ReturnAliases = res
+			f.AliasesComputed = true
+			return res
+		}
+
+		// Cycle-tainted. Fold this iteration into the monotone union.
+		prev := root.aliasProvisional[f]
+		next := unionAliases(prev, res)
+		if !aliasesEqual(prev, next) {
+			// Still growing: update the provisional and iterate (the
+			// re-analysis re-runs the whole in-cycle subtree against the
+			// larger provisional).
+			root.aliasProvisional[f] = next
+			continue
+		}
+
+		// Union stable. If this is the OUTERMOST in-progress analysis, the
+		// fixpoint has converged: memoize. Otherwise leave the provisional
+		// for the outer entry's iteration and return without memoizing.
+		if len(inProgress) == 1 {
+			delete(root.aliasProvisional, f)
+			f.ReturnAliases = next
+			f.AliasesComputed = true
+			return next
+		}
+		return res
+	}
+}
+
+// unionAliases returns the per-slot union of two alias sets (sorted,
+// deduplicated). Slot counts are expected to match; the longer wins.
+func unionAliases(a, b [][]int) [][]int {
+	n := len(a)
+	if len(b) > n {
+		n = len(b)
+	}
+	out := make([][]int, n)
+	for s := 0; s < n; s++ {
+		var merged []int
+		if s < len(a) {
+			merged = append(merged, a[s]...)
+		}
+		if s < len(b) {
+			merged = append(merged, b[s]...)
+		}
+		out[s] = sortDedup(merged)
+	}
+	return out
+}
+
+// aliasesEqual reports per-slot equality of two (sorted) alias sets.
+func aliasesEqual(a, b [][]int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for s := range a {
+		if len(a[s]) != len(b[s]) {
+			return false
+		}
+		for i := range a[s] {
+			if a[s][i] != b[s][i] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // analyzeFunctionAliases runs the real compile of f's body to a discard
