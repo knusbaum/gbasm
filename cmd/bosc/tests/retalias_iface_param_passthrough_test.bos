@@ -1,0 +1,28 @@
+package main
+
+import "string"
+
+// Positive twin of retalias_iface_param_passthrough_local_err: a
+// param-backed interface flows through the passthrough and dispatches
+// correctly within the source's lifetime. (The local is named bxv, not
+// bx — naming a memory-backed local after an x86 register trips a
+// pre-existing bas name-collision bug unrelated to aliasing.)
+type box struct { val i64 } {
+	get(b *box) i64 { return b.val }
+}
+interface Getter {
+	get(s *self) i64
+}
+fn passthrough(g Getter) Getter { return g }
+fn show(b *box) i64 {
+	var g Getter = b
+	var h Getter = passthrough(g)
+	return h.get()
+}
+fn main() i64 {
+	var bxv box = box{val: 5}
+	var v i64 = show(&bxv)
+	string.puti(v)
+	string.puts("\n")
+	return 0
+}

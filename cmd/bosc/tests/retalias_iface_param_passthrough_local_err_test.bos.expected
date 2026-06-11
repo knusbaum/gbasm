@@ -1,0 +1,2 @@
+Compiling tests/retalias_iface_param_passthrough_local_err_test.bos
+Fatal: Borrowed slice escapes through return

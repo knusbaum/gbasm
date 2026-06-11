@@ -2231,6 +2231,14 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 			// allocated value bindings.
 			pexpr := c.PointerFlow().NewBorrowedOrigin(flow.Binding(a.Name))
 			c.PointerFlow().AssignPointer(flow.Binding(a.Name), pexpr)
+		} else if c.IsInterfaceType(a.Type) && !a.Type.HasOwned() {
+			// Borrowed interface parameter: the fat pointer's data word
+			// points at caller storage, so the value is a borrowed view
+			// exactly like a slice param. Without this seeding,
+			// `fn passthrough(g Getter) Getter { return g }` inferred ∅
+			// and a local-backed interface laundered through the call.
+			pexpr := c.PointerFlow().NewBorrowedOrigin(flow.Binding(a.Name))
+			c.PointerFlow().AssignPointer(flow.Binding(a.Name), pexpr)
 		} else if a.Type.Indirection == 0 && !a.Type.HasOwned() {
 			// By-value struct parameter: seed each slice/pointer field as a
 			// borrowed view of caller storage (rooted at the param), so a

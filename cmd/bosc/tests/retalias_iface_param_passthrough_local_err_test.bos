@@ -1,0 +1,19 @@
+package main
+
+// An interface PARAMETER is a borrowed view (its data word points at
+// caller storage). A local-backed interface must not launder through a
+// passthrough call: passthrough records [[0]] and the call expansion
+// reads the interface binding's data-field origin (a local) — rejected.
+type box struct { val i64 } {
+	get(b *box) i64 { return b.val }
+}
+interface Getter {
+	get(s *self) i64
+}
+fn passthrough(g Getter) Getter { return g }
+fn leak() Getter {
+	var local box = box{val: 3}
+	var g Getter = &local
+	return passthrough(g)
+}
+fn main() i64 { return 0 }

@@ -131,7 +131,12 @@ func argAliasProvenance(c *Context, arg AST) flow.PointerExpr {
 	}
 	if sym, ok := unwrapReturnExpr(arg).(*Symbol); ok && !c.IsGlobalBinding(sym.Name) {
 		if t, exists := c.TypeForVar(sym.Name); exists && t.Indirection == 0 && !t.IsSlice() {
-			if _, isStruct := structDeclForType(c, t); isStruct {
+			// Struct values carry borrows in their fields; interface values
+			// carry theirs in the fat pointer's "data" field fact (set at
+			// the coercion site by emitInterfaceFatPtr). Both read back as
+			// the union of the binding's field origins.
+			_, isStruct := structDeclForType(c, t)
+			if isStruct || c.IsInterfaceType(t) {
 				var merged flow.PointerExpr
 				for _, origin := range c.PointerFlow().FieldOrigins(flow.Binding(sym.Name)) {
 					op := flow.PointerExpr{KnownOrigin: true, Origin: origin}
@@ -165,12 +170,29 @@ func recordMultiReturnSlotProvenance(c *Context, dest string, destType ASTType, 
 	if !ok {
 		return
 	}
+	// The destination is being overwritten by this slot's fresh value:
+	// whatever provenance it had is stale and must be REPLACED, not left
+	// in place. (Leaving it produced a false reject: `v, n = mkglob()`
+	// after `var v,n = mkslice(loc[:])` kept the old local fact.) The
+	// new fact is the merged contributing-argument provenance — or
+	// Unknown if the callee/summary yields nothing.
+	clear := func() {
+		rt := c.ResolveUnderlying(destType)
+		if rt.Indirection > 0 || rt.IsSlice() {
+			c.PointerFlow().AssignPointer(flow.Binding(dest), c.PointerFlow().UnknownPointer())
+		} else if _, isStruct := structDeclForType(c, rt); isStruct {
+			key := fmt.Sprintf("%s.%s", dest, structReturnAliasFieldKey)
+			c.PointerFlow().SetPathPointer(key, c.PointerFlow().UnknownPointer())
+		}
+	}
 	callee, args := resolveCalleeForAlias(c, call)
 	if callee == nil {
+		clear()
 		return
 	}
 	aliases := aliasSet(c, callee)
 	if slot < 0 || slot >= len(aliases) || len(aliases[slot]) == 0 {
+		clear()
 		return
 	}
 	var merged flow.PointerExpr
@@ -192,6 +214,7 @@ func recordMultiReturnSlotProvenance(c *Context, dest string, destType ASTType, 
 		merged = c.PointerFlow().JoinOrigins(merged, ap)
 	}
 	if !merged.KnownOrigin {
+		clear()
 		return
 	}
 	rt := c.ResolveUnderlying(destType)
