@@ -3,16 +3,19 @@ import "fmt"
 import "io"
 import "string"
 
-// Layer 5: more args than directives — trailing args are appended %v-style,
-// space-separated, and a surplus error is latched. One surplus arg is a
-// stringer (passed by reference) so the %v append renders real text rather
-// than the placeholder, exercising the dispatch path on the surplus tail.
-type word struct { s byte[] } {
-	string(w *word) byte[] { return w.s }
+// More args than directives — trailing args are appended %v-style,
+// space-separated, and a surplus error is latched. This is the ONLY test of
+// the surplus-args path (the space-separated %v append and the E2BIG/surplus
+// latch). One surplus arg is a stringer (passed by reference) so the %v append
+// renders real text rather than the placeholder, exercising the dispatch path
+// on the surplus tail. The stringer returns a static .rodata slice, not a
+// borrow of its receiver, so the type coerces to `any` for the vararg shape.
+type word struct { tag i64 } {
+	string(w *word) byte[] { return "tail" }
 }
 
 fn main() i64 {
-	var w word = word{s: "tail"}
+	var w word = word{tag: 1}
 	const n, var err = fmt.print("first=%d", 1, 2, &w)
 	string.putc(10)
 	if (err != io.io_err.OK) {

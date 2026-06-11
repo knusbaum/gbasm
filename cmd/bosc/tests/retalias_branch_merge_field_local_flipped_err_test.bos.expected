@@ -1,0 +1,2 @@
+Compiling tests/retalias_branch_merge_field_local_flipped_err_test.bos
+Fatal: Cannot return struct by value: field "buf" contains a slice into local-scope storage; the alias would dangle in the returned copy

@@ -1,0 +1,31 @@
+package main
+
+import "string"
+
+// Branch-merge of two BORROWED params into one binding returned after the
+// if. Both branches reach `t` through a borrowed parameter (a or b), so the
+// merge unions the escape-restricted taint into a join origin and inference
+// records the union ReturnAliases=[[0,1]] — the result may alias a or b.
+// This is LEGITIMATE (no local escapes) and must be allowed; the caller
+// uses the view while both args are still live.
+fn choose(a byte[], b byte[], use_a bool) byte[] {
+	var t byte[] = a
+	if (use_a) {
+		// no-op branch: keep t = a
+	} else {
+		t = b
+	}
+	return t
+}
+
+fn main() i64 {
+	var x byte[] = "first"
+	var y byte[] = "second"
+	var p byte[] = choose(x, y, (1 == 1))
+	string.puts(p)
+	string.puts("\n")
+	var q byte[] = choose(x, y, (1 == 0))
+	string.puts(q)
+	string.puts("\n")
+	return 0
+}

@@ -2,10 +2,24 @@
 
 ## Status
 
-Draft. Not implemented. Independent of the other in-flight proposals,
-but motivated by them: a `fmt.Builder` constructor and the canonical
-`fn first_word(s byte[]) byte[]` sub-slice pattern are both rejected
-today, and both are unblocked by this change.
+Implemented. Independent of the other in-flight proposals, but motivated
+by them: a `fmt.Builder` constructor and the canonical
+`fn first_word(s byte[]) byte[]` sub-slice pattern were both rejected
+before this change, and both are unblocked by it.
+
+The interface-coercion guard (option (a)) is deliberately strict: a
+concrete type with **any** borrow-returning method cannot be coerced to
+any interface — not even `any`. This closed a pre-existing soundness gap
+(borrowed-field returns through a pointer receiver were silently accepted
+at coercion) but it also **broke** `fmt`'s previously-shipped
+borrowed-field `stringer` (`string()` returned a view of `self`). That
+breakage is intended and is reconciled in
+[Interface-method dispatch](#interface-method-dispatch): `fmt`'s
+`stringer` contract now requires `string()` to return bytes that outlive
+the receiver (a static/`.rodata` slice or caller-owned storage), and the
+borrowed-view case moves to `Formatter`. Lifting the restriction for
+borrowed-field stringers under a checked contract is **option (b)**,
+documented future work.
 
 ## Summary
 
@@ -749,10 +763,40 @@ only the static typedesc/iface_desc tables.)
 
 Three properties make this safe and non-disruptive:
 
-- **No regression.** Today no method can have a non-empty
-  `ReturnAliases` (the feature does not exist), so no existing coercion
-  is newly rejected. The constraint only bites a *newly-legal*
-  borrowing-method type.
+- **One deliberate, sound breakage — borrowed-field stringers.** The
+  claim "no existing coercion is newly rejected" is *not* accurate, and
+  the honest statement matters: this rule rejects a borrowed-field
+  stringer that compiled before. Concretely, `fmt`'s shipped
+  `stringer` contract was *render me as a borrowed view of my own
+  fields* (`string(p *planet) byte[] { return p.name }`), and four
+  positive tests exercised exactly that shape
+  (`fmt_print_v_stringer`, `fmt_stringer_user_type`,
+  `fmt_stringer_preferred`, and the borrowed-field arm of
+  `fmt_print_v_value_shape`). Those coercions are now rejected — and
+  rejecting them is the *point*: a `string()` that returns a view of
+  `self` produces bytes that dangle once the interface value (the
+  `any` that `fmt.print` packs varargs into) outlives the receiver.
+  This closed a **pre-existing soundness gap**: borrowed-field returns
+  through a pointer receiver were silently accepted at coercion before
+  return-alias inference existed, so the unsound shape shipped as a
+  supported pattern. The breakage is therefore a *fix*, not a
+  regression in the "broke working sound code" sense — but it does
+  break source that compiled, so it must be called out, not glossed.
+  `fmt`'s `stringer` contract is corrected accordingly: `string()`
+  must return bytes that **outlive the receiver** (a static/`.rodata`
+  slice or caller-owned storage), never a borrowed view of `self`; a
+  type that needs to render a view of its own fields uses `Formatter`
+  (which writes into a caller-provided writer, so nothing escapes).
+  The positive `%v`/stringer path is still covered by a corrected
+  non-borrowing test (`fmt_print_v_stringer_test`, `string()` returns a
+  static slice), and the rejection is pinned by
+  `fmt_stringer_borrowed_field_coerce_err_test`. Supporting
+  borrowed-field stringers under a checked contract is **option (b)**
+  (below), explicit future work — it would lift this restriction.
+- **Genuinely-unaffected common case.** Apart from the borrowed-field
+  stringer shape above, no existing coercion is newly rejected: any
+  type all of whose methods return non-borrows (counts, errors, owned
+  storage) has an all-empty `ReturnAliases` and coerces unchanged.
 - **Cross-package works via the importer.** For an imported concrete
   type, each method's `ReturnAliases` is visible at the coercion site
   because the importer attaches it to the rebuilt `FuncDecl` (see
@@ -900,6 +944,86 @@ Naming the methods (and, where available, their definition sites) is
 what turns an accidental borrow-introducing edit into an immediately
 actionable error pointing back at the edit, rather than a confusing
 rejection at an unrelated coercion.
+
+### Branch-merge of escape-restricted origins
+
+`flow.Merge` is the shared join run at every if/else/loop/switch
+convergence in the whole borrow checker — not just at returns. Before
+this feature it dropped a top-level binding's origin to
+unknown-and-safe (`KnownOrigin=false`) whenever the two branches'
+origins differed, which was a **pre-existing soundness hole** the moment
+borrowed/local returns became recordable: `var t byte[] = a; if (cond)
+{ t = loc[:] } return t` with a *local* array in one branch had its
+local origin collapsed away at the merge, so the return escaped
+uncaught.
+
+The fix unions the escape-restricted taint at the merge with a
+**most-restrictive preference**, mirroring (and correcting) the
+struct-field merge variant:
+
+- A **local** origin from *either* branch surfaces, so a return/escape
+  of the merged binding is rejected exactly as a direct local-slice
+  return. Preference is most-restrictive, not first-restricted-wins: a
+  borrowed origin in one branch must not mask a local in the other
+  (that ordering-dependence was itself a latent hole, present in both
+  the binding and field merge paths, and is closed in both).
+- Two *different borrowed* origins (a clean param in each branch)
+  combine into a synthesized **join origin** that carries the union, so
+  inference records every contributing parameter
+  (`ReturnAliases = [[0,1]]`) rather than under-reporting one of them.
+  This applies to **both** the top-level binding merge (`mergePointerExpr`)
+  **and** the struct-field merge (`mergeFieldPointerExpr`): the two paths
+  share the same `newJoinOrigin`/`JoinMembers` mechanism, and the field
+  consumer (`classifyStructSymbol` via `EscapingFieldOrigins`) expands the
+  join's members exactly as the top-level consumer (`classifyExprOrigin`)
+  does. The **union is the only sound direction** here, on both paths:
+  `ReturnAliases` tells the caller which parameters to keep live for the
+  returned value, so **over-recording** is conservative (the caller keeps
+  an extra parameter live) while **under-recording a borrow is a
+  use-after-free** — the caller may free a parameter the return still
+  borrows. Recording only one of two merged borrowed fields would drop the
+  other from the alias set; a caller could then pass a local (or a
+  to-be-freed value) in the dropped slot and the escape would go uncaught.
+  The earlier draft of this subsection called field-level under-recording
+  "the acceptable (coarser-caller) direction" — that was **backwards and
+  wrong**, and is corrected here: the field path records the full union.
+  The only sanctioned residual coarseness is on the *over-record* side: the
+  alias set is positional (slot → param, no field name), so a struct that
+  borrows two params through *distinct* fields records both params against
+  the whole return slot rather than per-field — conservative (it can only
+  ask the caller to keep *more* live), never unsound. Eliminating that
+  per-field imprecision is the deferred `[]Origin`-per-field representation
+  extension noted under [Caller-side propagation](#caller-side-propagation).
+
+Regression coverage: `retalias_branch_merge_local_err` /
+`retalias_branch_merge_local_flipped_err` and
+`retalias_branch_merge_field_local_err` /
+`retalias_branch_merge_field_local_flipped_err` (local in one branch →
+rejected, both branch orderings, for the top-level binding and the
+struct-field merge respectively); `retalias_branch_merge_param`,
+`retalias_branch_merge_field_param`, and
+`retalias_branch_merge_field_union` (two borrowed params → allowed, union
+recorded); `retalias_branch_merge_field_union_err` (a *local* in the
+unrecorded-by-the-old-merge slot → rejected, the use-after-free the field
+union closes); plus `TestReturnAliasInference` cases asserting the
+top-level merge records `[[0,1]]` and the struct-field merge (`choose`)
+records `[[0,1]]`.
+
+Struct returned by value *from a call*: a struct whose borrowed field is
+populated through a call (`var b B = mk(arg)`, `b = mk(arg)`, or directly
+`return mk(arg)`) carries no single `Origin`, so the call result's borrow
+lives in one of its fields, not in a top-level pointer fact. Inference
+expands the callee's alias set onto the call arguments and records the
+merged origin under a synthetic field key on the destination
+(`recordStructReturnCallFieldFacts`, shared by the live compile and the
+cold inference walk). The same key feeds `CheckStructFieldEscapeLocal`, so
+a *local* argument flowing into a returned struct through a call is
+rejected at the live return site exactly as the direct
+`b.buf = loc[:]; return b` form is. Regression coverage:
+`retalias_struct_return_call_arg_local_err` (local through the call →
+rejected), `retalias_struct_return_call_param` (borrowed param through the
+call → recorded and usable by the caller), plus `TestReturnAliasInference`
+cases for the struct-through-call alias recording.
 
 ### Variadic parameters
 

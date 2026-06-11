@@ -1,0 +1,26 @@
+package main
+
+import "string"
+
+// A recursive function returning a parameter alias. The cycle guard
+// returns a conservative self-alias (the recursive result is assumed to
+// alias every parameter position); unioned with the base case, that yields
+// ReturnAliases=[[0]]. The conservative set still permits correct caller
+// use: drop walks to the first space, returning a sub-slice of s.
+fn drop_spaces(s byte[]) byte[] {
+	if (len(s) == 0) {
+		return s
+	}
+	if (s[0] == 32) {
+		return drop_spaces(s[1:len(s)])
+	}
+	return s
+}
+
+fn main() i64 {
+	var src byte[] = "   hi"
+	var r byte[] = drop_spaces(src)
+	string.puts(r)
+	string.puts("\n")
+	return 0
+}

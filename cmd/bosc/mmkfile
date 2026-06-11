@@ -141,6 +141,25 @@ file visibility.bo : bas visibility.bs {
     ./bas -o visibility.bo visibility.bs >/dev/null 2>&1
 }
 
+# Cross-package return-alias fixture: a package exporting a sub-slice
+# function and a borrowing-method type. The .bo carries each function's
+# inferred ReturnAliases; the consumer (in main) uses the sub-slice view
+# safely and is rejected if it coerces the borrowing-method type to an
+# interface (the imported-type arm of the coercion guard).
+file retalias_pkg.importcfg : builtin.bo {
+    cat > retalias_pkg.importcfg <<EOF
+builtin=builtin.bo
+EOF
+}
+
+file retalias_pkg.bs : bosc retalias_pkg.importcfg $TESTPKGS/retalias_pkg/retalias_pkg.bos {
+    ./bosc -importcfg=retalias_pkg.importcfg -o retalias_pkg.bs $TESTPKGS/retalias_pkg/retalias_pkg.bos >/dev/null 2>&1
+}
+
+file retalias_pkg.bo : bas retalias_pkg.bs {
+    ./bas -o retalias_pkg.bo retalias_pkg.bs >/dev/null 2>&1
+}
+
 # Compile the Boson-source `io` runtime package so cross-package type-alias
 # tests have something to import.
 file io.importcfg : builtin.bo io_sys.bo string.bo {
@@ -181,7 +200,7 @@ file fmt.bo : bas fmt.bs {
 }
 
 # Generate a project-wide importcfg.
-file test.importcfg : builtin.bo string.bo pair.bo io.bo io_sys.bo errors.bo visibility.bo iface.bo geom.bo ifaces.bo fmt.bo {
+file test.importcfg : builtin.bo string.bo pair.bo io.bo io_sys.bo errors.bo visibility.bo iface.bo geom.bo ifaces.bo fmt.bo retalias_pkg.bo {
     cat > test.importcfg <<EOF
 builtin=builtin.bo
 string=string.bo
@@ -194,12 +213,13 @@ _iface=iface.bo
 geom=geom.bo
 ifaces=ifaces.bo
 fmt=fmt.bo
+retalias_pkg=retalias_pkg.bo
 EOF
 }
 
 clean : {
     rm -f tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout *.importcfg
-    rm -f bosc bas bld string.bo init.bo heap.bo iface.bo builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo errors.bo errors.bs visibility.bo visibility.bs geom.bo geom.bs ifaces.bo ifaces.bs fmt.bo fmt.bs fmt.importcfg test.importcfg
+    rm -f bosc bas bld string.bo init.bo heap.bo iface.bo builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo errors.bo errors.bs visibility.bo visibility.bs geom.bo geom.bs ifaces.bo ifaces.bs fmt.bo fmt.bs fmt.importcfg test.importcfg retalias_pkg.bo retalias_pkg.bs retalias_pkg.importcfg
 }
 
 go_tests {
@@ -286,6 +306,9 @@ test: go_tests bosc_tests {
     fi
     if grep -q '^import "ifaces"' "$target"; then
         extra_bo="$extra_bo ifaces.bo"
+    fi
+    if grep -q '^import "retalias_pkg"' "$target"; then
+        extra_bo="$extra_bo retalias_pkg.bo"
     fi
     if grep -q '^import "fmt"' "$target"; then
         extra_bo="$extra_bo fmt.bo"

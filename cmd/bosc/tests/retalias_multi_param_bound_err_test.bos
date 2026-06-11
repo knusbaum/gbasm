@@ -1,0 +1,24 @@
+package main
+
+// Boundary pin (sanctioned over-rejection): the TRANSIENT form
+// `return pick(x, y, first)` is accepted (retalias_multi_param_return_test),
+// because the call-expansion attributes the result to both params. But the
+// BOUND form — `const t = pick(x, y, first); return t` — is currently
+// REJECTED: a binding fed by a multi-param call result has no single tracked
+// origin in v1 (the intermediate `t` cannot be attributed to one parameter),
+// so it falls back to the escape-restricted reject. This test pins that
+// rejection so a future change that accidentally lets the bound form through
+// without proper multi-origin tracking is caught.
+fn pick(a byte[], b byte[], use_a bool) byte[] {
+	if (use_a) {
+		return a
+	}
+	return b
+}
+
+fn use(x byte[], y byte[], first bool) byte[] {
+	const t byte[] = pick(x, y, first)
+	return t
+}
+
+fn main() {}

@@ -1,0 +1,31 @@
+package main
+
+import "string"
+
+// Branch-merge of two BORROWED params into a struct FIELD, returned by
+// value. Both branches set b.buf from a borrowed parameter, so no local
+// escapes and the constructor is legitimate: it must be allowed (the
+// returned struct borrows s or t). The caller reads the view while both
+// args are live. (Field-level companion to retalias_branch_merge_param.)
+type B struct { buf byte[] }
+fn choose(s byte[], t byte[], use_s bool) B {
+	var b B
+	if (use_s) {
+		b.buf = s
+	} else {
+		b.buf = t
+	}
+	return b
+}
+
+fn main() i64 {
+	var x byte[] = "alpha"
+	var y byte[] = "beta"
+	var b1 B = choose(x, y, (1 == 1))
+	string.puts(b1.buf)
+	string.puts("\n")
+	var b2 B = choose(x, y, (1 == 0))
+	string.puts(b2.buf)
+	string.puts("\n")
+	return 0
+}

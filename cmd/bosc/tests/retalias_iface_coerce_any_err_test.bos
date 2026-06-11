@@ -1,0 +1,15 @@
+package main
+
+// The same borrowing-method type coerced to the zero-method `any`
+// interface. Rejected: the widened guard runs for the `any` target too —
+// the case a required-methods-only guard would let through (any requires
+// zero methods, so it would otherwise satisfy trivially).
+type Holder struct { buf byte[] } {
+	bytes(h *Holder) byte[] { return h.buf }
+}
+
+fn coerce(h *Holder) {
+	var a any = h
+}
+
+fn main() {}

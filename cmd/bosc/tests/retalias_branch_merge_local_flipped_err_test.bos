@@ -1,0 +1,19 @@
+package main
+
+// Flipped-ordering companion to retalias_branch_merge_local_err: here the
+// LOCAL origin is the else (second) branch and the borrowed param the then
+// (first) branch. The most-restrictive merge surfaces a local from EITHER
+// branch, so the escape is rejected regardless of which branch is local —
+// asserting the claimed order-independence of mergePointerExpr.
+fn f(a byte[], cond bool) byte[] {
+	var loc byte[16]
+	var t byte[] = a
+	if (cond) {
+		t = a[0:1]
+	} else {
+		t = loc[0:8]
+	}
+	return t
+}
+
+fn main() {}

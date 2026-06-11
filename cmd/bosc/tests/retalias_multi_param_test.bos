@@ -1,0 +1,29 @@
+package main
+
+import "string"
+
+// pick returns one of two borrowed parameters depending on a flag. Each
+// return is single-origin (slot 0 ← param 0 on one path, ← param 1 on the
+// other), so ReturnAliases=[[0, 1]]: slot 0 may alias either param. The
+// result is usable as long as both contributing arguments outlive it.
+fn pick(a byte[], b byte[], use_a bool) byte[] {
+	if (use_a) {
+		return a
+	}
+	return b
+}
+
+fn main() i64 {
+	var x byte[] = "first"
+	var y byte[] = "second"
+	var r1 byte[] = pick(x, y, yes())
+	var r2 byte[] = pick(x, y, no())
+	string.puts(r1)
+	string.puts("\n")
+	string.puts(r2)
+	string.puts("\n")
+	return 0
+}
+
+fn yes() bool { return 1 == 1 }
+fn no() bool { return 1 == 0 }

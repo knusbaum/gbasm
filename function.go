@@ -739,7 +739,13 @@ type Function struct {
 	Args        []*Var
 	Symbols     []Symbol
 	Relocations []Relocation
-	bodyBs      []byte
+	// ReturnAliases[slot] = sorted parameter indices the return slot may
+	// alias (inferred return-parameter aliasing). Empty/nil for ordinary
+	// functions. Serialized at the *end* of the function record (see
+	// writeFunction/readFunction): appended strictly after the body so
+	// field-order parity between writer and reader is preserved.
+	ReturnAliases [][]int
+	bodyBs        []byte
 
 	// The following fields are used to resolve jumps and labels within a function.
 	// These are *NOT* written or read to/from object files.

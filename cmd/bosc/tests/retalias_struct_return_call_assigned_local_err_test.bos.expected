@@ -1,0 +1,2 @@
+Compiling tests/retalias_struct_return_call_assigned_local_err_test.bos
+Fatal: Cannot return "b" by value: it holds a borrow of local-scope storage (through a returned struct value); the alias would dangle in the returned copy

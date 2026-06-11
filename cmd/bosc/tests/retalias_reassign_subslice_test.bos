@@ -1,0 +1,31 @@
+package main
+
+import "string"
+
+// Reassignment (not init-binding) of a borrowed sub-slice into a returned
+// local. `var t byte[]` declares the binding origin-less; `t = s[0:i]`
+// reassigns it to a view of the borrowed parameter. Return-alias inference
+// must install t's own origin at the assignment (mirroring the init path)
+// so this records ReturnAliases=[[0]] and the caller may use the view as
+// long as the argument outlives it. (Regression guard for the soundness
+// hole where the Assignment path under-recorded the binding's own origin.)
+fn first_word(s byte[]) byte[] {
+	var t byte[]
+	var i i64 = 0
+	for (; i < len(s); i = i + 1) {
+		if (s[i] == 32) {
+			t = s[0:i]
+			return t
+		}
+	}
+	t = s
+	return t
+}
+
+fn main() i64 {
+	var src byte[] = "hello world"
+	var w byte[] = first_word(src)
+	string.puts(w)
+	string.puts("\n")
+	return 0
+}

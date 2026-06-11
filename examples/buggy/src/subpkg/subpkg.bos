@@ -1,0 +1,13 @@
+package subpkg
+
+import "io"
+import "fmt"
+
+pub const x i64 = 0
+
+pub fn do_something_else() {
+	fmt.str(&io.STDOUT, "DO SOMETHING ELSE ")
+	fmt.int(&io.STDOUT, x)
+	//x=x+1
+	fmt.str(&io.STDOUT, " \n")
+}

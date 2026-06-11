@@ -1,0 +1,2 @@
+Compiling tests/retalias_iface_coerce_imported_err_test.bos
+Fatal: cannot use "retalias_pkg.borrowing_holder" as interface "Byter" here

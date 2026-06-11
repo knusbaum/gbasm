@@ -219,6 +219,16 @@ func validateInterfaceCoercion(c *Context, errNode AST, dstt, srct ASTType) (val
 	// to the named leaf so satisfaction is checked against a real type's
 	// method set (and the typedesc symbol later resolves).
 	concreteTypeName := shapeBaseName(srct)
+	// Return-alias interface-coercion guard (option (a), the coarse
+	// exclusion). A concrete type with ANY method whose inferred
+	// ReturnAliases is non-empty may not be coerced to ANY interface —
+	// including the zero-method `any`. This closes the runtime-itab
+	// laundering path (x.(B) / type-switch mint the result interface's
+	// vtable from the concrete type's *full* method table, so a guard
+	// keyed on the target interface's required-method subset would be
+	// vacuous for `any`). The check is independent of
+	// TypeSatisfiesInterfaceAs and runs for the `any` target too.
+	rejectBorrowingMethodCoercion(c, errNode, concreteTypeName, dstt.Name)
 	ifaceDecl, _ := c.InterfaceForName(dstt.Name)
 	// The coercion direction is determined by the source, not by the
 	// interface's declared receiver shape. A pointer source produces a
@@ -730,6 +740,25 @@ func checkSliceEscape(c *Context, a AST, what string) {
 	}
 }
 
+// checkSliceEscapeLocalOnly is the return-site variant of checkSliceEscape:
+// it rejects only a slice rooted at OriginLocal (a local fixed array whose
+// storage dies with the frame). A slice rooted at OriginBorrowed (a view
+// of a parameter) is *not* rejected here — with inferred return-parameter
+// aliasing the borrow is recordable and the lifetime obligation moves to
+// the caller, where alias_set propagation enforces it. Used only at the
+// return site; assignment-to-longer-lived-storage sites keep the full
+// escape-restricted reject (checkSliceEscape), since the caller cannot
+// vouch for those.
+func checkSliceEscapeLocalOnly(c *Context, a AST, what string) {
+	ptr := pointerExprForAST(c, a, "")
+	if !ptr.KnownOrigin {
+		return
+	}
+	if c.PointerFlow().OriginKindOf(ptr.Origin) == flow.OriginLocal {
+		CompileErrorF(a, "Borrowed slice escapes %s", what)
+	}
+}
+
 // lvalueLocalRoot walks an lvalue chain (Symbol, Dot, Index, NonNullAssert)
 // to its root binding and returns the binding name if every step stays
 // inside the same stack frame — no pointer auto-deref at a Dot, no
@@ -803,6 +832,36 @@ func recordStructLiteralFieldFacts(c *Context, base FlowPath, lit *StructLiteral
 		ft := f.Val.ASTType(c)
 		if ft.Indirection > 0 || ft.IsSlice() {
 			c.PointerFlow().SetPathPointer(fieldPath.Key(), pointerExprForAST(c, f.Val, ""))
+		}
+	}
+}
+
+// seedStructParamFieldProvenance records, for a by-value struct parameter,
+// that each of its slice/pointer fields is a borrowed view of caller storage.
+// A by-value struct param is copied into the callee's frame, but the
+// slice/pointer fields inside it still point at the caller's backing data — so
+// returning the struct (or any of its fields) aliases the parameter. The
+// tracker previously modeled nothing for struct params (only pointer and slice
+// params were seeded), which left a returned struct param's borrow invisible.
+//
+// Every seeded field origin is a borrowed origin rooted at the parameter name,
+// so a return-value provenance query maps it back to this parameter. Recurses
+// into struct-typed fields ("b.inner.buf"). Owned obligations are out of scope:
+// the caller gates this on a non-owned param, and fieldTypeForBase strips owned
+// from the (borrowed) fields, so only borrowed views are seeded.
+func seedStructParamFieldProvenance(c *Context, paramName string, base FlowPath, t ASTType) {
+	sd, ok := structDeclForType(c, t)
+	if !ok {
+		return
+	}
+	for _, f := range sd.Fields {
+		ft := fieldTypeForBase(t, f.Type)
+		fieldPath := base.Append(f.Name)
+		if ft.Indirection > 0 || ft.IsSlice() {
+			c.PointerFlow().SetPathPointer(fieldPath.Key(),
+				c.PointerFlow().NewBorrowedOrigin(flow.Binding(paramName)))
+		} else if _, isStruct := structDeclForType(c, ft); isStruct {
+			seedStructParamFieldProvenance(c, paramName, fieldPath, ft)
 		}
 	}
 }
@@ -905,6 +964,12 @@ func updateFieldPointerFactsForAssignment(c *Context, target AST, targetIsSymbol
 			c.PointerFlow().CopyFieldPointers(flow.Binding(sym.Name), flow.Binding(targetSym.Name))
 		} else if sl, ok := val.(*StructLiteral); ok {
 			recordStructLiteralFieldFacts(c, VarFlowPath(targetSym.Name), sl)
+		} else if _, ok := val.(*Funcall); ok {
+			// A struct returned by value FROM A CALL (`b = mk(arg)`): record
+			// its borrowed-argument provenance onto the destination's field
+			// facts so a later `return b` rejects a local arg through the
+			// call, identical to the direct-assignment form.
+			recordStructReturnCallFieldFacts(c, targetSym.Name, dstt, val)
 		}
 		return
 	}
@@ -1308,10 +1373,126 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 				return c.PointerFlow().NewAllocatedOrigin(flow.Binding(assignedName))
 			}
 		}
+		// Borrowed-returning call: the result aliases one or more of the
+		// arguments per the callee's inferred ReturnAliases. Propagate the
+		// matching argument's origin onto the result so the caller's escape
+		// / deref machinery treats it exactly as a borrow produced inline.
+		// This is the call-expansion that keeps the feature sound once a
+		// borrowed-returning callee is made legal (it cannot fire today —
+		// the callee would have been rejected first).
+		if pe, ok := funcallResultOrigin(c, ast, assignedName); ok {
+			return pe
+		}
 		return c.PointerFlow().UnknownPointer()
 	default:
 		return c.PointerFlow().UnknownPointer()
 	}
+}
+
+// funcallResultOrigin synthesizes the PointerExpr for a call result from
+// the callee's inferred slot-0 ReturnAliases. Single aliased param → the
+// result inherits that argument's origin verbatim. Multiple → the result
+// is modeled conservatively as escape-restricted iff any contributing
+// argument is escape-restricted (the multi-param union fallback): a fresh
+// local-shaped origin is registered when any contributor is escape-
+// restricted, so the caller treats the result as un-returnable / un-
+// storable-long-lived; otherwise the result is opaque (records nothing).
+// Returns (_, false) when the callee carries no slot-0 alias.
+func funcallResultOrigin(c *Context, call *Funcall, assignedName string) (flow.PointerExpr, bool) {
+	callee, args := resolveCalleeForAlias(c, call)
+	if callee == nil {
+		return flow.PointerExpr{}, false
+	}
+	aliases := aliasSet(c, callee)
+	if len(aliases) == 0 || len(aliases[0]) == 0 {
+		return flow.PointerExpr{}, false
+	}
+	params := aliases[0]
+	if len(params) == 1 {
+		p := params[0]
+		if p < 0 || p >= len(args) {
+			return flow.PointerExpr{}, false
+		}
+		return pointerExprForAST(c, args[p], ""), true
+	}
+	// Multi-param union (conservative fallback). The result is treated as
+	// live only if every contributing argument is live, and escape-
+	// restricted if any is. Single-Origin PointerExpr cannot carry the
+	// union, so the two consumers diverge:
+	//
+	//   - Bound result (`const t = pick(x,y)`, assignedName != ""): the
+	//     binding persists and may later escape with a *different* arg
+	//     being the local one, so it must be the conservative meet — a
+	//     local-rooted origin keyed to the destination. This over-rejects
+	//     a bound-then-escaped multi-param result (the proposal's
+	//     sanctioned fallback coarseness; the precise fix is the deferred
+	//     []Origin representation extension).
+	//
+	//   - Transient result (assignedName == ""): a global-assign RHS, a
+	//     direct-return arg, any escape-check site — read exactly once by
+	//     a kind-sensitive check that inspects the origin *kind*, never the
+	//     param identity. Returning the most-restrictive contributor's real
+	//     origin (a local contributor first, then a borrowed one) carries
+	//     precisely the right semantics with no synthetic origin. A bail to
+	//     opaque here would let a local reaching long-lived storage through
+	//     a multi-param call escape uncaught.
+	if assignedName != "" {
+		anyRestricted := false
+		for _, p := range params {
+			if p < 0 || p >= len(args) {
+				continue
+			}
+			ap := pointerExprForAST(c, args[p], "")
+			if ap.KnownOrigin && c.PointerFlow().IsEscapeRestricted(ap.Origin) {
+				anyRestricted = true
+				break
+			}
+		}
+		if anyRestricted {
+			return c.PointerFlow().NewLocalOrigin(flow.Binding(assignedName)), true
+		}
+		// All contributors are clean borrowed params: inherit the first.
+		for _, p := range params {
+			if p >= 0 && p < len(args) {
+				return pointerExprForAST(c, args[p], ""), true
+			}
+		}
+		return flow.PointerExpr{}, false
+	}
+	// Transient: return the most-restrictive contributor's origin. Prefer a
+	// local contributor (the strongest escape), then any escape-restricted
+	// (borrowed) contributor, else the first known origin.
+	var firstKnown flow.PointerExpr
+	var firstRestricted flow.PointerExpr
+	haveKnown := false
+	haveRestricted := false
+	for _, p := range params {
+		if p < 0 || p >= len(args) {
+			continue
+		}
+		ap := pointerExprForAST(c, args[p], "")
+		if !ap.KnownOrigin {
+			continue
+		}
+		if !haveKnown {
+			firstKnown = ap
+			haveKnown = true
+		}
+		if c.PointerFlow().OriginKindOf(ap.Origin) == flow.OriginLocal {
+			return ap, true
+		}
+		if !haveRestricted && c.PointerFlow().IsEscapeRestricted(ap.Origin) {
+			firstRestricted = ap
+			haveRestricted = true
+		}
+	}
+	if haveRestricted {
+		return firstRestricted, true
+	}
+	if haveKnown {
+		return firstKnown, true
+	}
+	return flow.PointerExpr{}, false
 }
 
 func pointerSlotTargetForDeref(c *Context, target AST) (flow.PointerExpr, bool) {
@@ -2348,6 +2529,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if sym, ok := ast.Init.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) && dstt.Indirection == 0 {
 				c.PointerFlow().CopyFieldPointers(flow.Binding(sym.Name), flow.Binding(ast.Name))
 			}
+			// A struct returned by value from a CALL carries no single Origin;
+			// record its borrowed-argument provenance onto the destination's
+			// field facts so a later `return b` rejects a local arg via
+			// CheckStructFieldEscapeLocal exactly as the direct assignment does.
+			recordStructReturnCallFieldFacts(c, ast.Name, dstt, ast.Init)
 		} else if !ast.Type.ZeroInitializable(c) {
 			CompileErrorF(a, "Variable \"%s\" of type %s requires an initializer", ast.Name, ast.Type)
 		} else if ast.Type.Indirection > 0 && ast.Type.NilMask&1 != 0 {
@@ -2536,6 +2722,22 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		sig.WriteString(") ")
 		sig.WriteString(ast.Return.String())
 		fmt.Fprintf(of, "\ttype %s\n", sig.String())
+		// Infer this function's return-parameter alias set (demand-driven,
+		// memoized, cycle-safe) and emit a `retaliases` directive per
+		// non-empty slot so the fact travels through the .bo to
+		// cross-package callers. The inference also rejects any OriginLocal
+		// escape, so a local reaching a returned slot is caught here as
+		// well as at the per-return checks below.
+		for slot, params := range aliasSet(c, ast) {
+			if len(params) == 0 {
+				continue
+			}
+			fmt.Fprintf(of, "\tretaliases %d:", slot)
+			for _, p := range params {
+				fmt.Fprintf(of, " %d", p)
+			}
+			fmt.Fprintf(of, "\n")
+		}
 		// Collect any memBacked-by-value params that need a prologue
 		// spill: argi puts the arg in a (sub-)register, but the body
 		// addresses fields via [name+offset] which requires a memory
@@ -2579,6 +2781,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				// allocated value bindings.
 				pexpr := c.PointerFlow().NewBorrowedOrigin(flow.Binding(a.Name))
 				c.PointerFlow().AssignPointer(flow.Binding(a.Name), pexpr)
+			} else if a.Type.Indirection == 0 && !a.Type.HasOwned() {
+				// By-value struct parameter: seed each slice/pointer field as a
+				// borrowed view of caller storage (rooted at the param), so a
+				// returned struct param / field is recognized as aliasing the
+				// parameter. The tracker modeled nothing here before.
+				if _, isStruct := structDeclForType(c, a.Type); isStruct {
+					seedStructParamFieldProvenance(c, a.Name, VarFlowPath(a.Name), a.Type)
+				}
 			}
 		}
 		fmt.Fprintf(of, "\n\tprologue\n\n")
@@ -3611,12 +3821,19 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// Resolve through type aliases so `type myptr *T` followed by
 		// `return p` runs the same pointer-escape checks as a bare *T return.
 		if c.ResolveUnderlying(retType).Indirection > 0 {
-			checkBorrowedPointerDoesNotEscape(c, ast.Val, "return")
+			// A borrowed pointer return is no longer a hard error: it is
+			// recordable via alias_set (which ran above and emitted this
+			// function's retaliases), so the lifetime obligation moves to
+			// the caller. Only a pointer to *local* storage stays rejected
+			// here — caller knowledge cannot rescue a dead stack slot.
 			checkLocalOriginDoesNotEscape(c, ast.Val, "return")
 		}
 		retCompat := c.ResolveUnderlying(retType)
 		if retCompat.IsSlice() {
-			checkSliceEscape(c, ast.Val, "through return")
+			// Return site: reject only a local-array escape; a borrowed
+			// (parameter-view) slice is recordable via alias_set, which
+			// already ran for this function and emitted its retaliases.
+			checkSliceEscapeLocalOnly(c, ast.Val, "through return")
 		}
 		if retType.Indirection == 0 {
 			retVal := ast.Val
@@ -3624,7 +3841,18 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				retVal = op.Val
 			}
 			if sym, ok := retVal.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) {
-				if escaped, field := c.PointerFlow().CheckStructFieldEscape(flow.Binding(sym.Name)); escaped {
+				// Local-only: a struct whose field borrows a *parameter* is
+				// recordable via alias_set; only a field aliasing local
+				// storage dangles in the returned copy and stays rejected.
+				if escaped, field := c.PointerFlow().CheckStructFieldEscapeLocal(flow.Binding(sym.Name)); escaped {
+					// A struct returned by value FROM A CALL borrows local
+					// storage through one of its (coarsely-tracked) fields: the
+					// alias set names a parameter, not a field, so the sentinel
+					// key carries the provenance. Report it without leaking the
+					// synthetic field name.
+					if field == structReturnAliasFieldKey {
+						CompileErrorF(ast.Val, "Cannot return %q by value: it holds a borrow of local-scope storage (through a returned struct value); the alias would dangle in the returned copy", sym.Name)
+					}
 					// The escaping field can be either a pointer or a slice.
 					// The wording differs ("pointer to" vs "slice into", and
 					// the slice form drops the binding name). For multi-level
@@ -3672,7 +3900,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				}
 				walkStructLiteralSliceEscape(c, ownerType, sl, func(ot ASTType, fieldName string, val AST) {
 					ptr := pointerExprForAST(c, val, "")
-					if ptr.KnownOrigin && c.PointerFlow().IsEscapeRestricted(ptr.Origin) {
+					// Local-only: a literal field borrowing a *parameter*
+					// (the new_builder constructor case) is recordable via
+					// alias_set; only a field aliasing local-scope storage
+					// dangles in the returned copy and stays rejected.
+					if ptr.KnownOrigin && c.PointerFlow().OriginKindOf(ptr.Origin) == flow.OriginLocal {
 						CompileErrorF(ast.Val, "Cannot return struct literal by value: field %q contains a slice into local-scope storage; the alias would dangle in the returned copy", fieldName)
 					}
 				})

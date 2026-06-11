@@ -1,0 +1,20 @@
+package main
+
+// A concrete type with a method returning a borrowed receiver field
+// (legal, inferred ReturnAliases non-empty), coerced to an interface
+// declaring that method. Rejected at the coercion site: a borrowing-method
+// type cannot be dispatched through any interface (option (a)). Concrete
+// `v.bytes()` still works; only the coercion is forbidden.
+type Holder struct { buf byte[] } {
+	bytes(h *Holder) byte[] { return h.buf }
+}
+
+interface Byter {
+	bytes(s *self) byte[]
+}
+
+fn coerce(h *Holder) Byter {
+	return h
+}
+
+fn main() {}

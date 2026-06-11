@@ -1,0 +1,23 @@
+package main
+
+// The soundness analog of the positive multi-param case: pick returns
+// either of two borrowed params (ReturnAliases=[[0,1]]). The caller passes
+// a LOCAL array's slice as one of those arguments and returns the result.
+// The local reaches a returned slot through the multi-param call, so the
+// return must be rejected — the multi-param union representation does not
+// let a local contributor slip through.
+fn pick(a byte[], b byte[], use_a bool) byte[] {
+	if (use_a) {
+		return a
+	}
+	return b
+}
+
+fn caller(s byte[]) byte[] {
+	var l byte[16]
+	return pick(l[0:8], s, yes())
+}
+
+fn yes() bool { return 1 == 1 }
+
+fn main() {}

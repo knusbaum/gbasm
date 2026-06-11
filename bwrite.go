@@ -430,6 +430,22 @@ func writeFunction(w io.Writer, f *Function) error {
 	if err != nil {
 		return fmt.Errorf("Writing body: %w", err)
 	}
+	// ReturnAliases is appended strictly after the body. The outer count
+	// is zero for ordinary functions (a single zero-count varint), so the
+	// on-disk overhead for the common case is one byte.
+	if err := writeSize(w, len(f.ReturnAliases)); err != nil {
+		return fmt.Errorf("Writing return-aliases slot count: %w", err)
+	}
+	for _, slot := range f.ReturnAliases {
+		if err := writeSize(w, len(slot)); err != nil {
+			return fmt.Errorf("Writing return-aliases param count: %w", err)
+		}
+		for _, idx := range slot {
+			if err := writeSize(w, idx); err != nil {
+				return fmt.Errorf("Writing return-aliases param index: %w", err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -500,16 +516,42 @@ func readFunction(r io.Reader) (*Function, error) {
 	if err != nil {
 		return nil, err
 	}
+	// ReturnAliases is read strictly after the body, mirroring
+	// writeFunction. Zero slot count ⇒ nil (the common case).
+	slotCount, err := readSize(r)
+	if err != nil {
+		return nil, err
+	}
+	var returnAliases [][]int
+	if slotCount > 0 {
+		returnAliases = make([][]int, slotCount)
+		for s := 0; s < slotCount; s++ {
+			paramCount, err := readSize(r)
+			if err != nil {
+				return nil, err
+			}
+			params := make([]int, paramCount)
+			for p := 0; p < paramCount; p++ {
+				idx, err := readSize(r)
+				if err != nil {
+					return nil, err
+				}
+				params[p] = idx
+			}
+			returnAliases[s] = params
+		}
+	}
 	return &Function{
-		Name:        name,
-		IsPub:       isPub,
-		Type:        fType,
-		SrcFile:     srcFile,
-		SrcLine:     srcLine,
-		Args:        args,
-		Symbols:     symbols,
-		Relocations: relocations,
-		bodyBs:      bodyBs,
+		Name:          name,
+		IsPub:         isPub,
+		Type:          fType,
+		SrcFile:       srcFile,
+		SrcLine:       srcLine,
+		Args:          args,
+		Symbols:       symbols,
+		Relocations:   relocations,
+		ReturnAliases: returnAliases,
+		bodyBs:        bodyBs,
 	}, nil
 }
 

@@ -1,0 +1,20 @@
+package main
+
+import "retalias_pkg"
+
+interface Byter {
+	bytes(s *self) byte[]
+}
+
+// A borrowing-method type defined in an IMPORTED package, coerced to an
+// interface in the consumer. Rejected via the importer-attached
+// ReturnAliases fact: the imported type's bytes() method carries its
+// inferred alias set across the .bo boundary, so the full-method
+// enumeration in the coercion guard sees the borrow. This pins the
+// imported-type diagnostic rendering (degraded "defined in package X" or,
+// with position plumbing, the exact site).
+fn coerce(h *retalias_pkg.borrowing_holder) Byter {
+	return h
+}
+
+fn main() {}

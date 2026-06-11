@@ -1,0 +1,35 @@
+package main
+
+import "string"
+
+// Hole B positive: a struct field merged from two DIFFERENT borrowed params
+// across an if. choose records ReturnAliases=[[0,1]] (the returned struct may
+// borrow s OR t depending on the branch), so the caller must keep BOTH live.
+// Here both arguments are live buffers; the caller reads the returned view on
+// each branch. The union is the sound direction: over-recording keeps an
+// extra param live, while under-recording would let the caller free a param
+// the return still borrows. (Companion to the field union .err test, which
+// puts a local in the unrecorded slot and is rejected.)
+type B struct { buf byte[] }
+
+fn choose(s byte[], t byte[], use_s bool) B {
+	var b B
+	if (use_s) {
+		b.buf = s
+	} else {
+		b.buf = t
+	}
+	return b
+}
+
+fn main() i64 {
+	var x byte[] = "first"
+	var y byte[] = "second"
+	var b1 B = choose(x, y, (1 == 1))
+	string.puts(b1.buf)
+	string.puts("\n")
+	var b2 B = choose(x, y, (1 == 0))
+	string.puts(b2.buf)
+	string.puts("\n")
+	return 0
+}

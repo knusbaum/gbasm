@@ -1,0 +1,24 @@
+package main
+
+// Branch-merge soundness at the STRUCT-FIELD level. A struct field is set
+// to a borrowed param in the `then` branch and to a local array's slice in
+// the `else` branch, then the struct is returned by value. The pre-fix
+// field merge was first-escape-restricted-wins, so the borrowed `then`
+// origin masked the local `else` origin and the local-field escape went
+// uncaught (order-dependent). The fix surfaces a local from EITHER branch,
+// so this returns-a-dangling-local case is rejected regardless of branch
+// order. (Companion to retalias_branch_merge_local_err for the top-level
+// binding merge.)
+type B struct { buf byte[] }
+fn f(s byte[], cond bool) B {
+	var loc byte[16]
+	var b B
+	if (cond) {
+		b.buf = s
+	} else {
+		b.buf = loc[:]
+	}
+	return b
+}
+
+fn main() {}

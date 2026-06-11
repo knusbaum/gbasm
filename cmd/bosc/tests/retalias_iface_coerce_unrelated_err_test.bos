@@ -1,0 +1,31 @@
+package main
+
+import "io"
+
+// The bluntness case: a type with a non-borrowing method that legitimately
+// satisfies an interface (an io.writer-shaped `write`), PLUS an unrelated
+// borrowing accessor (`peek`). Coerced to io.writer — which does not even
+// mention `peek` — it is rejected, and the diagnostic must explain the
+// whole-type rule rather than reading as a non-sequitur.
+type Sink struct {
+	buf mut byte[]
+	pos i64
+} {
+	write(s *mut Sink, data byte[]) i64, error {
+		var i i64 = 0
+		for (; i < len(data); i = i + 1) {
+			s.buf[s.pos] = data[i]
+			s.pos = s.pos + 1
+		}
+		return len(data), io.io_err.OK
+	}
+	peek(s *Sink) byte[] {
+		return s.buf[0:s.pos]
+	}
+}
+
+fn coerce(s *mut Sink) io.writer {
+	return s
+}
+
+fn main() {}

@@ -1,2 +1,0 @@
-Compiling tests/slice_return_multi_level_via_struct_copy_err_test.bos
-Fatal: Cannot return struct by value: field "inner.buf" contains a slice into local-scope storage; the alias would dangle in the returned copy

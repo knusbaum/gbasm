@@ -1,0 +1,23 @@
+package main
+
+// Hole A: a struct returned BY VALUE FROM A CALL with a LOCAL argument.
+// mk borrows its parameter into the returned struct's field (legal). outer
+// passes a LOCAL array's slice into mk and returns the result — the local
+// reaches the returned struct's field *through the call* and must be
+// rejected. Before the fix the struct-shaped return slot only classified a
+// bare *Symbol; a *Funcall returning the struct never reached the call
+// expansion, so this escape went uncaught. (The direct form
+// `b.buf = loc[:]; return b` and the slice-through-call form were already
+// rejected — only this struct-through-call path leaked.)
+type B struct { buf byte[] }
+
+fn mk(s byte[]) B {
+	return B{buf: s}
+}
+
+fn outer() B {
+	var loc byte[16]
+	return mk(loc[:])
+}
+
+fn main() {}

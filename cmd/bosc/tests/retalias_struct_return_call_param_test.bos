@@ -1,0 +1,28 @@
+package main
+
+import "string"
+
+// Hole A positive: a struct returned BY VALUE FROM A CALL whose argument is
+// a borrowed PARAMETER. mk borrows its param into the returned struct field;
+// outer forwards its own param into mk and returns the struct. Inference
+// expands mk's alias set onto the call argument, so outer records
+// ReturnAliases=[[0]] (the returned struct borrows outer's param 0). The
+// caller passes a live buffer and reads the borrowed view while it is still
+// in scope — no escape.
+type B struct { buf byte[] }
+
+fn mk(s byte[]) B {
+	return B{buf: s}
+}
+
+fn outer(p byte[]) B {
+	return mk(p)
+}
+
+fn main() i64 {
+	var storage byte[] = "hello"
+	var b B = outer(storage)
+	string.puts(b.buf)
+	string.puts("\n")
+	return 0
+}

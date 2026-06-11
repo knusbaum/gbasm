@@ -1,0 +1,18 @@
+package main
+
+// The same hazard via a recursive-call argument. The cycle guard's
+// conservative self-alias assumes the recursive result aliases every
+// argument position; classifying the recursive-call argument buf[:] (a
+// local origin) rejects it. The local-escape rejection is NOT relaxed
+// inside a cycle.
+fn weird_local(s byte[], cond bool) byte[] {
+	var buf byte[8]
+	if (cond) {
+		return weird_local(buf[0:4], no())
+	}
+	return s[0:1]
+}
+
+fn no() bool { return 1 == 0 }
+
+fn main() {}

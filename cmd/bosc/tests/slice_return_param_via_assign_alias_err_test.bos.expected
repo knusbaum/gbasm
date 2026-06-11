@@ -1,2 +1,0 @@
-Compiling tests/slice_return_param_via_assign_alias_err_test.bos
-Fatal: Borrowed slice escapes through return

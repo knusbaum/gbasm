@@ -425,9 +425,16 @@ pub type BuilderWriter struct {
 // Layer 4: user-extension interfaces
 // ---------------------------------------------------------------------------
 
-// stringer is implemented by types that can render themselves as a borrowed
-// byte slice without constructing new storage (a self field, or a static
-// .rodata slice). Preferred over Formatter when both are available.
+// stringer is implemented by types that can render themselves as a byte
+// slice without constructing new storage. The returned bytes MUST outlive
+// the receiver — a static .rodata slice (e.g. `return "Point"`) or
+// caller-owned storage — NOT a borrowed view of self's own fields. A type
+// whose string() returns a view of self (`return self.buf`) cannot be a
+// stringer: it is rejected at interface coercion, because once the
+// interface value outlives the receiver the borrowed bytes dangle. Use
+// Formatter for the render-a-view-of-self case (it writes into a
+// caller-provided writer, so nothing escapes). Preferred over Formatter
+// when both are available.
 pub interface stringer {
 	string(self *self) byte[]
 }

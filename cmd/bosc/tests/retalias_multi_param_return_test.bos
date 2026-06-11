@@ -1,0 +1,32 @@
+package main
+
+import "string"
+
+// Direct multi-param return: use returns pick(x, y) where both arguments
+// are borrowed parameters. The call-expansion records the union
+// ReturnAliases(use)=[[0,1]], and the direct return of the multi-param
+// call result is legal (no contributor is local). The caller of use is
+// then bound by use's own recorded union.
+fn pick(a byte[], b byte[], use_a bool) byte[] {
+	if (use_a) {
+		return a
+	}
+	return b
+}
+
+fn use(x byte[], y byte[], first bool) byte[] {
+	return pick(x, y, first)
+}
+
+fn main() i64 {
+	var p byte[] = "primary"
+	var q byte[] = "backup"
+	string.puts(use(p, q, yes()))
+	string.puts("\n")
+	string.puts(use(p, q, no()))
+	string.puts("\n")
+	return 0
+}
+
+fn yes() bool { return 1 == 1 }
+fn no() bool { return 1 == 0 }

@@ -1,0 +1,17 @@
+package main
+
+// The soundness regression a params-only inference shortcut would let
+// through: wrap returns a sub-slice of its parameter (legal). danger passes
+// a LOCAL array into wrap and returns the result — the local reaches a
+// returned slot *through the call*, and must be rejected in danger's body.
+// This is what the call-expansion in alias_set catches.
+fn wrap(b byte[]) byte[] {
+	return b[0:1]
+}
+
+fn danger(s byte[]) byte[] {
+	var l byte[16]
+	return wrap(l[0:8])
+}
+
+fn main() {}

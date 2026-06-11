@@ -1,0 +1,22 @@
+package main
+
+import "string"
+
+// B returns a sub-slice of its parameter (ReturnAliases=[[0]]). A returns
+// B(s); transitive inference resolves A's slot 0 to param 0 via the
+// call-expansion. ReturnAliases(A)=[[0]].
+fn B(s byte[]) byte[] {
+	return s[0:3]
+}
+
+fn A(s byte[]) byte[] {
+	return B(s)
+}
+
+fn main() i64 {
+	var src byte[] = "abcdef"
+	var r byte[] = A(src)
+	string.puts(r)
+	string.puts("\n")
+	return 0
+}

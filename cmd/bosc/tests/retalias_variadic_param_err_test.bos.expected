@@ -1,0 +1,2 @@
+Compiling tests/retalias_variadic_param_err_test.bos
+Fatal: Cannot return a view into variadic parameter; the packed args slice does not outlive the call

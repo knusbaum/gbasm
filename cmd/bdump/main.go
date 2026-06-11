@@ -91,6 +91,12 @@ func main() {
 				fmt.Printf("\t\t\tWARNING: Bound name [%s] does not match function name [%s].\n", f, v.Name)
 			}
 			fmt.Printf("\t\t\tType: %s\n", v.Type)
+			if len(v.ReturnAliases) > 0 {
+				fmt.Printf("\t\t\tReturnAliases:\n")
+				for slot, params := range v.ReturnAliases {
+					fmt.Printf("\t\t\t\tslot %d: %v\n", slot, params)
+				}
+			}
 			fmt.Printf("\t\t\tSrcFile: %s\n", v.SrcFile)
 			fmt.Printf("\t\t\tSrcLine: %d\n", v.SrcLine)
 			fmt.Printf("\t\t\tArgs:\n")

@@ -1,0 +1,17 @@
+package main
+
+// The caller assigns a borrowed result into a global. tail's result
+// inherits param s's borrowed origin; storing a borrow into longer-lived
+// global storage is rejected at the assignment (the caller cannot vouch
+// for the global outliving the borrow's source).
+var g mut byte[]
+
+fn tail(s byte[]) byte[] {
+	return s[1:len(s)]
+}
+
+fn store(s byte[]) {
+	g = tail(s)
+}
+
+fn main() {}

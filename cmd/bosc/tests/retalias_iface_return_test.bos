@@ -1,0 +1,28 @@
+package main
+
+import "string"
+
+type box struct { val i64 } {
+	get(b *box) i64 { return b.val }
+}
+
+interface Getter {
+	get(s *self) i64
+}
+
+// as_getter returns a borrowed pointer coerced to an interface. This
+// exercises the interface-coerced pointer-return site: the borrow it
+// carries must be recorded (ReturnAliases=[[0]]) rather than silently
+// dropped. The interface-coercion guard does NOT fire here because `box`'s
+// methods (get) return a count, not a borrow.
+fn as_getter(b *box) Getter {
+	return b
+}
+
+fn main() i64 {
+	var b box = box{val: 7}
+	var g Getter = as_getter(&b)
+	string.puti(g.get())
+	string.puts("\n")
+	return 0
+}

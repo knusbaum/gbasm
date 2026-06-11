@@ -2,14 +2,19 @@ package main
 import "fmt"
 import "io"
 
-// Layer 5: %v dispatches to stringer.
-type word struct { s byte[] } {
-	string(w *word) byte[] { return w.s }
+// Layer 5: %v dispatches to stringer. A VALID stringer returns bytes that
+// outlive the receiver — here a static .rodata slice — so the concrete type
+// coerces to `any` (the vararg shape) and dispatches through render_v's
+// `a.(stringer)` assertion. A stringer that returned a borrow of its own
+// fields would be rejected at this coercion (see
+// fmt_stringer_borrowed_field_coerce_err_test); returning a static slice is
+// the sound shape this test pins.
+type word struct { tag i64 } {
+	string(w *word) byte[] { return "hello-stringer" }
 }
 
 fn main() i64 {
-	var s byte[] = "hello-stringer"
-	var w word = word{s: s}
+	var w word = word{tag: 1}
 	fmt.print("v=%v\n", &w)
 	return 0
 }

@@ -1,0 +1,23 @@
+package main
+
+// Hole A, sentinel reject path: a struct returned from a call BOUND TO A VAR
+// (`var b B = mk(loc[:])`), then returned. Unlike the direct
+// `return mk(loc[:])` form (caught by classifyCallExpansion), the call result
+// here has no single origin — its borrow lives in a field. The fix records
+// that borrowed-argument provenance onto b's synthetic field key, so a LOCAL
+// argument surfaces at `return b` via CheckStructFieldEscapeLocal exactly as
+// the direct `b.buf = loc[:]; return b` form does. Before the fix the struct-
+// copy field propagation only handled a *Symbol RHS, so this leaked.
+type B struct { buf byte[] }
+
+fn mk(s byte[]) B {
+	return B{buf: s}
+}
+
+fn outer() B {
+	var loc byte[16]
+	var b B = mk(loc[:])
+	return b
+}
+
+fn main() {}

@@ -1,0 +1,2 @@
+Compiling tests/retalias_iface_launder_via_any_err_test.bos
+Fatal: cannot use "Holder" as interface "any" here

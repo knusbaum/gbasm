@@ -1,0 +1,43 @@
+package main
+
+// Exercises the `retaliases` directive: bas must parse it (structured
+// <slot>: <param-index>... form, accumulated per slot into the function's
+// ReturnAliases) and store it on the Function without misfeeding it to the
+// instruction matcher. The directive carries no runtime effect — the
+// program runs normally and prints 7, proving the assembler accepted the
+// directive lines in the function preamble.
+
+function ident
+	type fn(i64) i64
+	retaliases 0: 0
+	arg x rdi
+	prologue
+	acquire rax
+	mov rax x
+	epilogue
+	ret
+
+// multi-slot accumulation: two retaliases lines, one per slot.
+function pair_ident
+	type fn(i64, i64) i64, i64
+	retaliases 0: 0
+	retaliases 1: 1
+	arg a rdi
+	arg b rsi
+	prologue
+	acquire rax
+	mov rax a
+	epilogue
+	ret
+
+function main
+	prologue
+	mov rdi 7
+	call ident
+	mov rdi rax
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	epilogue
+	xor rax rax
+	ret

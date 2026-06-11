@@ -1,0 +1,43 @@
+package main
+
+import "string"
+
+// A struct built BY VALUE (a Symbol), not a struct literal: `var b Builder;
+// b.buf = buf; return b`. The borrowed parameter is stored into a field via
+// ASSIGNMENT, then the struct symbol is returned by value. This exercises
+// the 5th return site (CheckStructFieldEscapeLocal over a returned struct
+// symbol) AND guards that struct-field-via-assignment provenance is recorded
+// during inference. new_builder must infer ReturnAliases=[[0]]; the caller's
+// borrowed view into its own buffer must be live so the writes are visible.
+type Builder struct {
+	buf mut byte[]
+	pos i64
+} {
+	append(b *mut Builder, s byte[]) {
+		var i i64 = 0
+		for (; i < len(s); i = i + 1) {
+			b.buf[b.pos] = s[i]
+			b.pos = b.pos + 1
+		}
+	}
+	bytes(b *Builder) byte[] {
+		return b.buf[0:b.pos]
+	}
+}
+
+fn new_builder(buf mut byte[]) Builder {
+	var b Builder
+	b.buf = buf
+	b.pos = 0
+	return b
+}
+
+fn main() i64 {
+	var storage byte[32]
+	var b Builder = new_builder(storage[:])
+	b.append("wx")
+	b.append("yz")
+	string.puts(b.bytes())
+	string.puts("\n")
+	return 0
+}

@@ -81,6 +81,13 @@ type Context struct {
 	valuesDecls map[string]*ValuesDecl
 	// maps type alias names to their attached methods.
 	typeMethods map[string][]*FuncDecl
+
+	// aliasInProgress is the cycle guard for return-parameter alias
+	// inference (alias_set). Keyed on the FuncDecl currently being
+	// inferred; re-entry (direct/mutual recursion) is detected here and
+	// resolved with a conservative self-alias. Lives on the root context
+	// only (lazily created), reached via aliasRoot().
+	aliasInProgress map[*FuncDecl]bool
 	// vtables collects (vtableName → spec) for emission at end of compilation.
 	vtables map[string]vtableSpec
 
@@ -1127,6 +1134,21 @@ func (c *Context) Import(importKey, path string) error {
 			}
 			qualifyImportedTypeFull(&t.Return, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces, o.Values)
 			t.Name = fn.Name
+			// Attach the inferred return-parameter aliasing fact so a
+			// cross-package alias_set() lookup short-circuits to it. The
+			// indices are pure positional param/slot numbers, carrying no
+			// type names, so the qualify loop above does not touch them;
+			// the assignment is qualification-invariant. AliasesComputed=true
+			// marks the imported decl as already-inferred (no body walk).
+			t.ReturnAliases = fn.ReturnAliases
+			t.AliasesComputed = true
+			// Thread the .bo's source position onto the rebuilt decl so the
+			// interface-coercion diagnostic can name "defined at file:line"
+			// for imported borrowing-method types. parseFuncType sets no
+			// position; degrade gracefully to package-only when absent.
+			if fn.SrcFile != "" {
+				t.p = position{fname: fn.SrcFile, lineoff: uint(fn.SrcLine)}
+			}
 			c.DefineImportedFunc(o.Pkgname, fn.Name, &t)
 		}
 	}
@@ -2240,6 +2262,17 @@ type FuncDecl struct {
 	Body     *Block
 	Variadic bool // true when the last parameter is variadic (`...T`)
 	p        position
+
+	// ReturnAliases[slot] = sorted parameter indices the return slot may
+	// alias (inferred return-parameter aliasing). nil/empty for ordinary
+	// functions. Populated by alias_set() (demand-driven inference) for
+	// locally-defined functions, or attached by the importer from the .bo
+	// for cross-package callees. AliasesComputed gates the memo: false
+	// means the inference has not yet run on this (local) FuncDecl; the
+	// importer sets it true so cross-package lookups short-circuit to the
+	// deserialized fact without a body walk.
+	ReturnAliases   [][]int
+	AliasesComputed bool
 }
 
 func (*FuncDecl) ASTType(*Context) ASTType {

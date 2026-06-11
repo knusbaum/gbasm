@@ -1,0 +1,18 @@
+package main
+
+// Branch-merge soundness: a local array's slice assigned to a binding in
+// ONE branch, then returned after the if. The pre-fix top-level merge
+// dropped to unknown-and-safe when the two branches' origins differed, so
+// the local escaped uncaught. The fix unions the escape-restricted taint
+// (most-restrictive: a local from either branch surfaces), so the return
+// of the merged binding is rejected exactly as a direct local-slice return.
+fn f(a byte[], cond bool) byte[] {
+	var loc byte[16]
+	var t byte[] = a
+	if (cond) {
+		t = loc[0:8]
+	}
+	return t
+}
+
+fn main() {}

@@ -1,0 +1,38 @@
+package main
+
+import "string"
+
+// A bring-your-own-memory accumulator whose constructor borrows the
+// caller's buffer. new_builder infers ReturnAliases=[[0]] (the returned
+// struct borrows param 0). The concrete `append` method writes through the
+// borrowed buffer; the caller sees the bytes. Concrete method dispatch on a
+// borrowing-method type still works (the exclusion is only at coercion).
+type Builder struct {
+	buf mut byte[]
+	pos i64
+} {
+	append(b *mut Builder, s byte[]) {
+		var i i64 = 0
+		for (; i < len(s); i = i + 1) {
+			b.buf[b.pos] = s[i]
+			b.pos = b.pos + 1
+		}
+	}
+	bytes(b *Builder) byte[] {
+		return b.buf[0:b.pos]
+	}
+}
+
+fn new_builder(buf mut byte[]) Builder {
+	return Builder{buf: buf, pos: 0}
+}
+
+fn main() i64 {
+	var storage byte[32]
+	var b Builder = new_builder(storage[:])
+	b.append("ab")
+	b.append("cd")
+	string.puts(b.bytes())
+	string.puts("\n")
+	return 0
+}

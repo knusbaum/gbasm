@@ -985,6 +985,39 @@ func main() {
 				f.Type = ftype
 				continue
 			}
+			// retaliases <slot>: <param-index>...
+			// Records inferred return-parameter aliasing for return slot
+			// <slot>. One directive per non-empty slot; accumulate into
+			// f.ReturnAliases, growing the outer slice to index <slot>.
+			// Must be dispatched here, ahead of the generic instruction
+			// matcher, or `retaliases 0: 0` is misparsed as an opcode.
+			if strings.HasPrefix(line, "retaliases") {
+				rest := strings.TrimSpace(strings.TrimPrefix(line, "retaliases"))
+				colon := strings.IndexByte(rest, ':')
+				if colon < 0 {
+					fmt.Printf("Fatal: retaliases directive missing ':' separator: %q\n", line)
+					os.Exit(1)
+				}
+				slot, err := strconv.Atoi(strings.TrimSpace(rest[:colon]))
+				if err != nil || slot < 0 {
+					fmt.Printf("Fatal: retaliases directive has invalid slot index: %q\n", line)
+					os.Exit(1)
+				}
+				var params []int
+				for _, tok := range SplitSpace(strings.TrimSpace(rest[colon+1:])) {
+					idx, err := strconv.Atoi(tok)
+					if err != nil || idx < 0 {
+						fmt.Printf("Fatal: retaliases directive has invalid param index %q: %q\n", tok, line)
+						os.Exit(1)
+					}
+					params = append(params, idx)
+				}
+				for len(f.ReturnAliases) <= slot {
+					f.ReturnAliases = append(f.ReturnAliases, nil)
+				}
+				f.ReturnAliases[slot] = params
+				continue
+			}
 			if strings.HasPrefix(line, "local") {
 				lnamesize := SplitSpace(strings.TrimSpace(strings.TrimPrefix(line, "local")))
 				if len(lnamesize) < 2 || len(lnamesize) > 3 {

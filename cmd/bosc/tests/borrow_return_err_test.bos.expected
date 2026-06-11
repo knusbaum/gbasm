@@ -1,2 +1,0 @@
-Compiling tests/borrow_return_err_test.bos
-Fatal: Borrowed pointer escapes via return

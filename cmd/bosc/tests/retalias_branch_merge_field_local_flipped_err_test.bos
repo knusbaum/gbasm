@@ -1,0 +1,20 @@
+package main
+
+// Flipped-ordering companion to retalias_branch_merge_field_local_err: the
+// LOCAL-slice field write is the then (first) branch and the borrowed param
+// the else (second). mergeFieldPointerExpr surfaces a local from EITHER
+// branch, so the returned-struct local-field escape is rejected regardless of
+// branch order — asserting the order-independence the field merge claims.
+type B struct { buf byte[] }
+fn f(s byte[], cond bool) B {
+	var loc byte[16]
+	var b B
+	if (cond) {
+		b.buf = loc[:]
+	} else {
+		b.buf = s
+	}
+	return b
+}
+
+fn main() {}

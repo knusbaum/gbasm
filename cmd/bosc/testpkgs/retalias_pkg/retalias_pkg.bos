@@ -1,0 +1,32 @@
+package retalias_pkg
+
+// first_word returns a sub-slice of its borrowed parameter. The inferred
+// ReturnAliases=[[0]] travels through the .bo so a cross-package consumer
+// (in package main) can use the returned view safely — and would be
+// rejected at its own call site if it misused it. This is the path the
+// .bo-carried alias fact supports.
+pub fn first_word(s byte[]) byte[] {
+	var i i64 = 0
+	for (; i < len(s); i = i + 1) {
+		if (s[i] == 32) {
+			return s[0:i]
+		}
+	}
+	return s
+}
+
+// borrowing_holder is a concrete type with a borrowing method. A
+// cross-package consumer that tries to coerce it to an interface must be
+// rejected by the importer-attached ReturnAliases fact (the imported-type
+// arm of the interface-coercion guard).
+pub type borrowing_holder struct {
+	buf byte[]
+} {
+	bytes(h *borrowing_holder) byte[] {
+		return h.buf
+	}
+}
+
+pub fn make_holder(s byte[]) borrowing_holder {
+	return borrowing_holder{buf: s}
+}

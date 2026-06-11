@@ -1,0 +1,29 @@
+package main
+
+import "string"
+
+// Hole A, sentinel positive path: a struct returned from a call BOUND TO A
+// VAR whose argument is a borrowed PARAMETER, then returned. The borrowed
+// sentinel must NOT cause a spurious reject — a returned struct that borrows a
+// live parameter is legal and recordable. outer records ReturnAliases=[[0]];
+// the caller passes a live buffer and reads the view in scope. (Guards the
+// recording side of recordStructReturnCallFieldFacts and the var-bound path
+// that the direct-form tests do not exercise.)
+type B struct { buf byte[] }
+
+fn mk(s byte[]) B {
+	return B{buf: s}
+}
+
+fn outer(p byte[]) B {
+	var b B = mk(p)
+	return b
+}
+
+fn main() i64 {
+	var storage byte[] = "bound"
+	var b B = outer(storage)
+	string.puts(b.buf)
+	string.puts("\n")
+	return 0
+}

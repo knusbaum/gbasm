@@ -1,0 +1,12 @@
+package main
+
+// A variadic function returning a view into its variadic parameter. The
+// variadic pack is a caller-frame-synthesized slice whose lifetime is the
+// call, not a normal borrowed parameter, and the positional
+// param-index→argument mapping breaks down for the packed args. v1 rejects
+// a returned alias of a variadic parameter outright (never recorded).
+fn first(args ...any) any[] {
+	return args[0:1]
+}
+
+fn main() {}

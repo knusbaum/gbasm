@@ -2,10 +2,15 @@ package main
 import "fmt"
 import "io"
 
-// Layer 4: a type implementing BOTH stringer and Formatter renders via
-// stringer under %v — stringer wins the preference order.
-type tag struct { label byte[] } {
-	string(t *tag) byte[] { return t.label }
+// A type implementing BOTH stringer and Formatter renders via stringer under
+// %v — stringer wins the preference order in render_v. This is the ONLY test
+// pinning that precedence. The stringer returns a static .rodata slice (a
+// string literal), not a borrow of the receiver, so the type still coerces to
+// `any` (the vararg shape); a borrowed-self stringer would be rejected at the
+// coercion. If the Formatter were preferred, the output would read
+// "FORMATTER" instead.
+type tag struct { label i64 } {
+	string(t *tag) byte[] { return "STRINGER" }
 	format(t *tag, w io.writer) error {
 		const _, var err = w.write("FORMATTER")
 		return err
@@ -13,8 +18,7 @@ type tag struct { label byte[] } {
 }
 
 fn main() i64 {
-	var l byte[] = "STRINGER"
-	var t tag = tag{label: l}
+	var t tag = tag{label: 1}
 	fmt.print("got %v\n", &t)
 	return 0
 }

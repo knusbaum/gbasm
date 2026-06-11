@@ -1,0 +1,11 @@
+package main
+
+// A function returning a sub-slice of its OWN local array is still rejected
+// in the callee — a local origin, not a borrowed parameter. No amount of
+// caller knowledge rescues a dead stack slot.
+fn bad() byte[] {
+	var local byte[16]
+	return local[0:8]
+}
+
+fn main() {}

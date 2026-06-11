@@ -1,0 +1,26 @@
+package main
+
+// The transient multi-param case: pick returns either of two borrowed
+// params (ReturnAliases=[[0,1]]). The caller assigns the result — with a
+// LOCAL array as one contributing argument — directly into a global. The
+// multi-param result must be treated as escape-restricted because a
+// contributing argument is local; the assignment to longer-lived global
+// storage is rejected. This is the no-assignedName transient path: the
+// result origin is the most-restrictive contributor (the local one).
+var g byte[]
+
+fn pick(a byte[], b byte[], use_a bool) byte[] {
+	if (use_a) {
+		return a
+	}
+	return b
+}
+
+fn store(s byte[]) {
+	var l byte[16]
+	g = pick(l[0:8], s, yes())
+}
+
+fn yes() bool { return 1 == 1 }
+
+fn main() {}

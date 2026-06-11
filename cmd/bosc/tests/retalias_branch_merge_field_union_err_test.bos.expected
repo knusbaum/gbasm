@@ -1,0 +1,2 @@
+Compiling tests/retalias_branch_merge_field_union_err_test.bos
+Fatal: Borrowed slice escapes through return

@@ -1,0 +1,2 @@
+Compiling tests/retalias_multi_param_assign_global_err_test.bos
+Fatal: Borrowed slice escapes via global g

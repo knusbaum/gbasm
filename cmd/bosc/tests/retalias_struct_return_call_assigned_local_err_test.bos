@@ -1,0 +1,21 @@
+package main
+
+// Hole A, sentinel reject path via ASSIGNMENT (`b = mk(loc[:])`, not a var
+// init). updateFieldPointerFactsForAssignment routes the *Funcall RHS through
+// recordStructReturnCallFieldFacts, so the assignment-bound form records the
+// local-argument provenance and `return b` is rejected identically to the
+// var-init form. Guards the assignment branch of the sentinel wiring.
+type B struct { buf byte[] }
+
+fn mk(s byte[]) B {
+	return B{buf: s}
+}
+
+fn outer() B {
+	var loc byte[16]
+	var b B
+	b = mk(loc[:])
+	return b
+}
+
+fn main() {}

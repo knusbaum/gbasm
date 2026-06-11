@@ -1,0 +1,2 @@
+Compiling tests/retalias_iface_coerce_unrelated_err_test.bos
+Fatal: cannot use "Sink" as interface "io.writer" here

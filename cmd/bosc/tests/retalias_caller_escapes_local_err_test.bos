@@ -1,0 +1,16 @@
+package main
+
+// The caller passes a local array's slice into a sub-slice function and
+// returns the result. tail's result inherits the local origin; the return
+// is rejected at the caller's return — the lifetime evidence sits in the
+// caller's frame.
+fn tail(s byte[]) byte[] {
+	return s[1:len(s)]
+}
+
+fn oops() byte[] {
+	var local byte[16]
+	return tail(local[0:8])
+}
+
+fn main() {}

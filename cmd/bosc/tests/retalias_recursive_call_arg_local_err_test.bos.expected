@@ -1,0 +1,2 @@
+Compiling tests/retalias_recursive_call_arg_local_err_test.bos
+Fatal: Borrowed slice escapes through return

@@ -1,0 +1,19 @@
+package main
+
+import "string"
+
+// split returns two views into its single parameter. Per-slot inference:
+// ReturnAliases=[[0], [0]] — both slots view param 0.
+fn split(s byte[], at i64) byte[], byte[] {
+	return s[0:at], s[at:len(s)]
+}
+
+fn main() i64 {
+	var src byte[] = "abcdef"
+	var lo byte[], var hi byte[] = split(src, 2)
+	string.puts(lo)
+	string.puts("\n")
+	string.puts(hi)
+	string.puts("\n")
+	return 0
+}
