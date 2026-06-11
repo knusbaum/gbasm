@@ -88,6 +88,16 @@ type Context struct {
 	// resolved with a conservative self-alias. Lives on the root context
 	// only (lazily created), reached via aliasRoot().
 	aliasInProgress map[*FuncDecl]bool
+	// aliasCapture, when non-nil, marks this compile as an analysis run:
+	// compileFunctionBody is executing to a discard writer purely to
+	// compute a return-alias summary, and the *Return case records each
+	// return value's borrowed-param provenance into this accumulator
+	// instead of (in addition to nothing — output is discarded anyway).
+	// Set on the analysis run's function subcontext by aliasSet; nil
+	// during real codegen. Inherited via SubContext so nested blocks of
+	// the analyzed body see it, but NOT propagated into the analysis of a
+	// different function (aliasSet installs a fresh one per function).
+	aliasCapture *aliasCaptureState
 	// vtables collects (vtableName → spec) for emission at end of compilation.
 	vtables map[string]vtableSpec
 

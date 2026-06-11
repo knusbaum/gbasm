@@ -8,29 +8,15 @@ import (
 	"github.com/knusbaum/gbasm/cmd/bosc/flow"
 )
 
-// retalias.go implements inferred return-parameter aliasing (alias_set).
+// retalias.go — shared helpers for inferred return-parameter aliasing.
 //
-// For each function the compiler computes, per return slot, the set of
-// parameter indices that slot may alias. The result is memoized on the
-// FuncDecl (ReturnAliases + AliasesComputed) and serialized through the
-// .bo so cross-package callers can read it.
-//
-// The inference is demand-driven (run on first need during the Compile
-// pass), cycle-safe (a conservative self-alias breaks recursion), and
-// performs both recording (borrowed parameter → record its index) and
-// rejection (a local origin reaching a returned slot is a hard error,
-// reported here so the reject is order-independent regardless of whether
-// the demand came from lowering f's body, a call site, or the
-// interface-coercion guard).
-
-// aliasClassification is the outcome of classifying one escaping origin.
-type aliasClassKind int
-
-const (
-	aliasPass   aliasClassKind = iota // not escape-restricted (global/heap/unknown): record nothing
-	aliasRecord                       // borrowed parameter: record its index
-	aliasReject                       // local origin or variadic param: hard error
-)
+// The summary ENGINE (how a function's per-slot alias set is computed)
+// lives in retalias_engine.go: it runs the real compile to a discard
+// writer and reads provenance out of the one true flow tracker at each
+// return. This file holds what surrounds the engine: the cycle guard,
+// slot/index helpers, callee resolution, the summary-driven call-result
+// provenance recording, the interface-coercion guard with its directed
+// diagnostic, and small utilities. See DESIGN_return_alias_engine.md.
 
 // aliasInProgressSet returns the cycle-guard set, lazily created on the
 // root context.
@@ -45,78 +31,10 @@ func (c *Context) aliasInProgressSet() map[*FuncDecl]bool {
 	return root.aliasInProgress
 }
 
-// aliasSet returns f's inferred return-parameter alias set, computing it
-// on first demand. Memoized via f.AliasesComputed. Imported FuncDecls
-// arrive with AliasesComputed=true (the importer attaches the fact), so
-// cross-package lookups short-circuit without any body walk.
-func aliasSet(c *Context, f *FuncDecl) [][]int {
-	if f == nil {
-		return nil
-	}
-	if f.AliasesComputed {
-		return f.ReturnAliases
-	}
-	// A function with no body to walk (e.g. a forward-declared or
-	// otherwise bodyless decl) infers the empty set.
-	if f.Body == nil {
-		f.ReturnAliases = nil
-		f.AliasesComputed = true
-		return nil
-	}
-
-	inProgress := c.aliasInProgressSet()
-	if inProgress[f] {
-		// Cycle (direct or mutual recursion). Return a conservative
-		// self-alias: the recursive call's result is assumed to alias
-		// every (non-variadic) parameter position. The caller's
-		// classification of the *arguments* still rejects locals.
-		return conservativeSelfAlias(f)
-	}
-	inProgress[f] = true
-
-	nslots := returnSlotCount(f.Return)
-	result := make([][]int, nslots)
-
-	// Run the walk in an isolated flow state so cold inference never
-	// pollutes the live compile. Clone-save the root flow, install a
-	// fresh state, seed f's params exactly as the prologue does, walk,
-	// then restore. bosc aborts on first CompileErrorF, so no
-	// defer-restore is needed on the reject path.
-	saved := c.PointerFlow().Clone()
-	c.RestorePointerFlow(flow.NewState())
-
-	// Base the inference scope on the *root* compilation context, not the
-	// passed-in c. c may itself be an enclosing function's body/inference
-	// scope carrying local bindings (a recursive or transitive alias_set
-	// call expands a callee while the caller's params are still bound); a
-	// SubContext of that would have BindVar's shadow check fire on a
-	// same-named parameter. The root holds all declarations (funcs,
-	// structs, imports) and only file-scope globals as bindings, so an
-	// inference scope rooted there sees every callee/type but no enclosing
-	// local. Flow state is shared at the root and was swapped to a fresh
-	// State above, so the isolation still holds.
-	root := c
-	for root.parent != nil {
-		root = root.parent
-	}
-	ic := root.SubContext()
-	seedParamsForInference(ic, f)
-	walkReturnsForInference(ic, f, f.Body, result)
-
-	c.RestorePointerFlow(saved)
-
-	for s := range result {
-		result[s] = sortDedup(result[s])
-	}
-	delete(inProgress, f)
-
-	f.ReturnAliases = result
-	f.AliasesComputed = true
-	return result
-}
-
 // conservativeSelfAlias produces the over-approximation used when a cycle
 // is detected: every return slot may alias every non-variadic parameter.
+// Sound (only ever widens the alias set); the SCC-fixpoint driver replaces
+// this with the converged precise answer.
 func conservativeSelfAlias(f *FuncDecl) [][]int {
 	nslots := returnSlotCount(f.Return)
 	var params []int
@@ -160,24 +78,6 @@ func returnSlotType(ret ASTType, s int) ASTType {
 	return ret
 }
 
-// seedParamsForInference registers f's parameters into the inference
-// context, mirroring the prologue at compile.go's FuncDecl case so the
-// classifier sees the same borrowed-origin facts the live compile would.
-func seedParamsForInference(ic *Context, f *FuncDecl) {
-	for _, a := range f.Args {
-		ic.BindVar(f, a.Name, a.Type, a.IsConst)
-		if a.Type.Indirection > 0 && !a.Type.HasOwned() {
-			ic.SetBorrowedBinding(a.Name, true)
-		}
-		if a.Type.Indirection > 0 {
-			ic.PointerFlow().AssignPointer(flow.Binding(a.Name), ic.PointerFlow().NewObject(flow.Binding(a.Name)))
-		} else if a.Type.IsSlice() && !a.Type.HasOwned() {
-			pexpr := ic.PointerFlow().NewBorrowedOrigin(flow.Binding(a.Name))
-			ic.PointerFlow().AssignPointer(flow.Binding(a.Name), pexpr)
-		}
-	}
-}
-
 // paramIndexOf returns the parameter index of binding name in f, or -1 if
 // name is not a parameter.
 func paramIndexOf(f *FuncDecl, name string) int {
@@ -189,250 +89,8 @@ func paramIndexOf(f *FuncDecl, name string) int {
 	return -1
 }
 
-// walkReturnsForInference does a flat, sequential pre-order walk of f's
-// body, threading binding-introducing statements into the inference flow
-// state (so an intermediate borrowed binding is resolvable) and
-// classifying every return statement's slot expressions. No branch-merge
-// precision: a binding's origin is fixed at its decl, so sequential
-// processing is sound. OriginLocal escapes are rejected here via
-// CompileErrorF.
-func walkReturnsForInference(ic *Context, f *FuncDecl, node AST, result [][]int) {
-	switch n := node.(type) {
-	case nil:
-		return
-	case *Block:
-		// Open a fresh lexical scope per block so a `const x` redeclared
-		// in a sibling block does not collide (BindVar enforces no
-		// redeclaration / no shadowing within one scope). Flow origins
-		// live on the root flow state and survive the sub-scope, so
-		// origin facts threaded here remain visible to outer returns.
-		sc := ic.SubContext()
-		for _, stmt := range n.Body {
-			walkReturnsForInference(sc, f, stmt, result)
-		}
-	case *IfStmt:
-		// Process each branch over its own flow snapshot, then merge the
-		// resulting states so a field borrowed on *either* branch survives
-		// into the post-if return (flow.Merge keeps an escape-restricted
-		// origin from either side — the union, which over-records soundly).
-		// Returns *inside* a branch are classified against that branch's
-		// own state during its walk.
-		before := ic.PointerFlow().Clone()
-		walkReturnsForInference(ic, f, n.Then, result)
-		thenState := ic.PointerFlow().Clone()
-		ic.RestorePointerFlow(before)
-		walkReturnsForInference(ic, f, n.Else, result)
-		elseState := ic.PointerFlow().Clone()
-		ic.RestorePointerFlow(flow.Merge(thenState, elseState))
-	case *For:
-		sc := ic.SubContext()
-		threadInferenceBinding(sc, n.Init)
-		walkReturnsForInference(sc, f, n.Body, result)
-	case *Loop:
-		walkReturnsForInference(ic, f, n.Body, result)
-	case *TypeSwitch:
-		for _, tc := range n.Cases {
-			// Each case narrows BindName to the case's concrete type.
-			// Bind it (no tracked origin) so returns inside the case that
-			// reference it resolve. Interface/value narrowings carry no
-			// borrow in v1.
-			sc := ic.SubContext()
-			if n.BindName != "" {
-				if _, exists := sc.TypeForVar(n.BindName); !exists {
-					sc.BindVar(n, n.BindName, tc.T, false)
-				}
-			}
-			walkReturnsForInference(sc, f, tc.Body, result)
-		}
-	case *VarDecl:
-		threadInferenceBinding(ic, n)
-	case *Assignment:
-		threadInferenceAssignment(ic, n)
-	case *MultiBindDecl:
-		// `var a T, var b U = expr` binds each target. Register the names
-		// with their declared types so later returns/uses over these
-		// bindings resolve (their origins are conservatively Unknown — a
-		// multi-value source is not a single borrowed root we track in v1).
-		for i := range n.Bindings {
-			b := &n.Bindings[i]
-			if _, exists := ic.TypeForVar(b.Name); !exists {
-				ic.BindVar(b, b.Name, b.Type, b.IsConst)
-			}
-		}
-	case *Return:
-		classifyReturn(ic, f, n, result)
-	default:
-		// Other statements introduce no flow-relevant bindings for the
-		// purposes of inference and contain no nested returns we track.
-	}
-}
-
-// threadInferenceBinding processes a VarDecl during the inference walk,
-// registering the binding's origin so a later `return t` over an
-// intermediate binding resolves to the right root (recording or
-// rejecting). Mirrors the VarDecl Init handling in compileTop.
-func threadInferenceBinding(ic *Context, node AST) {
-	vd, ok := node.(*VarDecl)
-	if !ok || vd == nil {
-		return
-	}
-	t := vd.Type
-	if _, exists := ic.TypeForVar(vd.Name); !exists {
-		ic.BindVar(vd, vd.Name, t, vd.IsConst)
-	}
-	if vd.Init == nil {
-		// Uninitialized local fixed array (`var l byte[16]`) roots a
-		// local origin so `return l[:]` is rejected.
-		if t.IsArray() {
-			ic.PointerFlow().NewLocalOrigin(flow.Binding(vd.Name))
-		}
-		return
-	}
-	// Gate origin computation on escape-relevance. A non-escape-relevant
-	// value binding (an i64, an error, an interface result) carries no
-	// tracked borrow in v1, so we skip pointerExprForAST entirely — which
-	// also avoids resolving (and potentially erroring on) an Init the
-	// cold walk has not fully established. The name is still bound above
-	// so escape-relevant Inits that *reference* it resolve.
-	if !typeIsEscapeRelevantForInference(ic, t) {
-		return
-	}
-	if t.Indirection > 0 && !t.HasOwned() {
-		ic.SetBorrowedBinding(vd.Name, ic.IsBorrowedBinding(rootBindingName(vd.Init)))
-	}
-	pexpr := pointerExprForAST(ic, vd.Init, vd.Name)
-	if pexpr.KnownOrigin || pexpr.KnownSlot {
-		ic.PointerFlow().AssignPointer(flow.Binding(vd.Name), pexpr)
-	}
-	// A struct returned by value from a call (`var b B = mk(arg)`) carries no
-	// single Origin; record its borrowed-argument field provenance so a later
-	// `return b` classifies the borrow (EscapingFieldOrigins reads the
-	// sentinel key) — mirroring the live compile's recordStructReturnCallFieldFacts.
-	recordStructReturnCallFieldFacts(ic, vd.Name, t, vd.Init)
-}
-
-// typeIsEscapeRelevantForInference reports whether a binding of type t can
-// carry a tracked borrow that inference must thread: slices, fixed arrays,
-// pointers, and struct values (whose fields may borrow). Scalar values and
-// interface results are not escape-relevant in v1.
-func typeIsEscapeRelevantForInference(c *Context, t ASTType) bool {
-	rt := c.ResolveUnderlying(t)
-	if rt.IsSlice() || rt.IsArray() || rt.Indirection > 0 {
-		return true
-	}
-	if c.IsInterfaceType(rt) {
-		return false
-	}
-	if _, ok := structDeclForType(c, rt); ok {
-		return true
-	}
-	return false
-}
-
-// threadInferenceAssignment records the field-provenance facts of an
-// assignment during the inference walk, mirroring the live Assignment
-// handler's updateFieldPointerFactsForAssignment call. Without this a
-// struct returned by value whose field was set by assignment
-// (`b.buf = s; return b`) would under-record its alias — the
-// CheckStructFieldEscape that classifyStructSymbol consults reads exactly
-// these field-pointer facts. Only the provenance-recording side effect is
-// reproduced; the assignment's mutability/owned checks belong to the live
-// compile and are not re-run here.
-func threadInferenceAssignment(ic *Context, n *Assignment) {
-	if n == nil || n.Target == nil {
-		return
-	}
-	targetSym, targetIsSymbol := n.Target.(*Symbol)
-	if targetIsSymbol {
-		dstt, ok := ic.DeclaredTypeForVar(targetSym.Name)
-		if !ok {
-			return
-		}
-		// Install the binding's OWN slice/pointer origin, mirroring the
-		// VarDecl-init path in threadInferenceBinding and the live compile's
-		// updatePointerFlowForAssignment. Without this a borrowed slice
-		// *reassigned* into a returned local (`var t byte[]; t = a[0:1];
-		// return t`) is origin-less during inference, `return t` classifies
-		// as non-escaping, and ReturnAliases under-records — letting a local
-		// escape uncaught through a call. Gate on escape-relevance (same as
-		// the VarDecl path) so a non-escape-relevant RHS like `n = 1` is not
-		// run through pointerExprForAST, which can throw on an expression the
-		// cold walk has not established. Only the origin-installing side
-		// effect is reproduced; the assignment's mutability/owned/coercion
-		// checks belong to the live compile and are not re-run here.
-		if typeIsEscapeRelevantForInference(ic, dstt) && !ic.IsGlobalBinding(targetSym.Name) {
-			if dstt.Indirection > 0 && !dstt.HasOwned() {
-				ic.SetBorrowedBinding(targetSym.Name, ic.IsBorrowedBinding(rootBindingName(n.Val)))
-			}
-			pexpr := pointerExprForAST(ic, n.Val, targetSym.Name)
-			if pexpr.KnownOrigin || pexpr.KnownSlot {
-				ic.PointerFlow().AssignPointer(flow.Binding(targetSym.Name), pexpr)
-			}
-		}
-		// updateFieldPointerFactsForAssignment routes a struct-by-value *Funcall
-		// RHS through recordStructReturnCallFieldFacts itself, so a `b = mk(arg)`
-		// assignment records its borrowed-argument field provenance here too —
-		// no separate inference call is needed.
-		updateFieldPointerFactsForAssignment(ic, n.Target, true, targetSym, dstt, n.Val)
-		return
-	}
-	// Non-Symbol target (Dot/Index chain). updateFieldPointerFactsForAssignment
-	// only records facts for a chain rooted at a resolvable non-pointer
-	// local binding; anything else (a deref `*p`, a global root, a
-	// pointer-rooted path) is a no-op there. Gate on that same precondition
-	// up front so we never call ASTType on a target whose type the cold
-	// walk cannot resolve (e.g. `*p` where p is a still-inferred `<infer>`
-	// binding), which would throw mid-inference.
-	path, ok := ProvenancePathForExpr(n.Target)
-	if !ok || path.Fields == "" || ic.IsGlobalBinding(path.Root) {
-		return
-	}
-	rootType, ok := ic.TypeForVar(path.Root)
-	if !ok || rootType.Indirection > 0 {
-		return
-	}
-	dstt := n.Target.ASTType(ic)
-	updateFieldPointerFactsForAssignment(ic, n.Target, false, nil, dstt, n.Val)
-}
-
-// rootBindingName walks an expression to its root symbol name, or "".
-func rootBindingName(a AST) string {
-	if name, ok := rootSymbolName(a); ok {
-		return name
-	}
-	return ""
-}
-
-// classifyReturn classifies the escaping origins of a return statement's
-// slot expressions and records/rejects per slot. A single-value return is
-// slot 0; a multi-value return is a StructLiteral whose field _s is slot s.
-func classifyReturn(ic *Context, f *FuncDecl, ret *Return, result [][]int) {
-	if ret.Val == nil {
-		return
-	}
-	// Multi-value return: the AST lowers `return e0, e1` to a
-	// StructLiteral with positional fields _0, _1, ... whose value for
-	// field _s is slot s's expression.
-	if f.Return.MultiReturn {
-		if sl, ok := ret.Val.(*StructLiteral); ok {
-			for _, field := range sl.Fields {
-				s := slotIndexFromFieldName(field.Name)
-				if s < 0 || s >= len(result) {
-					continue
-				}
-				// Direct return: rejectLocal=false. A local origin reaching
-				// this slot directly is rejected by the precise per-site
-				// check during live lowering, not here.
-				classifySlotExpr(ic, f, field.Val, returnSlotType(f.Return, s), s, false, result)
-			}
-			return
-		}
-	}
-	classifySlotExpr(ic, f, ret.Val, returnSlotType(f.Return, 0), 0, false, result)
-}
-
-// slotIndexFromFieldName parses the positional field name "_N" produced by
-// multi-value return lowering into the slot index N.
+// slotIndexFromFieldName maps a multi-return StructLiteral's positional
+// field name (_0, _1, ...) to its slot index, or -1.
 func slotIndexFromFieldName(name string) int {
 	if len(name) < 2 || name[0] != '_' {
 		return -1
@@ -447,167 +105,13 @@ func slotIndexFromFieldName(name string) int {
 	return n
 }
 
-// classifySlotExpr classifies the escaping origins of a single return-slot
-// expression and records/rejects into result[slot]. Only escape-relevant
-// slots (slice / pointer / aggregate-with-borrowable-fields) participate:
-// a scalar slot (an i64 count) records nothing even if its expression
-// roots at a parameter.
-func classifySlotExpr(ic *Context, f *FuncDecl, expr AST, slotType ASTType, slot int, rejectLocal bool, result [][]int) {
-	// A struct literal slot: walk its fields and classify any
-	// slice/pointer field. This covers the constructor case
-	// (`return Builder{buf: buf}`).
-	if sl, ok := expr.(*StructLiteral); ok {
-		classifyStructLiteral(ic, f, sl, slot, rejectLocal, result)
-		return
-	}
-	// A bare struct-symbol returned by value whose fields carry borrowed
-	// slices/pointers (CheckStructFieldEscape's domain).
-	resolved := ic.ResolveUnderlying(slotType)
-	if resolved.Indirection == 0 && !resolved.IsSlice() {
-		if sym, ok := expr.(*Symbol); ok && !ic.IsGlobalBinding(sym.Name) {
-			classifyStructSymbol(ic, f, sym, slot, rejectLocal, result)
-			return
-		}
-		// A struct returned by value *from a call* (`return mk(loc[:])`)
-		// must expand the callee's alias set onto the call's argument
-		// origins, exactly as the slice/pointer slot path does. Without
-		// this a local flowing into the struct's borrowed field through
-		// the call escapes uncaught (the struct slot's classification
-		// otherwise stops here). classifyCallExpansion runs each mapped
-		// argument with rejectLocal=true, so a local through the call is a
-		// hard error and a borrowed param is recorded as the struct
-		// return's alias.
-		if call, ok := expr.(*Funcall); ok {
-			classifyCallExpansion(ic, f, call, slot, result)
-		}
-		return
-	}
-	// Slice / pointer slot: classify the expression's escaping origin.
-	classifyExprOrigin(ic, f, expr, slot, rejectLocal, result)
-}
-
-// classifyExprOrigin classifies one slice/pointer-shaped return expression.
-// Dual path: (1) pointerExprForAST's resolved origin, when known; (2) a
-// root-symbol fallback for shapes pointerExprForAST cannot resolve (a Dot
-// through a pointer receiver — `s.buf` — yields no field-provenance
-// origin, but its root is a borrowed parameter). Both paths run the same
-// classifyBinding switch, so a local root is rejected on either.
-func classifyExprOrigin(ic *Context, f *FuncDecl, expr AST, slot int, rejectLocal bool, result [][]int) {
-	// A call whose result borrows its arguments expands: classify the
-	// matching argument expressions' origins. Arguments flowing into a
-	// returned slot *through a call* must reject locals here — the per-site
-	// check cannot see them (the call result may carry no single origin),
-	// so aliasSet is the order-independent backstop.
-	if call, ok := expr.(*Funcall); ok {
-		classifyCallExpansion(ic, f, call, slot, result)
-		return
-	}
-	ptr := pointerExprForAST(ic, expr, "")
-	if ptr.KnownOrigin {
-		// A branch-merge of two different borrowed params resolves to a
-		// synthesized join origin; expand it so every contributing param is
-		// recorded (JoinMembers returns the single origin unchanged for a
-		// non-join origin, so the common case is one classification).
-		for _, o := range ic.PointerFlow().JoinMembers(ptr.Origin) {
-			applyClassification(ic, f, classifyBinding(ic, f, string(o), rejectLocal), expr, slot, result)
-		}
-		return
-	}
-	// Fallback: root-symbol classification for pointer-rooted field
-	// access and other shapes pointerExprForAST leaves Unknown. This walks
-	// SliceOp as well as Dot/Index/NonNullAssert, so `s.buf[0:s.pos]`
-	// (a sub-slice of a borrowed pointer receiver's field) resolves to the
-	// borrowed root `s` — the readProvenancePath path bails on a pointer
-	// root, leaving no origin, and this fallback is what records the borrow
-	// (critical for the interface-coercion guard's borrowing-method
-	// detection on struct methods).
-	if root, ok := aliasRootSymbol(expr); ok && !ic.IsGlobalBinding(root) {
-		applyClassification(ic, f, classifyBinding(ic, f, root, rejectLocal), expr, slot, result)
-	}
-}
-
-// aliasRootSymbol walks an expression's lvalue chain to its root symbol
-// name, traversing SliceOp in addition to Dot/Index/NonNullAssert. Used by
-// the inference fallback to attribute a borrowed root when pointerExprForAST
-// leaves the expression Unknown (a sub-slice or field access through a
-// pointer receiver).
-func aliasRootSymbol(expr AST) (string, bool) {
-	for {
-		switch v := expr.(type) {
-		case *Symbol:
-			return v.Name, true
-		case *Dot:
-			expr = v.Val
-		case *Index:
-			expr = v.Val
-		case *NonNullAssert:
-			expr = v.Val
-		case *SliceOp:
-			expr = v.Val
-		case *OwnedPromotion:
-			expr = v.Val
-		default:
-			return "", false
-		}
-	}
-}
-
-// classifyStructLiteral walks a struct literal's slice/pointer fields and
-// classifies each. Nested struct literals recurse.
-func classifyStructLiteral(ic *Context, f *FuncDecl, sl *StructLiteral, slot int, rejectLocal bool, result [][]int) {
-	for _, field := range sl.Fields {
-		if field.Val == nil {
-			continue
-		}
-		if nested, ok := field.Val.(*StructLiteral); ok {
-			classifyStructLiteral(ic, f, nested, slot, rejectLocal, result)
-			continue
-		}
-		ft := field.Val.ASTType(ic)
-		if ft.Indirection == 0 && !ft.IsSlice() {
-			continue
-		}
-		classifyExprOrigin(ic, f, field.Val, slot, rejectLocal, result)
-	}
-}
-
-// classifyStructSymbol handles returning a struct by value whose fields
-// carry borrowed slices/pointers. CheckStructFieldEscape reports whether
-// such a field exists; for inference we conservatively classify the
-// binding's root: if the binding is a borrowed param, record it; if it
-// roots a local, reject. v1 is coarse (no per-field precision), so a
-// struct symbol with any escaping field aliases whatever its binding
-// roots at.
-func classifyStructSymbol(ic *Context, f *FuncDecl, sym *Symbol, slot int, rejectLocal bool, result [][]int) {
-	// Each escaping field's *origin* is what matters — not the struct
-	// binding itself (the binding `b` is a local struct whose field
-	// `b.buf` borrows the parameter `s`; classifying `b` would wrongly see
-	// a local). Classify every escape-restricted field origin: a borrowed
-	// param field records its index; a local field is rejected (through a
-	// call) or passed (direct return, left to the per-site check). v1 is
-	// coarse — no per-field precision — but over-records soundly.
-	for _, origin := range ic.PointerFlow().EscapingFieldOrigins(flow.Binding(sym.Name)) {
-		// A branch-merged field whose two branches borrowed *different*
-		// params resolves to a synthesized join origin; expand it so every
-		// contributing param is recorded (JoinMembers returns a non-join
-		// origin unchanged, so the common single-field case classifies
-		// once). Without this expansion a join origin would have
-		// paramIndexOf == -1 and record nothing — under-recording a
-		// borrow, a use-after-free. This mirrors classifyExprOrigin's
-		// JoinMembers expansion for the top-level slice/pointer path.
-		for _, member := range ic.PointerFlow().JoinMembers(origin) {
-			applyClassification(ic, f, classifyBinding(ic, f, string(member), rejectLocal), sym, slot, result)
-		}
-	}
-}
-
 // structReturnAliasFieldKey is the synthetic field-provenance key suffix
 // used to record a struct-by-value call result's borrowed-argument origins
 // onto its destination binding. The alias set is coarse (slot → param, no
 // real field name), so we cannot reconstruct which struct field borrows;
 // a single sentinel sub-key under the destination's "binding." prefix
 // carries the merged origin. Both consumers — CheckStructFieldEscapeLocal
-// (live per-site reject) and EscapingFieldOrigins (inference) — are
+// (live per-site reject) and EscapingFieldOrigins (summary read) — are
 // prefix-scans over "binding.", so the sentinel participates uniformly.
 const structReturnAliasFieldKey = "__callret"
 
@@ -616,29 +120,63 @@ const structReturnAliasFieldKey = "__callret"
 //
 // A struct returned BY VALUE from a call (`var b B = mk(arg)`, `b = mk(arg)`)
 // carries no single Origin — its borrow lives in one of its fields, which
-// pointerExprForAST's single-Origin call-expansion cannot represent. Without
-// recording it, a local flowing into the returned struct's field through the
-// call escapes uncaught: the direct form (`b.buf = loc[:]; return b`) is
-// rejected by CheckStructFieldEscapeLocal reading b's field pointers, but the
-// call-bound form left those pointers empty.
-//
-// This expands the callee's alias set for return slot 0 onto the call's
-// argument origins (via pointerExprForAST), unions them through the same
-// join-origin mechanism the branch merge uses, and records the result under
-// the destination's sentinel field key. The call-bound case then becomes
-// byte-identical to the direct assignment: a local arg yields a local field
-// origin (live per-site reject), a borrowed arg yields a borrowed field
-// origin (inference records it for the destination's own callers).
-//
-// Called from BOTH the live compile (struct-var-init / struct-assignment
-// from a call) and the inference walk (threadInferenceBinding /
-// threadInferenceAssignment), so the live reject and the inferred alias stay
-// consistent.
+// pointerExprForAST's single-Origin call-expansion cannot represent. This
+// expands the callee's summary for return slot 0 onto the call's argument
+// origins (via pointerExprForAST), unions them through the same join-origin
+// mechanism the branch merge uses, and records the result under the
+// destination's sentinel field key. The call-bound case then behaves
+// identically to the direct field assignment: a local arg yields a local
+// field origin (per-site reject), a borrowed arg yields a borrowed field
+// origin (read back by the summary engine for the destination's own
+// callers). This is Gap 2's struct-result wiring: call-result provenance
+// populated from the callee's real summary.
 func recordStructReturnCallFieldFacts(c *Context, destBinding string, destType ASTType, init AST) {
 	call, ok := init.(*Funcall)
 	if !ok {
 		return
 	}
+	recordStructCallResultAtPath(c, destBinding, destType, call)
+}
+
+// argAliasProvenance reads one call argument's provenance for alias
+// expansion. For most arguments this is the expression's own tracked
+// origin (pointerExprForAST). A STRUCT-VALUED symbol argument carries its
+// borrows in its FIELDS — its own origin is unknown — so its contribution
+// is the union of its field origins (joined; the most-restrictive member
+// governs, so a local field surfaces). Without this, `pass(b)` where
+// b.buf borrows local storage contributed nothing and the local escaped
+// through the call.
+func argAliasProvenance(c *Context, arg AST) flow.PointerExpr {
+	ap := pointerExprForAST(c, arg, "")
+	if ap.KnownOrigin {
+		return ap
+	}
+	if sym, ok := unwrapReturnExpr(arg).(*Symbol); ok && !c.IsGlobalBinding(sym.Name) {
+		if t, exists := c.TypeForVar(sym.Name); exists && t.Indirection == 0 && !t.IsSlice() {
+			if _, isStruct := structDeclForType(c, t); isStruct {
+				var merged flow.PointerExpr
+				for _, origin := range c.PointerFlow().EscapingFieldOrigins(flow.Binding(sym.Name)) {
+					op := flow.PointerExpr{KnownOrigin: true, Origin: origin}
+					if !merged.KnownOrigin {
+						merged = op
+					} else if merged.Origin != op.Origin {
+						merged = c.PointerFlow().JoinOrigins(merged, op)
+					}
+				}
+				if merged.KnownOrigin {
+					return merged
+				}
+			}
+		}
+	}
+	return ap
+}
+
+// recordStructCallResultAtPath records a struct-by-value call result's
+// borrowed-argument provenance under an arbitrary destination path (a
+// binding name, or a nested field path like "o.inner"). The merged origin
+// lands at "<destPath>.__callret".
+func recordStructCallResultAtPath(c *Context, destPath string, destType ASTType, call *Funcall) {
 	rt := c.ResolveUnderlying(destType)
 	if rt.Indirection > 0 || rt.IsSlice() {
 		return
@@ -656,7 +194,7 @@ func recordStructReturnCallFieldFacts(c *Context, destBinding string, destType A
 	if len(aliases) == 0 || len(aliases[0]) == 0 {
 		return
 	}
-	key := fmt.Sprintf("%s.%s", destBinding, structReturnAliasFieldKey)
+	key := fmt.Sprintf("%s.%s", destPath, structReturnAliasFieldKey)
 	// Clear any stale sentinel fact before recording — the destination is
 	// being (re)initialized from this call.
 	c.PointerFlow().SetPathPointer(key, c.PointerFlow().UnknownPointer())
@@ -665,7 +203,7 @@ func recordStructReturnCallFieldFacts(c *Context, destBinding string, destType A
 		if p < 0 || p >= len(args) {
 			continue
 		}
-		ap := pointerExprForAST(c, args[p], "")
+		ap := argAliasProvenance(c, args[p])
 		if !ap.KnownOrigin {
 			continue
 		}
@@ -678,36 +216,12 @@ func recordStructReturnCallFieldFacts(c *Context, destBinding string, destType A
 		}
 		// Union two distinct argument origins via a join origin, so a later
 		// EscapingFieldOrigins expands every contributing param and a local
-		// in either position still surfaces (JoinMembersFor / OriginKindOf
-		// see each member). The join is itself escape-restricted, so the
-		// most-restrictive member governs the live reject.
+		// in either position still surfaces. The join is itself escape-
+		// restricted, so the most-restrictive member governs the live reject.
 		merged = c.PointerFlow().JoinOrigins(merged, ap)
 	}
 	if merged.KnownOrigin {
 		c.PointerFlow().SetPathPointer(key, merged)
-	}
-}
-
-// classifyCallExpansion classifies `return g(args)` by expanding g's own
-// alias set: for each param index p in alias_set(g)[slot], classify the
-// matching argument expression arg_p's origin. This is what keeps a local
-// reaching a returned slot *through a call* rejected.
-func classifyCallExpansion(ic *Context, f *FuncDecl, call *Funcall, slot int, result [][]int) {
-	callee, args := resolveCalleeForAlias(ic, call)
-	if callee == nil {
-		return
-	}
-	calleeAliases := aliasSet(ic, callee)
-	if slot >= len(calleeAliases) {
-		return
-	}
-	for _, p := range calleeAliases[slot] {
-		if p < 0 || p >= len(args) {
-			continue
-		}
-		// rejectLocal=true: a local reaching a returned slot through this
-		// call is a hard error caught here (per-site checks cannot see it).
-		classifyExprOrigin(ic, f, args[p], slot, true, result)
 	}
 }
 
@@ -769,71 +283,6 @@ func resolveCalleeForAlias(ic *Context, call *Funcall) (*FuncDecl, []AST) {
 		}
 	}
 	return nil, nil
-}
-
-// classifyBinding is the unified per-origin classifier. A local origin is
-// a hard reject; a borrowed parameter is recorded; everything else passes.
-// The IsBorrowedBinding OR is load-bearing: pointer parameters are borrowed
-// only via the borrowed-binding flag (NewObject records no OriginKind), so
-// OriginKindOf alone would miss them.
-func classifyBinding(ic *Context, f *FuncDecl, originName string, rejectLocal bool) aliasClassification {
-	kind := ic.PointerFlow().OriginKindOf(flow.Origin(originName))
-	if kind == flow.OriginLocal {
-		// A local origin reaching a returned slot directly (rejectLocal
-		// false) is left to the precise per-site check, which has the
-		// exact "pointer to local variable" / "slice into local-scope
-		// storage" wording. Through a call/recursion arg (rejectLocal
-		// true) the per-site check cannot see it, so aliasSet rejects.
-		if rejectLocal {
-			return aliasClassification{kind: aliasReject}
-		}
-		return aliasClassification{kind: aliasPass}
-	}
-	borrowed := kind == flow.OriginBorrowed || ic.IsBorrowedBinding(originName)
-	if !borrowed {
-		return aliasClassification{kind: aliasPass}
-	}
-	idx := paramIndexOf(f, originName)
-	if idx < 0 {
-		// Borrowed, but not a direct parameter (e.g. an intermediate
-		// borrowed binding whose origin name differs). Resolve via the
-		// origin: if the origin name *is* a param, record it; otherwise
-		// it traces to a param transitively and the AssignPointer chain
-		// already keyed it to the param's origin name, so a non-param
-		// name here means we cannot attribute it — pass conservatively
-		// is unsound, so treat as reject only if local (already handled).
-		// In practice the origin name of a borrowed intermediate is the
-		// param's name (AssignPointer copies the source Origin), so this
-		// branch is not normally reached.
-		return aliasClassification{kind: aliasPass}
-	}
-	// Variadic parameter is never aliasable in v1.
-	if f.Variadic && idx == len(f.Args)-1 {
-		return aliasClassification{kind: aliasReject, variadic: true}
-	}
-	return aliasClassification{kind: aliasRecord, paramIdx: idx}
-}
-
-type aliasClassification struct {
-	kind     aliasClassKind
-	paramIdx int
-	variadic bool
-}
-
-// applyClassification records or rejects per the classification outcome.
-func applyClassification(ic *Context, f *FuncDecl, cls aliasClassification, errNode AST, slot int, result [][]int) {
-	switch cls.kind {
-	case aliasReject:
-		if cls.variadic {
-			CompileErrorF(errNode, "Cannot return a view into variadic parameter; the packed args slice does not outlive the call")
-		}
-		// Local origin escape. Mirror the existing return-site messages.
-		CompileErrorF(errNode, "Borrowed slice escapes through return")
-	case aliasRecord:
-		result[slot] = append(result[slot], cls.paramIdx)
-	case aliasPass:
-		// Not escape-restricted: record nothing.
-	}
 }
 
 // rejectBorrowingMethodCoercion enforces the interface-coercion guard:

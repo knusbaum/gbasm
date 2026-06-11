@@ -832,6 +832,23 @@ func recordStructLiteralFieldFacts(c *Context, base FlowPath, lit *StructLiteral
 		ft := f.Val.ASTType(c)
 		if ft.Indirection > 0 || ft.IsSlice() {
 			c.PointerFlow().SetPathPointer(fieldPath.Key(), pointerExprForAST(c, f.Val, ""))
+			continue
+		}
+		// Struct-typed field sourced from a non-literal: the field value
+		// carries its borrows in ITS fields, which must flow into this
+		// field's path or they vanish (`Outer{inner: mk(p)}` / `Outer{inner:
+		// b}` previously recorded nothing for inner, silently dropping the
+		// borrow — and with it both the live local-escape reject and the
+		// summary's param alias).
+		if _, isStruct := structDeclForType(c, ft); isStruct {
+			switch v := f.Val.(type) {
+			case *Symbol:
+				if !c.IsGlobalBinding(v.Name) {
+					c.PointerFlow().CopyFieldPointersUnderPath(v.Name, fieldPath.Key())
+				}
+			case *Funcall:
+				recordStructCallResultAtPath(c, fieldPath.Key(), ft, v)
+			}
 		}
 	}
 }
@@ -1413,7 +1430,7 @@ func funcallResultOrigin(c *Context, call *Funcall, assignedName string) (flow.P
 		if p < 0 || p >= len(args) {
 			return flow.PointerExpr{}, false
 		}
-		return pointerExprForAST(c, args[p], ""), true
+		return argAliasProvenance(c, args[p]), true
 	}
 	// Multi-param union (conservative fallback). The result is treated as
 	// live only if every contributing argument is live, and escape-
@@ -1442,7 +1459,7 @@ func funcallResultOrigin(c *Context, call *Funcall, assignedName string) (flow.P
 			if p < 0 || p >= len(args) {
 				continue
 			}
-			ap := pointerExprForAST(c, args[p], "")
+			ap := argAliasProvenance(c, args[p])
 			if ap.KnownOrigin && c.PointerFlow().IsEscapeRestricted(ap.Origin) {
 				anyRestricted = true
 				break
@@ -1454,7 +1471,7 @@ func funcallResultOrigin(c *Context, call *Funcall, assignedName string) (flow.P
 		// All contributors are clean borrowed params: inherit the first.
 		for _, p := range params {
 			if p >= 0 && p < len(args) {
-				return pointerExprForAST(c, args[p], ""), true
+				return argAliasProvenance(c, args[p]), true
 			}
 		}
 		return flow.PointerExpr{}, false
@@ -1470,7 +1487,7 @@ func funcallResultOrigin(c *Context, call *Funcall, assignedName string) (flow.P
 		if p < 0 || p >= len(args) {
 			continue
 		}
-		ap := pointerExprForAST(c, args[p], "")
+		ap := argAliasProvenance(c, args[p])
 		if !ap.KnownOrigin {
 			continue
 		}
@@ -3922,6 +3939,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				})
 			}
 		}
+		// Analysis-run summary capture: when this compile is an alias-
+		// inference run (aliasCapture installed by aliasSet; nil during
+		// real codegen), read the return value's provenance from the
+		// tracker and fold the borrowed-param indices it reaches into the
+		// summary. Ordered AFTER the per-site escape checks above so the
+		// precise local-escape diagnostics fire first; the capture's own
+		// local-reject then only catches locals arriving through a call
+		// boundary, which the per-site checks cannot see.
+		captureReturnAliases(c, ast)
 		if sl, ok := ast.Val.(*StructLiteral); ok && sameIgnoringOwned(retType, sl.Type) {
 			valType = retType
 		}
