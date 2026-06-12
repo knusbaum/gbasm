@@ -1,0 +1,43 @@
+# Build outputs — the toolchain binaries (built by `make all` / mmk)
+/bosc
+/bas
+/bld
+/bdoc
+/bplayd
+/bplay-runner
+
+# Per-subproject build binaries + test-harness intermediates
+cmd/bosc/bosc
+cmd/bosc/bas
+cmd/bosc/bld
+cmd/bas/bas
+cmd/bas/bld
+cmd/bosc/*.bo
+cmd/bosc/*.importcfg
+cmd/bosc/builtin.bs
+cmd/bosc/io.bs
+cmd/bosc/fmt.bs
+cmd/bosc/errors.bs
+cmd/bosc/geom.bs
+cmd/bosc/ifaces.bs
+cmd/bosc/pair.bs
+cmd/bosc/visibility.bs
+cmd/bosc/retalias_pkg.bs
+
+# Example build artifacts (mmk writes everything under target/)
+examples/*/target/
+
+# Compiler scratch emitted next to inputs during ad-hoc runs
+/main.bs
+cmd/bosc/main.bs
+
+# Editor / session scratch
+*~
+\#*\#
+.\#*
+claude.txt
+codex.txt
+
+# Saved web pages (docs scraped for reference, not part of the repo)
+*.html
+*\ Packages_files/
