@@ -1,0 +1,28 @@
+package main
+import "string"
+
+// An owned interface widens to a subset interface that still declares the
+// consuming method; calling that method through the widened value consumes
+// the obligation AND runs the destructor (dispatched via the rebuilt vtable).
+type res i64 {
+	destroy(r owned *res) {
+		string.puts("destroyed\n")
+		dispose(r)
+	}
+	describe(r *res) byte[] { return "res" }
+}
+interface bigC {
+	destroy(self owned *self)
+	describe(self *self) byte[]
+}
+interface smallC {
+	destroy(self owned *self)
+}
+
+fn main() i64 {
+	var x owned res = 9
+	var a owned bigC = &x
+	var b owned smallC = a
+	b.destroy()
+	return 0
+}

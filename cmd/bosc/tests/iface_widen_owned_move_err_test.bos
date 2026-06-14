@@ -1,0 +1,16 @@
+package main
+
+// Widening an owned interface MOVES it: the source is consumed, so a later
+// dispose of (or any use of) the source must be rejected — no double
+// ownership.
+interface Describer { describe(d *self) byte[] }
+type myint i64 { describe(m *myint) byte[] { return "myint" } }
+
+fn main() i64 {
+	var x owned myint = 5
+	var d owned Describer = &x
+	var a owned any = d
+	dispose(d)
+	dispose(a)
+	return 0
+}

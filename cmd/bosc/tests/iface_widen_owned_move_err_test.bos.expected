@@ -1,0 +1,2 @@
+Compiling tests/iface_widen_owned_move_err_test.bos
+Fatal: dispose: "d" was already moved
