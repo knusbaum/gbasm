@@ -1702,6 +1702,13 @@ func (t ASTType) ZeroInitializable(c *Context) bool {
 	if t.IsArray() {
 		return t.Element.ZeroInitializable(c)
 	}
+	if c != nil && c.IsInterfaceType(t) {
+		// An interface's zero value is a nil fat pointer (null vtable);
+		// dispatching through it derefs null. Like a non-nullable pointer, it
+		// requires an initializer rather than zero-initializing to an
+		// unusable nil interface.
+		return false
+	}
 	if underlying := c.ResolveUnderlying(t); underlying.Name != t.Name ||
 		underlying.Indirection != t.Indirection ||
 		underlying.ArraySize != t.ArraySize ||

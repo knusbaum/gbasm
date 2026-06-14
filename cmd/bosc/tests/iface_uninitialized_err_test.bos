@@ -1,0 +1,12 @@
+package main
+
+// An interface's zero value is a nil fat pointer (null vtable); dispatching
+// through it would deref null. Like a non-nullable pointer, an interface
+// variable requires an initializer rather than zero-initializing to an
+// unusable nil interface.
+interface Speaker { speak(s *self) byte[] }
+
+fn main() i64 {
+	var k Speaker
+	return 0
+}

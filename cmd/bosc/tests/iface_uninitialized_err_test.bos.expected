@@ -1,0 +1,2 @@
+Compiling tests/iface_uninitialized_err_test.bos
+Fatal: Variable "k" of type Speaker requires an initializer
