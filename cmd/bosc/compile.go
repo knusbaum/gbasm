@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"math/big"
-	"os"
 	"sort"
 	"strings"
 
@@ -1358,61 +1357,30 @@ func canWriteImmediatePointee(t ASTType) bool {
 	return t.Indirection > 0 && t.MutMask&(1<<1) != 0
 }
 
-// nudgeMode selects the immutability-nudge behavior. It defaults to
-// "enforce" — a `var` that is never reassigned is a compile error, the
-// language's "immutable unless it must be mutable" rule. The BOSON_NUDGE
-// environment variable overrides it:
-//
-//   - "enforce"   (default) reject the first never-reassigned `var`.
-//   - "enumerate" list every never-reassigned `var` (to BOSON_NUDGE_LOG or
-//                 stderr), non-fatally. Used to drive bulk migrations.
-//   - "off"       disable the nudge entirely.
-var nudgeMode = nudgeModeFromEnv()
-
-func nudgeModeFromEnv() string {
-	switch m := os.Getenv("BOSON_NUDGE"); m {
-	case "off":
-		return ""
-	case "enumerate":
-		return "enumerate"
-	default:
-		return "enforce"
-	}
-}
-
-// nudgeLog, when set, names a file the enumerate mode appends its findings
-// to (one per line) instead of stderr. Lets a whole suite run collect
-// every site into one file across many separate bosc invocations.
-var nudgeLog = os.Getenv("BOSON_NUDGE_LOG")
-
 // recordMutCandidate notes a local `var` declaration in the current scope
-// as a nudge candidate. Keyed per-scope so sibling scopes reusing a name
-// stay distinct.
+// as a never-reassigned-check candidate. Keyed per-scope so sibling scopes
+// reusing a name stay distinct.
 func (c *Context) recordMutCandidate(name string, p position) {
-	if nudgeMode != "" {
-		c.mutCandidates[name] = p
-	}
+	c.mutCandidates[name] = p
 }
 
 // markMutRelied records that `name`'s var-mutability was actually used, so
 // it must stay `var`. The mark is routed to the binding's own defining
 // scope so it can't bleed onto a same-named binding in a sibling scope.
-// No-ops when the nudge is off or the name isn't a tracked binding (e.g. a
-// global or parameter).
+// No-ops when the name isn't a tracked binding (e.g. a global or parameter).
 func (c *Context) markMutRelied(name string) {
-	if nudgeMode == "" {
-		return
-	}
 	if bc := c.BindingContext(name); bc != nil {
 		bc.mutRelied[name] = true
 	}
 }
 
-// reportScopeNudge emits the never-reassigned-var diagnostics for the
-// bindings declared in this scope, at scope exit. Only the real codegen
-// pass reports (captureState nil); the alias-inference dry run is skipped.
+// reportScopeNudge rejects any `var` declared in this scope whose
+// mutability was never used: an immutable binding spelled `var` claims a
+// capability it doesn't need. Run at scope exit. The alias-inference dry
+// run (captureState non-nil) re-walks the body to a discard writer, so it
+// is skipped to avoid a spurious second report.
 func (c *Context) reportScopeNudge() {
-	if nudgeMode == "" || c.captureState() != nil || len(c.mutCandidates) == 0 {
+	if c.captureState() != nil || len(c.mutCandidates) == 0 {
 		return
 	}
 	names := make([]string, 0, len(c.mutCandidates))
@@ -1421,24 +1389,12 @@ func (c *Context) reportScopeNudge() {
 			names = append(names, n)
 		}
 	}
-	sort.Strings(names)
-	var sink io.Writer = os.Stderr
-	if nudgeMode != "enforce" && nudgeLog != "" {
-		f, err := os.OpenFile(nudgeLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-		if err == nil {
-			defer f.Close()
-			sink = f
-		}
-	}
+	sort.Strings(names) // deterministic: report the first offender by name
 	for _, n := range names {
-		p := c.mutCandidates[n]
-		if nudgeMode == "enforce" {
-			panic(&interpreterError{
-				msg: fmt.Sprintf("\"%s\" is declared `var` but never reassigned; declare it immutable by dropping `var`", n),
-				p:   p,
-			})
-		}
-		fmt.Fprintf(sink, "%s:%d:%d %s\n", p.fname, p.lineoff, p.linecharoff, n)
+		panic(&interpreterError{
+			msg: fmt.Sprintf("\"%s\" is declared `var` but never reassigned; declare it immutable by dropping `var`", n),
+			p:   c.mutCandidates[n],
+		})
 	}
 }
 
