@@ -2205,6 +2205,7 @@ type Binding struct {
 	Type     ASTType
 	IsConst  bool // false = var (rebindable); always false for struct fields
 	Variadic bool // true for a `...T` variadic parameter (Type is then T[])
+	p        position
 }
 
 type StructDecl struct {
@@ -3693,6 +3694,7 @@ func (n *Node) toASTTop(c *Context) AST {
 				Type:     t,
 				IsConst:  a.ival&1 == 0,
 				Variadic: variadic,
+				p:        a.p,
 			})
 			if variadic {
 				fn.Variadic = true
@@ -4001,6 +4003,7 @@ func (n *Node) toASTTop(c *Context) AST {
 						Name:    a.sval,
 						Type:    mkTypename(a.args[0]),
 						IsConst: a.ival == 0,
+						p:       a.p,
 					})
 					margs = margs[1:]
 				}

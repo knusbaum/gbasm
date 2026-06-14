@@ -2568,7 +2568,7 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 			fmt.Fprintf(of, "\targi %s %d %d\n", a.Name, i, a.Type.Size(c)*8)
 		}
 		c.BindVar(ast, a.Name, a.Type, a.IsConst)
-		c.recordUsedCandidate(a.Name, ast.Pos())
+		c.recordUsedCandidate(a.Name, a.p)
 		if a.Type.Indirection > 0 && !a.Type.HasOwned() {
 			c.SetBorrowedBinding(a.Name, true)
 		}
