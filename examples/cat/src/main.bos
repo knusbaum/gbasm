@@ -19,7 +19,7 @@ fn main(args byte[][]) {
 		fmt.str(&io.STDOUT, "Done.\n")
 		return
 	}
-	for(var i i64 = 1; i < len(args); i = i + 1) {
+	for(var i i64 := 1; i < len(args); i = i + 1) {
 		f, var openerr := io.open(args[i], io.O_CREAT | io.O_RDONLY, 0o660)
 		if (openerr != io.io_err.OK) {
 			fmt.str(&io.STDOUT, "While opening ")

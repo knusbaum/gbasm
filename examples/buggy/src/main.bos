@@ -20,7 +20,7 @@ fn do_a_thing() owned built_error {
 fn blowstack() {
 	var x i64[1024]
 
-	for(var i i64 = 0; i < 100; i = i + 1) {
+	for(var i i64 := 0; i < 100; i = i + 1) {
 		x[i] = i
 	}
 }
