@@ -1,0 +1,30 @@
+package main
+import "string"
+
+// End-to-end soundness: a borrowing-method type packed into `any`, then
+// asserted to an interface that declares NO borrow for that method. The
+// compiler emits Holder.bytes's borrow mask into the typedesc, and
+// _iface.assert_to's per-slot ⊆ check rejects the assertion — the borrowing
+// method is never laundered through a runtime-minted itab. The else branch
+// runs.
+type Holder struct { buf byte[] } {
+	bytes(h *Holder) byte[] { return h.buf }
+}
+
+interface Byter {
+	bytes(s *self) byte[]
+}
+
+fn main() i64 {
+	var s byte[] = "data"
+	var h Holder = Holder{buf: s}
+	var a any = &h
+	var bt Byter, var ok bool = a.(Byter)
+	if (ok) {
+		string.puts("LAUNDERED")
+	} else {
+		string.puts("blocked")
+	}
+	string.putc(10)
+	return 0
+}

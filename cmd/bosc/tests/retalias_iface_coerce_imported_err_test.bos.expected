@@ -1,2 +1,2 @@
 Compiling tests/retalias_iface_coerce_imported_err_test.bos
-Fatal: cannot use "retalias_pkg.borrowing_holder" as interface "Byter" here
+Fatal: Type retalias_pkg.borrowing_holder does not implement interface Byter: method bytes returns a borrow of its receiver, but Byter declares no such borrow

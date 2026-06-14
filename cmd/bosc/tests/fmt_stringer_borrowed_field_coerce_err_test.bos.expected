@@ -1,2 +1,0 @@
-Compiling tests/fmt_stringer_borrowed_field_coerce_err_test.bos
-Fatal: cannot use "word" as interface "any" here

@@ -1,10 +1,11 @@
 package main
 
-// A concrete type with a method returning a borrowed receiver field
-// (legal, inferred ReturnAliases non-empty), coerced to an interface
-// declaring that method. Rejected at the coercion site: a borrowing-method
-// type cannot be dispatched through any interface (option (a)). Concrete
-// `v.bytes()` still works; only the coercion is forbidden.
+// A concrete type whose `bytes` returns a borrow of its receiver (inferred
+// ReturnAliases non-empty), coerced to an interface that requires `bytes`
+// but declares NO `from(...)` contract for it. Rejected by the ⊆ conformance
+// rule: the impl's inferred borrow {receiver} is not ⊆ Byter's declared ∅.
+// The fix is to declare `from(self)` on Byter (then it conforms). Concrete
+// `h.bytes()` still works; only this uncovered coercion is forbidden.
 type Holder struct { buf byte[] } {
 	bytes(h *Holder) byte[] { return h.buf }
 }

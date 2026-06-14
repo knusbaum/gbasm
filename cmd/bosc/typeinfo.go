@@ -128,12 +128,52 @@ func canonicalSig(c *Context, params []Binding, ret ASTType) string {
 
 // methodEntry is one row of a typedesc method table.
 type methodEntry struct {
-	name        string
-	sig         string
-	nameHash    uint64
-	sigHash     uint64
-	recvShape   int
-	fnReloc     string // fully-qualified symbol of the method body
+	name      string
+	sig       string
+	nameHash  uint64
+	sigHash   uint64
+	recvShape int
+	fnReloc   string // fully-qualified symbol of the method body
+	// masks is the method's per-return-slot borrow descriptor (the *impl*
+	// side: bit p of slot s = "slot s may borrow param p", from the inferred
+	// ReturnAliases). nil = borrows nothing. Emitted as trailing tokens on the
+	// `method` directive line; arms _iface.assert_to's ⊆ gate.
+	masks []uint64
+}
+
+// borrowMaskBound is the maximum parameter index a per-slot u64 bitmask can
+// represent (param 0..63). A method with a borrowing return and >64 params is
+// rejected rather than silently truncated (D0).
+const borrowMaskBound = 64
+
+// borrowMasksFor builds the per-slot bitmasks for method m from its inferred
+// ReturnAliases (receiver = bit 0). Returns nil when m borrows nothing.
+// Panics (compile error at m's site) if a borrowed parameter index exceeds the
+// 64-bit mask width.
+func borrowMasksFor(c *Context, m *FuncDecl) []uint64 {
+	aliases := aliasSet(c, m)
+	masks := make([]uint64, len(aliases))
+	any := false
+	for slot, params := range aliases {
+		var mask uint64
+		for _, p := range params {
+			if p < 0 || p >= borrowMaskBound {
+				panic(&interpreterError{
+					msg: fmt.Sprintf("method %s borrows parameter %d, beyond the %d-parameter limit for borrow contracts", m.Name, p, borrowMaskBound),
+					p:   m.p,
+				})
+			}
+			mask |= 1 << uint(p)
+		}
+		masks[slot] = mask
+		if mask != 0 {
+			any = true
+		}
+	}
+	if !any {
+		return nil
+	}
+	return masks
 }
 
 // reqEntry is one row of an iface_desc required-method table.
@@ -179,8 +219,8 @@ func emitTypedescStructured(of io.Writer, isPub bool, typeName string, sizeBytes
 	fmt.Fprintf(of, "\tsize %d\n", sizeBytes)
 	fmt.Fprintf(of, "\tcache_ref %s\n", cacheName)
 	for _, m := range methods {
-		fmt.Fprintf(of, "\tmethod %s %s %d %d %d %s\n",
-			m.name, basQuoteSig(m.sig), m.nameHash, m.sigHash, m.recvShape, m.fnReloc)
+		fmt.Fprintf(of, "\tmethod %s %s %d %d %d %s%s\n",
+			m.name, basQuoteSig(m.sig), m.nameHash, m.sigHash, m.recvShape, m.fnReloc, formatMaskTokens(m.masks))
 	}
 	fmt.Fprintf(of, "}\n")
 	fmt.Fprintf(of, "%stypedesc_cache %s\n", pubPrefix(isPub), cacheName)
@@ -217,6 +257,19 @@ func basQuoteSig(sig string) string {
 	return strings.ReplaceAll(sig, " ", "\x1f")
 }
 
+// formatMaskTokens renders per-slot borrow masks as trailing directive tokens
+// (" m0 m1 ..."), or "" when there are none (the no-borrow sentinel).
+func formatMaskTokens(masks []uint64) string {
+	if len(masks) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, m := range masks {
+		fmt.Fprintf(&b, " %d", m)
+	}
+	return b.String()
+}
+
 // basUnquoteSig is the inverse of basQuoteSig (used by bas).
 func basUnquoteSig(tok string) string {
 	return strings.ReplaceAll(tok, "\x1f", " ")
@@ -246,6 +299,7 @@ func methodEntriesForType(c *Context, typeName, ownerPkg string) []methodEntry {
 			sigHash:   fnv1a64(sig),
 			recvShape: rshape,
 			fnReloc:   fmt.Sprintf("%s.%s.%s", ownerPkg, typeName, m.Name),
+			masks:     borrowMasksFor(c, m),
 		})
 	}
 	return out

@@ -1,0 +1,19 @@
+package main
+import "string"
+
+// A borrowing-method type may now be coerced to `any`: the strict
+// option-(a) guard is relaxed ("any no longer needs to be closed" — the
+// runtime gate handles laundering, not a blanket entry denial). Pins that
+// the coercion compiles and runs.
+type Holder struct { buf byte[] } {
+	bytes(h *Holder) byte[] { return h.buf }
+}
+
+fn main() i64 {
+	var s byte[] = "x"
+	var h Holder = Holder{buf: s}
+	var a any = &h
+	string.puts("ok")
+	string.putc(10)
+	return 0
+}

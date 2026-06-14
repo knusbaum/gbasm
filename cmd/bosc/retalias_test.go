@@ -444,11 +444,12 @@ fn ok(s byte[]) B {
 	}
 }
 
-// TestInterfaceCoercionGuardDiagnostic checks the directed diagnostic for
-// the interface-coercion guard names the offending borrowing method and
-// explains the whole-type rule (the harness's first-line-only integration
-// matching cannot assert the multi-line body, so it is pinned here).
-func TestInterfaceCoercionGuardDiagnostic(t *testing.T) {
+// TestInterfaceBorrowContractDiagnostic checks the directed diagnostic for a
+// ⊆-conformance failure: a borrowing method coerced to an interface that does
+// not declare a covering `from(...)` contract names the method, what it
+// borrows, and the fix (the harness's first-line-only integration matching
+// cannot assert the multi-line body, so it is pinned here).
+func TestInterfaceBorrowContractDiagnostic(t *testing.T) {
 	src := `package main
 type Holder struct { buf byte[] } {
 	bytes(h *Holder) byte[] { return h.buf }
@@ -462,13 +463,12 @@ fn main() i64 { return 0 }`
 	}
 	msg := err.Error()
 	for _, want := range []string{
-		`cannot use "Holder" as interface "Byter" here`,
-		"concrete-only",
-		"not even `any`",
-		"borrow-returning method(s)",
+		"Type Holder does not implement interface Byter",
+		"method bytes returns a borrow of its receiver",
+		"declares no such borrow",
 		"bytes(h *Holder) byte[]",
-		"returns a borrow of its receiver",
 		"defined at",
+		"from(...)",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("diagnostic missing %q\nfull message:\n%s", want, msg)
@@ -476,10 +476,10 @@ fn main() i64 { return 0 }`
 	}
 }
 
-// Note: coercion-to-`any` rejection (the laundering entry point) is pinned
-// by the integration test retalias_iface_coerce_any_err_test, which has the
-// builtin `any` interface available through the test importcfg; the Go unit
-// harness here does not import builtin, so `any` is not in scope.
+// Note: coercion of a borrowing type TO `any` is now allowed (the relaxation);
+// the laundering it would enable is blocked at runtime by _iface.assert_to's
+// mask check, pinned end-to-end by the integration test
+// retalias_iface_launder_via_any_test.
 
 func equalAliasSets(a, b [][]int) bool {
 	if len(a) != len(b) {

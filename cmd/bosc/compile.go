@@ -219,16 +219,12 @@ func validateInterfaceCoercion(c *Context, errNode AST, dstt, srct ASTType) (val
 	// to the named leaf so satisfaction is checked against a real type's
 	// method set (and the typedesc symbol later resolves).
 	concreteTypeName := shapeBaseName(srct)
-	// Return-alias interface-coercion guard (option (a), the coarse
-	// exclusion). A concrete type with ANY method whose inferred
-	// ReturnAliases is non-empty may not be coerced to ANY interface —
-	// including the zero-method `any`. This closes the runtime-itab
-	// laundering path (x.(B) / type-switch mint the result interface's
-	// vtable from the concrete type's *full* method table, so a guard
-	// keyed on the target interface's required-method subset would be
-	// vacuous for `any`). The check is independent of
-	// TypeSatisfiesInterfaceAs and runs for the `any` target too.
-	rejectBorrowingMethodCoercion(c, errNode, concreteTypeName, dstt.Name)
+	// Interface borrow-contract gate (the ⊆ ceiling rule) is folded into
+	// TypeSatisfiesInterfaceAs below: for each method the target interface
+	// *requires*, the concrete method's inferred ReturnAliases[slot] must be
+	// ⊆ the interface's declared set. A borrowing method the interface does
+	// not require imposes no static constraint — it is reachable only via
+	// runtime assertion, which _iface.assert_to's per-slot mask check gates.
 	ifaceDecl, _ := c.InterfaceForName(dstt.Name)
 	// The coercion direction is determined by the source, not by the
 	// interface's declared receiver shape. A pointer source produces a
@@ -415,10 +411,33 @@ func interfaceSatisfactionError(c *Context, typeName, ifaceName string, iface *I
 			if !m.Return.Same(isig.Return) {
 				return fmt.Sprintf("Type %s does not implement interface %s: method %s returns %s, expected %s", typeName, ifaceName, isig.Name, m.Return, isig.Return)
 			}
+			if !methodAliasesSatisfy(c, m, isig.ReturnAliases) {
+				return interfaceBorrowMismatchError(c, typeName, ifaceName, m, isig)
+			}
 		}
 		return fmt.Sprintf("Type %s does not implement interface %s", typeName, ifaceName)
 	}
 	return fmt.Sprintf("Type %s does not implement interface %s", typeName, ifaceName)
+}
+
+// interfaceBorrowMismatchError is the directed diagnostic for a method that
+// structurally matches but whose inferred return borrow exceeds the interface
+// method's declared `from(...)` ceiling (the ⊆ conformance failure). The first
+// line carries the whole story (err-test comparison keeps only that line).
+func interfaceBorrowMismatchError(c *Context, typeName, ifaceName string, m *FuncDecl, isig InterfaceMethodSig) string {
+	declares := "no such borrow"
+	if isig.ReturnAliases != nil {
+		declares = "a narrower borrow"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Type %s does not implement interface %s: method %s %s, but %s declares %s",
+		typeName, ifaceName, bareMethodName(m.Name), borrowDescription(m), ifaceName, declares)
+	fmt.Fprintf(&b, "\n  method: %s", methodSignatureRendering(c, typeName, m))
+	if site := methodDefinitionSite(typeName, m); site != "" {
+		fmt.Fprintf(&b, "\n  %s", site)
+	}
+	fmt.Fprintf(&b, "\n  fix: declare a matching `from(...)` clause on %s's %s, or return a value that outlives the borrowed source.", ifaceName, isig.Name)
+	return b.String()
 }
 
 // multiReturnReturnsClause formats the "<name> returns (T1, T2)" fragment

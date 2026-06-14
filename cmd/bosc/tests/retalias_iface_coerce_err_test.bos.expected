@@ -1,2 +1,2 @@
 Compiling tests/retalias_iface_coerce_err_test.bos
-Fatal: cannot use "Holder" as interface "Byter" here
+Fatal: Type Holder does not implement interface Byter: method bytes returns a borrow of its receiver, but Byter declares no such borrow

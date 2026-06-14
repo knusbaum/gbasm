@@ -632,6 +632,14 @@ func (c *Context) TypeSatisfiesInterfaceAs(typeName string, iface *InterfaceDecl
 			if !m.Return.Same(isig.Return) {
 				continue
 			}
+			// Borrow-contract axis: the concrete method's inferred return
+			// borrows must be ⊆ the interface method's declared `from(...)`
+			// contract (a non-declaring interface = borrows nothing). A
+			// borrowing method cannot satisfy an interface that doesn't admit
+			// the borrow — otherwise dispatch would lose the lifetime bound.
+			if !methodAliasesSatisfy(c, m, isig.ReturnAliases) {
+				continue
+			}
 			found = true
 			break
 		}

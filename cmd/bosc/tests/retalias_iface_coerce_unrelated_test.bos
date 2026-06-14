@@ -1,0 +1,34 @@
+package main
+import "io"
+import "string"
+
+// Sink satisfies io.writer via its non-borrowing `write`. Its unrelated
+// borrowing accessor `peek` is NOT required by io.writer, so the ⊆ guard
+// (which checks only required methods) allows the coercion — `peek` is
+// reachable only via assertion, which the runtime gate covers.
+type Sink struct {
+	buf mut byte[]
+	pos i64
+} {
+	write(s *mut Sink, data byte[]) i64, error {
+		var i i64 = 0
+		for (; i < len(data); i = i + 1) {
+			s.buf[s.pos] = data[i]
+			s.pos = s.pos + 1
+		}
+		return len(data), io.io_err.OK
+	}
+	peek(s *Sink) byte[] {
+		return s.buf[0:s.pos]
+	}
+}
+
+fn coerce(s *mut Sink) io.writer {
+	return s
+}
+
+fn main() i64 {
+	string.puts("ok")
+	string.putc(10)
+	return 0
+}

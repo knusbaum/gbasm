@@ -1,2 +1,0 @@
-Compiling tests/retalias_iface_coerce_any_err_test.bos
-Fatal: cannot use "Holder" as interface "any" here

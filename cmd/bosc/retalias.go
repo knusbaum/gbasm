@@ -341,71 +341,38 @@ func resolveCalleeForAlias(ic *Context, call *Funcall) (*FuncDecl, []AST) {
 	return nil, nil
 }
 
-// rejectBorrowingMethodCoercion enforces the interface-coercion guard:
-// a concrete type with ANY method whose inferred ReturnAliases is
-// non-empty may not be coerced to ANY interface (including `any`). It
-// demand-drives alias_set on each of the type's methods (not a possibly-
-// empty cache) and, on finding a borrowing method, emits the directed
-// diagnostic naming each offending method, its definition site, and the
-// whole-type rule. No-op for a type with no methods or no borrowing
-// method (the overwhelming common case), so ordinary types coerce
-// unchanged.
-func rejectBorrowingMethodCoercion(c *Context, errNode AST, concreteTypeName, ifaceName string) {
-	if concreteTypeName == "" {
-		return
-	}
-	methods, ok := c.TypeMethodsFor(concreteTypeName)
-	if !ok || len(methods) == 0 {
-		return
-	}
-	var offending []*FuncDecl
-	for _, m := range methods {
-		if m == nil {
-			continue
-		}
-		aliases := aliasSet(c, m)
-		if aliasSetNonEmpty(aliases) {
-			offending = append(offending, m)
+// methodAliasesSatisfy reports whether concrete method m conforms to an
+// interface method's declared borrow contract: for every return slot, m's
+// *inferred* ReturnAliases[slot] must be ⊆ the interface's *declared* set
+// (declared nil, or a slot absent from it, means "borrows nothing"). This is
+// the static half of the interface borrow-contract gate — the ⊆ ceiling rule
+// folded into TypeSatisfiesInterfaceAs; the runtime half is the per-slot mask
+// check in _iface.assert_to. Demand-drives alias_set on m (memoized into
+// m.ReturnAliases). Subsumes the old whole-type coarse guard: a type with a
+// borrowing method the interface does not *require* is unconstrained here (it
+// is reachable only via assertion, which the runtime gate covers).
+func methodAliasesSatisfy(c *Context, m *FuncDecl, declared [][]int) bool {
+	for slot, implSet := range aliasSet(c, m) {
+		for _, p := range implSet {
+			if !slotDeclaresParam(declared, slot, p) {
+				return false
+			}
 		}
 	}
-	if len(offending) == 0 {
-		return
-	}
-	CompileErrorF(errNode, "%s", borrowingMethodCoercionError(c, concreteTypeName, ifaceName, offending))
+	return true
 }
 
-// aliasSetNonEmpty reports whether any slot of an alias set lists a param.
-func aliasSetNonEmpty(aliases [][]int) bool {
-	for _, slot := range aliases {
-		if len(slot) > 0 {
+// slotDeclaresParam reports whether declared[slot] lists parameter index p.
+func slotDeclaresParam(declared [][]int, slot, p int) bool {
+	if slot < 0 || slot >= len(declared) {
+		return false
+	}
+	for _, d := range declared[slot] {
+		if d == p {
 			return true
 		}
 	}
 	return false
-}
-
-// borrowingMethodCoercionError renders the directed diagnostic for the
-// interface-coercion guard. It names each borrowing method, points at its
-// definition site (degrading to "defined in package X" for imported types
-// whose rebuilt FuncDecl carries no position), describes what it borrows,
-// and explains the whole-type "concrete-only" rule.
-func borrowingMethodCoercionError(c *Context, concreteTypeName, ifaceName string, offending []*FuncDecl) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "cannot use %q as interface %q here\n", concreteTypeName, ifaceName)
-	fmt.Fprintf(&b, "  %q is concrete-only: it has a method that returns a borrow, and a\n", concreteTypeName)
-	b.WriteString("  borrow-returning method cannot be dispatched through an interface\n")
-	b.WriteString("  (dispatch cannot track the borrow's lifetime). A type with any such\n")
-	b.WriteString("  method cannot be coerced to any interface — not even `any`.\n\n")
-	fmt.Fprintf(&b, "  borrow-returning method(s) on %q:\n", concreteTypeName)
-	for _, m := range offending {
-		fmt.Fprintf(&b, "    %s   — %s\n", methodSignatureRendering(c, concreteTypeName, m), borrowDescription(m))
-		if site := methodDefinitionSite(concreteTypeName, m); site != "" {
-			fmt.Fprintf(&b, "        %s\n", site)
-		}
-	}
-	b.WriteString("\n  fix: call the borrowing method directly on a concrete value, or change\n")
-	b.WriteString("       it so it does not return a borrow, to make the type interface-eligible.")
-	return b.String()
 }
 
 // methodSignatureRendering renders a short method signature for the
