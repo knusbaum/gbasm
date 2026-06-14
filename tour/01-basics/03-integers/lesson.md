@@ -9,9 +9,10 @@ and unsigned forms at four widths — the number is the bit width:
 - signed: `i8`, `i16`, `i32`, `i64`
 - unsigned: `u8`, `u16`, `u32`, `u64`
 
-`i64` is the everyday integer; a plain integer literal is an `i64` unless
-the surrounding context calls for something narrower. Two more built-ins
-complete the set:
+`i64` is the everyday integer, and a plain integer literal defaults to
+`i64`. In a context that expects a different type — a `u64`, a `byte`, an
+`i32` — the literal takes that type instead, as long as its value fits.
+Two more built-ins complete the set:
 
 - `byte` — a one-byte unsigned integer, and what text is made of: a
   `byte[]` is a string or buffer, and a character literal like `'A'` is
