@@ -1,0 +1,12 @@
+package main
+
+import "fmt"
+
+// Bare ':=' declarations are immutable; 'var x :=' is mutable.
+fn main() {
+	x := 10
+	y i64 := 32
+	var z := 0
+	z = x + y
+	fmt.print("%d\n", z)
+}

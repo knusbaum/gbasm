@@ -1,0 +1,7 @@
+package main
+
+// A bare ':=' binding is immutable — reassigning it is rejected.
+fn main() {
+	x := 1
+	x = 2
+}

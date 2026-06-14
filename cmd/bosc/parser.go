@@ -1268,7 +1268,7 @@ func (p *Parser) parseBindingDecl(isConst bool) *Node {
 	name := p.current().sval
 	p.advance()
 	var typeNode *Node
-	if p.current().t == tok_eq || p.current().t == tok_comma {
+	if p.current().t == tok_eq || p.current().t == tok_decl || p.current().t == tok_comma {
 		// No explicit type: use sentinel for type inference.
 		typeNode = &Node{t: n_typename, p: pos, sval: "<infer>"}
 	} else {
@@ -1279,7 +1279,9 @@ func (p *Parser) parseBindingDecl(isConst bool) *Node {
 		constVal = 1
 	}
 	args := []*Node{typeNode}
-	if p.current().t == tok_eq {
+	// Accept both the legacy '=' and the new ':=' declaration operator
+	// (phase-1 migration: both spellings parse to the same node).
+	if p.current().t == tok_eq || p.current().t == tok_decl {
 		p.advance()
 		args = append(args, p.parseExpression())
 	}
@@ -1396,8 +1398,8 @@ func (p *Parser) parseMultiBind(first *Node) *Node {
 		b := p.parseBindingSpec(isConst)
 		bindings = append(bindings, b)
 	}
-	if p.current().t != tok_eq {
-		panic(&interpreterError{"multi-bind: expected '=' after binding list", p.current().p})
+	if p.current().t != tok_eq && p.current().t != tok_decl {
+		panic(&interpreterError{"multi-bind: expected '=' or ':=' after binding list", p.current().p})
 	}
 	p.advance()
 	init := p.parseExpression()
@@ -1417,7 +1419,37 @@ func (p *Parser) parseMultiBind(first *Node) *Node {
 // begin a multi-assignment LHS continuation. parseExpression already consumes
 // the `var`/`const`-prefixed multi-*bind* forms, so by the time we see a bare
 // comma here the LHS is a list of existing lvalues being re-assigned.
+// startsBareDecl reports whether the current IDENT begins a keyword-less
+// declaration — `x :=` or `x TYPE :=` — by peeking one token past the name
+// and restoring it. A bare declaration is immutable (the `var`-prefixed
+// forms are handled by parseExpression). Pointer-typed bare declarations
+// (`x *foo :=`) are deferred until the effectful-statement rule lets the
+// parser treat a leading `IDENT *` as unambiguously a type.
+func (p *Parser) startsBareDecl() bool {
+	name := p.current()
+	p.advance()
+	after := p.current().t
+	p.pushback(name)
+	switch after {
+	case tok_decl: // x :=
+		return true
+	case tok_ident, tok_owned, tok_mut, tok_fn: // x TYPE := (named/qualified/fn type)
+		return true
+	}
+	return false
+}
+
 func (p *Parser) parseStatement() *Node {
+	// A bare declaration (`x := …`, `x i64 := …`) is immutable. Reuse the
+	// binding-decl path with isConst=true; a trailing comma continues into a
+	// multi-bind exactly as the var/const path does.
+	if p.current().t == tok_ident && p.startsBareDecl() {
+		first := p.parseBindingDecl(true)
+		if len(first.args) == 1 && p.current().t == tok_comma {
+			return p.parseMultiBind(first)
+		}
+		return first
+	}
 	first := p.parseExpression()
 	if p.current().t != tok_comma {
 		return first

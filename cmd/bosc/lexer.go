@@ -20,6 +20,7 @@ const (
 	tok_lsquare
 	tok_rsquare
 	tok_colon
+	tok_decl // ':=' declaration operator
 	tok_semicolon
 	tok_comma
 	tok_ident
@@ -125,6 +126,8 @@ func (t toktype) String() string {
 		return "tok_rsquare"
 	case tok_colon:
 		return "tok_colon"
+	case tok_decl:
+		return "tok_decl"
 	case tok_semicolon:
 		return "tok_semicolon"
 	case tok_comma:
@@ -663,6 +666,10 @@ func (l *lexer) Next() (rt token, re error) {
 		return token{t: tok_minus, p: p}, nil
 	case ':':
 		l.nextRune()
+		if l.headRune() == '=' {
+			l.nextRune()
+			return token{t: tok_decl, p: p}, nil
+		}
 		return token{t: tok_colon, p: p}, nil
 	case ';':
 		l.nextRune()
