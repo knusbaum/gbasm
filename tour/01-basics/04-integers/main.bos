@@ -7,7 +7,7 @@ fn main() {
 	masked i64 := flags & 0x06
 	fmt.print("masked = %d\n", masked)
 
-	var neg i64 := -1
+	neg i64 := -1
 	fmt.print("as signed:   %d\n", neg)
 	fmt.print("as unsigned: %u\n", u64(neg))
 }

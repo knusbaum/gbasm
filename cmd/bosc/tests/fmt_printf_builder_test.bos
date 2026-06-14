@@ -10,7 +10,7 @@ fn main() i64 {
 	var backing byte[128]
 	var b fmt.Builder := fmt.Builder{buf: backing[:], pos: 0, err_: io.io_err.OK}
 	var bw fmt.BuilderWriter := fmt.BuilderWriter{b: &b}
-	n, var err := fmt.printf(&bw, "name=%s n=%d\n", &"alice", 42)
+	n, err := fmt.printf(&bw, "name=%s n=%d\n", &"alice", 42)
 	if (err != io.io_err.OK) { string.puts("ERR\n"); return 1 }
 	string.puts("buffered: ")
 	string.puts(b.bytes())

@@ -15,8 +15,8 @@ type point struct { x i64, y i64 } {
 		b.int(p.y)
 		b.str(")")
 		if (b.error() != io.io_err.OK) { return b.error() }
-		var bs byte[] := b.bytes()
-		_, var err := w.write(bs)
+		bs byte[] := b.bytes()
+		_, err := w.write(bs)
 		return err
 	}
 }

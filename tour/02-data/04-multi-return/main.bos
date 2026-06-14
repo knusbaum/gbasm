@@ -3,7 +3,7 @@ package main
 import "fmt"
 
 fn divmod(a i64, b i64) i64, i64 {
-	var q i64 := a / b
+	q i64 := a / b
 	return q, a - q * b
 }
 

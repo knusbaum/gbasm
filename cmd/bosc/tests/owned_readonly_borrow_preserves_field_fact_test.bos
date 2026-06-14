@@ -14,7 +14,7 @@ fn read(b *box) i64 {
 }
 
 fn destroy(b owned *owned mut box) {
-	var child owned *?owned mut leaf := b.child
+	child owned *?owned mut leaf := b.child
 	read(b)
 	free(b)
 	if(child) {

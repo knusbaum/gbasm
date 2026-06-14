@@ -63,6 +63,15 @@ type Context struct {
 	anonGlobalCount int
 	// tracks which bindings are const (true) vs var (false).
 	constBindings map[string]bool
+	// mutCandidates / mutRelied drive the var-never-reassigned nudge,
+	// per-scope. mutCandidates holds the `var` declarations made *in this
+	// scope* (name -> decl position). mutRelied marks the subset whose
+	// var-ness was actually used (reassigned, value-field/array written,
+	// address- or slice-taken); relied marks are routed to the binding's
+	// own defining scope so sibling scopes that reuse a name stay distinct.
+	// Reported at scope exit. Populated only when the nudge is enabled.
+	mutCandidates map[string]position
+	mutRelied     map[string]bool
 	// maps struct names to their declarations.
 	structs map[string]*StructDecl
 	// maps function names to their declarations.
@@ -145,6 +154,8 @@ func NewContext() *Context {
 		prebound:        make(map[string]bool),
 		addressNames:    make(map[string]bool),
 		constBindings:   make(map[string]bool),
+		mutCandidates:   make(map[string]position),
+		mutRelied:       make(map[string]bool),
 		structs:         make(map[string]*StructDecl),
 		funcs:           make(map[string]*FuncDecl),
 		imports:         make(map[string]map[string]*FuncDecl),

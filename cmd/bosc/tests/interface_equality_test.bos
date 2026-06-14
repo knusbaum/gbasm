@@ -43,10 +43,10 @@ type thing i64 {
 }
 
 fn main() {
-	var e labeled := code.OK
-	var same labeled := code.OK
-	var different_value labeled := code.FAIL
-	var different_type labeled := other.OK
+	e labeled := code.OK
+	same labeled := code.OK
+	different_value labeled := code.FAIL
+	different_type labeled := other.OK
 
 	say("iface concrete eq", e == code.OK)
 	say("concrete iface eq", code.OK == e)
@@ -57,9 +57,9 @@ fn main() {
 
 	var a thing := 1
 	var b thing := 1
-	var pa ptr_labeled := &a
-	var pa2 ptr_labeled := &a
-	var pb ptr_labeled := &b
+	pa ptr_labeled := &a
+	pa2 ptr_labeled := &a
+	pb ptr_labeled := &b
 
 	say("ptr iface eq", pa == pa2)
 	say("ptr concrete eq", pa == &a)

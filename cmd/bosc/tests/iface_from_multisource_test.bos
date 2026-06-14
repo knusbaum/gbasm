@@ -12,7 +12,7 @@ type J struct { tag i64 } {
 
 fn main() i64 {
 	var j J := J{tag: 0}
-	var v joiner := &j
+	v joiner := &j
 	r byte[] := v.pick("aa", "bb")
 	string.puts(r)
 	string.putc(10)

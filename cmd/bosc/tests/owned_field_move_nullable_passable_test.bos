@@ -17,7 +17,7 @@ fn count(b *bag) i64 {
 
 fn main() {
 	var b owned bag := bag{item: alloc(i64)}
-	var item owned *?mut i64 := b.item
+	item owned *?mut i64 := b.item
 	if (item) {
 		free(item)
 	}

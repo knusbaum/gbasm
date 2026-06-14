@@ -36,8 +36,8 @@ fn main() i64 {
 	var d dog := 0
 	var c cat := 0
 
-	var ad Animal := &d
-	var ac Animal := &c
+	ad Animal := &d
+	ac Animal := &c
 
 	string.puts(ad.speak())
 	string.puts("\n")

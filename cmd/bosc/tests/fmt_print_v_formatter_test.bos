@@ -12,8 +12,8 @@ type span struct { lo i64, hi i64 } {
 		b.str("..")
 		b.int(s.hi)
 		b.str("]")
-		var bs byte[] := b.bytes()
-		_, var err := w.write(bs)
+		bs byte[] := b.bytes()
+		_, err := w.write(bs)
 		return err
 	}
 }

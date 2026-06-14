@@ -5,7 +5,7 @@ fn unwrap(p owned *?mut i64) owned *mut i64 {
 }
 
 fn main() {
-	var p owned *?mut i64 := alloc(i64)
-	var q owned *mut i64 := unwrap(p)
+	p owned *?mut i64 := alloc(i64)
+	q owned *mut i64 := unwrap(p)
 	free(q)
 }

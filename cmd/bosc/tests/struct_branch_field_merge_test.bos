@@ -21,8 +21,8 @@ fn mkfoo(var set i64) Foo {
 }
 
 fn main() {
-	var a Foo := mkfoo(0)
-	var b Foo := mkfoo(1)
+	a Foo := mkfoo(0)
+	b Foo := mkfoo(1)
 	string.puti(a.x)
 	string.puts("\n")
 	string.puti(b.x)

@@ -5,7 +5,7 @@ import "string"
 fn main() {
 	var x i64
 	x = 42
-	var p *?mut i64 := &x
+	p *?mut i64 := &x
 	string.puti(*p?)
 	string.puts("\n")
 }

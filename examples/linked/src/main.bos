@@ -27,7 +27,7 @@ fn list_print(l *node) {
 	var curr *?node := l
 	fmt.str(&io.STDOUT, "[")
 	for(; curr != nil; curr = curr?.next) {
-		var cur *node := curr?
+		cur *node := curr?
 		fmt.int(&io.STDOUT, cur.val)
 		if(cur.next != nil) {
 			fmt.str(&io.STDOUT, ", ")

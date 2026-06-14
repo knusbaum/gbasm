@@ -10,11 +10,11 @@ type pair struct {
 }
 
 fn main() {
-	var p owned *owned mut pair := new(pair{a: alloc(i64), b: alloc(i64)})
+	p owned *owned mut pair := new(pair{a: alloc(i64), b: alloc(i64)})
 	*p.a = 10
 	*p.b = 20
-	var a owned *mut i64 := p.a
-	var b owned *mut i64 := p.b
+	a owned *mut i64 := p.a
+	b owned *mut i64 := p.b
 	fmt.print("a=%d b=%d\n", *a, *b)
 	free(a)
 	free(b)

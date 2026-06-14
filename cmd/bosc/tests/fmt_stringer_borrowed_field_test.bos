@@ -14,7 +14,7 @@ type word struct { s byte[] } {
 }
 
 fn main() i64 {
-	var s byte[] := "hello-stringer"
+	s byte[] := "hello-stringer"
 	var w word := word{s: s}
 	fmt.print("v=%v\n", &w)
 	return 0

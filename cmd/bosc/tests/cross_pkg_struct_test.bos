@@ -15,7 +15,7 @@ import "string"
 //   - calling a pair.pkg function that returns a pair.pair value
 fn main() {
 	// Construct via qualified-name struct literal, read a field.
-	var p pair.pair := pair.pair{a: 3, b: 4}
+	p pair.pair := pair.pair{a: 3, b: 4}
 	string.puti(p.a)
 	string.putc(' ')
 	string.puti(p.b)
@@ -26,7 +26,7 @@ fn main() {
 	string.putc('\n')
 
 	// Receive a struct back from a cross-package function and read it.
-	var q pair.pair := pair.make_pair(10, 20)
+	q pair.pair := pair.make_pair(10, 20)
 	string.puti(q.a)
 	string.putc(' ')
 	string.puti(q.b)

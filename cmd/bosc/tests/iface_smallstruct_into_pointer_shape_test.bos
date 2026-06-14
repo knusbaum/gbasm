@@ -31,6 +31,6 @@ fn show(l labeled) {
 }
 
 fn main() {
-	var b bag := bag{a: 9, b: 8, c: 7, d: 6}
+	b bag := bag{a: 9, b: 8, c: 7, d: 6}
 	show(b)
 }

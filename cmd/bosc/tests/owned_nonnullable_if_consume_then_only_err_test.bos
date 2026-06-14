@@ -1,7 +1,7 @@
 package main
 
 fn cond() bool {
-	var b bool
+	b bool
 	return b
 }
 

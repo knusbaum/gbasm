@@ -17,7 +17,7 @@ fn bad() Foo {
 }
 
 fn main() {
-	var s Foo := bad()
+	s Foo := bad()
 	string.puti(s.x)
 	string.puts("\n")
 }

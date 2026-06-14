@@ -23,12 +23,12 @@ fn choose(s byte[], t byte[], use_s bool) B {
 }
 
 fn main() i64 {
-	var x byte[] := "first"
-	var y byte[] := "second"
-	var b1 B := choose(x, y, (1 == 1))
+	x byte[] := "first"
+	y byte[] := "second"
+	b1 B := choose(x, y, (1 == 1))
 	string.puts(b1.buf)
 	string.puts("\n")
-	var b2 B := choose(x, y, (1 == 0))
+	b2 B := choose(x, y, (1 == 0))
 	string.puts(b2.buf)
 	string.puts("\n")
 	return 0

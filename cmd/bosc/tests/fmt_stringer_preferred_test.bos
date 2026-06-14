@@ -12,7 +12,7 @@ import "io"
 type tag struct { label i64 } {
 	string(t *tag) byte[] { return "STRINGER" }
 	format(t *tag, w io.writer) error {
-		_, var err := w.write("FORMATTER")
+		_, err := w.write("FORMATTER")
 		return err
 	}
 }

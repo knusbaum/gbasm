@@ -11,7 +11,7 @@ fn modify(var o outer) {
 }
 
 fn main() {
-	var o outer := outer{x: 1, in: inner{z: 2}}
+	o outer := outer{x: 1, in: inner{z: 2}}
 	modify(o)
 	string.puti(o.x); string.putc('\n')
 	string.puti(o.in.z); string.putc('\n')

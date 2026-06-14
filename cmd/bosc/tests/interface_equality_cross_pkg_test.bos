@@ -13,8 +13,8 @@ fn say(name byte[], ok bool) {
 }
 
 fn main() {
-	var not_found errors.error_val := errors.open_for(2)
-	var busy errors.error_val := errors.open_for(0)
+	not_found errors.error_val := errors.open_for(2)
+	busy errors.error_val := errors.open_for(0)
 
 	say("cross concrete eq", not_found == errors.io_error.NOT_FOUND)
 	say("cross concrete neq", not_found != errors.io_error.BUSY)

@@ -54,7 +54,7 @@ type W struct { buf byte[] } {
 	bytes(w *W) byte[] { return w.buf }
 }
 fn get(w *W) byte[] {
-	var v viewer := w
+	v viewer := w
 	return v.bytes()
 }
 fn main() i64 { return 0 }`)
@@ -186,7 +186,7 @@ fn mk2(s byte[]) byte[], i64 {
 	return s[0:4], 7
 }
 fn take2(s byte[]) byte[] {
-	var v byte[], var n i64 := mk2(s)
+	v byte[], n i64 := mk2(s)
 	return v
 }`,
 			fn:   "take2",
@@ -307,7 +307,7 @@ fn outer(p byte[]) B { return mk(p) }`,
 		},
 		{
 			// Hole A, sentinel path: a struct returned from a call BOUND TO A
-			// VAR then returned (`var b B := mk(p); return b`). The direct form
+			// VAR then returned (`b B := mk(p); return b`). The direct form
 			// (`return mk(p)`) goes through the engine's call-expansion read; this var-
 			// bound form has no single Origin, so recordStructReturnCallFieldFacts
 			// records the borrowed-argument provenance onto b's sentinel field
@@ -317,7 +317,7 @@ fn outer(p byte[]) B { return mk(p) }`,
 			name: "struct from call bound to var records param",
 			body: `type B struct { buf byte[] }
 fn mk(s byte[]) B { return B{buf: s} }
-fn outer(p byte[]) B { var b B := mk(p); return b }`,
+fn outer(p byte[]) B { b B := mk(p); return b }`,
 			fn:   "outer",
 			want: [][]int{{0}},
 		},

@@ -5,7 +5,7 @@ type holder struct {
 }
 
 fn main() {
-	var p owned *mut i64 := alloc(i64)
-	var h holder := holder{next: p}
+	p owned *mut i64 := alloc(i64)
+	h holder := holder{next: p}
 	free(p)
 }

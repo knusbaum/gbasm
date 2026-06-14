@@ -3,7 +3,7 @@ package main
 import "string"
 
 fn divide(a i64, b i64) struct { quot i64, rem i64 } {
-	var q i64 := a / b
+	q i64 := a / b
 	return { quot: q, rem: a - q * b }
 }
 
@@ -20,7 +20,7 @@ fn main() i64 {
 	string.puts("\n")
 
 	// var with type inference from function returning anonymous struct
-	var r2 := divide(100, 7)
+	r2 := divide(100, 7)
 	string.puti(r2.quot)
 	string.puts("\n")
 	string.puti(r2.rem)

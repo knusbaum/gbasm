@@ -4,7 +4,7 @@ import "string"
 
 fn main() i64 {
 	// infer owned *mut i64 from alloc
-	var p := alloc(i64)
+	p := alloc(i64)
 	*p = 99
 	string.puti(*p)
 	string.puts("\n")

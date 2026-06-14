@@ -10,7 +10,7 @@ import "string"
 // dispatch, and use the borrow within the value's lifetime.
 fn main() i64 {
 	var h retalias_pkg.borrowing_holder := retalias_pkg.make_holder("hi")
-	var v retalias_pkg.viewer := &h
+	v retalias_pkg.viewer := &h
 	r byte[] := v.bytes()
 	string.puts(r)
 	string.putc(10)

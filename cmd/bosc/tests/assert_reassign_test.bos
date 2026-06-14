@@ -5,8 +5,8 @@ import "string"
 // pre-declared lvalues (distinct from the declaration form
 // `var v T, var ok bool = x.(T)`).
 fn main() i64 {
-	var m i64 := 42
-	var a any := m
+	m i64 := 42
+	a any := m
 	var v i64 := 0
 	var ok bool
 	v, ok = a.(i64)
@@ -15,7 +15,7 @@ fn main() i64 {
 
 	// A failing assertion re-assigns both targets: ok=false. The source holds
 	// an i64, so asserting to byte misses.
-	var b any := m
+	b any := m
 	var w byte := 7
 	var ok2 bool
 	w, ok2 = b.(byte)

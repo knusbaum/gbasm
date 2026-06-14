@@ -185,7 +185,7 @@ func (t nodetype) String() string {
 type Parser struct {
 	l      *lexer
 	curr   *token
-	pushed *token // one extra look-ahead slot for pushback
+	pushed []token // look-ahead stack for pushback (top = last element)
 	fname  string
 	// inTypeSwitchHead suppresses `.(type)` being parsed as a type
 	// assertion while parsing the switched value in a type-switch head.
@@ -265,9 +265,10 @@ func (p *Parser) ParseFunctype() (FuncDecl, error) {
 
 func (p *Parser) current() token {
 	if p.curr == nil {
-		if p.pushed != nil {
-			p.curr = p.pushed
-			p.pushed = nil
+		if n := len(p.pushed); n > 0 {
+			t := p.pushed[n-1]
+			p.pushed = p.pushed[:n-1]
+			p.curr = &t
 		} else {
 			next, err := p.l.Next()
 			if err != nil {
@@ -283,15 +284,14 @@ func (p *Parser) advance() {
 	p.curr = nil
 }
 
-// pushback inserts t before whatever token is currently pending.
-// After this call, the next current() returns t; the token that was
-// pending (if any) is returned after t. Requires pushed == nil (only
-// one look-ahead slot is available).
+// pushback inserts t before whatever token is currently pending. After
+// this call, the next current() returns t; the token that was pending
+// (if any) is returned after t. Pushbacks stack, so callers may defer
+// more than one token (used for multi-token look-ahead).
 func (p *Parser) pushback(t token) {
-	if p.pushed != nil {
-		panic("pushback: look-ahead slots exhausted")
+	if p.curr != nil {
+		p.pushed = append(p.pushed, *p.curr)
 	}
-	p.pushed = p.curr
 	p.curr = &t
 }
 
@@ -1424,17 +1424,34 @@ func (p *Parser) parseMultiBind(first *Node) *Node {
 func (p *Parser) startsBareDecl() bool {
 	name := p.current()
 	p.advance()
-	after := p.current().t
-	p.pushback(name)
-	switch after {
+	after := p.current()
+	switch after.t {
 	case tok_decl: // x :=
+		p.pushback(name)
 		return true
-	case tok_ident, tok_owned, tok_mut, tok_fn, tok_star: // x TYPE :=
+	case tok_ident, tok_owned, tok_mut, tok_fn, tok_star, tok_maybe_ptr: // x TYPE :=
 		// tok_star is unambiguous now: a leading `IDENT *` can no longer be a
 		// bare multiply statement (rejected by the effectful-statement rule),
-		// so it must be a pointer-typed declaration.
+		// so it must be a pointer-typed declaration. tok_maybe_ptr (`*?`) is
+		// the nullable-pointer type-start and is likewise unambiguous.
+		p.pushback(name)
 		return true
+	case tok_question:
+		// Ambiguous: `x ?T :=` (nullable-value-typed decl) vs `x?` / `x?.f`
+		// (postfix non-null assert). It's a declaration only when a type-
+		// start token follows the `?`; an operator/`.`/terminator after it
+		// means the `?` is a postfix assert on the expression `x`.
+		p.advance()
+		after2 := p.current()
+		p.pushback(after)
+		p.pushback(name)
+		switch after2.t {
+		case tok_ident, tok_owned, tok_mut, tok_fn, tok_star, tok_question, tok_maybe_ptr:
+			return true
+		}
+		return false
 	}
+	p.pushback(name)
 	return false
 }
 
@@ -1482,9 +1499,15 @@ func (p *Parser) parseStatement() *Node {
 		p.advance()
 		// A per-target `var` prefix only appears in a declaration; an
 		// assignment lvalue never has one. Bare targets are immutable.
+		// A bare target carrying a type annotation (`name T`, `name *T`,
+		// `name owned T`, …) or sitting just before `:=` is also a binding
+		// spec; only a plain lvalue expression (`x`, `x.f`, `arr[i]`) goes
+		// through parseBoolOp.
 		if p.current().t == tok_var {
 			p.advance()
 			targets = append(targets, p.parseBindingSpec(false))
+		} else if p.current().t == tok_ident && p.startsBareDecl() {
+			targets = append(targets, p.parseBindingSpec(true))
 		} else {
 			targets = append(targets, p.parseBoolOp())
 		}

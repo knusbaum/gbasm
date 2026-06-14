@@ -2,13 +2,13 @@ package main
 import "string"
 
 fn main() i64 {
-	var n i64 := 17
-	var a any := n
-	var v i64, var ok bool := a.(i64)
+	n i64 := 17
+	a any := n
+	v i64, ok bool := a.(i64)
 	if (ok) { string.puti(v) } else { string.puti(-1) }
 	string.putc(10)
-	var b any := n
-	var w byte, var bok bool := b.(byte)
+	b any := n
+	w byte, bok bool := b.(byte)
 	if (bok) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
 	return 0

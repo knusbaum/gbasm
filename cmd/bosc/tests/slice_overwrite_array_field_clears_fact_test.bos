@@ -14,14 +14,14 @@ type Inner struct {
 fn ok(s byte[]) Inner {
 	var i Inner
 	i.bufs[0] = s
-	var clean byte[][1]
+	clean byte[][1]
 	i.bufs = clean
 	return i
 }
 
 fn main() {
 	var arr byte[8]
-	var r Inner := ok(arr[:])
+	r Inner := ok(arr[:])
 	string.puti(len(r.bufs[0]))
 	string.puts("\n")
 }

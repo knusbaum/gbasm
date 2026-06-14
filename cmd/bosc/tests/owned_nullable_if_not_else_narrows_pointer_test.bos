@@ -1,11 +1,11 @@
 package main
 
 fn main() {
-	var p owned *?mut i64 := alloc(i64)
+	p owned *?mut i64 := alloc(i64)
 	if (!p) {
 		return 0
 	} else {
-		var q owned *mut i64 := p
+		q owned *mut i64 := p
 		free(q)
 	}
 }

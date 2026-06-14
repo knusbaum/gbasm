@@ -27,13 +27,13 @@ fn main() {
 	nums[2] = 30
 	nums[3] = 40
 
-	var p *i64 := &nums[2]
+	p *i64 := &nums[2]
 	string.puti(deref(p))
 	string.putc('\n')
 
 	// Local array, runtime index.
-	var i i64 := 1
-	var q *i64 := &nums[i]
+	i i64 := 1
+	q *i64 := &nums[i]
 	string.puti(deref(q))
 	string.putc('\n')
 
@@ -41,8 +41,8 @@ fn main() {
 	var pt point
 	pt.x = 7
 	pt.y = 11
-	var px *i64 := &pt.x
-	var py *i64 := &pt.y
+	px *i64 := &pt.x
+	py *i64 := &pt.y
 	string.puti(deref(px))
 	string.putc('\n')
 	string.puti(deref(py))

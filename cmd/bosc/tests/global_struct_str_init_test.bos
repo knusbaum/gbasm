@@ -22,12 +22,12 @@ fn main() {
 	// (The parser doesn't currently chain index/slice onto a dot
 	// expression directly — `ph.greeting[0:5]` doesn't parse yet.)
 	var g byte[16] := ph.greeting
-	var gs byte[] := g[0:5]
+	gs byte[] := g[0:5]
 	string.puts(gs)
 	string.putc('\n')
 
 	var f byte[16] := ph.farewell
-	var fs byte[] := f[0:7]
+	fs byte[] := f[0:7]
 	string.puts(fs)
 	string.putc('\n')
 }

@@ -17,17 +17,17 @@ fn make_greeting() *(byte[]) {
 
 fn main() i64 {
 	// Empty literal: deref + print writes zero bytes; print a marker after.
-	var e *(byte[]) := &""
+	e *(byte[]) := &""
 	string.puts(*e)
 	string.puts("[empty]\n")
 
 	// Returned static pointer.
-	var g *(byte[]) := make_greeting()
+	g *(byte[]) := make_greeting()
 	string.puts(*g)
 	string.putc(10)
 
 	// Stored in a struct field.
-	var h holder := holder{p: &"stored"}
+	h holder := holder{p: &"stored"}
 	string.puts(*h.p)
 	string.putc(10)
 	return 0

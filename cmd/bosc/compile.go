@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"os"
+	"sort"
 	"strings"
 
 	"github.com/knusbaum/gbasm/cmd/bosc/flow"
@@ -1356,6 +1358,123 @@ func canWriteImmediatePointee(t ASTType) bool {
 	return t.Indirection > 0 && t.MutMask&(1<<1) != 0
 }
 
+// nudgeMode selects the immutability-nudge behavior. It defaults to
+// "enforce" — a `var` that is never reassigned is a compile error, the
+// language's "immutable unless it must be mutable" rule. The BOSON_NUDGE
+// environment variable overrides it:
+//
+//   - "enforce"   (default) reject the first never-reassigned `var`.
+//   - "enumerate" list every never-reassigned `var` (to BOSON_NUDGE_LOG or
+//                 stderr), non-fatally. Used to drive bulk migrations.
+//   - "off"       disable the nudge entirely.
+var nudgeMode = nudgeModeFromEnv()
+
+func nudgeModeFromEnv() string {
+	switch m := os.Getenv("BOSON_NUDGE"); m {
+	case "off":
+		return ""
+	case "enumerate":
+		return "enumerate"
+	default:
+		return "enforce"
+	}
+}
+
+// nudgeLog, when set, names a file the enumerate mode appends its findings
+// to (one per line) instead of stderr. Lets a whole suite run collect
+// every site into one file across many separate bosc invocations.
+var nudgeLog = os.Getenv("BOSON_NUDGE_LOG")
+
+// recordMutCandidate notes a local `var` declaration in the current scope
+// as a nudge candidate. Keyed per-scope so sibling scopes reusing a name
+// stay distinct.
+func (c *Context) recordMutCandidate(name string, p position) {
+	if nudgeMode != "" {
+		c.mutCandidates[name] = p
+	}
+}
+
+// markMutRelied records that `name`'s var-mutability was actually used, so
+// it must stay `var`. The mark is routed to the binding's own defining
+// scope so it can't bleed onto a same-named binding in a sibling scope.
+// No-ops when the nudge is off or the name isn't a tracked binding (e.g. a
+// global or parameter).
+func (c *Context) markMutRelied(name string) {
+	if nudgeMode == "" {
+		return
+	}
+	if bc := c.BindingContext(name); bc != nil {
+		bc.mutRelied[name] = true
+	}
+}
+
+// reportScopeNudge emits the never-reassigned-var diagnostics for the
+// bindings declared in this scope, at scope exit. Only the real codegen
+// pass reports (captureState nil); the alias-inference dry run is skipped.
+func (c *Context) reportScopeNudge() {
+	if nudgeMode == "" || c.captureState() != nil || len(c.mutCandidates) == 0 {
+		return
+	}
+	names := make([]string, 0, len(c.mutCandidates))
+	for n := range c.mutCandidates {
+		if !c.mutRelied[n] {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	var sink io.Writer = os.Stderr
+	if nudgeMode != "enforce" && nudgeLog != "" {
+		f, err := os.OpenFile(nudgeLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err == nil {
+			defer f.Close()
+			sink = f
+		}
+	}
+	for _, n := range names {
+		p := c.mutCandidates[n]
+		if nudgeMode == "enforce" {
+			panic(&interpreterError{
+				msg: fmt.Sprintf("\"%s\" is declared `var` but never reassigned; declare it immutable by dropping `var`", n),
+				p:   p,
+			})
+		}
+		fmt.Fprintf(sink, "%s:%d:%d %s\n", p.fname, p.lineoff, p.linecharoff, n)
+	}
+}
+
+// mutabilityReliedRoot returns the root binding name of an lvalue when the
+// write's legality depends on that binding being `var` — i.e. the lvalue
+// chain reaches a bare Symbol through value projections only. Writes
+// through a pointer (`*p`, `p.f` where p is a pointer, `s[i]` on a slice)
+// do not rely on the root binding's mutability and return "". It mirrors
+// lvalueIsWritable's recursion and is only called after that check passes,
+// so the shapes are known-valid lvalues.
+func mutabilityReliedRoot(c *Context, a AST) string {
+	switch v := a.(type) {
+	case *Symbol:
+		return v.Name
+	case *Dot:
+		parent := ResolveSelector(c, v.Val)
+		switch parent.Kind {
+		case ResolvedRuntimeValue, ResolvedStructField:
+			if parent.Type.Indirection > 0 {
+				return "" // through a pointer: binding only read
+			}
+			return mutabilityReliedRoot(c, v.Val)
+		}
+		return ""
+	case *Index:
+		baseType := v.Val.ASTType(c)
+		if baseType.Indirection > 0 || baseType.IsSlice() {
+			return "" // through a pointer or slice: binding only read
+		}
+		return mutabilityReliedRoot(c, v.Val) // fixed array: write hits its storage
+	case *NonNullAssert:
+		return mutabilityReliedRoot(c, v.Val)
+	}
+	return "" // Deref and anything else: not binding-reliant
+}
+
 // lvalueIsWritable answers the type-system question "may this lvalue be
 // written to?". It walks the lval AST and checks each link:
 //
@@ -1457,6 +1576,8 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 	case *Address:
 		if ast.Var != "" {
 			name := ast.Var
+			// `&x` relies on x's var-ness (yields *mut); keep x mutable.
+			c.markMutRelied(name)
 			if c.IsGlobalBinding(name) {
 				return c.PointerFlow().UnknownPointer()
 			}
@@ -2782,6 +2903,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 		}
 		c.BindVar(a, ast.Name, ast.Type, ast.IsConst)
+		if !ast.IsConst {
+			c.recordMutCandidate(ast.Name, ast.Pos())
+		}
 		if c.ResolveUnderlying(ast.Type).Indirection > 0 {
 			c.PointerFlow().DeclarePointer(flow.Binding(ast.Name))
 		} else if ast.Type.HasOwned() {
@@ -2949,8 +3073,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				if c.IsConst(b.Name) {
 					CompileErrorF(a, "Cannot assign to immutable binding %q", b.Name)
 				}
+				c.markMutRelied(b.Name)
 			} else {
 				c.BindVar(a, b.Name, bindType, b.IsConst)
+				if !b.IsConst {
+					c.recordMutCandidate(b.Name, b.Pos())
+				}
 				if c.ResolveUnderlying(bindType).Indirection > 0 {
 					c.PointerFlow().DeclarePointer(flow.Binding(b.Name))
 				} else if bindType.HasOwned() {
@@ -3023,6 +3151,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if c.IsConst(sym.Name) {
 				CompileErrorF(tgt, "Cannot assign to immutable binding %q", sym.Name)
 			}
+			c.markMutRelied(sym.Name)
 			if _, reason := coerceType(c, declType, field.Type); reason != coerceOK {
 				reportCoerceFailure(tgt, declType, field.Type, reason,
 					"multi-assignment to %s: cannot assign %s to %s", sym.Name, field.Type, declType)
@@ -3121,6 +3250,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
 			}
 		}
+		sc.reportScopeNudge()
 		sc.InvalidateLocalOriginsForScope()
 		sc.ForgetPointerBindings()
 		sc.FreeLocalVars(of)
@@ -3439,6 +3569,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// Taking the address of an inconsistent aggregate would create an
 			// alias that could read its moved-out non-null field.
 			checkAggregateNotAliasedWhileInconsistent(c, name, ast)
+			// `&x` of a `var` yields *mut; converting x to immutable would
+			// yield *T and could break a write-through consumer. Keep x var.
+			c.markMutRelied(name)
 		}
 		if !hasName {
 			// Function-scope `&"literal"`: the only address-of-literal form
@@ -3460,6 +3593,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			switch ast.Lit.(type) {
 			case *Index, *Dot:
+				// `&x.f` / `&x[i]` of a `var` root yields a *mut view; keep
+				// the root var so converting it can't strip write-through.
+				if root, ok := rootSymbolName(ast.Lit); ok {
+					c.markMutRelied(root)
+				}
 				if path, ok := FlowPathForExpr(ast.Lit); ok {
 					c.MarkAddress(path.Root)
 				}
@@ -3635,6 +3773,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if v.t.IsSlice() {
 			newt.MutMask = v.t.MutMask
 		} else if isLvalueMutable(c, ast.Val) {
+			// Slicing an array yields a `mut` slice only because the source
+			// binding is `var`; converting it to immutable would yield a
+			// read-only slice and could break a `mut` consumer. Keep it var.
+			if root, ok := rootSymbolName(ast.Val); ok {
+				c.markMutRelied(root)
+			}
 			newt.MutMask = 1 << 1
 		}
 		var addr spot
@@ -3703,6 +3847,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// auto-deref through Dot/Index, and explicit *p through a *T.
 		if ok, reason := lvalueIsWritable(c, ast.Target); !ok {
 			CompileErrorF(a, "%s", reason)
+		}
+		if root := mutabilityReliedRoot(c, ast.Target); root != "" {
+			c.markMutRelied(root)
 		}
 		if targetIsSymbol {
 			if c.OwnedObligationLive(targetSym.Name, dstt) {

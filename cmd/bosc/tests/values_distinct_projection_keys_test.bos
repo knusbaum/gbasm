@@ -13,7 +13,7 @@ type v values (i64, *i64) {
 }
 
 fn main() {
-	var e v := v.A
+	e v := v.A
 	string.puti(i64(e))
 	string.puts("\n")
 }

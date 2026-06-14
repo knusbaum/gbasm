@@ -9,7 +9,7 @@ import "string"
 
 fn main() {
 	// Scalar element type, constant-index reads.
-	var nums i64[3] := [10, 20, 30]
+	nums i64[3] := [10, 20, 30]
 	string.puti(nums[0])
 	string.putc(' ')
 	string.puti(nums[1])

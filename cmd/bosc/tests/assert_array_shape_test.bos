@@ -10,10 +10,10 @@ import "string"
 fn main() i64 {
 	var arr byte[16]
 	arr[0] = 90
-	var a any := &arr
+	a any := &arr
 	string.puts("arr16 coerced ")
-	var p16 *byte[16], var ok16 bool := a.(*byte[16])
-	var p32 *byte[32], var ok32 bool := a.(*byte[32])
+	p16 *byte[16], ok16 bool := a.(*byte[16])
+	p32 *byte[32], ok32 bool := a.(*byte[32])
 	if (ok16) { string.puts("16y ") } else { string.puts("16n ") }
 	if (ok32) { string.puts("32y ") } else { string.puts("32n ") }
 	string.putc(10)

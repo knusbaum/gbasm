@@ -19,8 +19,8 @@ type W struct { buf byte[] } {
 
 fn main() i64 {
 	var w W := W{buf: "sub"}
-	var b bigger := &w
-	var s smaller := b
+	b bigger := &w
+	s smaller := b
 	r byte[] := s.bytes()
 	string.puts(r)
 	string.putc(10)

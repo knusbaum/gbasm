@@ -5,9 +5,9 @@ type box struct {
 }
 
 fn main() {
-	var p owned *mut i64 := alloc(i64)
-	var b owned box := box{next: p}
-	var next owned *?mut i64 := b.next
+	p owned *mut i64 := alloc(i64)
+	b owned box := box{next: p}
+	next owned *?mut i64 := b.next
 	free(next)
 	dispose(b)
 }

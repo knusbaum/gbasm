@@ -10,7 +10,7 @@ fn apply(op fn(i64, i64) i64, a i64, b i64) i64 {
 }
 
 fn main() {
-	var f fn(i64, i64) i64 := &add
+	f fn(i64, i64) i64 := &add
 	fmt.print("add: %d\n", apply(f, 7, 3))
 	fmt.print("sub: %d\n", apply(&sub, 7, 3))
 }

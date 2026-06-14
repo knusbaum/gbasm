@@ -6,7 +6,7 @@ import "string"
 // Layer 5: a %d directive against a byte arg fails the assertion. printf
 // writes an inline marker, continues, and latches a non-OK error.
 fn main() i64 {
-	n, var err := fmt.print("val=%d done\n", byte(65))
+	n, err := fmt.print("val=%d done\n", byte(65))
 	if (err != io.io_err.OK) {
 		string.puts("error latched\n")
 	} else {

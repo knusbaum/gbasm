@@ -14,10 +14,10 @@ fn pick(a byte[], b byte[], use_a bool) byte[] {
 }
 
 fn main() i64 {
-	var x byte[] := "first"
-	var y byte[] := "second"
-	var r1 byte[] := pick(x, y, yes())
-	var r2 byte[] := pick(x, y, no())
+	x byte[] := "first"
+	y byte[] := "second"
+	r1 byte[] := pick(x, y, yes())
+	r2 byte[] := pick(x, y, no())
 	string.puts(r1)
 	string.puts("\n")
 	string.puts(r2)

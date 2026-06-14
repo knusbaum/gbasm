@@ -10,8 +10,8 @@ type box struct {
 }
 
 fn destroy(b owned *owned mut box) {
-	var alias *mut box := b
-	var child owned *?owned mut leaf := b.child
+	alias *mut box := b
+	child owned *?owned mut leaf := b.child
 	alias.val = 10
 	free(b)
 	if (child) {

@@ -8,7 +8,7 @@ type foo struct {
 
 fn main() i64 {
 	var f owned foo := foo{x: 1}
-	var fp *owned foo := &f
+	fp *owned foo := &f
 	dispose(fp)
 	f = foo{x: 20}
 	string.puti(f.x)

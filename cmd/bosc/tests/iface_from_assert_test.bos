@@ -13,8 +13,8 @@ type W struct { buf byte[] } {
 
 fn main() i64 {
 	var w W := W{buf: "hi"}
-	var a any := &w
-	var v ?viewer := a.(viewer)
+	a any := &w
+	v ?viewer := a.(viewer)
 	if (v != nil) {
 		r byte[] := v.bytes()
 		string.puts(r)

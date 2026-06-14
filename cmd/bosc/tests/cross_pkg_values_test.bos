@@ -25,7 +25,7 @@ fn main() {
 	// Value-backed interface returned from the producer package: the
 	// values tag flows through the fat-pointer data slot, the
 	// vtable points at the producer's pkg.io_error.message symbol.
-	var ev errors.error_val := errors.open_for(2)
+	ev errors.error_val := errors.open_for(2)
 	string.puts(ev.message())
 	string.puts("\n")
 
@@ -33,7 +33,7 @@ fn main() {
 	// pointer happens here, NeedVtable on the importer's Context
 	// registers the cross-package vtable, the data word carries the
 	// case tag.
-	var ev2 errors.error_val := errors.io_error.BUSY
+	ev2 errors.error_val := errors.io_error.BUSY
 	string.puts(ev2.message())
 	string.puts("\n")
 }

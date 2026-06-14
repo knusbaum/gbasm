@@ -8,18 +8,18 @@ type foo struct { x i64 }
 //   - a *foo source (&const) asserts .(*mut foo) false, .(*foo) true.
 fn main() i64 {
 	var f foo := foo{x: 1}
-	var am any := &f                 // *mut foo
-	var p1 *foo, var ok1 bool := am.(*foo)
+	am any := &f                 // *mut foo
+	p1 *foo, ok1 bool := am.(*foo)
 	if (ok1) { string.puti(1) } else { string.puti(0) }
-	var p2 *mut foo, var ok2 bool := am.(*mut foo)
+	p2 *mut foo, ok2 bool := am.(*mut foo)
 	if (ok2) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
 
 	g foo := foo{x: 2}
-	var ar any := &g                 // *foo (read-only)
-	var q1 *mut foo, var ok3 bool := ar.(*mut foo)
+	ar any := &g                 // *foo (read-only)
+	q1 *mut foo, ok3 bool := ar.(*mut foo)
 	if (ok3) { string.puti(1) } else { string.puti(0) }
-	var q2 *foo, var ok4 bool := ar.(*foo)
+	q2 *foo, ok4 bool := ar.(*foo)
 	if (ok4) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
 	return 0

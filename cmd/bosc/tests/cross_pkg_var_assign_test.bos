@@ -9,7 +9,7 @@ import "string"
 // so an importer can read or write it. Read-back through the same
 // qualified form sees the new value.
 fn main() i64 {
-    var orig io.FD := io.STDIN
+    orig io.FD := io.STDIN
     io.STDIN = io.FD(42)
     string.puti(i64(io.STDIN))
     string.putc('\n')

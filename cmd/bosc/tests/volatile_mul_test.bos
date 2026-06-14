@@ -6,7 +6,7 @@ fn main() {
 	var x i64
 	x = 6
 
-	var y *mut i64 := &x
+	y *mut i64 := &x
 
 	x = x * 7
 

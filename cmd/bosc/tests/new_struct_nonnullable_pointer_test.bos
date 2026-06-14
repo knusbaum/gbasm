@@ -6,6 +6,6 @@ type cursor struct {
 
 fn main() {
 	var x i64
-	var c owned *mut cursor := new(cursor{current: &x})
+	c owned *mut cursor := new(cursor{current: &x})
 	free(c)
 }

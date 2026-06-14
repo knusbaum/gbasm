@@ -8,13 +8,13 @@ type pair struct {
 }
 
 fn main() {
-	var n owned *mut i64 := alloc(i64)
+	n owned *mut i64 := alloc(i64)
 	*n = 123
 	string.puti(*n)
 	string.puts("\n")
 	free(n)
 
-	var p owned *mut pair := alloc(pair)
+	p owned *mut pair := alloc(pair)
 	p.x = 7
 	p.y = 8
 	string.puti(p.x)

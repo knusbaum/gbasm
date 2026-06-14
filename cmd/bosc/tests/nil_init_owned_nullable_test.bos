@@ -1,5 +1,5 @@
 package main
 
 fn main() {
-	var p owned *?mut i64 := nil
+	p owned *?mut i64 := nil
 }

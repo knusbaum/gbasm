@@ -23,8 +23,8 @@ fn first_word(s byte[]) byte[] {
 }
 
 fn main() i64 {
-	var src byte[] := "hello world"
-	var w byte[] := first_word(src)
+	src byte[] := "hello world"
+	w byte[] := first_word(src)
 	string.puts(w)
 	string.puts("\n")
 	return 0

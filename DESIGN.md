@@ -1075,6 +1075,28 @@ Immutable-by-default and the `var` opt-out apply uniformly to all types — inte
 
 Function parameters are immutable by default. A parameter that needs to be reassigned within the function body must be declared `var` (`fn f(var x i64)`).
 
+**`var` must be earned.** Because `var` is the marked, opt-in case, a
+`var` binding that is never actually reassigned is a compile error: the
+declaration claims a capability it doesn't use. The fix is to drop `var`.
+
+```
+var n i64 := compute()   // ERROR if n is never reassigned: "declared `var`
+                         // but never reassigned; declare it immutable by
+                         // dropping `var`"
+n i64 := compute()       // correct
+```
+
+"Reassigned" means the binding's own var-ness is relied upon: a direct
+rebind (`n = …`), a write to a value field or fixed-array element rooted
+at the binding (`s.f = …`, `a[i] = …` on a by-value `a`), or taking a
+mutable view of it (`&n`, `&n.f`, slicing an array `n[:]` — all of which
+yield `*mut`/`mut` only because the binding is `var`). Writing *through* a
+pointer (`*p = …`) or a `mut T[]` slice does not count — that mutability
+comes from the pointee type, not the binding, so such a binding stays
+immutable. Parameters are exempt (a `var` parameter documents a contract
+even if a given body doesn't reassign it). The check is enforced per
+scope, so sibling blocks may reuse a name independently.
+
 ### Axis 2: Write-through mutability (`*mut T`, `mut T[]`)
 
 This axis only exists for *reference types* — pointers and slices. It controls whether you can write to the data *through* the reference. It is a property of the type, not the binding.
@@ -2328,6 +2350,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Nullable pointers (`*?T`), non-null pointers (`*T`), boolean narrowing for nullable pointers, and postfix `?` non-null assertions
 - Nested slices/arrays (`byte[][]`, `T[N][M]`, etc.)
 - Immutable and `var` bindings with declaration initializers (`x i64 := 42`)
+- `var`-never-reassigned enforcement: a `var` whose mutability is never used (no rebind, value-field/array write, or mutable-view/`&`/array-slice) is a compile error directing the author to drop `var`; checked per scope, parameters exempt
 - File-scope variable declarations with compile-time-constant initializers — integer/byte literals, string-into-`byte[N]`, string-into-`byte[]` (slice with relocated pointer), struct literals composing all of the above, array literals (`[1, 2, 3]`) for fixed-array and slice destinations, `&someGlobal`, `&SomeStruct{...}` (anonymous globals), `&globalArr[N]` (pointer-into-array via relocation addend)
 - Array literals at runtime as initializers for fixed-array locals; slice destinations rejected with a directed error (lifetime issue)
 - Full nested `*mut T` write-through mutability with implicit coercion

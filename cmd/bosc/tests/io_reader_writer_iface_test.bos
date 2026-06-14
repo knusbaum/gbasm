@@ -20,7 +20,7 @@ fn writeline(w io.writer, msg byte[]) {
 }
 
 fn readbyte(r io.reader, buf mut byte[]) i64 {
-	var n, err := r.read(buf)
+	n, err := r.read(buf)
 	return n
 }
 

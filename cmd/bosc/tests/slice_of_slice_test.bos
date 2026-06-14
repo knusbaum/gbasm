@@ -6,14 +6,14 @@ import "string"
 // type parsing and codegen for byte[][]. We never call it here — this test
 // is purely a type-level exercise (declaration, sizing, fn-param type).
 fn show(ss byte[][], i i64) {
-	var s byte[] := ss[i]
+	s byte[] := ss[i]
 	string.puts(s)
 	string.putc('\n')
 }
 
 fn main() {
 	// Declare a byte[][] local — pure type-level exercise.
-	var ss byte[][]
+	ss byte[][]
 
 	string.puts("byte[][] declared and parameter passed OK\n")
 }

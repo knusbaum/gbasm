@@ -17,15 +17,15 @@ type W struct { buf byte[] } {
 
 fn main() i64 {
 	var w W := W{buf: "hi"}
-	var v viewer := &w
-	var k ?Byter := v.(Byter)
+	v viewer := &w
+	k ?Byter := v.(Byter)
 	if (k != nil) {
 		string.puts("LAUNDERED")
 	} else {
 		string.puts("blocked")
 	}
 	string.putc(10)
-	var v2 ?viewer2 := v.(viewer2)
+	v2 ?viewer2 := v.(viewer2)
 	if (v2 != nil) {
 		r byte[] := v2.bytes()
 		string.puts(r)

@@ -118,7 +118,7 @@ fn ok() byte[] {
 		{
 			name: "local array return rejected",
 			body: `fn bad() byte[] {
-	var local byte[8]
+	local byte[8]
 	return local[:]
 }`,
 			wantErr: "Borrowed slice escapes through return",
@@ -127,7 +127,7 @@ fn ok() byte[] {
 			// Now legal: alias of a borrowed param returned — recordable.
 			name: "alias of borrowed param return allowed (return-alias inference)",
 			body: `fn ok(s byte[]) byte[] {
-	var alias byte[] := s
+	alias byte[] := s
 	return alias
 }`,
 		},
@@ -180,7 +180,7 @@ fn ok(s byte[]) Outer {
 			body: `type Inner struct { buf byte[8] }
 type Outer struct { inner Inner }
 fn bad() byte[] {
-	var o Outer
+	o Outer
 	return o.inner.buf[:]
 }`,
 			wantErr: "Borrowed slice escapes through return",
@@ -188,7 +188,7 @@ fn bad() byte[] {
 		{
 			name: "array of arrays element slice return rejected",
 			body: `fn bad() byte[] {
-	var a byte[8][1]
+	a byte[8][1]
 	return a[0][:]
 }`,
 			wantErr: "Borrowed slice escapes through return",
@@ -220,7 +220,7 @@ type Outer struct { inner Inner }
 fn ok(s byte[]) Outer {
 	var o Outer
 	o.inner.buf = s
-	var o2 Outer := o
+	o2 Outer := o
 	return o2
 }`,
 		},
@@ -288,7 +288,7 @@ type Outer struct { inner Inner }
 fn ok(s byte[]) Outer {
 	var o Outer
 	o.inner.buf = s
-	var clean Inner
+	clean Inner
 	o.inner = clean
 	return o
 }`,
@@ -299,7 +299,7 @@ fn ok(s byte[]) Outer {
 fn ok(s byte[]) Inner {
 	var i Inner
 	i.bufs[0] = s
-	var clean byte[][1]
+	clean byte[][1]
 	i.bufs = clean
 	return i
 }`,
@@ -309,7 +309,7 @@ fn ok(s byte[]) Inner {
 			body: `type Inner struct { buf byte[] }
 type Outer struct { inner Inner }
 fn clean() Inner {
-	var i Inner
+	i Inner
 	return i
 }
 fn ok(s byte[]) Outer {
@@ -323,7 +323,7 @@ fn ok(s byte[]) Outer {
 			name: "function call array field overwrite clears bucket",
 			body: `type Inner struct { bufs byte[][1] }
 fn clean() byte[][1] {
-	var a byte[][1]
+	a byte[][1]
 	return a
 }
 fn ok(s byte[]) Inner {
@@ -377,7 +377,7 @@ fn ok(s byte[]) B {
 		{
 			name: "whole array overwrite clears indexed bucket",
 			body: `fn clean() byte[][2] {
-	var a byte[][2]
+	a byte[][2]
 	return a
 }
 fn ok(s byte[]) byte[] {
@@ -391,7 +391,7 @@ fn ok(s byte[]) byte[] {
 			name: "nested whole array overwrite clears indexed bucket",
 			body: `type B struct { items byte[][2] }
 fn clean() byte[][2] {
-	var a byte[][2]
+	a byte[][2]
 	return a
 }
 fn ok(s byte[]) B {
@@ -438,7 +438,7 @@ func TestSliceProvenanceSourceMatrix(t *testing.T) {
 			name: "global slice alias may be returned",
 			body: `var g byte[8]
 fn ok() byte[] {
-	var s byte[] := g[:]
+	s byte[] := g[:]
 	return s
 }`,
 		},
@@ -446,7 +446,7 @@ fn ok() byte[] {
 			name: "local struct field array source rejected",
 			body: `type B struct { buf byte[8] }
 fn bad() byte[] {
-	var b B
+	b B
 	return b.buf[:]
 }`,
 			wantErr: "Borrowed slice escapes through return",
@@ -456,7 +456,7 @@ fn bad() byte[] {
 			body: `type B struct { bufs byte[8][1] }
 fn bad() byte[] {
 	var b B
-	var s byte[] := b.bufs[0][:]
+	s byte[] := b.bufs[0][:]
 	return s
 }`,
 			wantErr: "Borrowed slice escapes through return",

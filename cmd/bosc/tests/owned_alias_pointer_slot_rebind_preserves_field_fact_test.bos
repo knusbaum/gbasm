@@ -10,12 +10,12 @@ type box struct {
 }
 
 fn destroy(b owned *owned mut box) {
-	var other owned *owned mut box := new(box{val: 2, child: nil})
-	var other_child owned *?owned mut leaf := other.child
+	other owned *owned mut box := new(box{val: 2, child: nil})
+	other_child owned *?owned mut leaf := other.child
 	var alias *mut box := b
-	var slot *mut *mut box := &alias
-	var child owned *?owned mut leaf := b.child
-	var other_alias *mut box := other
+	slot *mut *mut box := &alias
+	child owned *?owned mut leaf := b.child
+	other_alias *mut box := other
 	*slot = other_alias
 	alias.val = 3
 	free(b)

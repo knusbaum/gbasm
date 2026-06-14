@@ -15,7 +15,7 @@ fn peek(h *holder) i64 {
 fn main() {
 	var h owned holder := holder{item: alloc(i64)}
 	*h.item = 1
-	var old owned *mut i64 := h.item
+	old owned *mut i64 := h.item
 	free(old)
 	h.item = alloc(i64)
 	*h.item = 2

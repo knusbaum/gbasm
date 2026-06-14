@@ -15,7 +15,7 @@ fn use_foo(f *owned foo) {
 
 fn main() i64 {
 	var x owned foo := 0
-	var y *owned foo := &x
+	y *owned foo := &x
 	use_foo(y)
 	return 0
 }

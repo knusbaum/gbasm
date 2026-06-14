@@ -3,12 +3,12 @@ import "string"
 
 fn main() i64 {
 	var m i64 := 42
-	var a any := m
-	var b any := &m
-	var v i64, var ok bool := a.(i64)
+	a any := m
+	b any := &m
+	v i64, ok bool := a.(i64)
 	if (ok) { string.puti(v) } else { string.puti(0) }
 	string.putc(10)
-	var p *mut i64, var ok2 bool := b.(*mut i64)
+	p *mut i64, ok2 bool := b.(*mut i64)
 	if (ok2) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
 	return 0

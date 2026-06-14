@@ -3,13 +3,13 @@ package main
 import "string"
 
 fn main(args byte[][]) {
-	var a i64 := 0o777
+	a i64 := 0o777
 	string.puti(a)
 	string.puts("\n")
-	var b i64 := 0o644
+	b i64 := 0o644
 	string.puti(b)
 	string.puts("\n")
-	var c i64 := 0o0
+	c i64 := 0o0
 	string.puti(c)
 	string.puts("\n")
 }

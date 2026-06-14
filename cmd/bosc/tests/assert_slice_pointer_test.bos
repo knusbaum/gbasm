@@ -12,9 +12,9 @@ import "string"
 // fails the shape check. That distinction is what the second line pins.
 fn main() i64 {
 	var s byte[] := "hi"
-	var b any := &s
+	b any := &s
 	string.puts("coerced ")
-	var q *byte[], var ok bool := b.(*byte[])
+	q *byte[], ok bool := b.(*byte[])
 	if (ok) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
 	return 0

@@ -15,13 +15,13 @@ interface Getter {
 }
 fn passthrough(g Getter) Getter { return g }
 fn show(b *box) i64 {
-	var g Getter := b
-	var h Getter := passthrough(g)
+	g Getter := b
+	h Getter := passthrough(g)
 	return h.get()
 }
 fn main() i64 {
 	var bxv box := box{val: 5}
-	var v i64 := show(&bxv)
+	v i64 := show(&bxv)
 	string.puti(v)
 	string.puts("\n")
 	return 0

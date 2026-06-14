@@ -23,6 +23,6 @@ fn show(e error_ptr) {
 }
 
 fn main() {
-	var e error_ptr := my_err(1)
+	e error_ptr := my_err(1)
 	show(e)
 }

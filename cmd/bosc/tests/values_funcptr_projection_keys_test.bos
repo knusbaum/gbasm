@@ -16,5 +16,5 @@ type v values (fn() i64, fn(i64) i64) {
 }
 
 fn main() {
-	var e v := v.A
+	e v := v.A
 }

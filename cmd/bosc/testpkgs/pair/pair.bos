@@ -21,6 +21,6 @@ pub fn sum(p pair) i64 {
 // calls. (Struct returns happen by-pointer in the existing ABI;
 // this function exists so the import side compiles end-to-end.)
 pub fn make_pair(x i64, y i64) pair {
-	var p pair := pair{a: x, b: y}
+	p pair := pair{a: x, b: y}
 	return p
 }

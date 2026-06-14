@@ -9,7 +9,7 @@ fn commit(id owned i64) {
 }
 
 fn main() {
-	var ticket owned i64 := 1001
+	ticket owned i64 := 1001
 	commit(ticket) // ticket's obligation moves into commit
 	fmt.print("done\n")
 }

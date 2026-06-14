@@ -16,7 +16,7 @@ type word struct { tag i64 } {
 
 fn main() i64 {
 	var w word := word{tag: 1}
-	n, var err := fmt.print("first=%d", 1, 2, &w)
+	n, err := fmt.print("first=%d", 1, 2, &w)
 	string.putc(10)
 	if (err != io.io_err.OK) {
 		string.puts("surplus latched\n")
