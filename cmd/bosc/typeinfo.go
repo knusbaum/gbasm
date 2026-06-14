@@ -146,12 +146,12 @@ type methodEntry struct {
 // rejected rather than silently truncated (D0).
 const borrowMaskBound = 64
 
-// borrowMasksFor builds the per-slot bitmasks for method m from its inferred
-// ReturnAliases (receiver = bit 0). Returns nil when m borrows nothing.
-// Panics (compile error at m's site) if a borrowed parameter index exceeds the
-// 64-bit mask width.
-func borrowMasksFor(c *Context, m *FuncDecl) []uint64 {
-	aliases := aliasSet(c, m)
+// slotBitmasksFromAliases builds the per-slot borrow bitmasks (receiver =
+// bit 0) for a ReturnAliases set, shared by the impl (typedesc) and declared
+// (iface_desc) sides. Returns nil when nothing borrows. The methodName/pos are
+// only used for the >64-parameter overflow error, which is a hard compile
+// error rather than a silent truncation (D0).
+func slotBitmasksFromAliases(aliases [][]int, methodName string, pos position) []uint64 {
 	masks := make([]uint64, len(aliases))
 	any := false
 	for slot, params := range aliases {
@@ -159,8 +159,8 @@ func borrowMasksFor(c *Context, m *FuncDecl) []uint64 {
 		for _, p := range params {
 			if p < 0 || p >= borrowMaskBound {
 				panic(&interpreterError{
-					msg: fmt.Sprintf("method %s borrows parameter %d, beyond the %d-parameter limit for borrow contracts", m.Name, p, borrowMaskBound),
-					p:   m.p,
+					msg: fmt.Sprintf("method %s borrows parameter %d, beyond the %d-parameter limit for borrow contracts", methodName, p, borrowMaskBound),
+					p:   pos,
 				})
 			}
 			mask |= 1 << uint(p)
@@ -176,6 +176,12 @@ func borrowMasksFor(c *Context, m *FuncDecl) []uint64 {
 	return masks
 }
 
+// borrowMasksFor builds the *impl* per-slot bitmasks for method m from its
+// inferred ReturnAliases.
+func borrowMasksFor(c *Context, m *FuncDecl) []uint64 {
+	return slotBitmasksFromAliases(aliasSet(c, m), m.Name, m.p)
+}
+
 // reqEntry is one row of an iface_desc required-method table.
 type reqEntry struct {
 	name     string
@@ -183,6 +189,10 @@ type reqEntry struct {
 	nameHash uint64
 	sigHash  uint64
 	declIdx  int // declaration index, used to place the fn in the itab vtable
+	// masks is the interface method's *declared* per-slot borrow descriptor
+	// (from `from(...)`); nil = declares no borrow. Emitted as trailing tokens
+	// on the iface_desc `method` line; the declared side of assert_to's ⊆ gate.
+	masks []uint64
 }
 
 // typedescDirectiveName returns the directive symbol name for a base type's
@@ -238,8 +248,8 @@ func emitIfaceDescStructured(of io.Writer, isPub bool, ifaceName string, reqs []
 	fmt.Fprintf(of, "%siface_desc %s {\n", pubPrefix(isPub), name)
 	fmt.Fprintf(of, "\tname \"%s\"\n", ifaceName)
 	for _, r := range reqs {
-		fmt.Fprintf(of, "\tmethod %s %s %d %d %d\n",
-			r.name, basQuoteSig(r.sig), r.nameHash, r.sigHash, r.declIdx)
+		fmt.Fprintf(of, "\tmethod %s %s %d %d %d%s\n",
+			r.name, basQuoteSig(r.sig), r.nameHash, r.sigHash, r.declIdx, formatMaskTokens(r.masks))
 	}
 	fmt.Fprintf(of, "}\n")
 }
@@ -323,6 +333,7 @@ func reqEntriesForInterface(c *Context, iface *InterfaceDecl) []reqEntry {
 			nameHash: fnv1a64(m.Name),
 			sigHash:  fnv1a64(sig),
 			declIdx:  i,
+			masks:    slotBitmasksFromAliases(m.ReturnAliases, m.Name, m.p),
 		})
 	}
 	return out

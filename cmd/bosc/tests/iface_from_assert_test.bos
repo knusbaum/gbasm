@@ -1,0 +1,26 @@
+package main
+import "string"
+
+// 5a-declared: asserting a borrowing value to a `from`-declaring interface
+// must SUCCEED. W.bytes borrows self ({0}); viewer declares from(self) ({0});
+// the iface_desc now carries that declared mask, so assert_to's ⊆ check
+// (impl {0} ⊆ declared {0}) admits the itab. Without the declared mask the
+// assertion would wrongly fail (declared ∅).
+interface viewer { bytes(self *self) byte[] from(self) }
+type W struct { buf byte[] } {
+	bytes(w *W) byte[] { return w.buf }
+}
+
+fn main() i64 {
+	var w W = W{buf: "hi"}
+	var a any = &w
+	var v viewer, var ok bool = a.(viewer)
+	if (ok) {
+		const r byte[] = v.bytes()
+		string.puts(r)
+	} else {
+		string.puts("REJECTED")
+	}
+	string.putc(10)
+	return 0
+}

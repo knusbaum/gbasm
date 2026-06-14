@@ -116,3 +116,26 @@ func TestInterfaceNoFromClause(t *testing.T) {
 	sig := ifaceMethodForTest(t, ctx, "plain", "foo")
 	assert.Nil(t, sig.ReturnAliases)
 }
+
+// TestIfaceDescDeclaredMasks pins the 5a-declared emission: the iface_desc
+// req entry for a `from`-declaring method carries the declared per-slot
+// bitmask (from(self) -> [[0]] -> mask bit 0 -> 1), while a non-declaring
+// method carries none. This is the declared side of assert_to's ⊆ gate.
+func TestIfaceDescDeclaredMasks(t *testing.T) {
+	ctx := toASTForTest(t, `
+interface viewer { bytes(self *self) byte[] from(self) }
+interface plain { bytes(self *self) byte[] }`)
+	reqMasks := func(iface string) []uint64 {
+		d, ok := ctx.InterfaceForName(iface)
+		if !ok {
+			t.Fatalf("interface %q not defined", iface)
+		}
+		reqs := reqEntriesForInterface(ctx, d)
+		if len(reqs) != 1 {
+			t.Fatalf("%s: want 1 req, got %d", iface, len(reqs))
+		}
+		return reqs[0].masks
+	}
+	assert.Equal(t, []uint64{1}, reqMasks("viewer"), "from(self) should declare mask bit 0")
+	assert.Nil(t, reqMasks("plain"), "no from clause should declare no mask")
+}
