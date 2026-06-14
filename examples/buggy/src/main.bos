@@ -26,7 +26,7 @@ fn blowstack() {
 }
 
 fn main(args byte[][]) {	
-	const e = do_a_thing()
+	e := do_a_thing()
 	fmt.str(&io.STDOUT, e.message())
 	e.destroy()
 

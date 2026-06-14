@@ -30,7 +30,7 @@ fn do_helloer(h helloer) {
 }
 
 fn main(args byte[][]) {
-	var t thingy = 100
+	var t thingy := 100
 	do_helloer(&t)
 	t = 20
 	do_helloer(&t)

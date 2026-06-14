@@ -9,25 +9,25 @@ type node struct {
 }
 
 fn list_new(val i64) owned *owned mut node {
-	const n owned *owned mut node = new(node{val: val, next: nil})
+	n owned *owned mut node := new(node{val: val, next: nil})
 	return n
 }
 
 fn list_append(l *mut node, val i64) {
-	const n owned *owned mut node = owned(alloc(node))
+	n owned *owned mut node := owned(alloc(node))
 	n.val = val
 
-	var curr *mut node = l
+	var curr *mut node := l
 	for(; curr.next != nil; curr = curr.next?) {}
 	curr.next = n
 	dispose(n)
 }
 
 fn list_print(l *node) {
-	var curr *?node = l
+	var curr *?node := l
 	fmt.str(&io.STDOUT, "[")
 	for(; curr != nil; curr = curr?.next) {
-		var cur *node = curr?
+		var cur *node := curr?
 		fmt.int(&io.STDOUT, cur.val)
 		if(cur.next != nil) {
 			fmt.str(&io.STDOUT, ", ")
@@ -37,7 +37,7 @@ fn list_print(l *node) {
 }
 
 fn list_destroy(l owned *owned mut node) {
-	var curr owned *owned mut node = l
+	var curr owned *owned mut node := l
 	var next owned *?owned mut node
 	for(;;) {
 		next = curr.next
@@ -51,7 +51,7 @@ fn list_destroy(l owned *owned mut node) {
 }
 
 fn main(args byte[][]) {
-	const lst owned *owned mut node = list_new(10)
+	lst owned *owned mut node := list_new(10)
 	list_append(lst, 20)
 	list_append(lst, 30)
 	list_print(lst)
