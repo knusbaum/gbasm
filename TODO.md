@@ -23,11 +23,42 @@ for the never-reassigned and unused-binding checks — trivial if it
 desugars to `x = x <op> v`; otherwise one `markMutRelied` + `markUsed`
 call on the target.
 
-### Bitwise operator completeness  *(noticed, not yet requested)*
-Only `&` and `|` are tokens. Missing: `^` (xor), `<<` / `>>` (shifts),
-`~` (bitwise not). Found while writing the integers tour lesson — the
-lesson currently states only `&` and `|` exist, which is accurate but
-thin.
+### Operator completeness
+Several expected operators don't exist as tokens yet:
+- `%` (modulo) — remainder must currently be written `a - q*b` (see the
+  `divmod` multi-return example/tour lesson).
+- `^` (bitwise xor), `<<` / `>>` (shifts), `~` (bitwise not) — only `&`
+  and `|` exist.
+
+Worth doing as one pass so the arithmetic/bitwise surface is complete.
+
+### Floating-point types
+No floats yet (`f32` / `f64`). The lexer already accepts decimal-point
+syntax but **truncates** the fractional part. Needs: the types, literal
+support, codegen (SSE), casts to/from integers, and print verbs (`%f`).
+The integers tour lesson currently has to say "there are no
+floating-point types yet" — revisit it when this lands.
+
+---
+
+## Tooling
+
+### Code formatter (`go fmt`-style)
+A canonical, opinionated formatter for `.bos` source — no config, one
+true layout, like `gofmt`. Would also give the editor integrations
+(`boson-mode.el`, future LSP) a format-on-save target. Decide on a name
+(`bosfmt`? a `fmt` subcommand of a future `bos` driver?).
+
+---
+
+## Runtime / Codegen
+
+### Read-only `.rodata` hardening
+String constants currently land in the writable `.data` LOAD segment;
+their immutability is enforced only at the source level, not by hardware.
+DESIGN flags this as "a future hardening pass": split `.data` and
+`.rodata` into separate LOAD segments (touches `elf64.go` / `linker.go`)
+so string-constant immutability is hardware-enforced.
 
 ---
 
