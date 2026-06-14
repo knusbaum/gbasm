@@ -67,7 +67,7 @@ Named struct types are declared with `type Name struct { ... }` (see [Type alias
 
 ```
 fn divide(a i64, b i64) struct { quot i64, rem i64 } {
-    var q i64 = a / b
+    var q i64 := a / b
     return { quot: q, rem: a - q * b }
 }
 
@@ -86,7 +86,7 @@ Three orthogonal qualifiers can apply to types:
 - **`?` on pointers** — nullability marker. `*T` is non-null; `*?T` may be `nil`. Non-null pointers can be used where nullable pointers are expected. Nullable pointers require a proof or assertion before non-null use: `if (p) { ... }` narrows `p` to non-null inside the true branch, `if (!p) { ... } else { ... }` narrows it in the else branch, and postfix `p?` inserts a runtime nil check and produces a non-null pointer.
 - **`?` on interfaces** — same marker. `T` (interface) is always valid; `?T` may be null (vtable = 0). A non-nullable interface can't be constructed null, so the *only* producer of a null interface is a fallible cast (see [type assertion](#interface-to-interface-assertion)), which yields `?T`. A `?T` must be narrowed before dispatch — `if (k != nil) { k.method() }` narrows `?T → T` in the true branch (a vtable-`!= 0` test) — and dispatching, or asserting/widening from, an un-narrowed `?T` is rejected, exactly like dereferencing a `*?` pointer.
 - **`owned`** — compile-time ownership obligation that must be discharged before the variable goes out of scope. See [Ownership](#ownership).
-- **`const` / `var`** — binding mutability: whether the named binding itself can be rebound. Distinct from `mut`. Defaults: `const` for function parameters (use `var` to opt out), explicit on local declarations.
+- **`:=` / `var`** — binding mutability: a binding is introduced with `:=` and is immutable; `var` makes it reassignable. Distinct from `mut`. Immutable is the default everywhere — bare `:=` locals and globals, and unmarked parameters; `var` is the opt-in for reassignment.
 
 ### Type syntax: parenthesized groups
 
@@ -104,9 +104,9 @@ type Tag i16
 Casts use the type name as a function:
 
 ```
-var fd FD = FD(3)         // i64 literal → FD
-var n  i64 = i64(fd)      // FD → i64 (same bits)
-var t  Tag = Tag(n)       // i64 → Tag (truncating)
+var fd FD := FD(3)         // i64 literal → FD
+var n  i64 := i64(fd)      // FD → i64 (same bits)
+var t  Tag := Tag(n)       // i64 → Tag (truncating)
 ```
 
 Integer literals coerce naturally. Widening (signed source → larger type) uses sign-extension; widening (unsigned source → larger type) uses zero-extension; same-size cast is a reinterpretation; narrowing truncates.
@@ -130,7 +130,7 @@ Struct field access uses `.` for both direct structs and pointer-to-struct (`p.x
 Postfix `?` asserts that a nullable pointer is non-null:
 
 ```
-var p *?node = ...
+var p *?node := ...
 if (p) {
     use(p)       // p is treated as *node in this branch
 }
@@ -146,12 +146,12 @@ Slice operations: `s[lo:hi]`, `s[lo:]`, `s[:hi]` produce new slice headers witho
 ### Statements
 
 ```
-var x i64                 // declaration without initializer
-var x i64 = 42            // declaration with initializer
-var x = 42                // type inferred from initializer (i64)
-const y i64 = 100         // const binding (must be initialized)
-const y = 100             // const binding with inferred type
-x = 10                    // assignment
+var x i64                 // mutable declaration without initializer
+var x i64 := 42           // mutable declaration with initializer
+var x := 42               // mutable, type inferred from initializer (i64)
+y i64 := 100              // immutable binding, typed (must be initialized)
+y := 100                  // immutable binding, inferred type
+x = 10                    // assignment (':=' declares, '=' assigns)
 p.x = i + 1               // field assignment
 *p = 5                    // write-through (requires p: *mut T)
 
@@ -167,38 +167,42 @@ return a, b               // multi-value return
 dispose(x)                // consume an owned binding (see Ownership)
 ```
 
+**Declarations vs. assignment.** `:=` *introduces* a binding (immutable, or `var` for mutable); `=` *assigns* to one that already exists. A bare `name = expr` whose name is not in scope is an error, not an implicit declaration — so the operator records intent and a forgotten declaration is caught at the site.
+
+**Expression statements must have an effect.** A statement-position expression is legal only if it is a function call. A bare value expression with no effect — `x * y`, `5 + 3`, or the common `x == 5` written where `x = 5` was meant — is rejected (`expression statement has no effect; only function calls are valid as statements`). Declarations, assignments, control flow, and `dispose`/`free` are statements in their own right; only stray *values* are rejected.
+
 **Multi-value return and destructuring bind.** A function may return more than one value by listing the return types comma-separated:
 
 ```
 fn divide(a i64, b i64) i64, i64 {
-    var q i64 = a / b
+    var q i64 := a / b
     return q, a - q * b
 }
 ```
 
-The call site binds all returned values in a single declaration. Each bind position is independent — names may be inferred or typed, and individual binds may be `var` or `const`:
+The call site binds all returned values in a single declaration. Each bind position is independent — names may be inferred or typed, and `var` applies per target (an unmarked target is immutable):
 
 ```
-var q, rem = divide(17, 5)                          // both inferred i64
-var q2 i64, const rem2 i64 = divide(100, 7)         // explicit types, mixed const/var
+q, rem := divide(17, 5)                        // both inferred i64, both immutable
+var q2 i64, rem2 i64 := divide(100, 7)         // explicit types, q2 mutable, rem2 immutable
 ```
 
-A name in the bind list may already exist in the enclosing scope — the existing binding is reused (re-assigned). This is how the `(value, err)` pattern composes across calls without forcing fresh names every time:
+A name in the bind list may already exist in the enclosing scope — the existing binding is reused (re-assigned). This is how the `(value, err)` pattern composes across calls without forcing fresh names every time (the reused target must be `var`):
 
 ```
-var f, err = io.open(path1, io.O_RDONLY, 0)
+var f, var err := io.open(path1, io.O_RDONLY, 0)
 if (err != 0) { ... }
 f, err = io.open(path2, io.O_RDONLY, 0)             // err re-binds the existing variable
 ```
 
 A single-name bind to a multi-return function is rejected — the count of binds must match the count of returns.
 
-**Type inference for `var`/`const`.** When the type slot is omitted, the binding's type is inferred from the initializer. Untyped integer literals infer as `i64`; expressions whose type cannot be expressed as a value (a `void` call, the `nil` literal) are rejected with a directed error.
+**Type inference.** When the type slot is omitted, the binding's type is inferred from the initializer. Untyped integer literals infer as `i64`; expressions whose type cannot be expressed as a value (a `void` call, the `nil` literal) are rejected with a directed error.
 
 ```
-var p = alloc(i64)            // owned *mut i64
-var r = divide(17, 5)         // struct { quot i64, rem i64 }
-var n = some_void_call()      // COMPILE ERROR: cannot infer from void expression
+var p := alloc(i64)            // owned *mut i64
+var r := divide(17, 5)         // struct { quot i64, rem i64 }
+var n := some_void_call()      // COMPILE ERROR: cannot infer from void expression
 ```
 
 `for` loops are source-level sugar. The compiler lowers them to a block containing the initializer and an unconditional loop with an explicit conditional `break`, body, and step. `continue` inside a lowered `for` carries the step expression so loop ownership and nullability checks use the same control-flow machinery as other blocks and branches.
@@ -273,7 +277,7 @@ The compiler emits fully-qualified call symbols (`io.puts`, `string.strlen`) so 
 ```
 import "pair"
 
-var p pair.pair = pair.pair{a: 3, b: 4}   // type and literal use pkg.Name
+var p pair.pair := pair.pair{a: 3, b: 4}   // type and literal use pkg.Name
 string.puti(pair.sum(p))                  // call takes pair.pair, transparent
 ```
 
@@ -290,13 +294,13 @@ import "io"
 
 fn main() {
     string.puts("hello\n")
-    var f = io.STDIN          // read a cross-package var
+    var f := io.STDIN          // read a cross-package var
 }
 ```
 
-Cross-package var access follows the usual mutability rules: `var` declarations are readable and writable by importers; `const` declarations are read-only. Boson does not impose an extra access-control rule on cross-package vars beyond what the producer's `var`/`const` keyword already says — protection against unwanted external mutation comes from whether the package exports the binding at all (a visibility system, when one exists) or from the producer exposing only function-mediated accessors. (Cross-package `const` enforcement currently relies on the consumer-side declaration: the `.bo` format does not yet carry the producer's `IsConst` flag, so writes to a producer-declared `const` from an importer compile until that flag is plumbed through.)
+Cross-package var access follows the usual mutability rules: mutable (`var`) declarations are readable and writable by importers; immutable declarations are read-only. Boson does not impose an extra access-control rule on cross-package vars beyond what the producer's mutability already says — protection against unwanted external mutation comes from whether the package exports the binding at all (a visibility system, when one exists) or from the producer exposing only function-mediated accessors. (Cross-package immutability enforcement currently relies on the consumer-side declaration: the `.bo` format does not yet carry the producer's `IsConst` flag, so writes to a producer-declared immutable global from an importer compile until that flag is plumbed through.)
 
-Owned types are not allowed at file scope. A global never goes out of scope, so the end-of-scope move check that gives `owned` its teeth can never fire; a `dispose()` inside a function isn't visible elsewhere either. `var x owned …` and `const x owned …` at the top level are rejected.
+Owned types are not allowed at file scope. A global never goes out of scope, so the end-of-scope move check that gives `owned` its teeth can never fire; a `dispose()` inside a function isn't visible elsewhere either. `var x owned …` and `x owned … :=` at the top level are rejected.
 
 **The `builtin` package.** A single package, `builtin`, is auto-imported into every compilation unit (except `builtin` itself). It contains the `error` and `any` interfaces, the built-in scalar typedescs (`__typedesc_i64`, `__typedesc_byte`, …), and serves as the home for declarations that need to be visible without an explicit `import`. The `-listimports` driver always emits `builtin` first, so the build system pulls in `target/builtin.bo` automatically. Bare references to `error` and `any` resolve to `builtin.error` / `builtin.any` the same way an explicitly imported package's interface would, but without requiring `import "builtin"` at the top of every file.
 
@@ -393,20 +397,20 @@ Because a slice (16 bytes) cannot be coerced into an interface by value, `byte[]
 ```
 type point struct { x i64, y i64, z i64 }
 
-var p point = point{ x: 10, y: 20, z: 30 }
+var p point := point{ x: 10, y: 20, z: 30 }
 ```
 
 Struct literals are context-typed. Omitted fields are zero-initialized only if the field's type is zero-initializable. Non-null pointer fields are not zero-initializable and must be provided explicitly.
 
-**Bare struct literals.** A `{ field: val, ... }` form without a leading type name is legal at any site where the destination shape is known: return statements, typed `var`/`const` initializers, assignments to a struct-typed lvalue, and function arguments whose parameter type is a struct. The literal takes the destination's struct shape. Using a bare literal where no shape is in scope (e.g. as an unbound expression) is a compile error.
+**Bare struct literals.** A `{ field: val, ... }` form without a leading type name is legal at any site where the destination shape is known: return statements, typed `:=` and `var` initializers, assignments to a struct-typed lvalue, and function arguments whose parameter type is a struct. The literal takes the destination's struct shape. Using a bare literal where no shape is in scope (e.g. as an unbound expression) is a compile error.
 
 ```
 fn divide(a i64, b i64) struct { quot i64, rem i64 } {
-    var q i64 = a / b
+    var q i64 := a / b
     return { quot: q, rem: a - q * b }     // shape from return type
 }
 
-var r struct { quot i64, rem i64 } = { quot: 1, rem: 0 }
+var r struct { quot i64, rem i64 } := { quot: 1, rem: 0 }
 r = { quot: 99, rem: 1 }                   // shape from lvalue
 ```
 
@@ -430,9 +434,9 @@ The ownership system enforces these invariants at compile time. It is not a secu
 `owned` can be applied to any type regardless of where the value lives:
 
 ```
-var fd owned i64 = open(...)        // stack i64, carries an obligation
-var t  owned transaction = ...      // stack struct, carries an obligation
-var p  owned *whatever = alloc(...) // heap pointer, carries an obligation
+var fd owned i64 := open(...)        // stack i64, carries an obligation
+var t  owned transaction := ...      // stack struct, carries an obligation
+var p  owned *whatever := alloc(...) // heap pointer, carries an obligation
 ```
 
 Ownership obligations are orthogonal to memory location. A file descriptor is just an integer on the stack, but it has an obligation. A heap pointer has a memory obligation. Neither implies the other.
@@ -442,7 +446,7 @@ Ownership obligations are orthogonal to memory location. A file descriptor is ju
 An owned value is created by declaring it with `owned`:
 
 ```
-var t owned transaction = transaction{ socket = open_socket() }
+var t owned transaction := transaction{ socket = open_socket() }
 ```
 
 The obligation begins at the point of declaration. Any code that can construct a `T` can create an `owned T`. Whether external code can construct a `T` at all is a matter of field visibility — a separate concern from ownership.
@@ -467,7 +471,7 @@ fn do_something(fd i64) void {
 }
 
 fn main() {
-    const fd owned i64 = open(...)
+    fd owned i64 := open(...)
     do_something(fd)   // owned i64 coerces to i64 — obligation stays with caller
     read(fd, ...)      // still valid
     close(fd)          // owned in parameter — fd is moved, now invalid
@@ -480,7 +484,7 @@ fn main() {
 After a variable is moved into a consuming function, it is **invalid** for the remainder of its scope. The compiler refuses any use of it — reading, writing, or passing it anywhere.
 
 ```
-const t owned transaction = create_transaction(...)
+t owned transaction := create_transaction(...)
 commit_transaction(t)   // t moved — invalid
 abort_transaction(t)    // COMPILE ERROR: t already moved
 ```
@@ -488,7 +492,7 @@ abort_transaction(t)    // COMPILE ERROR: t already moved
 `var` bindings can be re-established after a move by assigning a new value:
 
 ```
-var fd owned i64 = open(...)
+var fd owned i64 := open(...)
 close(fd)           // fd invalid
 fd = open(...)      // fd valid again — new obligation
 close(fd)
@@ -497,7 +501,7 @@ close(fd)
 The re-init form also accepts a struct literal of the matching shape, mirroring how the first initialization works:
 
 ```
-var f owned foo = foo{x: 1}
+var f owned foo := foo{x: 1}
 dispose(f)
 f = foo{x: 20}      // re-init via struct literal, no owned(...) wrapper needed
 dispose(f)
@@ -506,19 +510,19 @@ dispose(f)
 Re-initialization is rejected while any **live owned alias** still references the binding's storage. The check uses the pointer-flow tracker: an alias is `&f` (or a struct field that copied `&f`) bound to an owned type whose obligation has not yet been consumed. Borrowed `*T` aliases do not block re-init — they carry no cleanup responsibility, so observing the new value through them is memory-safe.
 
 ```
-var f owned foo = foo{x: 1}
-var fp *owned foo = &f
+var f owned foo := foo{x: 1}
+var fp *owned foo := &f
 f = foo{x: 20}        // COMPILE ERROR: fp still owns f's storage
 dispose(fp)
 
-var f owned foo = foo{x: 1}
-var fp *owned foo = &f
+var f owned foo := foo{x: 1}
+var fp *owned foo := &f
 dispose(fp)           // fp consumed; alias is no longer live
 f = foo{x: 20}        // ok
 dispose(f)
 ```
 
-`const` bindings cannot be re-established — once moved, they remain invalid for the rest of the scope.
+Immutable (`:=`) bindings cannot be re-established — once moved, they remain invalid for the rest of the scope.
 
 The compiler tracks invalidity across all control flow paths. A variable that is moved on one branch but not another is rejected at the branch join:
 
@@ -581,7 +585,7 @@ A caller who calls `process(start())` holds `owned U` and must reach `finalize` 
 Multiple `owned` qualifiers can exist at different levels of indirection in the same type:
 
 ```
-var tr owned *owned transaction = alloc(transaction)
+var tr owned *owned transaction := alloc(transaction)
 ```
 
 `tr` carries two independent obligations: memory (the `owned *`) and the transaction state machine (the inner `owned transaction`).
@@ -616,9 +620,9 @@ Ownership is unique, but access may alias. The compiler separates these two idea
 For example:
 
 ```
-const n owned *owned mut node = new(node{...})
-const a *mut node = n
-const b *mut node = a
+n owned *owned mut node := new(node{...})
+a *mut node := n
+b *mut node := a
 
 b.val = 10       // mutates the object; ownership still belongs to n
 free(n)          // consumes n's allocation obligation
@@ -633,15 +637,15 @@ type box struct {
 }
 
 fn bad(b owned *owned mut box) {
-    const alias *mut box = b
-    var child owned *?owned mut node = b.child
+    alias *mut box := b
+    var child owned *?owned mut node := b.child
     alias.child = nil       // may have overwritten the field whose obligation was moved
     free(b)                 // COMPILE ERROR: b.child fact was invalidated
 }
 
 fn ok(b owned *owned mut box) {
-    const alias *mut box = b
-    var child owned *?owned mut node = b.child
+    alias *mut box := b
+    var child owned *?owned mut node := b.child
     alias.val = 10          // does not touch owned storage
     free(b)                 // allowed if all owned fields are known consumed
     if (child) { free(child) }
@@ -653,8 +657,8 @@ The compiler tracks pointer aliases by origin. A pointer created by `new` or `al
 Pointer-to-pointer aliases are tracked as aliases to pointer slots:
 
 ```
-var alias *mut box = b
-var slot *mut *mut box = &alias
+var alias *mut box := b
+var slot *mut *mut box := &alias
 *slot = other
 alias.val = 1       // now affects other, not b
 ```
@@ -748,7 +752,7 @@ Struct literals are context-typed. When a literal initializes or returns an owne
 
 ```
 fn make_box() owned box {
-    var x owned i64 = 42
+    var x owned i64 := 42
     return box{ x: x, y: 10 }
 }
 ```
@@ -769,7 +773,7 @@ A **non-null owned pointer field** may now be moved out of an owned aggregate, s
 - **Re-initialization** restores consistency: assigning to a moved-out field (`f.a = new(...)`) is legal and marks it live again; once no non-null owned field is consumed, the aggregate may escape normally. Assigning to a *live* owned field is still rejected (it would leak its current value):
 
 ```
-var b owned box = make_box()       // box{ x owned i64 }
+var b owned box := make_box()       // box{ x owned i64 }
 b.x = 1                            // COMPILE ERROR: assign to live owned field; consume it first
 ```
 
@@ -784,7 +788,7 @@ type node struct {
 }
 
 fn destroy_one(n owned *owned mut node) owned *?owned mut node {
-    var next owned *?owned mut node = n.next  // consumes n.next, sets n.next = nil
+    var next owned *?owned mut node := n.next  // consumes n.next, sets n.next = nil
     free(n)                                  // allowed: n.next is known consumed
     return next
 }
@@ -825,8 +829,8 @@ fn destroy_whatever(w *owned whatever) void {
 }
 
 fn main() {
-    const w  owned *whatever = alloc(whatever)     // memory obligation in w
-    const w2 *owned whatever = create_whatever(w)  // whatever obligation in w2
+    w  owned *whatever := alloc(whatever)     // memory obligation in w
+    w2 *owned whatever := create_whatever(w)  // whatever obligation in w2
 
     // w and w2 alias the same memory, but carry separate obligations.
     // The type system tracks them independently.
@@ -848,7 +852,7 @@ For the common cases — stack-owned values and heap-owned values with bundled o
 Nullable owned pointers are useful for data structures because they provide a clear "empty" value when moving ownership out of fields:
 
 ```
-var next owned *?owned mut node = curr.next
+var next owned *?owned mut node := curr.next
 ```
 
 The source field becomes `nil`, so there is never a second owned pointer to the same allocation. Flow analysis also understands boolean checks on nullable pointers:
@@ -877,8 +881,8 @@ Coercion creates an alias, not a duplicate obligation. To produce a second indep
 fn copy(x *T) owned T { ... }   // borrows x (no owned), returns a new obligation
 
 fn main() {
-    const fd  owned i64 = open(...)
-    const fd2 owned i64 = copy(&fd)   // fd borrowed — still valid. fd2 is new.
+    fd  owned i64 := open(...)
+    fd2 owned i64 := copy(&fd)   // fd borrowed — still valid. fd2 is new.
     close(fd)
     close(fd2)
 }
@@ -916,7 +920,7 @@ fn destroy_node(n owned *owned mut node) void {
 }
 
 fn main() {
-    const n owned *owned mut node = new(node{...})
+    n owned *owned mut node := new(node{...})
     print_node(n)       // borrow; n remains owned by caller
     destroy_node(n)     // move; n is invalid after this call
 }
@@ -1030,7 +1034,7 @@ Read-only borrows preserve facts:
 fn inspect(b *box) i64 { return b.val }
 
 fn destroy(b owned *owned mut box) {
-    var child owned *?owned mut node = b.child
+    var child owned *?owned mut node := b.child
     inspect(b)       // read-only borrow; b.child fact remains valid
     free(b)
     if (child) { free(child) }
@@ -1043,7 +1047,7 @@ Mutable borrows are conservative across function calls because the callee body m
 fn touch(b *mut box) { b.val = b.val + 1 }
 
 fn destroy(b owned *owned mut box) {
-    var child owned *?owned mut node = b.child
+    var child owned *?owned mut node := b.child
     touch(b)         // may have written owned fields; b.child fact invalidated
     free(b)          // COMPILE ERROR
 }
@@ -1055,21 +1059,21 @@ Direct field writes are more precise: writing a non-owned field such as `b.val` 
 
 Boson has two orthogonal axes of mutability. They are independent and compose cleanly.
 
-### Axis 1: Binding mutability (`const` / `var`)
+### Axis 1: Binding mutability (`:=` / `var`)
 
-Every binding is either constant or variable. This controls whether the binding itself can be rebound.
+Every binding is either immutable or mutable; this controls whether the binding itself can be rebound. A binding is introduced with `:=` and is **immutable by default** — mutability is the marked, opt-in case, because immutability is the common, safe one. Mark a binding `var` when you need to reassign it.
 
 ```
-const x i16 = 100   // x cannot be reassigned
-var x i16 = 100     // x can be reassigned
+x i16 := 100         // immutable: x cannot be reassigned
+var x i16 := 100     // mutable: x can be reassigned
 
-const myfoo foo = foo{ x: 10, y: &x }   // myfoo's fields cannot be directly written
-var myfoo foo                            // myfoo's fields can be directly written
+myfoo foo := foo{ x: 10, y: &x }       // immutable: myfoo's fields can't be written
+var myfoo foo := foo{ x: 10, y: &x }   // mutable: myfoo's fields can be written
 ```
 
-`const` and `var` apply uniformly to all types — integers, structs, pointers, slices.
+Immutable-by-default and the `var` opt-out apply uniformly to all types — integers, structs, pointers, slices.
 
-Function parameters are `const` by default. A parameter that needs to be reassigned within the function body must be declared `var`.
+Function parameters are immutable by default. A parameter that needs to be reassigned within the function body must be declared `var` (`fn f(var x i64)`).
 
 ### Axis 2: Write-through mutability (`*mut T`, `mut T[]`)
 
@@ -1083,7 +1087,7 @@ T[]       // slice: cannot write through (elements are read-only)
 mut T[]   // slice: can write through (elements are writable)
 ```
 
-A `const` binding to a `*mut T` cannot be rebound, but can still write through the pointer. A `var` binding to a `*T` can be rebound to a different pointer, but cannot write through it.
+An immutable binding to a `*mut T` cannot be rebound, but can still write through the pointer. A `var` binding to a `*T` can be rebound to a different pointer, but cannot write through it.
 
 `mut` as a type qualifier is meaningless on non-reference types. The compiler rejects `mut i16` as a standalone type — there is no indirection involved.
 
@@ -1106,7 +1110,7 @@ type foo struct {
     y *mut i16    // y points to a mutable i16
 }
 
-const myfoo foo = ...
+myfoo foo := ...
 
 myfoo.x = 10    // illegal — myfoo is const, field cannot be written
 myfoo.y = &z    // illegal — myfoo is const, field cannot be rebound
@@ -1129,8 +1133,8 @@ Assignment through `*p` checks mutability of the immediate pointee slot, not the
 The write-through permission of a pointer obtained via `&` matches the binding mutability of the source:
 
 ```
-var x i16 = 5
-const y i16 = 5
+var x i16 := 5
+y i16 := 5
 
 &x   // *mut i16 — x is var, so you get a write-through pointer
 &y   // *i16     — y is const, so you get a read-only pointer
@@ -1145,22 +1149,22 @@ The same rule applies to struct fields: `&myfoo.x` yields `*mut i16` if `myfoo` 
 Owned bindings have one extra rule. Taking a mutable address of an owned binding is rejected, because it would expose the owner slot itself and allow code to overwrite the obligation without consuming it:
 
 ```
-var a owned *owned mut thing = new(thing{...})
-var slot *mut *mut thing = &a      // COMPILE ERROR
+var a owned *owned mut thing := new(thing{...})
+var slot *mut *mut thing := &a      // COMPILE ERROR
 ```
 
 `&` of an owned binding preserves the owned bits in the resulting pointer type. Whether the result acts as a borrow or as an ownership transfer is determined entirely by the destination type:
 
 ```
-var x owned foo = make_foo()
+var x owned foo := make_foo()
 
 inspect(&x)                  // param is *foo: Accepts strips owned, x stays owned (borrow)
-var y *owned foo = &x        // dest is *owned foo: x is moved; y now carries the obligation
+var y *owned foo := &x        // dest is *owned foo: x is moved; y now carries the obligation
 dispose(y)                   // discharges through y
 // x is no longer usable
 
-const a owned *owned mut thing = new(thing{...})
-const slot *owned *owned mut thing = &a     // const owned ptr: a is moved into slot
+a owned *owned mut thing := new(thing{...})
+slot *owned *owned mut thing := &a     // const owned ptr: a is moved into slot
 free(slot)
 ```
 
@@ -1188,9 +1192,9 @@ A function-pointer type `fn(args) ret` is a pointer-sized slot holding the addre
 ```
 fn add(x i64, y i64) i64 { return x + y }
 
-var op fn(i64, i64) i64 = &add       // file scope: static reloc to add's symbol
+var op fn(i64, i64) i64 := &add       // file scope: static reloc to add's symbol
 fn use() {
-    var fp fn(i64, i64) i64 = &add   // function scope: lea of add's symbol
+    var fp fn(i64, i64) i64 := &add   // function scope: lea of add's symbol
     fp = &sub                         // reassignment
     string.puti(fp(3, 4))             // indirect call
 }
@@ -1208,10 +1212,10 @@ fn pick(which i64) fn(i64, i64) i64 {
     if (which == 0) { return &add }
     return &sub
 }
-var chosen fn(i64, i64) i64 = pick(0)
+var chosen fn(i64, i64) i64 := pick(0)
 
 type dispatch struct { op fn(i64, i64) i64 }
-var d dispatch = dispatch{op: &add}
+var d dispatch := dispatch{op: &add}
 d.op(7, 8)                            // struct-field indirect call
 d.op = &sub                            // field reassignment
 ```
@@ -1238,7 +1242,7 @@ The reverse is not permitted — a `*T` cannot be passed where `*mut T` is requi
 Strings are immutable slices of bytes: `byte[]`. The `str` type (a bare pointer to null-terminated bytes) does not exist. String literals have type `byte[]`.
 
 ```
-const greeting byte[] = "hello\n"   // typical string constant
+greeting byte[] := "hello\n"   // typical string constant
 ```
 
 A mutable byte buffer has type `mut byte[]`. String literals cannot be coerced to `mut byte[]` — they're emitted by the compiler as `data` rather than `var` (the metadata distinction noted under [Types](#types)) and are intended to be treated as read-only even though the current loader maps the whole data section writable.
@@ -1260,7 +1264,7 @@ String literals are emitted by the compiler with both the slice data and a trail
 
 ### Future: unused-mutability warning
 
-The compiler could warn when a `var` binding is never directly reassigned and no mutable reference to it (`&x`) is ever taken: "var x i16 never mutated — use const instead." Taking `&x` (which yields `*mut T` for a `var` binding) counts as a potential mutation even if the callee only reads through the pointer, to avoid false positives. The check fires at the end of each scope and at function exit for `var` parameters. Not yet implemented.
+The compiler could warn when a `var` binding is never directly reassigned and no mutable reference to it (`&x`) is ever taken: "var x i16 never mutated — drop var." Taking `&x` (which yields `*mut T` for a `var` binding) counts as a potential mutation even if the callee only reads through the pointer, to avoid false positives. The check fires at the end of each scope and at function exit for `var` parameters. Not yet implemented.
 
 ---
 
@@ -1423,8 +1427,8 @@ The "consuming" check is keyed on `HasOwned()` of the receiver parameter — `ow
 **Coercion from a concrete owned pointer to `owned I`:**
 
 ```
-const e owned *mut myerror = new(myerror(42))   // owned *mut myerror
-const err owned error = e                       // moves ownership into the interface value; e is consumed
+e owned *mut myerror := new(myerror(42))   // owned *mut myerror
+err owned error := e                       // moves ownership into the interface value; e is consumed
 err.message()                                   // ok — borrows from owned interface
 err.destroy()                                   // ok — consumes err (owned-receiver method)
 // err is no longer usable after destroy()
@@ -1554,7 +1558,7 @@ The projection-table symbol scheme uses the case's *index in the projection sign
 A cast `T(e)` where `e` has values type `V` and `T` is one of `V`'s declared projection target types lowers to an indexed load from the corresponding projection table:
 
 ```
-const e io_error = io_error.NOT_FOUND
+e io_error := io_error.NOT_FOUND
 string.puts(byte[](e))      // copies the byte[] projection at tag(e)
 string.puti(i64(e))         // copies the i64 projection at tag(e)
 ```
@@ -1657,9 +1661,9 @@ vtable carries the source's `__typedesc_<base>` at slot 0 and the source's shape
 word at slot 1 (there are no method slots).
 
 ```
-var m i64 = 42
-var a any = m      ; value-backed: data = 42,    shape word = bare value
-var b any = &m     ; pointer-backed: data = &m,  shape word = *mut i64
+var m i64 := 42
+var a any := m      ; value-backed: data = 42,    shape word = bare value
+var b any := &m     ; pointer-backed: data = &m,  shape word = *mut i64
 ```
 
 ### Variadic parameters
@@ -1701,10 +1705,10 @@ type is `multiretu{T, bool}`, bound with either the two-value **declaration**
 form or, to pre-existing lvalues, the comma-LHS **re-assignment** form:
 
 ```
-var v i64, var ok bool = a.(i64)   // declaration form
+var v i64, var ok bool := a.(i64)   // declaration form
 if (ok) { use(v) }
 
-var w i64 = 0
+var w i64 := 0
 var found bool
 w, found = a.(i64)                 // re-assignment form (existing lvalues)
 ```
@@ -1751,7 +1755,7 @@ failure its vtable is `0` (null). The maybe-ness is in the type — there is no
 separate `ok` flag — so the result must be narrowed before use:
 
 ```
-var k ?Stringer = x.(Stringer)
+var k ?Stringer := x.(Stringer)
 if (k != nil) { puts(k.string()) }   // narrowed to Stringer; dispatch allowed
 ```
 
@@ -1803,15 +1807,15 @@ record kinds.
 
 ## File-Scope Declarations
 
-`var` and `const` work at file scope as well as inside functions:
+Bindings work at file scope the same as inside functions:
 
 ```
 var counter i64                  // zero-initialized
-var answer  i64 = 42             // primitive literal
-var label   byte = 'Z'
+var answer  i64 := 42             // primitive literal
+var label   byte := 'Z'
 var buf     byte[100]            // zero-filled fixed array
 
-const greeting byte[] = "hi\n"   // slice over a string constant
+greeting byte[] := "hi\n"   // slice over a string constant
 ```
 
 File-scope declarations are visible to every function in the package, regardless of source order. They are forward-bindable: a function defined earlier in the file can call into a global declared later. This is consistent with how cross-function calls work and is implemented by an early pass that registers all top-level names before any body codegen happens.
@@ -1844,8 +1848,8 @@ type config struct {
     greeting  byte[]     // slice field
 }
 
-var counter i64 = 0
-var cfg config = config{
+var counter i64 := 0
+var cfg config := config{
     threshold: 100,
     current:   &counter,
     greeting:  "configured\n",
