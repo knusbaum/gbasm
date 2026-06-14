@@ -1888,6 +1888,15 @@ func (p *Parser) parseTopLevel() *Node {
 			n.isPub = true
 			return n
 		default:
+			// `pub x := …` / `pub x T := …` — a pub bare (immutable) global.
+			if p.current().t == tok_ident && p.startsBareDecl() {
+				n := p.parseBindingDecl(true)
+				if len(n.args) == 1 && p.current().t == tok_comma {
+					ParseErrorF(n, "pub multi-bind declarations are not supported")
+				}
+				n.isPub = true
+				return n
+			}
 			panic(&interpreterError{"pub must be followed by fn, type, interface, var, or const", pubPos})
 		}
 	}

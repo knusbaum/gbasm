@@ -15,15 +15,15 @@ import "_io_sys"
 
 // Flags for open(). These correspond to the O_* constants in <fcntl.h> on
 // Linux x86-64. Combine with bitwise OR for multi-flag values.
-pub const O_RDONLY   i64 = 0       // open for reading only
-pub const O_WRONLY   i64 = 1       // open for writing only
-pub const O_RDWR     i64 = 2       // open for reading and writing
-pub const O_CREAT    i64 = 64      // create file if it does not exist (0100 octal)
-pub const O_EXCL     i64 = 128     // error if O_CREAT and file exists (0200 octal)
-pub const O_TRUNC    i64 = 512     // truncate file to zero length on open (01000 octal)
-pub const O_APPEND   i64 = 1024    // writes always append to end of file (02000 octal)
-pub const O_NONBLOCK i64 = 2048    // non-blocking I/O (04000 octal)
-pub const O_CLOEXEC  i64 = 524288  // set close-on-exec flag (02000000 octal)
+pub O_RDONLY   i64 := 0       // open for reading only
+pub O_WRONLY   i64 := 1       // open for writing only
+pub O_RDWR     i64 := 2       // open for reading and writing
+pub O_CREAT    i64 := 64      // create file if it does not exist (0100 octal)
+pub O_EXCL     i64 := 128     // error if O_CREAT and file exists (0200 octal)
+pub O_TRUNC    i64 := 512     // truncate file to zero length on open (01000 octal)
+pub O_APPEND   i64 := 1024    // writes always append to end of file (02000 octal)
+pub O_NONBLOCK i64 := 2048    // non-blocking I/O (04000 octal)
+pub O_CLOEXEC  i64 := 524288  // set close-on-exec flag (02000000 octal)
 
 // io_err is the typed error set returned by this package. The cases mirror
 // Linux's asm-generic errno values: kernel syscalls return -EACCES, -ENOENT,
@@ -308,15 +308,15 @@ fn err_from_code(errno i64) io_err {
 
 // STDIN is the standard input file descriptor (fd 0), pre-opened by the
 // kernel at process start. It is borrowed: do not pass it to close.
-pub var STDIN  FD = FD(0)
+pub var STDIN  FD := FD(0)
 
 // STDOUT is the standard output file descriptor (fd 1), pre-opened by the
 // kernel at process start. It is borrowed: do not pass it to close.
-pub var STDOUT FD = FD(1)
+pub var STDOUT FD := FD(1)
 
 // STDERR is the standard error file descriptor (fd 2), pre-opened by the
 // kernel at process start. It is borrowed: do not pass it to close.
-pub var STDERR FD = FD(2)
+pub var STDERR FD := FD(2)
 
 // FD is a Linux file descriptor. Every kernel-backed handle in this
 // package is represented as one.
@@ -337,7 +337,7 @@ pub type FD i64 {
 	// coerced to the builtin error interface. A partial read
 	// (n < len(buf), err == io_err.OK) may be retried.
 	read(fd *FD, buf mut byte[]) i64, error {
-		const raw i64 = _io_sys.read(i64(*fd), buf)
+		raw i64 := _io_sys.read(i64(*fd), buf)
 		if (raw < 0) {
 			return 0, err_from_code(-raw)
 		}
@@ -351,7 +351,7 @@ pub type FD i64 {
 	// to error). A short write (n < len(buf), err == io_err.OK) is not
 	// an error; the caller is responsible for re-issuing the remainder.
 	write(fd *FD, buf byte[]) i64, error {
-		const raw i64 = _io_sys.write(i64(*fd), buf)
+		raw i64 := _io_sys.write(i64(*fd), buf)
 		if (raw < 0) {
 			return 0, err_from_code(-raw)
 		}
@@ -366,7 +366,7 @@ pub type FD i64 {
 	// coerced to error. Some filesystems surface delayed write errors
 	// through close.
 	close(fd *owned FD) error {
-		const raw i64 = _io_sys.close(i64(*fd))
+		raw i64 := _io_sys.close(i64(*fd))
 		dispose(fd)
 		if (raw < 0) {
 			return err_from_code(-raw)
@@ -413,7 +413,7 @@ pub interface writer {
 // io_err.ENAMETOOLONG.
 pub fn open(path byte[], flags i64, mode i64) owned FD, error {
 	var buf byte[4096]
-	const n i64 = len(path)
+	n i64 := len(path)
 	if (n >= 4096) {
 		return owned(FD(-1)), io_err.ENAMETOOLONG
 	}
@@ -422,7 +422,7 @@ pub fn open(path byte[], flags i64, mode i64) owned FD, error {
 		buf[i] = path[i]
 	}
 	buf[n] = 0
-	const raw i64 = _io_sys.open(buf[:n+1], flags, mode)
+	raw i64 := _io_sys.open(buf[:n+1], flags, mode)
 	if (raw < 0) {
 		return owned(FD(-1)), err_from_code(-raw)
 	}
@@ -448,7 +448,7 @@ pub fn copy(dst writer, src reader) error {
 	var bs mut byte[]
 	for(;;) {
 		bs = b[:]
-		const n, var err = src.read(bs)
+		n, var err := src.read(bs)
 		if (err != io_err.OK) {
 			return err
 		}
@@ -456,7 +456,7 @@ pub fn copy(dst writer, src reader) error {
 			return io_err.OK
 		}
 		bs = bs[:n]
-		const wn, err = dst.write(bs)
+		wn, err := dst.write(bs)
 		if(err != io_err.OK) {
 			return err
 		}
