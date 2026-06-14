@@ -19,16 +19,20 @@ package _iface
 //
 // typedesc head layout (bytes, relative to td start):
 //   0 name_off  8 name_len  16 size  24 cache_ref  32 method_count
-//   40 methods[]: each 64 bytes:
+//   40 methods[]: each 72 bytes:
 //      0 name_off 8 name_len 16 sig_off 24 sig_len
-//      32 name_hash 40 sig_hash 48 recv_shape 56 fn_ptr
-//   Text blobs follow the method table; name/sig offsets are relative to td.
+//      32 name_hash 40 sig_hash 48 recv_shape 56 fn_ptr 64 mask_off
+//   Text blobs then the borrow-mask region follow the method table; name/sig
+//   and mask offsets are all relative to td. mask_off 0 = "borrows nothing";
+//   else it points at a [slot_count][mask...] blob (one u64 bitmask per
+//   return slot, bit p = "slot may borrow param p"; the inferred impl side).
 //
 // iface_desc layout:
 //   0 name_off 8 name_len 16 method_count
-//   24 methods[]: each 56 bytes:
+//   24 methods[]: each 64 bytes:
 //      0 name_off 8 name_len 16 sig_off 24 sig_len
-//      32 name_hash 40 sig_hash 48 decl_idx
+//      32 name_hash 40 sig_hash 48 decl_idx 56 mask_off
+//   mask_off as above, but the *declared* borrow set (from `from(...)`).
 //
 // itab layout (heap): header 24 bytes then vtable region.
 //   0 next  8 iface_desc  16 shape | 24 vtable[0]=typedesc 32 vtable[1]=shape
@@ -148,7 +152,7 @@ label .req_loop
 	add rcx 24
 	// store the resolved fn_ptr at vtable[decl_idx+2] (rcx = (decl_idx+2)*8+24)
 	mov [r15+rcx] rax
-	add r9 56
+	add r9 64
 	sub r8 1
 	jmp .req_loop
 
@@ -241,10 +245,44 @@ label .recv_ok
 	pop rcx
 	cmp rax 0
 	je .m_next
+	// --- Borrow-contract gate: the matched method's *inferred* per-slot
+	//     borrow set must be subset of the required method's *declared* set,
+	//     else the assertion is laundering a borrow to an under-declaring
+	//     interface. impl masks live at r12 + [rdx+64] (typedesc base),
+	//     declared at r14 + [r9+56] (iface_desc base); each blob is
+	//     [slot_count][mask...]. mask_off 0 = "borrows nothing".
+	//     Per-slot subset test: (impl & decl) == impl.
+	mov r10 [rdx+64]
+	cmp r10 0
+	je .borrow_ok
+	mov r11 [r9+56]
+	cmp r11 0
+	je .borrow_fail
+	add r10 r12
+	add r11 r14
+	mov rsi [r10]
+	add r10 8
+	add r11 8
+label .borrow_slot
+	cmp rsi 0
+	je .borrow_ok
+	mov rax [r10]
+	mov r8 [r11]
+	and r8 rax
+	cmp r8 rax
+	jne .borrow_fail
+	add r10 8
+	add r11 8
+	sub rsi 1
+	jmp .borrow_slot
+label .borrow_fail
+	mov rax 0
+	ret
+label .borrow_ok
 	mov rax [rdx+56]
 	ret
 label .m_next
-	add rdx 64
+	add rdx 72
 	sub rcx 1
 	jmp .m_loop
 label .no_match

@@ -525,33 +525,32 @@ The layers, in dependency order:
     `from` clause; cross-package, both the `InterfaceShape` field and the
     iface_desc bytes must round-trip identically, so the two gates see the
     same declared ceiling.
-  - **Descriptor placement is not free.** `lookup_method` walks the typedesc
-    method table and the iface_desc req table with **hand-coded fixed
-    strides and offsets** — 64-byte typedesc entries (`add rdx 64`, fn_ptr at
-    `[rdx+56]`, `iface_linux.bs:244,247`) and 56-byte req entries
-    (`add r9 56`, `iface_linux.bs:151`). Appending a per-entry mask field
-    re-strides both walks and shifts every later offset; "rides the existing
-    serialization" is true for the *bytes* but **not** for the assembler
-    routine. Two layouts were weighed: (a) widen the entry and re-derive the
-    strides/offsets in `assert_to`/`lookup_method`, or (b) keep entries
-    fixed-width and store the masks in a **parallel side-array** indexed by
-    the same method index, so the existing walk is untouched and the mask is
-    one extra indexed read. **D0 takes (b)** — the lower-risk change to
-    load-bearing hand-written x86-64.
+  - **Descriptor placement (done, D0).** `lookup_method` walks the typedesc
+    method table and the iface_desc req table with **hand-coded fixed strides
+    and offsets**, so the mask field is **appended at the end of each method
+    entry** — `mask_off` at `[entry+64]` (typedesc, stride 64→72) and
+    `[entry+56]` (iface_desc, stride 56→64). Appending at the end shifts no
+    existing offset (fn_ptr/recv/decl_idx stay put); only the two stride
+    constants change (`add rdx 64`→`72`, `add r9 56`→`64`). `mask_off=0` is the
+    no-borrow sentinel, leaving every existing descriptor byte-identical. (The
+    earlier "side-array" plan was abandoned — see D0; appending is strictly
+    simpler because the matched entry pointer is in hand at the match, so no
+    method-index math.)
   - **`_iface.assert_to`** (`runtime/_iface/iface_linux.bs`, hand-written
-    x86-64) gains, per matched method, the ⊆ check
-    `impl_mask &^ declared_mask == 0`; a failing method makes the assertion
-    fail. This is the one runtime-library change, and it is where the
-    soundness actually lives — it must be specified and tested before
-    anything depends on the relaxed guard.
+    x86-64) gains, per matched method, the per-slot ⊆ check done as
+    `(impl & decl) == impl` (avoids `andn`/`not`); a failing slot returns no
+    match from `lookup_method`, so the assertion fails. This is the one
+    runtime-library change and where the soundness lives — **implemented and
+    spike-validated** (the permuted-mask target is correctly rejected; both
+    the bas and bosc suites stay green).
 - **`.bo` transport**: the interface's declared per-method `ReturnAliases`
   travels cross-package. `InterfaceMethodSig`/`InterfaceShape` gain the
   field; the bas `interface` directive (`cmd/bas/main.go:394`) and
   `writeInterfaces`/`readInterfaces` (`bwrite.go`) serialize it (natural
   shape: a per-method `retaliases <slot>: <idx>...` line in the method
   block). The typedesc/iface_desc borrow descriptors serialize alongside
-  their tables as the **parallel side-array** D0 selects (entries unchanged,
-  masks indexed by method position).
+  their tables via the appended `mask_off` field + trailing mask blob (D0;
+  already implemented in `typeinfo.go`'s `EncodeTypedesc`/`EncodeIfaceDesc`).
 - **`bdump`**: print interface methods' declared `ReturnAliases` and the
   typedesc/iface_desc borrow descriptors.
 - **`fmt`**: declare `stringer { string(self *self) byte[] from(self) }`
@@ -603,23 +602,31 @@ The design questions raised during review are settled as follows. **v1 ships
 interface-methods-only**; items marked deferred/fast-follow are decided in
 principle but not built in v1.
 
-**D0 — Runtime borrow-descriptor encoding.** Per-slot parameter **bitmask**
-(bit *p* of slot *s* = "slot *s* may borrow param *p*"), one `u64` per return
-slot, so ⊆ is `impl &^ declared == 0` (one `andn`+test). Stored in a
-**parallel side-array** off the typedesc/iface_desc header, indexed by method
-position — *not* widened into the fixed-stride method entries — so the
-hand-written `assert_to`/`lookup_method` walk is untouched (see the
-[stride note](#implementation-impact)). **Per-slot is mandatory, never a
-per-method union:** a union mask is unsound — an impl that permutes which
-slot borrows which param (`(A from(self), B from(x))` vs
-`(A from(x), B from(self))`) has the *same* union yet violates the per-slot
-contract the caller bounds each result by, reopening a dangle. **64-param
-ceiling**, a hard compile-time error if exceeded — fired **independently at
-both emission sites** (impl mask in the type's home package, declared mask in
-the interface's), never silent truncation (which would make `assert_to`
-under-reject and reopen the hole). The full `[][]int` still rides the
-typedesc/iface_desc for `bdump`/diagnostics; the mask is the assert-time fast
-form.
+**D0 — Runtime borrow-descriptor encoding (spike-validated).** Per-slot
+parameter **bitmask** (bit *p* of slot *s* = "slot *s* may borrow param *p*"),
+one `u64` per return slot. The subset test is done as `(impl & decl) == impl`
+per slot — it avoids needing `andn`/`not`, which the assembler doesn't carry.
+Each method's masks live in a `[slot_count][mask...]` blob trailing the
+descriptor's string blob, reached by a **`mask_off` field appended to the
+method entry** (typedesc entry 64→72, iface_desc entry 56→64); `mask_off = 0`
+is the "borrows nothing" sentinel, so every existing descriptor is byte-for-
+byte unchanged. **This reverses the earlier side-array plan:** appending at the
+end of the entry shifts no existing offset (only the stride constant) and
+leaves the matched entry pointer in hand at the match site (no method-index
+math) — strictly simpler than a header side-array, which the spike confirmed.
+**Per-slot is mandatory, never a per-method union:** a union mask is unsound —
+an impl that permutes which slot borrows which param (`(A from(self), B
+from(x))` vs `(A from(x), B from(self))`) has the *same* union yet violates the
+per-slot contract the caller bounds each result by, reopening a dangle; the
+spike's permuted-target case (`[4,2]` vs declared `[2,4]`) is correctly
+rejected. **64-param ceiling**, a hard compile-time error if exceeded — fired
+**independently at both emission sites** (impl mask in the type's home package,
+declared mask in the interface's), never silent truncation (which would make
+`assert_to` under-reject and reopen the hole). The full `[][]int` still rides
+the typedesc/iface_desc for `bdump`/diagnostics; the mask is the assert-time
+fast form. *(The descriptor format and the `assert_to` gate are implemented and
+validated on `feature/interface-borrow-contracts`; the compiler emission of the
+masks is Phase 5a, still to come.)*
 
 **D1 — Keyword: `from`.** Chosen over `borrows` and `aliases`. `from` names
 **provenance** ("the result comes from this source") and nothing else, which

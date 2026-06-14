@@ -173,6 +173,25 @@ func mustParseU64(directive, name, field, val string) uint64 {
 	return n
 }
 
+// parseSlotMasks parses the optional trailing per-return-slot borrow masks of
+// a typedesc/iface_desc method line (one u64 bitmask per slot, base-0 so
+// "0x6" and "6" both work). Empty -> nil (the no-borrow sentinel).
+func parseSlotMasks(directive, name string, toks []string) []uint64 {
+	if len(toks) == 0 {
+		return nil
+	}
+	masks := make([]uint64, len(toks))
+	for i, t := range toks {
+		n, err := strconv.ParseUint(t, 0, 64)
+		if err != nil {
+			fmt.Printf("Fatal: %s %s: bad slot mask %q: %v\n", directive, name, t, err)
+			os.Exit(1)
+		}
+		masks[i] = n
+	}
+	return masks
+}
+
 // sizeKeywords maps a size-prefix keyword to its bit width.
 // Used for size-qualified memory operands: byte[reg+off], word[reg+off], dword[reg+off], qword[reg+off].
 var sizeKeywords = []struct {
@@ -571,8 +590,8 @@ func main() {
 						rec.CacheSym = strings.TrimSpace(strings.TrimPrefix(body, "cache_ref"))
 					case strings.HasPrefix(body, "method "):
 						f := strings.Fields(strings.TrimPrefix(body, "method"))
-						if len(f) != 6 {
-							fmt.Printf("Fatal: typedesc %s: method requires 6 fields (name sig name_hash sig_hash recv_shape fn_reloc), got %v\n", tname, f)
+						if len(f) < 6 {
+							fmt.Printf("Fatal: typedesc %s: method requires >=6 fields (name sig name_hash sig_hash recv_shape fn_reloc [slot_mask...]), got %v\n", tname, f)
 							os.Exit(1)
 						}
 						nh := mustParseU64("typedesc", tname, "name_hash", f[2])
@@ -585,6 +604,7 @@ func main() {
 							SigHash:   sh,
 							RecvShape: rs,
 							FnSym:     f[5],
+							SlotMasks: parseSlotMasks("typedesc", tname, f[6:]),
 						})
 					default:
 						fmt.Printf("Fatal: typedesc %s: unknown line %q\n", tname, body)
@@ -638,8 +658,8 @@ func main() {
 						rec.IfaceName = strings.Trim(s, `"`)
 					case strings.HasPrefix(body, "method "):
 						f := strings.Fields(strings.TrimPrefix(body, "method"))
-						if len(f) != 5 {
-							fmt.Printf("Fatal: iface_desc %s: method requires 5 fields (name sig name_hash sig_hash decl_idx), got %v\n", iname, f)
+						if len(f) < 5 {
+							fmt.Printf("Fatal: iface_desc %s: method requires >=5 fields (name sig name_hash sig_hash decl_idx [slot_mask...]), got %v\n", iname, f)
 							os.Exit(1)
 						}
 						nh := mustParseU64("iface_desc", iname, "name_hash", f[2])
@@ -651,6 +671,7 @@ func main() {
 							NameHash: nh,
 							SigHash:  sh,
 							DeclIdx:  di,
+							SlotMasks: parseSlotMasks("iface_desc", iname, f[5:]),
 						})
 					default:
 						fmt.Printf("Fatal: iface_desc %s: unknown line %q\n", iname, body)
