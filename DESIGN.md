@@ -218,7 +218,7 @@ fn add(x i64, y i64) i64 {
     return x + y
 }
 
-fn write_into(p *mut i64) {       // const parameter, but allows write-through
+fn write_into(p *mut i64) {       // immutable parameter, but allows write-through
     *p = 42
 }
 
@@ -287,7 +287,7 @@ The `.bs` carries Boson struct shapes via the `struct Name { … }` directive (s
 
 **Cross-package type aliases.** `type Name Base` declarations export the same way structs do, with their attached method tables. On import, the type is registered under the qualified name (`io.FD`); the method set is reconstructed from the already-imported function set using a method-name list carried in the `typealias` directive. Qualified casts (`io.FD(3)`) work in expression contexts and in file-scope static initializers.
 
-**Cross-package variable access.** File-scope `var`/`const` declarations are exported from a `.bo` along with functions and struct types. Source code reads them through the qualified form `pkg.name`:
+**Cross-package variable access.** File-scope variable declarations are exported from a `.bo` along with functions and struct types. Source code reads them through the qualified form `pkg.name`:
 
 ```
 import "io"
@@ -613,9 +613,9 @@ Passing `owned *owned T` to a function taking `*owned T` or `owned *T` — consu
 Ownership is unique, but access may alias. The compiler separates these two ideas:
 
 - **Ownership aliases are not allowed.** An `owned T` obligation cannot be held by two bindings at once. Passing to an owned parameter moves it; assigning to another owned binding moves it; using it afterward is rejected.
-- **Non-owning aliases are allowed but tracked.** A value of type `*T`, `*mut T`, `*?T`, etc. may be copied freely. A value-typed binding coerced from an owned source (`var t i64 = fd`) may also be created freely. In both cases the alias is recorded in flow state with the source's Origin, and the compiler invalidates it when the source is moved.
+- **Non-owning aliases are allowed but tracked.** A value of type `*T`, `*mut T`, `*?T`, etc. may be copied freely. A value-typed binding coerced from an owned source (`var t i64 := fd`) may also be created freely. In both cases the alias is recorded in flow state with the source's Origin, and the compiler invalidates it when the source is moved.
 - **Coercing to a non-owned destination strips ownership.** Passing `owned *owned mut node` to a parameter of type `*node` or `*mut node` does not move either obligation: `Accepts` strips owned at the coercion site. The callee receives only an access capability. Coercing to an `owned` destination (e.g. `*owned node`) moves instead.
-- **Value coercion is alias, not copy.** Stripping `owned` from a non-pointer source (e.g. `var t i64 = fd_owned`) duplicates the bit pattern into the destination but records a flow-state alias back to the source. Reading the destination after the source is moved is rejected as "cannot dereference pointer to X: the target was consumed," the same diagnostic a borrowed `*T` would produce. To obtain an independent obligation, construct it explicitly through a copy-returning function (see [Controlled copying](#controlled-copying)).
+- **Value coercion is alias, not copy.** Stripping `owned` from a non-pointer source (e.g. `var t i64 := fd_owned`) duplicates the bit pattern into the destination but records a flow-state alias back to the source. Reading the destination after the source is moved is rejected as "cannot dereference pointer to X: the target was consumed," the same diagnostic a borrowed `*T` would produce. To obtain an independent obligation, construct it explicitly through a copy-returning function (see [Controlled copying](#controlled-copying)).
 
 For example:
 
@@ -769,7 +769,7 @@ fn inspect(b box) {
 
 A **non-null owned pointer field** may now be moved out of an owned aggregate, so an aggregate holding owned resources can be destructed field by field (see [`PROPOSAL_owned_field_move.md`](PROPOSAL_owned_field_move.md)). Moving a field out copies the pointer to the destination, zeroes the field's slot, and records the field's obligation as consumed — just like moving a local `owned` pointer. The rules:
 
-- Moving the field out leaves the aggregate **inconsistent** (the field has no nil placeholder; the slot is zeroed and the non-null type carries no nil check). While inconsistent, the aggregate may not **escape its scope** — it can't be passed to a function, returned, moved to another binding, or aliased (`&f` / `var x = f`) — because the local consistency fact can't cross those boundaries. Only the shape-blind intrinsics `dispose` and `free` may consume it. Reading a moved-out field is a use-after-move error.
+- Moving the field out leaves the aggregate **inconsistent** (the field has no nil placeholder; the slot is zeroed and the non-null type carries no nil check). While inconsistent, the aggregate may not **escape its scope** — it can't be passed to a function, returned, moved to another binding, or aliased (`&f` / `var x := f`) — because the local consistency fact can't cross those boundaries. Only the shape-blind intrinsics `dispose` and `free` may consume it. Reading a moved-out field is a use-after-move error.
 - **Re-initialization** restores consistency: assigning to a moved-out field (`f.a = new(...)`) is legal and marks it live again; once no non-null owned field is consumed, the aggregate may escape normally. Assigning to a *live* owned field is still rejected (it would leak its current value):
 
 ```
@@ -843,7 +843,7 @@ fn main() {
 
 `owned(expr)` is an unsafe built-in: it asserts that `expr` may be used wherever an owned obligation is required, without consuming any source variable. It can promote at any level — `owned(&r)` produces a `*owned T` from a `*T`, and the result also satisfies `owned *owned T` if the destination demands it (both obligations are asserted at once). The compiler cannot verify the semantic correctness; the programmer is responsible for the aliasing invariant.
 
-Implicit ownership promotion is rejected: `var x owned T = some_non_owned_T` is a compile error. The only way to gain owned bits a source value doesn't have is `owned(expr)`. Integer literals are exempt (they can initialize an `owned T` directly, since there's no source value to alias).
+Implicit ownership promotion is rejected: `var x owned T := some_non_owned_T` is a compile error. The only way to gain owned bits a source value doesn't have is `owned(expr)`. Integer literals are exempt (they can initialize an `owned T` directly, since there's no source value to alias).
 
 For the common cases — stack-owned values and heap-owned values with bundled obligations — none of this complexity arises.
 
@@ -1096,8 +1096,8 @@ An immutable binding to a `*mut T` cannot be rebound, but can still write throug
 For any binding:
 
 ```
-const y *i16        // cannot rebind y, cannot write through y
-const y *mut i16    // cannot rebind y, CAN write through y
+y *i16              // cannot rebind y, cannot write through y
+y *mut i16          // cannot rebind y, CAN write through y
 var y *i16          // CAN rebind y, cannot write through y
 var y *mut i16      // CAN rebind y, CAN write through y
 ```
@@ -1112,18 +1112,18 @@ type foo struct {
 
 myfoo foo := ...
 
-myfoo.x = 10    // illegal — myfoo is const, field cannot be written
-myfoo.y = &z    // illegal — myfoo is const, field cannot be rebound
+myfoo.x = 10    // illegal — myfoo is immutable, field cannot be written
+myfoo.y = &z    // illegal — myfoo is immutable, field cannot be rebound
 *myfoo.y = 100  // LEGAL — the type of y carries write-through permission
 ```
 
 Pointer indirection nests correctly. Each `*` level independently carries its own `mut`:
 
 ```
-const y **i16          // const binding; cannot write through either pointer level
-const y **mut i16      // const binding; cannot change intermediate pointer, CAN write innermost i16
-const y *mut *mut i16  // const binding; CAN change intermediate pointer; CAN write innermost i16
-var   y *mut *mut i16  // all four: rebind y, change intermediate pointer, write innermost i16
+y **i16          // immutable binding; cannot write through either pointer level
+y **mut i16      // immutable binding; cannot change intermediate pointer, CAN write innermost i16
+y *mut *mut i16  // immutable binding; CAN change intermediate pointer; CAN write innermost i16
+var y *mut *mut i16  // all four: rebind y, change intermediate pointer, write innermost i16
 ```
 
 Assignment through `*p` checks mutability of the immediate pointee slot, not the deepest pointee. Therefore `*mut *mut T` permits replacing the intermediate pointer with `*p = other`, while `**mut T` only permits mutating the final `T` after another dereference; it does not permit replacing `*p`.
@@ -1137,12 +1137,12 @@ var x i16 := 5
 y i16 := 5
 
 &x   // *mut i16 — x is var, so you get a write-through pointer
-&y   // *i16     — y is const, so you get a read-only pointer
+&y   // *i16     — y is immutable, so you get a read-only pointer
 ```
 
-This prevents laundering a `const` binding into a `*mut` pointer. Write-through permission flows from the source.
+This prevents laundering an immutable binding into a `*mut` pointer. Write-through permission flows from the source.
 
-The same rule applies to struct fields: `&myfoo.x` yields `*mut i16` if `myfoo` is `var`, and `*i16` if `myfoo` is `const`.
+The same rule applies to struct fields: `&myfoo.x` yields `*mut i16` if `myfoo` is `var`, and `*i16` if `myfoo` is immutable.
 
 `&` accepts more than bare names. At runtime, `&someVar`, `&arr[i]` (with constant or runtime index), and `&s.field` all produce a `*T` to the addressed storage; the compiler delegates index and field forms to the existing lvalue-walk machinery, which already knows how to compute element/field addresses.
 
@@ -1164,11 +1164,11 @@ dispose(y)                   // discharges through y
 // x is no longer usable
 
 a owned *owned mut thing := new(thing{...})
-slot *owned *owned mut thing := &a     // const owned ptr: a is moved into slot
+slot *owned *owned mut thing := &a     // immutable owned ptr: a is moved into slot
 free(slot)
 ```
 
-This mirrors how value-typed owned bindings behave: `var y owned T = x` moves x because the destination is owned, while `var y T = x` would borrow. The pointer form follows the same destination-driven rule.
+This mirrors how value-typed owned bindings behave: `var y owned T := x` moves x because the destination is owned, while `var y T := x` would borrow. The pointer form follows the same destination-driven rule.
 
 The compiler enforces these invariants without relying on `&` itself stripping ownership:
 
@@ -1351,7 +1351,7 @@ A type `T` satisfies interface `I` if, for every method `m` declared in `I`, typ
 | a read-only pointer (`*T`, `*?T`) | `*self` only |
 | a mutable pointer (`*mut T`, `*?mut T`) | `*self` **or** `*mut self` |
 
-The mutable-source row encodes the legal `*mut → *` weakening: a mutable view may call a `*self` (read-only) method. The reverse — a read-only `*T` source driving a `*mut self` (mutating) method — is **rejected**, because that would mutate through a view that promised not to. (`&x` of a `var` yields `*mut T`, so the common `greet(&d)` pattern coerces a mutable pointer and can satisfy either receiver kind; `&x` of a `const` yields a read-only `*T`.)
+The mutable-source row encodes the legal `*mut → *` weakening: a mutable view may call a `*self` (read-only) method. The reverse — a read-only `*T` source driving a `*mut self` (mutating) method — is **rejected**, because that would mutate through a view that promised not to. (`&x` of a `var` yields `*mut T`, so the common `greet(&d)` pattern coerces a mutable pointer and can satisfy either receiver kind; `&x` of an immutable binding yields a read-only `*T`.)
 
 The compile-time satisfaction filter and the runtime `_iface` helper derive the same source→capability mapping and apply the same asymmetric weakening, so a compile-time-legal coercion and a runtime interface-to-interface assertion always agree.
 
@@ -1399,7 +1399,7 @@ The layout is `[typedesc_ptr, shape_word, method_0 .. method_{N-1}]`:
   of the source type's shape modifiers (pointer level, mut/nullable, slice,
   array length) as a bounded constructor stack read innermost-first. The empty
   stack (`shape_word == 0`) is a bare value. The shape word is what
-  distinguishes `var a any = m` (value) from `var b any = &m` (pointer) — both
+  distinguishes `var a any := m` (value) from `var b any := &m` (pointer) — both
   share `__typedesc_i64` at slot 0 but carry different shape words at slot 1.
 - **Slots 2..N+1** are 8-byte function pointers to the concrete methods, in the
   interface's declaration order.
@@ -1576,7 +1576,7 @@ io_error(999)              // error: integer-to-values cast not allowed
 io_error(some_other_v)     // error: cross-values-type cast not allowed
 ```
 
-The same rule blocks integer literals coercing into a values destination at file scope, in struct fields, in function arguments, in returns, and in array elements — every site where a `var x io_error = 999` shape could otherwise sneak through. Identity casts (`io_error(e)` where `e` is already `io_error`) are accepted as a no-op.
+The same rule blocks integer literals coercing into a values destination at file scope, in struct fields, in function arguments, in returns, and in array elements — every site where a `var x io_error := 999` shape could otherwise sneak through. Identity casts (`io_error(e)` where `e` is already `io_error`) are accepted as a no-op.
 
 Equality is defined only between values of the same values type:
 
@@ -1717,12 +1717,12 @@ The re-assignment form is a general comma-LHS multi-assignment `lv0, lv1, … =
 rhs`; it is recognized only at statement position (a top-level comma after a
 parsed expression there can only begin a multi-assignment LHS, so it does not
 conflict with the commas in argument lists or struct literals). Each target
-must be an already-declared, non-`const` variable whose type accepts the
+must be an already-declared, mutable (`var`) variable whose type accepts the
 corresponding result component.
 
 The lowering is an inline two-compare check: slot-0 typedesc identity against
 `__typedesc_<base(T)>`, plus slot-1 shape-word equality against the canonical
-immediate for `T`. Both must match. Shape matching is **exact** — `var x any = p`
+immediate for `T`. Both must match. Shape matching is **exact** — `var x any := p`
 where `p *mut i64` succeeds only on `x.(*mut i64)`, not `x.(*i64)` or `x.(i64)`.
 The shape word encodes each pointer level's mut/nullable bit and, for arrays,
 the length (up to 8191; a longer array is a clean compile error).
@@ -1822,7 +1822,7 @@ File-scope declarations are visible to every function in the package, regardless
 
 ### Static Initializers
 
-Initializers on file-scope `var` (and `const`) declarations must be **compile-time constants** in the bosc-internal sense: the encoder must be able to produce the value's bytes and any pointer relocations at compile time, with no runtime code.
+Initializers on file-scope variable declarations must be **compile-time constants** in the bosc-internal sense: the encoder must be able to produce the value's bytes and any pointer relocations at compile time, with no runtime code.
 
 The supported forms compose recursively:
 
@@ -1835,7 +1835,7 @@ The supported forms compose recursively:
 - `&someGlobal` — 8-byte pointer slot with a relocation to the named global.
 - `&SomeStruct{...}` — recursively encodes the inner struct into a fresh anonymous global (`__static_0`, `__static_1`, …) and emits a pointer slot relocated to it.
 - `&someGlobalArr[N]` for compile-time-constant N — a single relocation to the array's symbol with `Addend = N * elementSize`. Pointer-into-array without any auxiliary storage.
-- Type-alias casts of a literal integer — `var fd FD = FD(3)` (or the qualified form `io.FD(3)`). The encoder evaluates the inner literal at compile time and writes the resulting bytes into the alias's slot.
+- Type-alias casts of a literal integer — `var fd FD := FD(3)` (or the qualified form `io.FD(3)`). The encoder evaluates the inner literal at compile time and writes the resulting bytes into the alias's slot.
 
 Anything else (function calls, runtime expressions, type mismatches, length mismatches) produces a specific diagnostic at compile time.
 
@@ -1874,7 +1874,7 @@ At link time, the linker walks each placed var's `Relocs` and applies them. Reac
 
 ### Lexer (`lexer.go`)
 
-Produces a flat token stream from Boson source. Recognizes keywords (`fn`, `var`, `const`, `mut`, `owned`, `dispose`, `type`, `struct`, `interface`, `if`, `else`, `for`, `return`, `break`, `continue`, `import`, `package`), identifiers, integer literals (decimal, `0x`, `0o`, `0b`), string and character literals (with `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, `\'`, `\xHH` escapes), and all operators.
+Produces a flat token stream from Boson source. Recognizes keywords (`fn`, `var`, `mut`, `owned`, `dispose`, `type`, `struct`, `interface`, `if`, `else`, `for`, `return`, `break`, `continue`, `import`, `package`), identifiers, integer literals (decimal, `0x`, `0o`, `0b`), string and character literals (with `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, `\'`, `\xHH` escapes), and all operators.
 
 Integer literals are parsed as `uint64` for full-precision representation; downstream stages decide the final type. Decimal-point syntax is accepted but the fractional part is truncated (no float support yet).
 
@@ -1892,13 +1892,13 @@ Postfix chains compose: `a.b[i].c[lo:hi]` is parsed by a single `parsePostfix` l
 
 ### AST (`ast.go`)
 
-Defines all node types: declarations (package, import, struct, function, type alias, dispose, owned-promotion), statements (var/const, assign, if, for, return, break, continue, expression), and expressions (binary op, unary op, call, qualified call, cast, index, slice, field access, literal, identifier, address-of, deref).
+Defines all node types: declarations (package, import, struct, function, type alias, dispose, owned-promotion), statements (binding declaration, assign, if, for, return, break, continue, expression), and expressions (binary op, unary op, call, qualified call, cast, index, slice, field access, literal, identifier, address-of, deref).
 
 Defines `ASTType` with `Name`, `Indirection`, `ArraySize`, `Element`, `Signed`, `MutMask`, `OwnedMask` fields. A slice/array type is identified by `Element != nil` (with `ArraySize > 0` distinguishing array from slice); pointer/scalar types use `Name` and `Indirection`. Provides equality (`Same`), compatibility (`MutCompatible`, `OwnedCompatible`), and stringification. `Same` is structural — `ASTType` carries a pointer (`Element`) so `==` comparison is unsafe.
 
 `Address` has two forms: `{Var string}` for address-of-named-variable, and `{Lit AST}` for address-of-literal (used in static-init context).
 
-The `Context` type carries name resolution state: variable bindings (with `const`/`var` flags and moved/owned state), struct declarations, function declarations, imports (per-package namespace), type aliases, file-scope address-backed names (`addressNames`), pending anonymous-global emissions (`anonGlobals`), and the current package name. Helpers like `NameIsAddress(name)` consult both the explicit globals set and the type-based `typeIsMemoryBacked(t)` predicate to decide whether codegen should treat a name as an address (load through it) or as a value.
+The `Context` type carries name resolution state: variable bindings (with a mutability flag — immutable by default, `var` for mutable — and moved/owned state), struct declarations, function declarations, imports (per-package namespace), type aliases, file-scope address-backed names (`addressNames`), pending anonymous-global emissions (`anonGlobals`), and the current package name. Helpers like `NameIsAddress(name)` consult both the explicit globals set and the type-based `typeIsMemoryBacked(t)` predicate to decide whether codegen should treat a name as an address (load through it) or as a value.
 
 ### Importcfg loading (`main.go`)
 
@@ -1910,8 +1910,8 @@ A `-listimports` mode prints just the import keys declared by the input files an
 
 Walks the AST and emits `.bs` assembly text. Key responsibilities:
 
-- **Locals**: Each `var`/`const` declaration emits a `local` (for scalars and pointers) or `bytes` (for structs and arrays) directive in the assembly. The choice is driven by `typeIsMemoryBacked(t)` — true for structs and values larger than 8 bytes, false for everything else (including pointers regardless of pointee size). The assembler's register allocator handles actual placement.
-- **File-scope vars**: Top-level `var`/`const` declarations go through `emitGlobalVarDecl` rather than the local path. Initializers are encoded at compile time (see [Static Initializers](#static-initializers)). The bas-level emission is the `var name type N` size form (zero-init), `var name type "..."` string-literal form (no relocations), or the block form `var name type { bytes "..." reloc <off> <sym> <addend> ... }` when any pointer fields require fixups.
+- **Locals**: Each binding declaration emits a `local` (for scalars and pointers) or `bytes` (for structs and arrays) directive in the assembly. The choice is driven by `typeIsMemoryBacked(t)` — true for structs and values larger than 8 bytes, false for everything else (including pointers regardless of pointee size). The assembler's register allocator handles actual placement.
+- **File-scope vars**: Top-level binding declarations go through `emitGlobalVarDecl` rather than the local path. Initializers are encoded at compile time (see [Static Initializers](#static-initializers)). The bas-level emission is the `var name type N` size form (zero-init), `var name type "..."` string-literal form (no relocations), or the block form `var name type { bytes "..." reloc <off> <sym> <addend> ... }` when any pointer fields require fixups.
 - **Spots and addressing**: The compiler's intermediate `spot{ref, t, nameIsAddress}` records both the bas-level name and whether that name resolves to a value (`local`-allocated scalar) or to a memory address (`bytes`-allocated chunk, or file-scope global). Indirection sites (`*p`, `arr[i]`, `slice[lo:hi]`) consult `spot.nameIsAddress` to decide whether they need to materialize the address into a register before further indirection. This abstracts away the distinction between register-resident and memory-resident sources — the same codegen path handles both.
 - **Control flow**: `if`/`else` and `for` lower to compare-and-jump sequences with generated labels (`_LABEL_for_N`, `_LABEL_break_N`, `_LABEL_cont_N`, `_LABEL_return_N`).
 - **Function calls**: Arguments are evaluated into temporaries, then moved into the ABI argument registers before `call`. The emitted `call` is always fully qualified (`pkg.fname`); for in-package calls the current package's name is prepended. Function-defined-in-source signatures are emitted as `type fn(arg-types) ret` directives so cross-package import works for Boson-defined packages, not just hand-written bas runtime packages.
@@ -2324,17 +2324,17 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Slices (`T[]`), fixed arrays (`T[N]`), pointers (`*T`), structs
 - Anonymous struct types (`struct { quot i64, rem i64 }`) as parameter, return, and var types
 - Bare struct literals (`{ field: val }`) with shape inferred from the surrounding context (return, typed initializer, assignment lvalue, argument position)
-- `var x = expr` / `const x = expr` type inference from the initializer (`<intlit>` resolves to `i64`; void/nil sources rejected)
+- `x := expr` / `var x := expr` type inference from the initializer (`<intlit>` resolves to `i64`; void/nil sources rejected)
 - Nullable pointers (`*?T`), non-null pointers (`*T`), boolean narrowing for nullable pointers, and postfix `?` non-null assertions
 - Nested slices/arrays (`byte[][]`, `T[N][M]`, etc.)
-- `const`/`var` bindings with declaration initializers (`const x i64 = 42`)
-- File-scope `var`/`const` with compile-time-constant initializers — integer/byte literals, string-into-`byte[N]`, string-into-`byte[]` (slice with relocated pointer), struct literals composing all of the above, array literals (`[1, 2, 3]`) for fixed-array and slice destinations, `&someGlobal`, `&SomeStruct{...}` (anonymous globals), `&globalArr[N]` (pointer-into-array via relocation addend)
+- Immutable and `var` bindings with declaration initializers (`x i64 := 42`)
+- File-scope variable declarations with compile-time-constant initializers — integer/byte literals, string-into-`byte[N]`, string-into-`byte[]` (slice with relocated pointer), struct literals composing all of the above, array literals (`[1, 2, 3]`) for fixed-array and slice destinations, `&someGlobal`, `&SomeStruct{...}` (anonymous globals), `&globalArr[N]` (pointer-into-array via relocation addend)
 - Array literals at runtime as initializers for fixed-array locals; slice destinations rejected with a directed error (lifetime issue)
 - Full nested `*mut T` write-through mutability with implicit coercion
 - Full `owned T` ownership type system: move semantics, `dispose()`, `owned()` promotion, owned struct fields, owned-field move tracking, if/else branch analysis, loop backedge/exit checks, and scope-exit checks
 - Re-initialization of a moved `var owned` binding via assignment (including struct-literal RHS), gated by a pointer-flow check that rejects when a live owned alias still references the binding's storage
 - Address-of of an owned binding (`&x`) preserves owned bits; whether the result borrows or moves is decided by the destination type (`*T` borrows, `*owned T` moves; `*mut`-shaped views of the owner slot remain rejected)
-- Value-alias tracking for owned scalars: declaring `var fd owned i64 = ...` registers a flow-state Origin; coercing to a non-owned destination (`var t i64 = fd`, `thingy(fd)`, etc.) records the destination as an alias of that Origin; `c.Move` on the source invalidates all such aliases, and reading the destination after the move is rejected at the Symbol-use site with the same diagnostic as a borrowed-pointer use-after-move
+- Value-alias tracking for owned scalars: declaring `var fd owned i64 := ...` registers a flow-state Origin; coercing to a non-owned destination (`var t i64 := fd`, `thingy(fd)`, etc.) records the destination as an alias of that Origin; `c.Move` on the source invalidates all such aliases, and reading the destination after the move is rejected at the Symbol-use site with the same diagnostic as a borrowed-pointer use-after-move
 - Field-level pointer provenance: per-field pointer facts in flow state catch self-referential struct escapes at return, dispose/free invalidating field-pointer aliases, and out-of-scope local-address extraction through a struct field
 - Interfaces: structural satisfaction at coercion sites, fat-pointer representation (data + vtable, 16 bytes), automatic vtable emission per `(base, shape, I)` coercion, indirect dispatch through the vtable, and `owned I` / `I` interface qualifiers. The vtable carries a `[typedesc_ptr, shape_word, method_0..N]` layout: slot 0 is the single per-base-type `__typedesc_<base>` symbol (built-in scalar typedescs emitted by `builtin`), slot 1 is a canonical 64-bit shape word encoding the source's pointer/mut/slice/array shape, methods follow at slot 2+
 - The `any` built-in empty interface (zero methods, satisfied by every concrete type, available without import); used as a coercion target and as the element type of an untyped variadic
@@ -2362,17 +2362,17 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - bas synthetic instructions: `volatile`, `name:N` partials, size-qualified indirects, `movzx r64, r/m32`
 - bas struct directive (carries Boson struct shape into .bo); bas var block form with embedded `reloc` lines for data-section relocations; bas string escapes include `\xHH`, `\r`, `\t`
 - bas `typealias` and `interface` directives for cross-package export of type aliases (with method tables) and interfaces
-- Cross-package variable read access: `pkg.name` qualified reads against a foreign-package `var`/`const`
+- Cross-package variable read access: `pkg.name` qualified reads against a foreign-package variable
 - Built-in `len(s)` intrinsic for slice (runtime length load) and fixed-array (compile-time constant) operands
 - `builtin` package auto-imported into every compilation; provides the `error` and `any` interfaces and the single home for built-in scalar typedescs (`__typedesc_i64`, `__typedesc_byte`, …)
 - `owned error` ownership semantics: consuming-receiver methods (any owned bit on the receiver) require an owned interface, mark the interface variable consumed after the call, and forbid being called on a non-owned interface; return-statement checks reject silently dropping ownership (`valType.HasOwned() && !retType.HasOwned()`) and validate general return-type compatibility via `ResolveUnderlying + Accepts` with a `sameIgnoringOwned` escape so owned↔non-owned variants of the same underlying type still pass
-- Multi-value return (`fn f() i64, i64`) and destructuring bind (`var a, b = f()`), including mixed `var`/`const` per-bind qualifiers, per-bind type annotations, and re-binding when a name already exists in scope
+- Multi-value return (`fn f() i64, i64`) and destructuring bind (`a, b := f()`), including per-bind `var` qualifiers (immutable by default), per-bind type annotations, and re-binding when a name already exists in scope
 - Integer literal bases: decimal, hexadecimal (`0xFF`), octal (`0o755`), and binary (`0b1010`)
 - Bitwise `&` and `|` operators on integer operands
 - Bare `return` (no value) in `void` functions or as an early exit
 - `(expr).method(...)` dispatch for arbitrary concrete-type expression receivers (interface-typed receivers still require binding first)
 - Boson source string and character literal escapes: `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, `\'`, `\xHH`
-- Type-alias casts as file-scope static initializers (`var fd FD = FD(3)`, qualified form `io.FD(3)`)
+- Type-alias casts as file-scope static initializers (`var fd FD := FD(3)`, qualified form `io.FD(3)`)
 - Position tracking through a leading file-level doc comment preamble (errors point at the correct source line even when the file begins with comments)
 - `values` types (`type Name values { ... }`): closed symbolic case sets with compiler-private dense `i64` tags, scoped case access (`T.CASE`, `pkg.T.CASE`), declared static projections with explicit projection casts (`i64(e)`, `byte[](e)`, struct projections, function-pointer projections), optional value-receiver methods, value-backed interface satisfaction without heap allocation, and cross-package use through a `.bo` `values` directive
 - Value-receiver methods (`name(e T)` rather than `name(e *T)`) on `i64`-sized type aliases and `values` types; recognized at call-site dispatch and accepted as the receiver shape for value-backed interface coercion
@@ -2386,7 +2386,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Generics / type polymorphism not implemented.
 - Stacked `owned *owned T` cannot have partial consumption (needs typestate).
 - No witnessed borrows or explicit escaping-reference mechanism.
-- True read-only `.rodata` segment split not yet done. String constants and other immutable data are tagged at the `o.Data` level but currently land in the writable `.data` LOAD segment. Hardware-enforced const requires splitting the ELF layout.
+- True read-only `.rodata` segment split not yet done. String constants and other immutable data are tagged at the `o.Data` level but currently land in the writable `.data` LOAD segment. Hardware-enforced read-only data requires splitting the ELF layout.
 - No deduplication of structurally-identical anonymous globals. Each non-string `&literal` produces a fresh `__static_N`. (Function-scope `&"literal"` headers *are* shared per distinct literal value within a compilation unit; cross-unit dedup of identical headers is not done.)
 - macOS support stubbed but not implemented.
 - Unused-mutability warning not implemented.
@@ -2399,6 +2399,6 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - **Assembler as IR.** The `.bs` language occupies an unusual middle ground: it has named variables and a register allocator, making it usable as a compiler IR, while still being human-readable assembly.
 - **Minimal runtime.** No GC and no dynamic loading. Programs are fully static ELF64 binaries that make raw Linux syscalls; the heap runtime is a small mmap/munmap allocator.
 - **Single-pass compiler.** The compiler does not perform optimization. It lowers each AST node directly to assembly, relying on the register allocator to minimize unnecessary spills.
-- **Conservative-by-default ownership and mutability.** Defaults favor strictness (const, read-only, no implicit promotion) with explicit opt-in for looser forms (var, mut, owned()). The type system encodes obligations the compiler can check; programmer-asserted unsafe operations are explicit (`owned(...)`, `dispose(...)`).
+- **Conservative-by-default ownership and mutability.** Defaults favor strictness (immutable, read-only, no implicit promotion) with explicit opt-in for looser forms (var, mut, owned()). The type system encodes obligations the compiler can check; programmer-asserted unsafe operations are explicit (`owned(...)`, `dispose(...)`).
 - **Name-is-address as a single distinction.** `local` allocations are register-resident — the name *is* the value. `bytes`/`var`/`data` allocations are memory-resident — the name *is* the address. Bosc tracks this with a single bool per `spot` (`nameIsAddress`), populated at allocation/declaration time. Every site that needs to follow a pointer through such storage consults the same flag and emits the same lea-then-deref or load-first pattern. The distinction isn't between local and global scope (a `bytes`-allocated local and a `var` global behave the same way); it's about register vs memory residency.
 - **Data relocations as a uniform mechanism.** A `.bo` file's globals can carry per-block relocations the linker resolves at link time, producing absolute pointer slots. Any compile-time-constant expression — primitive literal, struct literal, `&someGlobal`, `&literal` — collapses to a `(bytes, relocations)` pair. Slice headers, struct fields holding pointers, and anonymous globals all fall out of that one mechanism without per-feature code paths.
