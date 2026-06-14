@@ -9,7 +9,7 @@ import "io"
 // variant — `return self.buf` — is also valid now and pinned by
 // fmt_stringer_borrowed_field_test.
 type word struct { tag i64 } {
-	string(w *word) byte[] { return "hello-stringer" }
+	string(_ *word) byte[] { return "hello-stringer" }
 }
 
 fn main() i64 {

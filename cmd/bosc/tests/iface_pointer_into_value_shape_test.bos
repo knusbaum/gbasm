@@ -12,7 +12,7 @@ interface value_shape {
 }
 
 type widget i64 {
-	name(w *widget) byte[] {
+	name(_ *widget) byte[] {
 		return "widget"
 	}
 }

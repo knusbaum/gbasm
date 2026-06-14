@@ -5,4 +5,5 @@ fn main() {
 	p *mut i64 := &x
 	var q *?mut i64 := p
 	q = nil
+	_ := q
 }

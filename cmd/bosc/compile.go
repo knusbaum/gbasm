@@ -1378,6 +1378,47 @@ func (c *Context) markMutRelied(name string) {
 	}
 }
 
+// recordUsedCandidate notes a binding declared in the current scope as
+// subject to the unused-binding check. The discard `_` is never recorded.
+func (c *Context) recordUsedCandidate(name string, p position) {
+	if !isDiscard(name) {
+		c.usedCandidates[name] = p
+	}
+}
+
+// markUsed records that `name` was read, address-taken, passed, or
+// consumed. Routed to the binding's defining scope. Marking is deliberately
+// generous: over-marking only costs a missed lint, while under-marking
+// would reject live code, so any plausible use marks.
+func (c *Context) markUsed(name string) {
+	if bc := c.BindingContext(name); bc != nil {
+		bc.used[name] = true
+	}
+}
+
+// reportUnused rejects any binding declared in this scope that was never
+// used — a dead binding. Run at scope exit, before the never-reassigned
+// check so "remove it" wins over "drop var" for a binding that is both.
+// Skipped on the alias-inference dry run (captureState non-nil).
+func (c *Context) reportUnused() {
+	if c.captureState() != nil || len(c.usedCandidates) == 0 {
+		return
+	}
+	names := make([]string, 0, len(c.usedCandidates))
+	for n := range c.usedCandidates {
+		if !c.used[n] {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		panic(&interpreterError{
+			msg: fmt.Sprintf("\"%s\" is declared but never used; remove it or discard with `_`", n),
+			p:   c.usedCandidates[n],
+		})
+	}
+}
+
 // reportScopeNudge rejects any `var` declared in this scope whose
 // mutability was never used: an immutable binding spelled `var` claims a
 // capability it doesn't need. Run at scope exit. The alias-inference dry
@@ -2527,6 +2568,7 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 			fmt.Fprintf(of, "\targi %s %d %d\n", a.Name, i, a.Type.Size(c)*8)
 		}
 		c.BindVar(ast, a.Name, a.Type, a.IsConst)
+		c.recordUsedCandidate(a.Name, ast.Pos())
 		if a.Type.Indirection > 0 && !a.Type.HasOwned() {
 			c.SetBorrowedBinding(a.Name, true)
 		}
@@ -2580,6 +2622,7 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 		fmt.Fprintf(of, "\n")
 	}
 	compileTop(of, c, ast.Body, nullspot)
+	c.reportUnused() // parameters live in the function context, not the body block
 	for _, name := range c.UnconsumedOwned() {
 		CompileErrorF(ast, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
 	}
@@ -2893,6 +2936,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if !ast.IsConst {
 			c.recordMutCandidate(ast.Name, ast.Pos())
 		}
+		c.recordUsedCandidate(ast.Name, ast.Pos())
 		if c.ResolveUnderlying(ast.Type).Indirection > 0 {
 			c.PointerFlow().DeclarePointer(flow.Binding(ast.Name))
 		} else if ast.Type.HasOwned() {
@@ -3075,6 +3119,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				if !b.IsConst {
 					c.recordMutCandidate(b.Name, b.Pos())
 				}
+				c.recordUsedCandidate(b.Name, b.Pos())
 				if c.ResolveUnderlying(bindType).Indirection > 0 {
 					c.PointerFlow().DeclarePointer(flow.Binding(b.Name))
 				} else if bindType.HasOwned() {
@@ -3253,6 +3298,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
 			}
 		}
+		sc.reportUnused()
 		sc.reportScopeNudge()
 		sc.InvalidateLocalOriginsForScope()
 		sc.ForgetPointerBindings()
@@ -3341,10 +3387,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			//                  call through field `f` of struct `d`
 			if pkg == "" {
 				if vt, vok := c.TypeForVar(fname); vok && vt.FuncSig != nil {
+					c.markUsed(fname) // calling through the binding reads it
 					return compileIndirectCall(of, c, a, ast, fname, vt.FuncSig, dest)
 				}
 			} else {
 				if vt, vok := c.TypeForVar(pkg); vok {
+					c.markUsed(pkg)
 					// Interface method dispatch: v.method(args) where v is an interface type.
 					if c.IsInterfaceType(vt) {
 						ifaceDecl, _ := c.InterfaceForName(vt.Name)
@@ -3575,6 +3623,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// `&x` of a `var` yields *mut; converting x to immutable would
 			// yield *T and could break a write-through consumer. Keep x var.
 			c.markMutRelied(name)
+			c.markUsed(name)
 		}
 		if !hasName {
 			// Function-scope `&"literal"`: the only address-of-literal form
@@ -3863,6 +3912,27 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		if root := mutabilityReliedRoot(c, ast.Target); root != "" {
 			c.markMutRelied(root)
+		}
+		// A projection target (`b.f`, `b[i]`, `*b`) reads its root binding to
+		// reach the location, so the root is used. A bare Symbol target is a
+		// pure write and must NOT mark used (write-only = unused).
+		if !targetIsSymbol {
+			for t := ast.Target; ; {
+				if v, ok := t.(*Dot); ok {
+					t = v.Val
+				} else if v, ok := t.(*Index); ok {
+					t = v.Val
+				} else if v, ok := t.(*Deref); ok {
+					t = v.Val
+				} else if v, ok := t.(*NonNullAssert); ok {
+					t = v.Val
+				} else {
+					if s, ok := t.(*Symbol); ok {
+						c.markUsed(s.Name)
+					}
+					break
+				}
+			}
 		}
 		if targetIsSymbol {
 			if c.OwnedObligationLive(targetSym.Name, dstt) {
@@ -4521,6 +4591,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if !ok {
 			CompileErrorF(a, "dispose: \"%s\" is not declared", ast.Var)
 		}
+		c.markUsed(ast.Var) // consuming a binding is a use
+
 		if !t.HasOwned() {
 			CompileErrorF(a, "dispose: \"%s\" has type %s which has no owned obligation", ast.Var, t)
 		}
@@ -4551,6 +4623,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		c.Break(of)
 		return nullspot
 	case *Symbol:
+		c.markUsed(ast.Name)
 		if c.IsMoved(ast.Name) {
 			CompileErrorF(a, "Use of \"%s\" after it was moved", ast.Name)
 		}
@@ -6039,6 +6112,7 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 
 	// The interface variable is memory-backed; its name is the base address.
 	ifaceRef := callNode.PkgName()
+	c.markUsed(ifaceRef) // dispatching through the interface reads it
 	if receiverParam.HasOwned() {
 		if !ifaceType.HasOwned() {
 			CompileErrorF(a, "Cannot call consuming method %s.%s on non-owned %s", ifaceDecl.Name, mname, ifaceType)

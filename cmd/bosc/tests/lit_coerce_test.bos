@@ -4,7 +4,7 @@ import "string"
 
 // Tests that a literal is accepted at an i8 call site without error.
 // (Using the parameter inside the function body is a separate issue.)
-fn accepti8(x i8) i64 {
+fn accepti8(_ i8) i64 {
 	return 0
 }
 

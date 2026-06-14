@@ -14,7 +14,7 @@ type poly struct {
 // *mut poly out-parameter is rejected (see
 // slice_assign_through_borrowed_ptr_field_err_test.bos), so the helper
 // stays slice-free and the caller does the slice store on its own local.
-fn dosth(bs byte[]) i64, i64, i64 {
+fn dosth(_ byte[]) i64, i64, i64 {
 	return 1, 2, 10
 }
 

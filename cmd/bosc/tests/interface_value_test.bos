@@ -24,7 +24,7 @@ fn show(e error_val) {
 	string.puts("\n")
 }
 
-fn main(args byte[][]) {
+fn main(_ byte[][]) {
 	e error_val := make_error()
 	show(e)
 }

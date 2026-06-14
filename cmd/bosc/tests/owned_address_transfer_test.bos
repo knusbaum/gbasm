@@ -3,7 +3,7 @@ package main
 import "string"
 
 type foo i64 {
-	hello(f *foo) {
+	hello(_ *foo) {
 		string.puts("hello\n")
 	}
 }

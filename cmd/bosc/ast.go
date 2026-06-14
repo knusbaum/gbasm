@@ -72,6 +72,13 @@ type Context struct {
 	// Reported at scope exit. Populated only when the nudge is enabled.
 	mutCandidates map[string]position
 	mutRelied     map[string]bool
+	// usedCandidates / used drive the unused-binding check, per-scope.
+	// usedCandidates holds every binding declared in this scope (locals
+	// and, on a function context, parameters); used marks the subset that
+	// is read, address-taken, passed, or consumed. A candidate not in used
+	// at scope exit is dead. The discard `_` is never a candidate.
+	usedCandidates map[string]position
+	used           map[string]bool
 	// maps struct names to their declarations.
 	structs map[string]*StructDecl
 	// maps function names to their declarations.
@@ -156,6 +163,8 @@ func NewContext() *Context {
 		constBindings:   make(map[string]bool),
 		mutCandidates:   make(map[string]position),
 		mutRelied:       make(map[string]bool),
+		usedCandidates:  make(map[string]position),
+		used:            make(map[string]bool),
 		structs:         make(map[string]*StructDecl),
 		funcs:           make(map[string]*FuncDecl),
 		imports:         make(map[string]map[string]*FuncDecl),

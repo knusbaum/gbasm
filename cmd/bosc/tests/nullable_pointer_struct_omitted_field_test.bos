@@ -6,5 +6,5 @@ type node struct {
 }
 
 fn main() {
-	n node := node{value: 10}
+	_ := node{value: 10}
 }

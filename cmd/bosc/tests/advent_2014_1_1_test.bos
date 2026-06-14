@@ -233,7 +233,6 @@ fn main() i64 {
 		if (ti < 0 ) {
 			ti = -ti
 		}
-		tmpi i64
 		diffi = diffi + ti
 	}
 	string.puts("Part 1 Result: ")

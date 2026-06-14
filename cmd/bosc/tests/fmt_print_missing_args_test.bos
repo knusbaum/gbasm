@@ -6,7 +6,7 @@ import "string"
 // Layer 5: fewer args than directives — each missing slot renders a MISSING
 // marker, processing continues, and an error is latched.
 fn main() i64 {
-	n, err := fmt.print("a=%d b=%d c=%d\n", 1)
+	_, err := fmt.print("a=%d b=%d c=%d\n", 1)
 	if (err != io.io_err.OK) {
 		string.puts("missing latched\n")
 	} else {

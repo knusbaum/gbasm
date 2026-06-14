@@ -5,7 +5,7 @@ type pair struct {
 	b owned *mut i64
 }
 
-fn touch(p *pair) {}
+fn touch(_ *pair) {}
 
 fn main() {
 	var p owned *owned mut pair := new(pair{a: alloc(i64), b: alloc(i64)})

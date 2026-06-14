@@ -6,6 +6,6 @@ type holder struct {
 
 fn main() {
 	p owned *mut i64 := alloc(i64)
-	h holder := holder{next: p}
+	_ := holder{next: p}
 	free(p)
 }

@@ -3,12 +3,12 @@ import "string"
 
 // greeter has a greet method; barer does not.
 type greeter i64 {
-	greet(g *self) byte[] {
+	greet(_ *self) byte[] {
 		return "hi"
 	}
 }
 type barer i64 {
-	other(b *self) i64 {
+	other(_ *self) i64 {
 		return 0
 	}
 }

@@ -8,7 +8,7 @@ type box struct {
 	child owned *?owned mut leaf
 }
 
-fn opaque(slot *?mut *leaf) {
+fn opaque(_ *?mut *leaf) {
 }
 
 fn main() {

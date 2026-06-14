@@ -7,7 +7,7 @@ interface named {
 }
 
 type dog i64 {
-	name(d *dog) byte[] { return "Rex" }
+	name(_ *dog) byte[] { return "Rex" }
 }
 
 fn main() {

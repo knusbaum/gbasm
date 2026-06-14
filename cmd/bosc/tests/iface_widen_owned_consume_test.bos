@@ -9,7 +9,7 @@ type res i64 {
 		string.puts("destroyed\n")
 		dispose(r)
 	}
-	describe(r *res) byte[] { return "res" }
+	describe(_ *res) byte[] { return "res" }
 }
 interface bigC {
 	destroy(self owned *self)

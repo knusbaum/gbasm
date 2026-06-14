@@ -4,7 +4,7 @@ type big struct {
 	a i64
 	b i64
 } {
-	message(b big) byte[] {
+	message(_ big) byte[] {
 		return "big"
 	}
 }

@@ -6,7 +6,7 @@ import "string"
 // (empty base) and the linker rejected it. The base type now resolves through
 // shapeBaseName ("byte"), so the coercion links and runs against real argv.
 fn main(args byte[][]) i64 {
-	a any := &args
+	_ := &args
 	string.puts("argv coerced ")
 	string.puti(len(args))
 	string.putc(10)

@@ -6,7 +6,7 @@ import "string"
 // interface even though `bump`'s receiver is `*mut self`, because the source
 // is itself mutable. Dispatch goes through the mutating method correctly.
 type counter i64 {
-	bump(c *mut counter) byte[] {
+	bump(_ *mut counter) byte[] {
 		return "bumped"
 	}
 }

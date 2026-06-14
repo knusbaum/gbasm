@@ -186,7 +186,7 @@ fn mk2(s byte[]) byte[], i64 {
 	return s[0:4], 7
 }
 fn take2(s byte[]) byte[] {
-	v byte[], n i64 := mk2(s)
+	v byte[], _ := mk2(s)
 	return v
 }`,
 			fn:   "take2",
@@ -368,7 +368,7 @@ fn ok(s byte[]) byte[] { t byte[] := tail(s); return t }`,
 		},
 		{
 			name: "count return aliases nothing",
-			body: `fn count(dst mut byte[], src byte[]) i64 { return len(src) }`,
+			body: `fn count(_ mut byte[], src byte[]) i64 { return len(src) }`,
 			fn:   "count",
 			want: [][]int{nil},
 		},

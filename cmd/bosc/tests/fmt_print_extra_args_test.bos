@@ -11,12 +11,12 @@ import "string"
 // on the surplus tail. The stringer returns a static .rodata slice, not a
 // borrow of its receiver, so the type coerces to `any` for the vararg shape.
 type word struct { tag i64 } {
-	string(w *word) byte[] { return "tail" }
+	string(_ *word) byte[] { return "tail" }
 }
 
 fn main() i64 {
 	var w word := word{tag: 1}
-	n, err := fmt.print("first=%d", 1, 2, &w)
+	_, err := fmt.print("first=%d", 1, 2, &w)
 	string.putc(10)
 	if (err != io.io_err.OK) {
 		string.puts("surplus latched\n")

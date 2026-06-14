@@ -4,7 +4,7 @@ import "string"
 
 // myError implements the builtin error interface.
 type myError i64 {
-    message(e *myError) byte[] {
+    message(_ *myError) byte[] {
         return "something went wrong"
     }
     destroy(e owned *myError) {
@@ -17,7 +17,7 @@ fn showError(err error) {
     string.puts("\n")
 }
 
-fn main(args byte[][]) {
+fn main(_ byte[][]) {
     var e myError := 0
     showError(&e)
 }

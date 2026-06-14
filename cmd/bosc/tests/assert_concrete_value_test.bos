@@ -8,7 +8,7 @@ fn main() i64 {
 	if (ok) { string.puti(v) } else { string.puti(-1) }
 	string.putc(10)
 	b any := n
-	w byte, bok bool := b.(byte)
+	_ byte, bok bool := b.(byte)
 	if (bok) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
 	return 0

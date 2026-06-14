@@ -3,19 +3,19 @@ package main
 import "string"
 
 type dog i64 {
-	speak(d *dog) byte[] {
+	speak(_ *dog) byte[] {
 		return "woof"
 	}
-	name(d *dog) byte[] {
+	name(_ *dog) byte[] {
 		return "dog"
 	}
 }
 
 type cat i64 {
-	speak(c *cat) byte[] {
+	speak(_ *cat) byte[] {
 		return "meow"
 	}
-	name(c *cat) byte[] {
+	name(_ *cat) byte[] {
 		return "cat"
 	}
 }

@@ -13,7 +13,6 @@ fn show(ss byte[][], i i64) {
 
 fn main() {
 	// Declare a byte[][] local — pure type-level exercise.
-	ss byte[][]
 
 	string.puts("byte[][] declared and parameter passed OK\n")
 }

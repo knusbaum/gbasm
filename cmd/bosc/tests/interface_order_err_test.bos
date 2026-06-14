@@ -7,7 +7,7 @@ interface labeled {
 type code values {
 	OK
 } {
-	label(c code) byte[] {
+	label(_ code) byte[] {
 		return "code"
 	}
 }

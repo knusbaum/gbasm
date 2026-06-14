@@ -1097,6 +1097,31 @@ immutable. Parameters are exempt (a `var` parameter documents a contract
 even if a given body doesn't reassign it). The check is enforced per
 scope, so sibling blocks may reuse a name independently.
 
+**Bindings must be used.** Symmetrically, a binding — local *or* parameter
+— that is never used is a compile error: declaring a name you never read
+is dead code. "Used" means read, address-taken (`&x`), passed to a call,
+or consumed (`dispose`/move). A write alone is not a use, so a binding
+that is only ever assigned and never read is still unused. There are no
+exemptions; the escape is the discard.
+
+**The discard `_`.** `_` is a write-only sink: it binds nothing, may
+appear repeatedly, and reading it is an error. It is valid anywhere a
+binding target appears — `_ := expr`, destructuring slots (`q, _ :=
+f()`), `_ = expr`, multi-assign slots, and parameters (`fn f(_ i64)`).
+The initializer or argument is still evaluated, so `_ := side_effect()`
+runs the call and drops the result. To keep a parameter's name for
+documentation while satisfying the use rule, read it into a discard:
+
+```
+fn write(self *T, buf byte[]) {
+    _ := buf   // `buf` is read (used); the value is discarded
+}
+```
+
+One hard limit, shared with everything else `_` touches: **an owned value
+can't be discarded.** `_` of an owned-typed value, slot, or parameter is
+an error — an obligation must be consumed, never dropped.
+
 ### Axis 2: Write-through mutability (`*mut T`, `mut T[]`)
 
 This axis only exists for *reference types* — pointers and slices. It controls whether you can write to the data *through* the reference. It is a property of the type, not the binding.
@@ -2351,6 +2376,8 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Nested slices/arrays (`byte[][]`, `T[N][M]`, etc.)
 - Immutable and `var` bindings with declaration initializers (`x i64 := 42`)
 - `var`-never-reassigned enforcement: a `var` whose mutability is never used (no rebind, value-field/array write, or mutable-view/`&`/array-slice) is a compile error directing the author to drop `var`; checked per scope, parameters exempt
+- Unused-binding enforcement: a binding (local or parameter) that is never read, address-taken, passed, or consumed is a compile error; checked per scope at scope exit and per function for parameters; unused subsumes never-reassigned when both apply
+- The discard `_`: a write-only, never-readable, repeatable binding target valid in declarations, assignments, destructuring slots, and parameters; the initializer/argument is still evaluated; discarding an owned value is rejected
 - File-scope variable declarations with compile-time-constant initializers — integer/byte literals, string-into-`byte[N]`, string-into-`byte[]` (slice with relocated pointer), struct literals composing all of the above, array literals (`[1, 2, 3]`) for fixed-array and slice destinations, `&someGlobal`, `&SomeStruct{...}` (anonymous globals), `&globalArr[N]` (pointer-into-array via relocation addend)
 - Array literals at runtime as initializers for fixed-array locals; slice destinations rejected with a directed error (lifetime issue)
 - Full nested `*mut T` write-through mutability with implicit coercion

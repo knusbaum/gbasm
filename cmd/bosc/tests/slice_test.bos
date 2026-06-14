@@ -27,15 +27,14 @@ fn main() {
 	slicetest(arr[:])
 
 	var i i64
-	var bb byte
 	for(i = 0; i < 50; i = i + 1) {
-		bb = arr[i]
+		_ = arr[i]
 	}
 
 	var bs byte[]
 	bs = arr[:]
 	for(i = 0; i < 50; i = i + 1) {
-		bb = bs[i]
+		_ = bs[i]
 	}
 
 	// bs = arr[10:20]

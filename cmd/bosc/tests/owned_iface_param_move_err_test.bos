@@ -12,7 +12,7 @@ interface Describer {
 }
 
 type myint i64 {
-	describe(m *myint) byte[] {
+	describe(_ *myint) byte[] {
 		return "myint"
 	}
 }

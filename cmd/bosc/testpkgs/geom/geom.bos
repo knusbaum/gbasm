@@ -8,7 +8,7 @@ pub type Point struct {
 	x i64
 	y i64
 } {
-	describe(p *self) byte[] {
+	describe(_ *self) byte[] {
 		return "point"
 	}
 	// combine's signature mentions the cross-package named type Point (here
@@ -16,7 +16,7 @@ pub type Point struct {
 	// ifaces.Combiner declares the same method with the param written
 	// `*geom.Point`. canonicalSig must render both identically (fully
 	// qualified) or the cross-.bo assertion would silently miss. (m8)
-	combine(p *self, other *Point) byte[] {
+	combine(_ *self, _ *Point) byte[] {
 		return "combined"
 	}
 }

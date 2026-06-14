@@ -9,7 +9,7 @@ interface labeled {
 }
 
 type only_val i64 {
-	tag(o only_val) byte[] {
+	tag(_ only_val) byte[] {
 		return "val"
 	}
 }

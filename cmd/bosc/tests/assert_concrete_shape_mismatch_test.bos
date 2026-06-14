@@ -4,7 +4,7 @@ import "string"
 fn main() i64 {
 	n i64 := 8
 	a any := n
-	p *i64, ok bool := a.(*i64)
+	_ *i64, ok bool := a.(*i64)
 	if (ok) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
 	v i64, ok2 bool := a.(i64)

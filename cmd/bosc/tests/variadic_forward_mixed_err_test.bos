@@ -1,6 +1,6 @@
 package main
 
-fn inner(args ...i64) {
+fn inner(_ ...i64) {
 }
 
 fn outer(xs ...i64) {

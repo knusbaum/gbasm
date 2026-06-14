@@ -4,7 +4,7 @@ package main
 // must be narrowed first — `k.(U)` on an un-narrowed `?K` is rejected.
 interface K { f(s *self) byte[] }
 interface U { f(s *self) byte[] }
-type T i64 { f(t *T) byte[] { return "x" } }
+type T i64 { f(_ *T) byte[] { return "x" } }
 
 fn main() i64 {
 	var t T := 3

@@ -12,8 +12,8 @@ fn main() i64 {
 	arr[0] = 90
 	a any := &arr
 	string.puts("arr16 coerced ")
-	p16 *byte[16], ok16 bool := a.(*byte[16])
-	p32 *byte[32], ok32 bool := a.(*byte[32])
+	_ *byte[16], ok16 bool := a.(*byte[16])
+	_ *byte[32], ok32 bool := a.(*byte[32])
 	if (ok16) { string.puts("16y ") } else { string.puts("16n ") }
 	if (ok32) { string.puts("32y ") } else { string.puts("32n ") }
 	string.putc(10)

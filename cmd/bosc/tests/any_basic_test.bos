@@ -8,7 +8,7 @@ fn main() i64 {
 	v i64, ok bool := a.(i64)
 	if (ok) { string.puti(v) } else { string.puti(0) }
 	string.putc(10)
-	p *mut i64, ok2 bool := b.(*mut i64)
+	_ *mut i64, ok2 bool := b.(*mut i64)
 	if (ok2) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
 	return 0

@@ -6,7 +6,7 @@ interface counter {
 }
 
 type ic i64 {
-	count(self ic) i64 {
+	count(_ ic) i64 {
 		return 1
 	}
 }
@@ -17,7 +17,7 @@ fn main() i64 {
 	a any := s              // widen to any (infallible)
 	string.puts("ok")
 	string.putc(10)
-	v ic, ok2 bool := a.(ic)   // concrete-target assert: 2-value
+	_ ic, ok2 bool := a.(ic)   // concrete-target assert: 2-value
 	if (ok2) {
 		string.puts("kept")
 	} else {

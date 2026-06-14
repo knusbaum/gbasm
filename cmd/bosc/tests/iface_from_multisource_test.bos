@@ -7,7 +7,7 @@ import "string"
 // declared mask through the real compiler path.
 interface joiner { pick(self *self, a byte[], b byte[]) byte[] from(a, b) }
 type J struct { tag i64 } {
-	pick(j *J, a byte[], b byte[]) byte[] { return a }
+	pick(_ *J, a byte[], _ byte[]) byte[] { return a }
 }
 
 fn main() i64 {

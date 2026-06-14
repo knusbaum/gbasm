@@ -14,7 +14,7 @@ fn main() i64 {
 	var s byte[] := "hi"
 	b any := &s
 	string.puts("coerced ")
-	q *byte[], ok bool := b.(*byte[])
+	_ *byte[], ok bool := b.(*byte[])
 	if (ok) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
 	return 0

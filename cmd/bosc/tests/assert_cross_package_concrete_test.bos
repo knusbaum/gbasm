@@ -6,7 +6,7 @@ import "geom"
 fn main() i64 {
 	var p geom.Point := geom.make(3, 4)
 	a any := &p
-	q *mut geom.Point, ok bool := a.(*mut geom.Point)
+	_ *mut geom.Point, ok bool := a.(*mut geom.Point)
 	if (ok) {
 		string.puts("got")
 	} else {
@@ -14,7 +14,7 @@ fn main() i64 {
 	}
 	string.putc(10)
 	// Wrong shape: value-target must fail.
-	v i64, ok2 bool := a.(i64)
+	_ i64, ok2 bool := a.(i64)
 	if (ok2) {
 		string.puts("bad")
 	} else {

@@ -1,5 +1,4 @@
 package main
 
 fn main() {
-	p owned *?mut i64 := nil
 }

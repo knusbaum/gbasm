@@ -1,0 +1,2 @@
+Compiling tests/unused_local_err_test.bos
+Fatal: "dead" is declared but never used; remove it or discard with `_`

@@ -1,6 +1,6 @@
 package main
 
-fn inspect(v i64) {}
+fn inspect(_ i64) {}
 
 fn main() {
 	var x owned i64

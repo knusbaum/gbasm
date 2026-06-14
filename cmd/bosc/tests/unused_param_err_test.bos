@@ -1,0 +1,9 @@
+package main
+
+fn f(used i64, ignored i64) i64 {
+	return used
+}
+
+fn main() i64 {
+	return f(1, 2)
+}

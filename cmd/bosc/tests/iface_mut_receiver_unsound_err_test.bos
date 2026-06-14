@@ -7,7 +7,7 @@ import "string"
 // mutating `bump(c *mut counter)` would drive a mutation through a read-only
 // interface. The coercion is rejected.
 type counter i64 {
-	bump(c *mut counter) byte[] {
+	bump(_ *mut counter) byte[] {
 		return "bumped"
 	}
 }

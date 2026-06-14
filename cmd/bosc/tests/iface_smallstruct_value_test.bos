@@ -15,7 +15,7 @@ type tag struct {
 	c i8
 	d i8
 } {
-	name(t tag) byte[] {
+	name(_ tag) byte[] {
 		return "tag"
 	}
 }

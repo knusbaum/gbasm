@@ -9,5 +9,5 @@ fn pair(n i64) i64 {
 }
 
 fn main() {
-	n i64 := pair(41)
+	_ := pair(41)
 }

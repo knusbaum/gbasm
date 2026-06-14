@@ -50,7 +50,7 @@ fn list_destroy(l owned *owned mut node) {
 	}
 }
 
-fn main(args byte[][]) {
+fn main(_ byte[][]) {
 	lst owned *owned mut node := list_new(10)
 	list_append(lst, 20)
 	list_append(lst, 30)

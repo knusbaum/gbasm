@@ -9,7 +9,7 @@ interface labeled {
 }
 
 type only_ptr i64 {
-	tag(o *only_ptr) byte[] {
+	tag(_ *only_ptr) byte[] {
 		return "ptr"
 	}
 }

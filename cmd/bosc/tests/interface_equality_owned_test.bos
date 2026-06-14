@@ -13,7 +13,7 @@ interface labeled {
 }
 
 type code i64 {
-	label(c *code) byte[] {
+	label(_ *code) byte[] {
 		return "code"
 	}
 	destroy(c owned *code) {

@@ -2,7 +2,7 @@ package main
 
 type big struct { a i64, b i64, c i64, d i64 }
 
-fn show(args ...any) {
+fn show(_ ...any) {
 }
 
 fn main() i64 {

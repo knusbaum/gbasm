@@ -20,7 +20,7 @@ type bag struct {
 	c i8
 	d i8
 } {
-	tag(b bag) byte[] {
+	tag(_ bag) byte[] {
 		return "bag"
 	}
 }

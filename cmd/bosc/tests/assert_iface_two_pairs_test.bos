@@ -5,10 +5,10 @@ import "string"
 // succeed and dispatch through their own method, exercising two distinct itabs
 // chained on the single typedesc cache for `worker`.
 type worker i64 {
-	greet(w *self) byte[] {
+	greet(_ *self) byte[] {
 		return "hi"
 	}
-	farewell(w *self) byte[] {
+	farewell(_ *self) byte[] {
 		return "bye"
 	}
 }

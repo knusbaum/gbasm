@@ -10,8 +10,8 @@ fn mkslice(s byte[]) byte[], i64 { return s[0:4], 7 }
 fn mkglob() byte[], i64 { return gbuf[0:4], 9 }
 fn refresh() byte[] {
 	var l byte[16]
-	var v byte[], var n i64 := mkslice(l[0:8])
-	v, n = mkglob()
+	var v byte[], var _ i64 := mkslice(l[0:8])
+	v, _ = mkglob()
 	return v
 }
 fn main() i64 {

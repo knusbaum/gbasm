@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-fn main(args byte[][]) {
+fn main(_ byte[][]) {
 	a i64 := 0o777
 	string.puti(a)
 	string.puts("\n")

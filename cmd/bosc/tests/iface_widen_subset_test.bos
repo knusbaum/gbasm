@@ -14,7 +14,7 @@ interface smaller {
 }
 type W struct { buf byte[] } {
 	bytes(w *W) byte[] { return w.buf }
-	tag(w *W) i64 { return 7 }
+	tag(_ *W) i64 { return 7 }
 }
 
 fn main() i64 {

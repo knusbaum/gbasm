@@ -5,7 +5,7 @@ interface helloer {
 }
 
 type thingy i64 {
-	hello(t *thingy) {
+	hello(_ *thingy) {
 	}
 }
 

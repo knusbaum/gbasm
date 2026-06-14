@@ -5,7 +5,7 @@ interface labeled {
 }
 
 type good i64 {
-	label(g good) byte[] {
+	label(_ good) byte[] {
 		return "good"
 	}
 }

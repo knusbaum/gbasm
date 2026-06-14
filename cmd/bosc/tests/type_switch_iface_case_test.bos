@@ -2,7 +2,7 @@ package main
 import "string"
 
 type widget i64 {
-	render(w *self) byte[] {
+	render(_ *self) byte[] {
 		return "widget"
 	}
 }

@@ -8,7 +8,7 @@ import "string"
 // straight to the `%!v(?)` placeholder. Passing the same type by reference
 // (`&x`) presents a pointer shape and dispatches to the stringer.
 type label i64 {
-	string(l *label) byte[] { return "L" }
+	string(_ *label) byte[] { return "L" }
 }
 
 fn main() i64 {

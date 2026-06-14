@@ -6,16 +6,16 @@ fn main() i64 {
 	n i64 := 9
 	a any := &m
 	b any := n
-	av *mut i64, aok bool := a.(*mut i64)
+	_ *mut i64, aok bool := a.(*mut i64)
 	if (aok) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
-	av2 i64, aok2 bool := a.(i64)
+	_ i64, aok2 bool := a.(i64)
 	if (aok2) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
 	bv i64, bok bool := b.(i64)
 	if (bok) { string.puti(bv) } else { string.puti(0) }
 	string.putc(10)
-	bv2 *mut i64, bok2 bool := b.(*mut i64)
+	_ *mut i64, bok2 bool := b.(*mut i64)
 	if (bok2) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
 	return 0

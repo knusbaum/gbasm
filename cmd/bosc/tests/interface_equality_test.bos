@@ -19,7 +19,7 @@ type code values {
 	OK
 	FAIL
 } {
-	label(c code) byte[] {
+	label(_ code) byte[] {
 		return "code"
 	}
 }
@@ -27,7 +27,7 @@ type code values {
 type other values {
 	OK
 } {
-	label(o other) byte[] {
+	label(_ other) byte[] {
 		return "other"
 	}
 }
@@ -37,7 +37,7 @@ interface ptr_labeled {
 }
 
 type thing i64 {
-	label(t *thing) byte[] {
+	label(_ *thing) byte[] {
 		return "thing"
 	}
 }

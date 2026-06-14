@@ -6,10 +6,10 @@ type foo struct { x i64 }
 fn main() i64 {
 	var f foo := foo{x: 3}
 	a any := &f
-	p *mut foo, ok bool := a.(*mut foo)
+	_ *mut foo, ok bool := a.(*mut foo)
 	if (ok) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
-	q *foo, ok2 bool := a.(*foo)
+	_ *foo, ok2 bool := a.(*foo)
 	if (ok2) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
 	return 0

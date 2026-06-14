@@ -1,7 +1,7 @@
 package main
 
 type myError i64 {
-	message(e *myError) byte[] {
+	message(_ *myError) byte[] {
 		return "bad"
 	}
 }

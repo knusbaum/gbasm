@@ -2,7 +2,7 @@ package main
 import "string"
 
 type greeter i64 {
-	greet(g *self) byte[] {
+	greet(_ *self) byte[] {
 		return "hey"
 	}
 }

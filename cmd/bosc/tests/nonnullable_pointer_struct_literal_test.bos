@@ -6,5 +6,5 @@ type cursor struct {
 
 fn main() {
 	var x i64
-	c cursor := cursor{current: &x}
+	_ := cursor{current: &x}
 }

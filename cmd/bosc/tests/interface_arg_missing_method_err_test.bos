@@ -1,7 +1,7 @@
 package main
 
 type dog i64 {
-	speak(d *dog) byte[] {
+	speak(_ *dog) byte[] {
 		return "woof"
 	}
 }
@@ -11,7 +11,7 @@ interface Animal {
 	name(a *self) byte[]
 }
 
-fn greet(a Animal) void {
+fn greet(_ Animal) void {
 }
 
 fn main() i64 {

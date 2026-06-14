@@ -5,7 +5,7 @@ import "string"
 // on failure. Dispatching through it without narrowing is rejected, exactly
 // like dereferencing a `*?` pointer.
 interface Speaker { speak(s *self) byte[] }
-type T i64 { speak(t *T) byte[] { return "hi" } }
+type T i64 { speak(_ *T) byte[] { return "hi" } }
 
 fn main() i64 {
 	var t T := 3

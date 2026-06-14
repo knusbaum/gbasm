@@ -3,10 +3,10 @@ import "string"
 
 // T has a value-receiver method f and a pointer-receiver method g.
 type tt i64 {
-	f(self tt) byte[] {
+	f(_ tt) byte[] {
 		return "f"
 	}
-	g(self *tt) byte[] {
+	g(_ *tt) byte[] {
 		return "g"
 	}
 }

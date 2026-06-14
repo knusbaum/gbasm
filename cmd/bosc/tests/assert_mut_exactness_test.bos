@@ -9,17 +9,17 @@ type foo struct { x i64 }
 fn main() i64 {
 	var f foo := foo{x: 1}
 	am any := &f                 // *mut foo
-	p1 *foo, ok1 bool := am.(*foo)
+	_ *foo, ok1 bool := am.(*foo)
 	if (ok1) { string.puti(1) } else { string.puti(0) }
-	p2 *mut foo, ok2 bool := am.(*mut foo)
+	_ *mut foo, ok2 bool := am.(*mut foo)
 	if (ok2) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
 
 	g foo := foo{x: 2}
 	ar any := &g                 // *foo (read-only)
-	q1 *mut foo, ok3 bool := ar.(*mut foo)
+	_ *mut foo, ok3 bool := ar.(*mut foo)
 	if (ok3) { string.puti(1) } else { string.puti(0) }
-	q2 *foo, ok4 bool := ar.(*foo)
+	_ *foo, ok4 bool := ar.(*foo)
 	if (ok4) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
 	return 0

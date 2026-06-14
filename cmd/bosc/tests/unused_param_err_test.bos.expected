@@ -1,0 +1,2 @@
+Compiling tests/unused_param_err_test.bos
+Fatal: "ignored" is declared but never used; remove it or discard with `_`

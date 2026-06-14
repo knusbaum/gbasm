@@ -7,5 +7,6 @@ type thing struct {
 fn main() {
 	a owned *owned mut thing := new(thing{val: 1})
 	slot **mut thing := &a
+	_ := slot
 	free(a)
 }

@@ -4,7 +4,7 @@ package main
 // dispose of (or any use of) the source must be rejected — no double
 // ownership.
 interface Describer { describe(d *self) byte[] }
-type myint i64 { describe(m *myint) byte[] { return "myint" } }
+type myint i64 { describe(_ *myint) byte[] { return "myint" } }
 
 fn main() i64 {
 	var x owned myint := 5
