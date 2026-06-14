@@ -3517,6 +3517,12 @@ type Symbol struct {
 }
 
 func (s *Symbol) ASTType(c *Context) ASTType {
+	if s.Name == "_" {
+		panic(&interpreterError{
+			msg: "cannot read from `_`: it is a discard, not a value",
+			p:   s.p,
+		})
+	}
 	r := ResolveSelector(c, s)
 	if r.Kind == ResolvedRuntimeValue {
 		return r.Type

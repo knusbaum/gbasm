@@ -1,0 +1,6 @@
+package main
+
+fn main() i64 {
+	_ := 5
+	return _
+}

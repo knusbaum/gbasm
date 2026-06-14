@@ -1,0 +1,2 @@
+Compiling tests/discard_read_err_test.bos
+Fatal: cannot read from `_`: it is a discard, not a value

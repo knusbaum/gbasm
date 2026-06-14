@@ -1357,6 +1357,10 @@ func canWriteImmediatePointee(t ASTType) bool {
 	return t.Indirection > 0 && t.MutMask&(1<<1) != 0
 }
 
+// isDiscard reports whether a binding name is the discard `_`: a write-only
+// sink that binds nothing, can't be read, and may appear repeatedly.
+func isDiscard(name string) bool { return name == "_" }
+
 // recordMutCandidate notes a local `var` declaration in the current scope
 // as a never-reassigned-check candidate. Keyed per-scope so sibling scopes
 // reusing a name stay distinct.
@@ -2495,6 +2499,16 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 	}
 	var spills []pendingSpill
 	for i, a := range ast.Args {
+		if isDiscard(a.Name) {
+			// `_` parameter: consume the ABI slot but bind nothing, so the
+			// argument is accepted and ignored. An owned parameter can't be
+			// discarded — its obligation must be consumed.
+			if a.Type.HasOwned() {
+				CompileErrorF(ast, "cannot discard an owned parameter with `_`; an owned parameter must be consumed")
+			}
+			fmt.Fprintf(of, "\targi __discard_arg_%d %d %d\n", i, i, a.Type.Size(c)*8)
+			continue
+		}
 		// memBacked params narrower than a pointer (1/2/4 bytes)
 		// need a stack slot for [name+offset] field reads to land
 		// somewhere addressable; the arg arrives in a sub-register
@@ -2822,6 +2836,23 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		return nullspot
 	case *VarDecl:
+		if isDiscard(ast.Name) {
+			// `_ := expr` — evaluate the initializer for its effects and
+			// reads, but bind nothing. The value is thrown away.
+			if ast.Init == nil {
+				CompileErrorF(a, "`_` discards a value and requires an initializer")
+			}
+			initT := ast.Init.ASTType(c)
+			if initT.MultiReturn {
+				CompileErrorF(a, "cannot discard a multi-value return with `_ :=`; call it as a statement, or discard each value (`_, _ := …`)")
+			}
+			if initT.HasOwned() {
+				CompileErrorF(a, "cannot discard an owned value into `_`; consume it explicitly (dispose/free or pass it to a consumer)")
+			}
+			s := compileTop(of, c, ast.Init, nullspot)
+			s.free(of)
+			return nullspot
+		}
 		if c.prebound[ast.Name] {
 			// Top-level var: ToAST already bound this in actx for forward
 			// references. Consume the marker, then emit a bas-level global
@@ -3009,6 +3040,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		initDecl, _ := structDeclForType(c, initType)
 		for i, b := range ast.Bindings {
 			field := initType.AnonFields[i]
+			if isDiscard(b.Name) {
+				// `_` slot: the value is discarded. The call already ran
+				// (srcSpot); skip copy-out and binding entirely. An owned
+				// value can't be silently dropped.
+				if field.Type.HasOwned() {
+					CompileErrorF(a, "cannot discard the owned value in destructuring slot %d into `_`; consume it explicitly", i)
+				}
+				continue
+			}
 			bindType := b.Type
 			if bindType.Name == "<infer>" {
 				bindType = field.Type
@@ -3099,6 +3139,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			sym, ok := tgt.(*Symbol)
 			if !ok {
 				CompileErrorF(tgt, "multi-assignment target must be a simple variable name")
+			}
+			if isDiscard(sym.Name) {
+				// `_` target: discard this slot. The call already ran.
+				if field.Type.HasOwned() {
+					CompileErrorF(tgt, "cannot discard the owned value in slot %d into `_`; consume it explicitly", i)
+				}
+				continue
 			}
 			declType, declared := c.DeclaredTypeForVar(sym.Name)
 			if !declared {
@@ -3783,6 +3830,16 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return newslice
 
 	case *Assignment:
+		if sym, ok := ast.Target.(*Symbol); ok && isDiscard(sym.Name) {
+			// `_ = expr` — evaluate and discard, binding nothing.
+			vt := ast.Val.ASTType(c)
+			if vt.HasOwned() {
+				CompileErrorF(a, "cannot discard an owned value into `_`; consume it explicitly")
+			}
+			s := compileTop(of, c, ast.Val, nullspot)
+			s.free(of)
+			return nullspot
+		}
 		// Copying a whole inconsistent aggregate (`alias = f` / `alias = &f`)
 		// forms a second handle that could read the moved-out field. Field
 		// RHS (`x = f.a`) is a move, handled separately and not gated here.

@@ -1,0 +1,2 @@
+Compiling tests/discard_owned_err_test.bos
+Fatal: cannot discard an owned value into `_`; consume it explicitly (dispose/free or pass it to a consumer)

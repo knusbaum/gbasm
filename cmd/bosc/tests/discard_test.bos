@@ -1,0 +1,43 @@
+package main
+
+import "string"
+
+fn two() i64, i64 { return 1, 2 }
+
+fn eff(counter *mut i64) i64 {
+	*counter = *counter + 1
+	return 42
+}
+
+fn ignore_first(_ i64, x i64) i64 {
+	return x
+}
+
+fn main() i64 {
+	// `_ :=` evaluates the initializer (side effect) and discards the value.
+	var calls i64 := 0
+	_ := eff(&calls)
+	_ := eff(&calls)
+
+	// destructuring discards, including multiple and acknowledging a param.
+	q, _ := two()
+	_, r := two()
+	_, _ := two()
+
+	// `_ =` assignment discard and a discard slot in multi-assign.
+	var a i64 := 10
+	_ = eff(&calls)
+	a, _ = two()
+
+	string.puti(q)                   // 1
+	string.puts("\n")
+	string.puti(r)                   // 2
+	string.puts("\n")
+	string.puti(a)                   // 1
+	string.puts("\n")
+	string.puti(calls)               // 3 (eff ran three times)
+	string.puts("\n")
+	string.puti(ignore_first(99, 7)) // 7
+	string.puts("\n")
+	return 0
+}
