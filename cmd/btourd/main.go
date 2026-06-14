@@ -88,9 +88,32 @@ func main() {
 	mux.Handle("/static/", state.staticHandler())
 
 	log.Printf("btourd: listening on %s", *addr)
-	if err := http.ListenAndServe(*addr, mux); err != nil {
+	if err := http.ListenAndServe(*addr, logRequests(mux)); err != nil {
 		log.Fatalf("listen: %v", err)
 	}
+}
+
+// logRequests logs one line per HTTP request — client, method, path, status,
+// and duration — so it is visible when (and whether) requests reach the
+// server. Useful when debugging the reverse proxy in front of it.
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		log.Printf("%s %s %s -> %d (%s)", r.RemoteAddr, r.Method, r.URL.Path, rec.status, time.Since(start))
+	})
+}
+
+// statusRecorder captures the response status code for logRequests.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
 }
 
 type serverConfig struct {
