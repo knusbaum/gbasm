@@ -1,7 +1,7 @@
 ---
 title: Variables
 section: Basics
-order: 3
+order: 2
 ---
 A binding is introduced with `:=`. By default it is **immutable** — `limit
 := 10` names a value that can't be reassigned. Immutability is the default

@@ -1,0 +1,4 @@
+0x0F & 0x06 = 6 (hex 0x6)
+-1 as i64 = -1, as u64 = 18446744073709551615
+byte A has value 65
+neg > 0 is false

@@ -1,0 +1,25 @@
+package main
+
+import "fmt"
+
+fn main() {
+	// Literals can be decimal or hexadecimal, and the bitwise operators
+	// (& | and friends) work as you'd expect.
+	flags i64 := 0x0F
+	masked i64 := flags & 0x06
+	fmt.print("0x0F & 0x06 = %d (hex %x)\n", masked, u64(masked))
+
+	// A cast `T(x)` reinterprets the bits as another type. The same value
+	// read as a signed i64 and as an unsigned u64 prints very differently.
+	neg i64 := -1
+	fmt.print("-1 as i64 = %d, as u64 = %u\n", neg, u64(neg))
+
+	// `byte` is a one-byte integer; a character literal is just its code.
+	letter byte := 'A'
+	fmt.print("byte %c has value %d\n", letter, i64(letter))
+
+	// `bool` values come from comparisons — Boson has no true/false
+	// literals. The %t verb prints one.
+	positive bool := neg > 0
+	fmt.print("neg > 0 is %t\n", positive)
+}
