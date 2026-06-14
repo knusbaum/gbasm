@@ -1,0 +1,28 @@
+package main
+import "string"
+
+// Implicit widening to a non-empty SUBSET interface (not just `any`): bigger
+// (bytes + tag) widens to smaller (bytes only); both declare the same
+// from(self) contract for bytes, so it is a valid widening. Dispatch through
+// the narrowed view works.
+interface bigger {
+	bytes(self *self) byte[] from(self)
+	tag(self *self) i64
+}
+interface smaller {
+	bytes(self *self) byte[] from(self)
+}
+type W struct { buf byte[] } {
+	bytes(w *W) byte[] { return w.buf }
+	tag(w *W) i64 { return 7 }
+}
+
+fn main() i64 {
+	var w W = W{buf: "sub"}
+	var b bigger = &w
+	var s smaller = b
+	const r byte[] = s.bytes()
+	string.puts(r)
+	string.putc(10)
+	return 0
+}

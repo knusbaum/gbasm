@@ -1,0 +1,16 @@
+package main
+
+// Escape continuity through widening: `a` widens a viewer that wraps a LOCAL,
+// so `a` borrows that local too (the data field-pointer is copied). Returning
+// `a` must be rejected — the widened interface references local storage.
+interface viewer { bytes(self *self) byte[] from(self) }
+type W struct { buf byte[] } { bytes(w *W) byte[] { return w.buf } }
+
+fn leak() any {
+	var local W = W{buf: "x"}
+	var v viewer = &local
+	var a any = v
+	return a
+}
+
+fn main() i64 { return 0 }

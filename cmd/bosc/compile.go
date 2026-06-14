@@ -261,9 +261,18 @@ func validateInterfaceCoercion(c *Context, errNode AST, dstt, srct ASTType) (val
 }
 
 func shouldCoerceToInterface(c *Context, dstt, srct ASTType) bool {
-	return c.IsInterfaceType(dstt) &&
-		!c.IsInterfaceType(srct) &&
-		(srct.Indirection > 0 || !srct.Same(intlitASTType()))
+	if !c.IsInterfaceType(dstt) {
+		return false
+	}
+	if c.IsInterfaceType(srct) {
+		// interface → interface: a same-type assignment is a plain 16-byte copy
+		// (handled elsewhere). Distinct interface types route through the
+		// widening emitter, which performs the conversion when it is a valid
+		// *widening* (dst's contract covered by src) and emits a directed "use
+		// an explicit `x.(D)` assertion" error for a narrowing.
+		return !srct.Same(dstt)
+	}
+	return srct.Indirection > 0 || !srct.Same(intlitASTType())
 }
 
 func typedescSymbolName(typeName string) string {
@@ -6068,6 +6077,138 @@ func ifaceDescSymbol(c *Context, ifaceName string) string {
 // _iface.assert_to with the target iface_desc, then builds the result
 // multiretu{I, bool}. On success the asserted interface carries src_data
 // verbatim and the helper-provided itab vtable; on failure it is zeroed.
+// emitAssertToCall emits the _iface.assert_to call for source interface value
+// srcRef (a 16-byte fat pointer) against target descriptor descSym, returning
+// local temps holding the result vtable pointer (rax) and ok flag (rdx). The
+// arg registers are pinned across the (already-compiled) argument loads.
+func emitAssertToCall(of io.Writer, c *Context, srcRef, descSym string) (vtTmp, okTmp string) {
+	fmt.Fprintf(of, "\tacquire rdi\n")
+	fmt.Fprintf(of, "\tacquire rsi\n")
+	fmt.Fprintf(of, "\tacquire rdx\n")
+	fmt.Fprintf(of, "\tacquire rcx\n")
+	fmt.Fprintf(of, "\tacquire rax\n")
+	fmt.Fprintf(of, "\tmov rax [%s+8]\n", srcRef) // src vtable ptr
+	fmt.Fprintf(of, "\tmov rdi [rax+0]\n")         // src_ti (concrete typedesc)
+	fmt.Fprintf(of, "\tmov rsi [rax+8]\n")         // src_shape
+	fmt.Fprintf(of, "\tmov rdx [%s+0]\n", srcRef)  // src_data
+	fmt.Fprintf(of, "\tlea rcx %s\n", descSym)
+	fmt.Fprintf(of, "\tcall _iface.assert_to\n")
+	okTmp = c.Temp()
+	vtTmp = c.Temp()
+	fmt.Fprintf(of, "\tlocal %s 64\n", okTmp)
+	fmt.Fprintf(of, "\tlocal %s 64\n", vtTmp)
+	fmt.Fprintf(of, "\tmov %s rdx\n", okTmp)
+	fmt.Fprintf(of, "\tmov %s rax\n", vtTmp)
+	fmt.Fprintf(of, "\trelease rax\n")
+	fmt.Fprintf(of, "\trelease rcx\n")
+	fmt.Fprintf(of, "\trelease rdx\n")
+	fmt.Fprintf(of, "\trelease rsi\n")
+	fmt.Fprintf(of, "\trelease rdi\n")
+	return vtTmp, okTmp
+}
+
+// interfaceWidensTo reports whether interface src can be *implicitly* converted
+// to interface dst — i.e. dst's contract is covered by src, so the conversion
+// can never fail at runtime. For each method dst requires, src must declare a
+// method matching on the same basis _iface.assert_to uses (canonical
+// non-receiver signature + receiver shape — so the static and runtime matchers
+// agree), with src's declared borrow set ⊆ dst's. The borrow direction is the
+// inverse of impl conformance: the concrete behind src has borrow ⊆ src, so
+// requiring src ⊆ dst keeps it ⊆ dst (assert_to's runtime mask gate can't
+// fail). `any` (zero required methods) is the trivial always-widens case.
+func interfaceWidensTo(c *Context, src, dst *InterfaceDecl) bool {
+	if src == nil || dst == nil {
+		return false
+	}
+	for _, dm := range dst.Methods {
+		matched := false
+		for _, sm := range src.Methods {
+			if sm.Name == dm.Name && interfaceMethodCanonMatch(c, sm, dm) &&
+				aliasSetSubset(sm.ReturnAliases, dm.ReturnAliases) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+// interfaceMethodCanonMatch compares two interface methods on the canonical
+// basis _iface.assert_to matches by: the non-receiver signature text (which
+// feeds sig_hash) and the receiver shape. Using canonicalSig here — the same
+// function reqEntriesForInterface feeds the hashes — guarantees that a static
+// match implies the runtime matcher agrees, so an "infallible" widening really
+// does succeed.
+func interfaceMethodCanonMatch(c *Context, sm, dm InterfaceMethodSig) bool {
+	if len(sm.Params) == 0 || len(dm.Params) == 0 {
+		return false
+	}
+	if receiverShapeOf(sm.Params[0].Type) != receiverShapeOf(dm.Params[0].Type) {
+		return false
+	}
+	return canonicalSig(c, sm.Params[1:], sm.Return) == canonicalSig(c, dm.Params[1:], dm.Return)
+}
+
+// aliasSetSubset reports whether every parameter index in sub[slot] also
+// appears in super[slot] — i.e. sub ⊆ super per return slot.
+func aliasSetSubset(sub, super [][]int) bool {
+	for slot, params := range sub {
+		for _, p := range params {
+			if !slotDeclaresParam(super, slot, p) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// emitInterfaceWiden lowers an implicit interface→interface widening
+// `var dst D = src` into an _iface.assert_to call that rebuilds the fat
+// pointer's vtable for D from the concrete typedesc src already carries
+// (vtable[0]). The conversion is infallible by construction (the static
+// interfaceWidensTo gate plus a congruent matcher), so the result is built
+// unconditionally; a defensive `ok == 0` trap guards against any matcher
+// desync rather than storing a null vtable. The widened value wraps src's
+// data verbatim, so it borrows whatever src borrowed (data field-pointer
+// copied for escape continuity).
+func emitInterfaceWiden(of io.Writer, c *Context, errNode AST, dstt, srct ASTType, valAST AST, destRef, destBinding string) {
+	srcIface, _ := c.InterfaceForName(srct.Name)
+	dstIface, _ := c.InterfaceForName(dstt.Name)
+	if !interfaceWidensTo(c, srcIface, dstIface) {
+		CompileErrorF(errNode, "Cannot implicitly convert interface %s to %s: %s is not covered by %s (a narrowing). Use an explicit assertion `x.(%s)`, which yields an ok flag.",
+			srct.Name, dstt.Name, dstt.Name, srct.Name, dstt.Name)
+	}
+	descSym := ifaceDescSymbol(c, dstt.Name)
+	src := compileAsInterfaceValue(of, c, valAST, srct, valAST)
+	defer src.free(of)
+
+	vtTmp, okTmp := emitAssertToCall(of, c, src.ref, descSym)
+	okLabel := c.Label("ifacewidenok")
+	fmt.Fprintf(of, "\tcmp %s 0\n", okTmp)
+	fmt.Fprintf(of, "\tjne %s\n", okLabel)
+	fmt.Fprintf(of, "\tcall _init.nil_assert\n") // unreachable given the static gate
+	fmt.Fprintf(of, "\tlabel %s\n", okLabel)
+
+	dataTmp := c.Temp()
+	fmt.Fprintf(of, "\tlocal %s 64\n", dataTmp)
+	fmt.Fprintf(of, "\tmov %s [%s+0]\n", dataTmp, src.ref)
+	fmt.Fprintf(of, "\tmov qword[%s+0] %s\n", destRef, dataTmp)
+	fmt.Fprintf(of, "\tmov qword[%s+8] %s\n", destRef, vtTmp)
+	fmt.Fprintf(of, "\tforget %s\n", dataTmp)
+	fmt.Fprintf(of, "\tforget %s\n", okTmp)
+	fmt.Fprintf(of, "\tforget %s\n", vtTmp)
+
+	// Borrow continuity: the widened interface wraps the same data, so it
+	// borrows whatever src borrowed. Skip for owned destinations (the move is
+	// handled at the assignment site).
+	if destBinding != "" && dstt.OwnedMask == 0 {
+		c.PointerFlow().SetFieldPointer(flow.Binding(destBinding), "data", argAliasProvenance(c, valAST))
+	}
+}
+
 func compileInterfaceAssert(of io.Writer, c *Context, ast *TypeAssert, dest spot, srcT ASTType) spot {
 	descSym := ifaceDescSymbol(c, ast.T.Name)
 
@@ -6089,30 +6230,7 @@ func compileInterfaceAssert(of io.Writer, c *Context, ast *TypeAssert, dest spot
 	// td/shp spots), the assert path must dereference the source vtable here to
 	// pull src_ti/src_shape, so it additionally acquires rax as the scratch
 	// base register for those two indirect loads.
-	fmt.Fprintf(of, "\tacquire rdi\n")
-	fmt.Fprintf(of, "\tacquire rsi\n")
-	fmt.Fprintf(of, "\tacquire rdx\n")
-	fmt.Fprintf(of, "\tacquire rcx\n")
-	fmt.Fprintf(of, "\tacquire rax\n")
-	fmt.Fprintf(of, "\tmov rax [%s+8]\n", src.ref) // src vtable ptr
-	fmt.Fprintf(of, "\tmov rdi [rax+0]\n")          // src_ti
-	fmt.Fprintf(of, "\tmov rsi [rax+8]\n")          // src_shape
-	fmt.Fprintf(of, "\tmov rdx [%s+0]\n", src.ref)  // src_data
-	fmt.Fprintf(of, "\tlea rcx %s\n", descSym)
-	fmt.Fprintf(of, "\tcall _iface.assert_to\n")
-	// rax = itab vtable ptr (or 0), rdx = ok flag. Stash both before they are
-	// clobbered by the result-building loads.
-	okTmp := c.Temp()
-	vtTmp := c.Temp()
-	fmt.Fprintf(of, "\tlocal %s 64\n", okTmp)
-	fmt.Fprintf(of, "\tlocal %s 64\n", vtTmp)
-	fmt.Fprintf(of, "\tmov %s rdx\n", okTmp)
-	fmt.Fprintf(of, "\tmov %s rax\n", vtTmp)
-	fmt.Fprintf(of, "\trelease rax\n")
-	fmt.Fprintf(of, "\trelease rcx\n")
-	fmt.Fprintf(of, "\trelease rdx\n")
-	fmt.Fprintf(of, "\trelease rsi\n")
-	fmt.Fprintf(of, "\trelease rdi\n")
+	vtTmp, okTmp := emitAssertToCall(of, c, src.ref, descSym)
 
 	fail := c.Label("ifaceassertfail")
 	done := c.Label("ifaceassertdone")
@@ -6309,6 +6427,12 @@ func compileTypeSwitchIfaceCase(of io.Writer, c *Context, ast *TypeSwitch, cs *T
 // interface look dead, which is the opposite of what an ownership transfer
 // means.
 func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTType, valAST AST, destRef, destBinding string) {
+	// Interface → interface widening rebuilds the vtable at runtime from the
+	// source's concrete typedesc (it has no static __vtable_T__I); delegate.
+	if c.IsInterfaceType(srct) {
+		emitInterfaceWiden(of, c, errNode, dstt, srct, valAST, destRef, destBinding)
+		return
+	}
 	// The vtable and its typedesc relocation are keyed off the *base* type of
 	// the source — the leaf at the bottom of the shape's constructor stack.
 	// For composite sources (`*byte[]`, `byte[][]`, `*byte[N]`) the bare

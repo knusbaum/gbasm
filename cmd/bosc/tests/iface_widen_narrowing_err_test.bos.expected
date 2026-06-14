@@ -1,0 +1,2 @@
+Compiling tests/iface_widen_narrowing_err_test.bos
+Fatal: Cannot implicitly convert interface viewer to Byter: Byter is not covered by viewer (a narrowing). Use an explicit assertion `x.(Byter)`, which yields an ok flag.

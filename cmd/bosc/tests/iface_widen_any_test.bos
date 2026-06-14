@@ -1,0 +1,34 @@
+package main
+import "string"
+
+// Implicit interface→interface widening: `var a any = v` widens a viewer to
+// the empty interface (zero methods ⊆ everything) without an explicit
+// assertion. The widened `any` still carries W's concrete typedesc, so a
+// later a.(Byter) (non-declaring) is blocked while a.(viewer) succeeds.
+interface viewer { bytes(self *self) byte[] from(self) }
+interface Byter { bytes(self *self) byte[] }
+type W struct { buf byte[] } {
+	bytes(w *W) byte[] { return w.buf }
+}
+
+fn main() i64 {
+	var w W = W{buf: "hi"}
+	var v viewer = &w
+	var a any = v
+	var k Byter, var ok bool = a.(Byter)
+	if (ok) {
+		string.puts("LAUNDERED")
+	} else {
+		string.puts("blocked")
+	}
+	string.putc(10)
+	var v2 viewer, var ok2 bool = a.(viewer)
+	if (ok2) {
+		const r byte[] = v2.bytes()
+		string.puts(r)
+	} else {
+		string.puts("rejected")
+	}
+	string.putc(10)
+	return 0
+}

@@ -1,0 +1,16 @@
+package main
+
+// A narrowing — viewer declares `bytes from(self)` but Byter declares no
+// borrow — is NOT an implicit conversion (it would drop the contract). The
+// method sigs match; only the borrow contract differs, so this pins that the
+// ⊆-on-declared check governs. Must use an explicit assertion instead.
+interface viewer { bytes(self *self) byte[] from(self) }
+interface Byter { bytes(self *self) byte[] }
+type W struct { buf byte[] } { bytes(w *W) byte[] { return w.buf } }
+
+fn main() i64 {
+	var w W = W{buf: "hi"}
+	var v viewer = &w
+	var b Byter = v
+	return 0
+}
