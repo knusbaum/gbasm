@@ -1419,6 +1419,12 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 		if pe, ok := funcallResultOrigin(c, ast, assignedName); ok {
 			return pe
 		}
+		// Virtual dispatch: a borrowed result of an interface method call
+		// (`v.method(...)`) borrows the interface value per the declared
+		// `from(...)` contract, so it cannot outlive v's referent.
+		if pe, ok := interfaceCallResultOrigin(c, ast, assignedName); ok {
+			return pe
+		}
 		return c.PointerFlow().UnknownPointer()
 	default:
 		return c.PointerFlow().UnknownPointer()
@@ -1439,7 +1445,16 @@ func funcallResultOrigin(c *Context, call *Funcall, assignedName string) (flow.P
 	if callee == nil {
 		return flow.PointerExpr{}, false
 	}
-	aliases := aliasSet(c, callee)
+	return resultOriginFromSlot0(c, aliasSet(c, callee), args, assignedName)
+}
+
+// resultOriginFromSlot0 synthesizes a call result's PointerExpr from return
+// slot 0's alias set and the positional argument ASTs (args[0] is the
+// receiver, args[k] the k-th parameter). Shared by direct calls (inferred
+// aliases via funcallResultOrigin) and interface dispatch (declared aliases
+// via interfaceCallResultOrigin); the single/multi-param handling is identical
+// regardless of where the alias set came from.
+func resultOriginFromSlot0(c *Context, aliases [][]int, args []AST, assignedName string) (flow.PointerExpr, bool) {
 	if len(aliases) == 0 || len(aliases[0]) == 0 {
 		return flow.PointerExpr{}, false
 	}
@@ -1526,6 +1541,50 @@ func funcallResultOrigin(c *Context, call *Funcall, assignedName string) (flow.P
 		return merged, true
 	}
 	return flow.PointerExpr{}, false
+}
+
+// interfaceCallResultOrigin synthesizes the result origin for a virtual call
+// `v.method(args)` (v an interface variable) from the interface method's
+// *declared* ReturnAliases (its `from(...)` contract). The receiver (the
+// interface value v) is argument index 0, so a `from(self)` result inherits
+// v's provenance — for an interface value that is v's `data`-field origin
+// (the referent the fat pointer points at, via argAliasProvenance), exactly
+// the lifetime `from(self)` bounds the result by. Mirrors funcallResultOrigin
+// but reads the static contract instead of inferring a body. Returns false
+// for any non-interface call or a method that declares no borrow.
+func interfaceCallResultOrigin(c *Context, call *Funcall, assignedName string) (flow.PointerExpr, bool) {
+	msig, recv, ok := resolveInterfaceCallForAlias(c, call)
+	if !ok || len(msig.ReturnAliases) == 0 {
+		return flow.PointerExpr{}, false
+	}
+	args := append([]AST{recv}, call.Args...)
+	return resultOriginFromSlot0(c, msig.ReturnAliases, args, assignedName)
+}
+
+// resolveInterfaceCallForAlias recognizes the one supported interface-call
+// shape — `v.method(args)` where v is an interface-typed variable (expression
+// receivers are rejected at codegen) — and returns the declared method
+// signature plus the receiver AST (the interface value v). Returns false
+// otherwise.
+func resolveInterfaceCallForAlias(c *Context, call *Funcall) (*InterfaceMethodSig, AST, bool) {
+	pkg, fname := call.PkgAndName()
+	if pkg == "" {
+		return nil, nil, false
+	}
+	vt, ok := c.TypeForVar(pkg)
+	if !ok || !c.IsInterfaceType(vt) {
+		return nil, nil, false
+	}
+	iface, ok := c.InterfaceForName(vt.Name)
+	if !ok {
+		return nil, nil, false
+	}
+	for i := range iface.Methods {
+		if iface.Methods[i].Name == fname {
+			return &iface.Methods[i], &Symbol{Name: pkg}, true
+		}
+	}
+	return nil, nil, false
 }
 
 func pointerSlotTargetForDeref(c *Context, target AST) (flow.PointerExpr, bool) {

@@ -1,0 +1,17 @@
+package main
+
+// Phase 3 soundness: the borrowed result of a virtual call `v.view()`
+// borrows the interface receiver per `from(self)`. With a LOCAL receiver the
+// result cannot be returned — it would dangle past the receiver's scope.
+interface viewer { view(s *self) byte[] from(self) }
+type box struct { data byte[8] } {
+	view(b *box) byte[] { return b.data[0:8] }
+}
+
+fn leak() byte[] {
+	var local box
+	var v viewer = &local
+	return v.view()
+}
+
+fn main() i64 { return 0 }

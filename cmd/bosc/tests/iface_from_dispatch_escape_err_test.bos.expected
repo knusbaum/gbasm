@@ -1,0 +1,2 @@
+Compiling tests/iface_from_dispatch_escape_err_test.bos
+Fatal: Borrowed slice escapes through return

@@ -40,6 +40,33 @@ func parseAndCompileForTest(t *testing.T, body string) *Context {
 	return ctx
 }
 
+// TestInterfaceDispatchBorrowPropagation is the discriminating case for
+// Phase 3: a borrowed result of a virtual call must inherit the interface
+// value's referent provenance. `v` is a LOCAL interface variable initialized
+// from a pointer parameter `w`; `v.bytes()` (declared `from(self)`) aliases
+// w's referent, so `get` must infer it returns a borrow of param 0 — [[0]],
+// not [] (which would mean the propagation read v's own slot instead of its
+// data-field origin) and not a rejection.
+func TestInterfaceDispatchBorrowPropagation(t *testing.T) {
+	ctx := parseAndCompileForTest(t, `
+interface viewer { bytes(self *self) byte[] from(self) }
+type W struct { buf byte[] } {
+	bytes(w *W) byte[] { return w.buf }
+}
+fn get(w *W) byte[] {
+	var v viewer = w
+	return v.bytes()
+}
+fn main() i64 { return 0 }`)
+	fn, ok := lookupFuncDeclForTest(ctx, "get")
+	if !ok {
+		t.Fatalf("get not found")
+	}
+	if !equalAliasSets(fn.ReturnAliases, [][]int{{0}}) {
+		t.Fatalf("get.ReturnAliases = %v, want [[0]] (result borrows the interface receiver's referent, param 0)", fn.ReturnAliases)
+	}
+}
+
 // lookupFuncDeclForTest resolves a function or "Type.method" name.
 func lookupFuncDeclForTest(ctx *Context, name string) (*FuncDecl, bool) {
 	if dot := strings.LastIndex(name, "."); dot >= 0 {

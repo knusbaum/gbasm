@@ -1,0 +1,19 @@
+package main
+import "string"
+
+// Phase 3: a borrow obtained through virtual dispatch, used within the
+// interface value's lifetime, is fine. `v.view()` borrows `b` (the local
+// box) per `from(self)`; the result is read before b goes out of scope.
+interface viewer { view(s *self) byte[] from(self) }
+type box struct { buf byte[] } {
+	view(b *box) byte[] { return b.buf }
+}
+
+fn main() i64 {
+	var b box = box{buf: "hello"}
+	var v viewer = &b
+	const r byte[] = v.view()
+	string.puts(r)
+	string.putc(10)
+	return 0
+}
