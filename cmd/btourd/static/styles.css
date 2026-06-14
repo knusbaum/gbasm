@@ -216,8 +216,6 @@ button.tab.active { background: var(--panel); }
   white-space: pre-wrap;
 }
 .panel.active { display: block; }
-.panel .pass { color: var(--accent-strong); }
-.panel .fail { color: var(--danger); }
 
 @media (max-width: 900px) {
   .layout {

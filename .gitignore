@@ -40,4 +40,8 @@ codex.txt
 
 # Saved web pages (docs scraped for reference, not part of the repo)
 *.html
+# ...but the app frontends' own pages ARE part of the repo (served via
+# go:embed). The broad *.html above is for scraped reference docs only.
+!cmd/bplayd/static/index.html
+!cmd/btourd/static/index.html
 *\ Packages_files/

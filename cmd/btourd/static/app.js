@@ -7,7 +7,6 @@ const prevButton = document.querySelector("#prev");
 const nextButton = document.querySelector("#next");
 const statusEl = document.querySelector("#status");
 const outputEl = document.querySelector("#output");
-const checkEl = document.querySelector("#check");
 const stepsEl = document.querySelector("#steps");
 const tabs = Array.from(document.querySelectorAll(".tab"));
 const panels = Array.from(document.querySelectorAll(".panel"));
@@ -77,7 +76,6 @@ async function loadLesson(section, slug) {
   sourceEl.value = saved !== null ? saved : current.source;
 
   outputEl.textContent = "";
-  checkEl.textContent = "";
   stepsEl.textContent = "";
   selectPanel("output");
   setStatus("ready", current.diagnostic ? "this lesson is expected to fail to compile" : "ready");
@@ -109,7 +107,6 @@ async function runProgram() {
   runButton.disabled = true;
   setStatus("running", "Running...");
   outputEl.textContent = "";
-  checkEl.textContent = "";
   stepsEl.textContent = "";
   selectPanel("output");
   try {
@@ -136,16 +133,23 @@ function renderResult(data) {
   outputEl.textContent = (stdout + (stdout && stderr ? "\n" : "") + stderr) || firstFailedStepOutput(run) || "(no output)";
   stepsEl.textContent = formatSteps(run.steps || []);
 
-  const check = data.check || {};
-  checkEl.innerHTML = check.passed
-    ? `<span class="pass">✓ check passed</span>`
-    : `<span class="fail">✗ check failed</span>\n\n${escapeHTML(check.message || "")}`;
-
-  // Stay on the output panel after a run — the point of the tour is to
-  // experiment and see your output. The status line and the check tab still
-  // report whether the check passed; we don't yank the view away from it.
-  setStatus(check.passed ? "ok" : "error", check.passed ? "check passed" : "check failed");
+  // Report the pipeline outcome — did the code compile, run, etc. — not a
+  // pass/fail against the lesson's expected output. The tour is for
+  // experimentation: changing the code and seeing what it prints is the
+  // point, so we never judge the output against the lesson's own.
+  const [kind, text] = STATUS_LABEL[run.status] || ["error", run.status || "no result"];
+  setStatus(kind, text);
 }
+
+const STATUS_LABEL = {
+  ok: ["ok", "ran"],
+  compile_error: ["error", "compile error"],
+  assemble_error: ["error", "assemble error"],
+  link_error: ["error", "link error"],
+  runtime_error: ["error", "runtime error"],
+  timeout: ["error", "timed out"],
+  internal_error: ["error", "internal error"],
+};
 
 function firstFailedStepOutput(run) {
   const failed = (run.steps || []).find((step) => step.exitCode !== 0);

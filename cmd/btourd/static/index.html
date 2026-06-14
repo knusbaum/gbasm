@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A Tour of Boson</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">A Tour of Boson</span>
+    <span id="status" class="status">ready</span>
+  </header>
+  <main class="layout">
+    <nav id="nav" class="nav" aria-label="Lessons"></nav>
+    <section class="lesson">
+      <article id="prose" class="prose"></article>
+    </section>
+    <section class="work">
+      <div class="editor-bar">
+        <button id="run">Run</button>
+        <button id="reset" class="secondary">Reset</button>
+        <span class="spacer"></span>
+        <button id="prev" class="secondary">&larr; Prev</button>
+        <button id="next" class="secondary">Next &rarr;</button>
+      </div>
+      <textarea id="source" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-panel="output" role="tab">Output</button>
+        <button class="tab" data-panel="steps" role="tab">Stages</button>
+      </div>
+      <pre id="output" class="panel active" role="tabpanel"></pre>
+      <pre id="steps" class="panel" role="tabpanel"></pre>
+    </section>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
