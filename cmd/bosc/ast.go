@@ -1282,6 +1282,9 @@ func (c *Context) Import(importKey, path string) error {
 			}
 			qualifyImportedTypeFull(&rt, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces, o.Values)
 			sig.Return = rt
+			// Declared borrow contract travels verbatim — parameter indices
+			// are package-independent (receiver = 0, params in order).
+			sig.ReturnAliases = m.ReturnAliases
 			decl.Methods = append(decl.Methods, sig)
 		}
 		c.DefineInterface(position{}, qname, decl)

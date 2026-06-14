@@ -469,6 +469,7 @@ func main() {
 					}
 					var params []gbasm.FieldShape
 					var retType string
+					var retAliases [][]int
 					sawReturn := false
 					for {
 						if !scanner.Scan() {
@@ -504,6 +505,34 @@ func main() {
 							sawReturn = true
 							continue
 						}
+						if strings.HasPrefix(mbody, "retaliases ") {
+							// retaliases <slot>: <idx> <idx>...  (declared borrow contract)
+							rest := strings.TrimSpace(strings.TrimPrefix(mbody, "retaliases"))
+							colon := strings.IndexByte(rest, ':')
+							if colon < 0 {
+								fmt.Printf("Fatal: interface %s: method %s: retaliases line %q lacks ':'\n", iname, mname, mbody)
+								os.Exit(1)
+							}
+							slot, err := strconv.Atoi(strings.TrimSpace(rest[:colon]))
+							if err != nil || slot < 0 {
+								fmt.Printf("Fatal: interface %s: method %s: bad retaliases slot in %q\n", iname, mname, mbody)
+								os.Exit(1)
+							}
+							var idxs []int
+							for _, tok := range strings.Fields(rest[colon+1:]) {
+								v, verr := strconv.Atoi(tok)
+								if verr != nil || v < 0 {
+									fmt.Printf("Fatal: interface %s: method %s: bad retaliases index %q\n", iname, mname, tok)
+									os.Exit(1)
+								}
+								idxs = append(idxs, v)
+							}
+							for len(retAliases) <= slot {
+								retAliases = append(retAliases, nil)
+							}
+							retAliases[slot] = idxs
+							continue
+						}
 						fmt.Printf("Fatal: interface %s: method %s: unknown line %q\n", iname, mname, mbody)
 						os.Exit(1)
 					}
@@ -512,9 +541,10 @@ func main() {
 						os.Exit(1)
 					}
 					methods = append(methods, gbasm.InterfaceMethodShape{
-						Name:   mname,
-						Params: params,
-						Return: retType,
+						Name:          mname,
+						Params:        params,
+						Return:        retType,
+						ReturnAliases: retAliases,
 					})
 				}
 				if err := o.AddInterface(iname, methods, isPub); err != nil {

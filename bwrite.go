@@ -849,6 +849,21 @@ func writeInterfaces(w io.Writer, ifaces map[string]*InterfaceShape) error {
 			if err := writeString(w, m.Return); err != nil {
 				return err
 			}
+			// Declared borrow contract (per-slot param indices). Zero outer
+			// count for the common no-`from` case ⇒ one byte.
+			if err := writeSize(w, len(m.ReturnAliases)); err != nil {
+				return err
+			}
+			for _, slot := range m.ReturnAliases {
+				if err := writeSize(w, len(slot)); err != nil {
+					return err
+				}
+				for _, idx := range slot {
+					if err := writeSize(w, idx); err != nil {
+						return err
+					}
+				}
+			}
 		}
 	}
 	return nil
@@ -899,7 +914,32 @@ func readInterfaces(r io.Reader) (map[string]*InterfaceShape, error) {
 			if err != nil {
 				return nil, err
 			}
-			methods[j] = InterfaceMethodShape{Name: mname, Params: params, Return: ret}
+			slotCount, err := readSize(r)
+			if err != nil {
+				return nil, err
+			}
+			var retAliases [][]int
+			if slotCount > 0 {
+				retAliases = make([][]int, slotCount)
+				for s := 0; s < slotCount; s++ {
+					paramCount, perr := readSize(r)
+					if perr != nil {
+						return nil, perr
+					}
+					if paramCount > 0 {
+						slot := make([]int, paramCount)
+						for p := 0; p < paramCount; p++ {
+							idx, ierr := readSize(r)
+							if ierr != nil {
+								return nil, ierr
+							}
+							slot[p] = idx
+						}
+						retAliases[s] = slot
+					}
+				}
+			}
+			methods[j] = InterfaceMethodShape{Name: mname, Params: params, Return: ret, ReturnAliases: retAliases}
 		}
 		m[name] = &InterfaceShape{Name: name, IsPub: isPub, Methods: methods}
 	}

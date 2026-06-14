@@ -30,3 +30,12 @@ pub type borrowing_holder struct {
 pub fn make_holder(s byte[]) borrowing_holder {
 	return borrowing_holder{buf: s}
 }
+
+// viewer declares a borrow contract: `bytes` may return a view of the
+// receiver. The declared ReturnAliases ([[0]]) must travel through the .bo so
+// a cross-package consumer's ⊆ conformance check admits a borrowing
+// implementer (e.g. borrowing_holder). Without that transport the consumer
+// would see an empty declared set and wrongly reject the coercion.
+pub interface viewer {
+	bytes(self *self) byte[] from(self)
+}

@@ -1,0 +1,18 @@
+package main
+import "retalias_pkg"
+import "string"
+
+// Cross-package borrow contract: retalias_pkg.viewer declares
+// `bytes(self) byte[] from(self)`. A borrowing implementer
+// (retalias_pkg.borrowing_holder, whose bytes() returns a view of self)
+// satisfies it only because the declared contract travels through the .bo —
+// the consumer's ⊆ check needs the imported declared set, not nil. Coerce,
+// dispatch, and use the borrow within the value's lifetime.
+fn main() i64 {
+	var h retalias_pkg.borrowing_holder = retalias_pkg.make_holder("hi")
+	var v retalias_pkg.viewer = &h
+	const r byte[] = v.bytes()
+	string.puts(r)
+	string.putc(10)
+	return 0
+}

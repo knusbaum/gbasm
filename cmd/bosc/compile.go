@@ -2482,6 +2482,19 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				fmt.Fprintf(of, "\t\tparam %s %s\n", p.Name, p.Type.String())
 			}
 			fmt.Fprintf(of, "\t\treturn %s\n", m.Return.String())
+			// Declared borrow contract: one `retaliases <slot>: <idx>...` line
+			// per slot that borrows, so the importer reconstructs the same
+			// per-slot ReturnAliases (receiver = 0). Empty slots are omitted.
+			for slot, params := range m.ReturnAliases {
+				if len(params) == 0 {
+					continue
+				}
+				fmt.Fprintf(of, "\t\tretaliases %d:", slot)
+				for _, p := range params {
+					fmt.Fprintf(of, " %d", p)
+				}
+				fmt.Fprintf(of, "\n")
+			}
 			fmt.Fprintf(of, "\t}\n")
 		}
 		fmt.Fprintf(of, "}\n")

@@ -185,6 +185,11 @@ type InterfaceMethodShape struct {
 	Name   string
 	Params []FieldShape // FieldShape{Name: paramName, Type: paramType}
 	Return string
+	// ReturnAliases is the method's declared borrow contract (from `from(...)`):
+	// per return slot, the sorted parameter indices it may borrow (receiver =
+	// 0). nil = no `from` clause. Carried cross-package so an importer's
+	// conformance ⊆ check and dispatch propagation see the same contract.
+	ReturnAliases [][]int
 }
 
 // ValuesShape is the wire-level description of a Boson values type.
