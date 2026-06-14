@@ -5,10 +5,12 @@
 package main
 
 import (
+	"bytes"
 	"embed"
 	"encoding/json"
 	"errors"
 	"flag"
+	"html"
 	"io/fs"
 	"log"
 	"net/http"
@@ -17,7 +19,24 @@ import (
 	"github.com/knusbaum/gbasm/internal/bpipeline"
 	"github.com/knusbaum/gbasm/internal/tour"
 	tourcontent "github.com/knusbaum/gbasm/tour"
+	"github.com/yuin/goldmark"
 )
+
+// markdown renders lesson prose. Lesson content is trusted (authored in this
+// repo), so the default CommonMark renderer is used without raw-HTML pass-
+// through. Configured once and reused; goldmark.Markdown is concurrency-safe.
+var markdown = goldmark.New()
+
+// renderMarkdown converts a lesson's Markdown prose to HTML. On the unlikely
+// error it falls back to the raw text wrapped in a <pre> so the lesson still
+// shows something rather than blanking.
+func renderMarkdown(src string) string {
+	var buf bytes.Buffer
+	if err := markdown.Convert([]byte(src), &buf); err != nil {
+		return "<pre>" + html.EscapeString(src) + "</pre>"
+	}
+	return buf.String()
+}
 
 //go:embed static/*
 var staticFiles embed.FS
@@ -196,7 +215,7 @@ type lessonResponse struct {
 	Slug        string `json:"slug"`
 	Title       string `json:"title"`
 	SectionName string `json:"sectionName"`
-	Prose       string `json:"prose"`
+	ProseHTML   string `json:"proseHTML"`
 	Source      string `json:"source"`
 	Expected    string `json:"expected,omitempty"`
 	HasExpected bool   `json:"hasExpected"`
@@ -214,7 +233,7 @@ func (s *serverState) handleLesson(w http.ResponseWriter, r *http.Request) {
 		Slug:        l.Slug,
 		Title:       l.Title,
 		SectionName: l.SectionName,
-		Prose:       l.Prose,
+		ProseHTML:   renderMarkdown(l.Prose),
 		Source:      l.Source,
 		Expected:    l.Expected,
 		HasExpected: l.HasExpected,

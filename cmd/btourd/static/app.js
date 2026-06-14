@@ -70,7 +70,9 @@ async function loadLesson(section, slug) {
   current = await resp.json();
   pristineSource = current.source;
 
-  proseEl.innerHTML = renderProse(current.prose, current.title);
+  // Prose is rendered to HTML server-side (goldmark); the title is the H1.
+  proseEl.innerHTML =
+    `<h1>${escapeHTML(current.title || "")}</h1>` + (current.proseHTML || "");
   const saved = localStorage.getItem(storageKey(current));
   sourceEl.value = saved !== null ? saved : current.source;
 
@@ -191,24 +193,6 @@ function setStatus(kind, text) {
 
 function storageKey(lesson) {
   return `btour.${lesson.section}/${lesson.slug}`;
-}
-
-// renderProse converts a small subset of Markdown (heading, paragraphs,
-// inline `code` and **bold**) to HTML. The lesson title is shown as an H1.
-function renderProse(markdown, title) {
-  const blocks = (markdown || "").split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
-  let html = `<h1>${escapeHTML(title || "")}</h1>`;
-  for (const block of blocks) {
-    html += `<p>${inline(block)}</p>`;
-  }
-  return html;
-}
-
-function inline(text) {
-  let out = escapeHTML(text).replace(/\n/g, " ");
-  out = out.replace(/`([^`]+)`/g, (_, code) => `<code>${code}</code>`);
-  out = out.replace(/\*\*([^*]+)\*\*/g, (_, b) => `<strong>${b}</strong>`);
-  return out;
 }
 
 function escapeHTML(s) {
