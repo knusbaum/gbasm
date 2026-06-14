@@ -1,0 +1,8 @@
+package main
+
+// An expression statement with no effect (here a comparison, a likely typo
+// for '=') is rejected; only calls are valid as statements.
+fn main() {
+	var x i64 = 5
+	x == 5
+}

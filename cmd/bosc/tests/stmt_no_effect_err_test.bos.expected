@@ -1,0 +1,2 @@
+Compiling tests/stmt_no_effect_err_test.bos
+Failed to parse: expression statement has no effect; only function calls are valid as statements

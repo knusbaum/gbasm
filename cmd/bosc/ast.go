@@ -140,19 +140,19 @@ type Context struct {
 
 func NewContext() *Context {
 	return &Context{
-		bindings:       make(map[string]ASTType),
-		checker:        NewCheckerState(nil),
-		prebound:       make(map[string]bool),
-		addressNames:   make(map[string]bool),
-		constBindings:  make(map[string]bool),
-		structs:        make(map[string]*StructDecl),
-		funcs:          make(map[string]*FuncDecl),
-		imports:        make(map[string]map[string]*FuncDecl),
-		importedVars:   make(map[string]map[string]ASTType),
-		typeAliases:    make(map[string]ASTType),
-		interfaceDecls: make(map[string]*InterfaceDecl),
-		valuesDecls:    make(map[string]*ValuesDecl),
-		typeMethods:    make(map[string][]*FuncDecl),
+		bindings:        make(map[string]ASTType),
+		checker:         NewCheckerState(nil),
+		prebound:        make(map[string]bool),
+		addressNames:    make(map[string]bool),
+		constBindings:   make(map[string]bool),
+		structs:         make(map[string]*StructDecl),
+		funcs:           make(map[string]*FuncDecl),
+		imports:         make(map[string]map[string]*FuncDecl),
+		importedVars:    make(map[string]map[string]ASTType),
+		typeAliases:     make(map[string]ASTType),
+		interfaceDecls:  make(map[string]*InterfaceDecl),
+		valuesDecls:     make(map[string]*ValuesDecl),
+		typeMethods:     make(map[string][]*FuncDecl),
 		vtables:         make(map[string]vtableSpec),
 		strngs:          make(map[string]string),
 		strSliceHeaders: make(map[string]string),
@@ -3685,6 +3685,9 @@ func (n *Node) toASTTop(c *Context) AST {
 		var b Block
 		b.p = n.p
 		for _, bn := range n.args {
+			if !isStatementForm(bn) {
+				ParseErrorF(bn, "expression statement has no effect; only function calls are valid as statements")
+			}
 			b.Body = append(b.Body, bn.toASTTop(NewContext()))
 		}
 		return &b

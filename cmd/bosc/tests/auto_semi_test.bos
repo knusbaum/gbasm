@@ -22,10 +22,13 @@ fn main() {
 	string.puti(*px)
 	string.putc('\n')
 
-	// Similarly: `-1` on a new line is a unary minus introducing
-	// a fresh assignment, not subtraction from the previous statement.
+	// `var y i64 = 5` is a complete statement; the following line does not
+	// merge into it. (A statement can no longer start with a bare unary `-`
+	// — such an expression has no effect and is rejected — so the old
+	// `var y = 5` / `-1` leading-minus merge case is now structurally
+	// impossible. The `*px` case above still exercises leading-operator
+	// auto-insertion.)
 	var y i64 = 5
-	-1
 	string.puti(y)
 	string.putc('\n')
 

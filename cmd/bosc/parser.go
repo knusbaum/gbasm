@@ -934,7 +934,7 @@ func (p *Parser) parseTypeSwitch() *Node {
 	if p.current().t != tok_type {
 		panic(&interpreterError{"expected `type` in `switch (v x.(type))`", p.current().p})
 	}
-	p.advance() // consume `type`
+	p.advance()          // consume `type`
 	p.expect(tok_rparen) // close `(type)`
 	p.expect(tok_rparen) // close switch head
 	p.expect(tok_lcurly)
@@ -1422,9 +1422,7 @@ func (p *Parser) parseMultiBind(first *Node) *Node {
 // startsBareDecl reports whether the current IDENT begins a keyword-less
 // declaration — `x :=` or `x TYPE :=` — by peeking one token past the name
 // and restoring it. A bare declaration is immutable (the `var`-prefixed
-// forms are handled by parseExpression). Pointer-typed bare declarations
-// (`x *foo :=`) are deferred until the effectful-statement rule lets the
-// parser treat a leading `IDENT *` as unambiguously a type.
+// forms are handled by parseExpression).
 func (p *Parser) startsBareDecl() bool {
 	name := p.current()
 	p.advance()
@@ -1433,8 +1431,31 @@ func (p *Parser) startsBareDecl() bool {
 	switch after {
 	case tok_decl: // x :=
 		return true
-	case tok_ident, tok_owned, tok_mut, tok_fn: // x TYPE := (named/qualified/fn type)
+	case tok_ident, tok_owned, tok_mut, tok_fn, tok_star: // x TYPE :=
+		// tok_star is unambiguous now: a leading `IDENT *` can no longer be a
+		// bare multiply statement (rejected by the effectful-statement rule),
+		// so it must be a pointer-typed declaration.
 		return true
+	}
+	return false
+}
+
+// isStatementForm reports whether a parse node is legal at statement
+// position. A statement must *do* something — declare, assign, call, or be
+// control flow. A bare value expression (`x * y`, `5 + 3`, `x == 5`,
+// `x.field`) has no effect and is rejected. (This also lets the parser treat
+// a leading `IDENT *` as unambiguously a declaration, since it can no longer
+// be a bare multiply.)
+func isStatementForm(n *Node) bool {
+	switch n.t {
+	case n_eq, n_funcall, n_var, n_multibind,
+		n_if, n_for, n_typeswitch, n_block, n_break, n_continue, n_return, n_none,
+		n_dispose: // dispose is a keyword-intrinsic, not an n_funcall
+		return true
+	case n_dot:
+		// A selector statement is legal only when it is a call
+		// (`x.method()` / `pkg.fn()`), not a bare member read (`x.field`).
+		return len(n.args) == 2 && n.args[1].t == n_funcall
 	}
 	return false
 }
