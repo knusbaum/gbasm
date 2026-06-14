@@ -1,0 +1,37 @@
+package main
+import "string"
+
+// Interface-to-interface assertion is where soundness depends on the itab
+// carrying the ORIGINAL concrete typedesc (vtable[0]): &w enters a COVERING
+// interface (viewer, declares from(self)); asserting that viewer value to a
+// sibling re-gates against W's real impl mask read from viewer's itab — not
+// viewer's declared mask.
+//   - v.(Byter) where Byter declares NO borrow: BLOCKED (impl {self} ⊄ ∅).
+//   - v.(viewer2) where viewer2 declares from(self): SUCCEEDS and renders.
+interface viewer { bytes(self *self) byte[] from(self) }
+interface viewer2 { bytes(self *self) byte[] from(self) }
+interface Byter { bytes(self *self) byte[] }
+type W struct { buf byte[] } {
+	bytes(w *W) byte[] { return w.buf }
+}
+
+fn main() i64 {
+	var w W = W{buf: "hi"}
+	var v viewer = &w
+	var k Byter, var ok1 bool = v.(Byter)
+	if (ok1) {
+		string.puts("LAUNDERED")
+	} else {
+		string.puts("blocked")
+	}
+	string.putc(10)
+	var v2 viewer2, var ok2 bool = v.(viewer2)
+	if (ok2) {
+		const r byte[] = v2.bytes()
+		string.puts(r)
+	} else {
+		string.puts("rejected")
+	}
+	string.putc(10)
+	return 0
+}

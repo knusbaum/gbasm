@@ -1,0 +1,24 @@
+package main
+import "string"
+
+// Type-switch shares assert_to's borrow gate: a borrowing W wrapped in `any`
+// does NOT match a non-declaring interface case (Byter), but matches a
+// declaring one (viewer). Pins that the gate governs the type-switch path,
+// not only the x.(K) assertion form.
+interface Byter { bytes(self *self) byte[] }
+interface viewer { bytes(self *self) byte[] from(self) }
+type W struct { buf byte[] } {
+	bytes(w *W) byte[] { return w.buf }
+}
+
+fn main() i64 {
+	var w W = W{buf: "hi"}
+	var a any = &w
+	switch (s a.(type)) {
+		case Byter { string.puts("byter") }
+		case viewer { string.puts("viewer") }
+		default { string.puts("default") }
+	}
+	string.putc(10)
+	return 0
+}
