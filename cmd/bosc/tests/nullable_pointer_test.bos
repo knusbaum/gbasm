@@ -1,9 +1,15 @@
 package main
 
+import "string"
+
 fn main() {
 	var x i64
 	p *mut i64 := &x
 	var q *?mut i64 := p
 	q = nil
-	_ := q
+	if (q != nil) {
+		string.puts("not nil\n")
+	} else {
+		string.puts("nil\n")
+	}
 }

@@ -5,6 +5,9 @@ type thing struct {
 }
 
 fn main() {
+	// `&a` of an owned binding yields a read-only `**mut thing` view, not
+	// `**owned mut thing` — asserted by this declaration compiling at all.
+	// The binding exists for that type assertion; its value is irrelevant.
 	a owned *owned mut thing := new(thing{val: 1})
 	slot **mut thing := &a
 	_ := slot
