@@ -377,7 +377,7 @@ Truncation: if `out` is too small, the longest prefix that fits is written and t
 
 *Layer 3 — `fmt.Builder`* is a bring-your-own-memory accumulator: `struct { buf mut byte[], pos i64, err_ error }`, constructed inline by struct literal (no constructor). Append methods (`str`/`int`/`uint`/`hex`/`char`/`bool`/`nl`) follow a latched-error pattern — the first append that would overflow sets `err_` to `io.io_err.ENOSPC` and every later append is a no-op; inspect `error()` once at the end. `bytes()` returns the borrowed view `buf[0:pos]`; `space()` is remaining capacity; `reset()` rewinds the cursor and clears the latched error. The append methods return nothing (not `*mut Builder`): Boson forbids returning the borrowed `*mut` receiver, so chaining is expressed as a sequence of statements. `fmt.BuilderWriter{b: &builder}` adapts a `*mut Builder` to the `*self`-shaped `io.writer` so a Builder can be a `printf`/`Formatter` sink.
 
-*Layer 4 — user-extension interfaces* `fmt.stringer { string(self *self) byte[] }` and `fmt.Formatter { format(self *self, w io.writer) error }`. A type renders under `%v` via `stringer` if it implements it (cheap, no writer); otherwise via `Formatter` (constructs into a writer). Both are discovered at runtime through interface assertion.
+*Layer 4 — user-extension interfaces* `fmt.stringer { string(self *self) byte[] from(self) }` and `fmt.Formatter { format(self *self, w io.writer) error }`. The `from(self)` clause lets a stringer return a borrowed view of its own bytes (`return self.buf`, zero allocation); a static-returning `string()` also satisfies it (∅ ⊆ {self}). A type renders under `%v` via `stringer` if it implements it (cheap, no writer); otherwise via `Formatter` (constructs into a writer). Both are discovered at runtime through interface assertion.
 
 *Layer 5 — variadic helpers* `fmt.print(format byte[], args ...any) i64, error` (to stdout) and `fmt.printf(w io.writer, format byte[], args ...any) i64, error`. Directives: `%d`→`i64`, `%u`→`u64`, `%x`→`u64` hex, `%s`→pointer-to-`byte[]` (`&name` or `&"literal"`), `%c`→`byte`, `%t`→`bool`, `%v`→`stringer` then `Formatter` (else a `%!v(?)` placeholder), `%%`→literal `%`. Matching is strict per directive: a type mismatch writes an inline `%!d(BADTYPE)`-style marker and latches a non-OK error but continues; an unknown verb (e.g. `%q`) consumes its arg, writes `%!q(BADTYPE)`, and latches the same error; an out-of-args slot writes `%!d(MISSING)`; surplus args are appended `%v`-style and latch a surplus error; a write failure stops immediately. The `BADTYPE` / `?` placeholders are fixed v1 markers: surfacing the arg's actual type name in the marker awaits a typedesc-name intrinsic that bosc does not yet expose to source (fmt proposal Open Question #6); until it lands the markers carry no type name. `Formatter` dispatch wraps the writer in a stack-allocated counting adapter so the returned byte total includes the Formatter's output.
 
@@ -969,11 +969,40 @@ The lifetime obligation moves to the caller: the returned view must not
 outlive the argument it aliases, and a *local* reaching a returned slot —
 directly or through any chain of calls — is still rejected. The inference
 is automatic (no syntax), interprocedural (summaries travel through `.bo`
-files for cross-package calls), and handles recursion by fixpoint. One
-consequence for interfaces: a concrete type with any borrow-returning
-method cannot be coerced to ANY interface (including `any`), because
-dynamic dispatch cannot track the borrow — see the directed diagnostic
-the compiler emits at such a coercion.
+files for cross-package calls), and handles recursion by fixpoint.
+
+#### Interface borrow contracts (`from(...)`)
+
+A dynamically-dispatched method has no body to infer from at the call site,
+so an interface method **declares** its borrow contract: a `from(...)` clause
+on a return-type position names the parameters that slot may borrow (`self`
+denotes the receiver):
+
+```
+pub interface stringer {
+    string(self *self) byte[] from(self)   // result may be a view of the receiver
+}
+```
+
+A concrete type satisfies the interface iff, for each return slot, its
+*inferred* return-alias set is a **subset** of the interface's *declared*
+set (`impl ⊆ declared`, receiver = index 0). So an implementation may borrow
+*less* than declared — a `string()` returning a static `.rodata` slice (∅)
+satisfies `from(self)` — but never *more*. An interface with no `from`
+clause declares ∅: a borrow-returning method cannot satisfy it (the old
+coarse "no borrowing method may enter any interface" rule is the special
+case ceiling = ∅). At a virtual call the result inherits the interface
+value's provenance per the declared contract, so a borrowed result cannot
+outlive the receiver.
+
+The runtime assertion / type-switch path (`x.(K)`, which builds an itab from
+the concrete type's full method table at runtime) is gated the same way: the
+typedesc and `iface_desc` carry per-method borrow bitmasks, and
+`_iface.assert_to` admits a method only when its impl mask is ⊆ the target's
+declared mask — closing the path that would otherwise launder a borrowing
+method to an under-declaring interface. The contract is parameter-level
+(which parameter), not a Rust-style named lifetime; the expressiveness is
+exactly the inferred return-alias set.
 
 Local pointer aliases preserve borrowed provenance (an alias of a borrow
 is the same borrow, recorded the same way in the alias set).
@@ -1940,17 +1969,17 @@ function add
 | `package` | `package name` | Sets file/package identity. Used to qualify defined symbols and bare-name relocations. |
 | `function` | `function name` | Begins a function definition |
 | `type` | `type fn(...) ret` | Annotates function signature (informational; consumed by importers) |
-| `retaliases` | `retaliases <slot>: <idx> ...` | Records the function's inferred return alias set: return slot `<slot>` may alias the parameters at the listed indices. Emitted by bosc per non-empty slot; parsed by bas into `Function.ReturnAliases`; serialized through the `.bo` so cross-package callers' borrow tracking extends across the call. Absent ⇒ all slots alias nothing. |
+| `retaliases` | `retaliases <slot>: <idx> ...` | Records a return alias set: return slot `<slot>` may alias the parameters at the listed indices (receiver = 0). As a standalone directive it carries a *function's* inferred set (parsed into `Function.ReturnAliases`); inside an `interface` method block it carries an interface method's *declared* `from(...)` contract (parsed into `InterfaceMethodShape.ReturnAliases`). Emitted per non-empty slot; serialized through the `.bo` so cross-package borrow tracking and ⊆ conformance extend across the boundary. Absent ⇒ all slots alias nothing. |
 | `data` | `data name type "..."` | Global immutable data (e.g., string constants emitted by bosc). Stored in `o.Data`. |
 | `var` | `var name type "..."` | Global writable data (string-literal payload form). Stored in `o.Vars`. |
 | `var` (size) | `var name type N` | Global writable data, N zero-filled bytes (uninitialized). |
 | `var` (block) | `var name type { bytes "..." reloc <off> <sym> <addend> ... }` | Multi-line form: explicit bytes payload plus zero or more per-var data relocations. Used by bosc to emit globals containing pointers (slice headers, struct fields holding addresses, anonymous-globals-as-pointers). |
 | `struct` | `struct Name { fname ftype \n ... }` | Multi-line declaration carrying a Boson struct shape into the `.bo`. Field types are stored verbatim; bosc reparses them on import. Used for cross-package struct types. |
 | `typealias` | `typealias Name underlying [m1 m2 ...]` | Single-line declaration carrying a Boson type alias into the `.bo`. The method-name list lets bosc reconstruct the type's method table on import from the already-imported function set. |
-| `interface` | `interface Name { method m1 { param p t \n ... \n return rt } ... }` | Multi-line declaration carrying a Boson interface shape into the `.bo`. Each method's params and return type are reparsed by bosc on import. Used for cross-package interface types. |
-| `typedesc` | `typedesc Name { name "..." \n size N \n cache_ref <sym> \n method <name> <sig> <name_hash> <sig_hash> <recv_shape> <fn_reloc> \n ... }` | Multi-line declaration of a structured typeinfo record (read-only, `o.Data`). Carries the type name string, size, a relocation to its paired cache slot, and a method table. bas serializes the fixed binary layout and emits the `cache_ref` and per-method `fn_ptr` relocations. Must be paired with a same-named `typedesc_cache` in the same `.bo` (bas errors otherwise). |
+| `interface` | `interface Name { method m1 { param p t \n ... \n return rt \n retaliases <slot>: <idx>... } ... }` | Multi-line declaration carrying a Boson interface shape into the `.bo`. Each method's params and return type are reparsed by bosc on import; optional `retaliases` lines carry the method's declared `from(...)` borrow contract. Used for cross-package interface types. |
+| `typedesc` | `typedesc Name { name "..." \n size N \n cache_ref <sym> \n method <name> <sig> <name_hash> <sig_hash> <recv_shape> <fn_reloc> [<slot_mask>...] \n ... }` | Multi-line declaration of a structured typeinfo record (read-only, `o.Data`). Carries the type name string, size, a relocation to its paired cache slot, and a method table. Optional trailing per-slot `<slot_mask>` tokens (u64 bitmasks) are the method's *inferred* borrow descriptor, read by `_iface.assert_to`'s ⊆ gate. bas serializes the fixed binary layout and emits the `cache_ref` and per-method `fn_ptr` relocations. Must be paired with a same-named `typedesc_cache` in the same `.bo` (bas errors otherwise). |
 | `typedesc_cache` | `typedesc_cache Name` | A bare 8-byte zero-initialized writable slot (`o.Vars`) holding the head of a type's lazy itab-cache list. One per `typedesc`, named in lockstep. |
-| `iface_desc` | `iface_desc Name { name "..." \n method <name> <sig> <name_hash> <sig_hash> <decl_idx> \n ... }` | Multi-line declaration of the assertion-time interface descriptor (read-only, `o.Data`). Carries the interface name and a required-method table (name/sig text, both hashes, and the method's declaration index for itab dispatch ordering). |
+| `iface_desc` | `iface_desc Name { name "..." \n method <name> <sig> <name_hash> <sig_hash> <decl_idx> [<slot_mask>...] \n ... }` | Multi-line declaration of the assertion-time interface descriptor (read-only, `o.Data`). Carries the interface name and a required-method table (name/sig text, both hashes, and the method's declaration index for itab dispatch ordering). Optional trailing per-slot `<slot_mask>` tokens are the method's *declared* `from(...)` borrow descriptor — the ceiling `_iface.assert_to` checks each impl mask against. |
 | `local` | `local name bits [reg]` | Stack/register local variable (scalars and pointers) |
 | `bytes` | `bytes name size [reg]` | Stack byte array (non-register; required for structs and arrays) |
 | `arg` | `arg name reg` | Pin argument to register |

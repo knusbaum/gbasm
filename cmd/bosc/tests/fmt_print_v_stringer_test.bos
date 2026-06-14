@@ -2,13 +2,12 @@ package main
 import "fmt"
 import "io"
 
-// Layer 5: %v dispatches to stringer. A VALID stringer returns bytes that
-// outlive the receiver — here a static .rodata slice — so the concrete type
-// coerces to `any` (the vararg shape) and dispatches through render_v's
-// `a.(stringer)` assertion. A stringer that returned a borrow of its own
-// fields would be rejected at this coercion (see
-// fmt_stringer_borrowed_field_coerce_err_test); returning a static slice is
-// the sound shape this test pins.
+// Layer 5: %v dispatches to stringer. This stringer returns a static .rodata
+// slice (borrows nothing), which satisfies stringer's `from(self)` contract by
+// ⊆ (∅ ⊆ {self}); the concrete type coerces to `any` (the vararg shape) and
+// dispatches through render_v's `a.(stringer)` assertion. The borrowed-field
+// variant — `return self.buf` — is also valid now and pinned by
+// fmt_stringer_borrowed_field_test.
 type word struct { tag i64 } {
 	string(w *word) byte[] { return "hello-stringer" }
 }

@@ -1,0 +1,21 @@
+package main
+import "fmt"
+import "io"
+
+// Interface borrow contracts payoff: fmt.stringer declares
+// `string(self *self) byte[] from(self)`, so a type whose string() returns a
+// view of its OWN field (the canonical render-yourself, zero allocation) is a
+// valid stringer. %v packs &w into `any`; render_v's `a.(stringer)` assertion
+// succeeds (impl borrow {self} ⊆ declared {self}, via the iface_desc declared
+// mask), and the borrowed bytes are written immediately. This was rejected at
+// coercion under the strict option-(a) guard; it is now the intended pattern.
+type word struct { s byte[] } {
+	string(w *word) byte[] { return w.s }
+}
+
+fn main() i64 {
+	var s byte[] = "hello-stringer"
+	var w word = word{s: s}
+	fmt.print("v=%v\n", &w)
+	return 0
+}

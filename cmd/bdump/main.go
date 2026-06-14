@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/knusbaum/gbasm"
 )
@@ -127,6 +128,20 @@ func main() {
 
 // printStructuredRecord pretty-prints typedesc / iface_desc / typedesc_cache
 // records. Returns true if v was a structured record (and was printed).
+// formatBorrowMasks renders a method's per-slot borrow descriptor (one u64
+// bitmask per return slot, bit p = "slot may borrow param p"; receiver = 0)
+// as a " borrow=[s0 s1 ...]" suffix, or "" when the method borrows nothing.
+func formatBorrowMasks(masks []uint64) string {
+	if len(masks) == 0 {
+		return ""
+	}
+	parts := make([]string, len(masks))
+	for i, m := range masks {
+		parts[i] = fmt.Sprintf("%#x", m)
+	}
+	return " borrow=[" + strings.Join(parts, " ") + "]"
+}
+
 func printStructuredRecord(v *gbasm.Var) bool {
 	switch v.Kind {
 	case gbasm.KindTypedesc:
@@ -134,8 +149,8 @@ func printStructuredRecord(v *gbasm.Var) bool {
 		fmt.Printf("\t\ttypedesc %s :: name=%q size=%d cache_ref=%s\n",
 			v.Name, rec.TypeName, rec.SizeBytes, rec.CacheSym)
 		for _, m := range rec.Methods {
-			fmt.Printf("\t\t\tmethod %s sig=%q name_hash=%d sig_hash=%d recv_shape=%d -> %s\n",
-				m.Name, m.Sig, m.NameHash, m.SigHash, m.RecvShape, m.FnSym)
+			fmt.Printf("\t\t\tmethod %s sig=%q name_hash=%d sig_hash=%d recv_shape=%d -> %s%s\n",
+				m.Name, m.Sig, m.NameHash, m.SigHash, m.RecvShape, m.FnSym, formatBorrowMasks(m.SlotMasks))
 		}
 		return true
 	case gbasm.KindIfaceDesc:
@@ -143,8 +158,8 @@ func printStructuredRecord(v *gbasm.Var) bool {
 		fmt.Printf("\t\tiface_desc %s :: name=%q method_count=%d\n",
 			v.Name, rec.IfaceName, len(rec.Methods))
 		for _, m := range rec.Methods {
-			fmt.Printf("\t\t\tmethod %s sig=%q name_hash=%d sig_hash=%d decl_idx=%d\n",
-				m.Name, m.Sig, m.NameHash, m.SigHash, m.DeclIdx)
+			fmt.Printf("\t\t\tmethod %s sig=%q name_hash=%d sig_hash=%d decl_idx=%d%s\n",
+				m.Name, m.Sig, m.NameHash, m.SigHash, m.DeclIdx, formatBorrowMasks(m.SlotMasks))
 		}
 		return true
 	case gbasm.KindTypedescCache:

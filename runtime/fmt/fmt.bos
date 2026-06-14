@@ -422,17 +422,20 @@ pub type BuilderWriter struct {
 // ---------------------------------------------------------------------------
 
 // stringer is implemented by types that can render themselves as a byte
-// slice without constructing new storage. The returned bytes MUST outlive
-// the receiver — a static .rodata slice (e.g. `return "Point"`) or
-// caller-owned storage — NOT a borrowed view of self's own fields. A type
-// whose string() returns a view of self (`return self.buf`) cannot be a
-// stringer: it is rejected at interface coercion, because once the
-// interface value outlives the receiver the borrowed bytes dangle. Use
-// Formatter for the render-a-view-of-self case (it writes into a
-// caller-provided writer, so nothing escapes). Preferred over Formatter
-// when both are available.
+// slice without constructing new storage. The result may be a borrowed view
+// of the receiver — `from(self)` — so `return self.buf` is allowed: the
+// canonical render-yourself pattern, with no allocation. Storage that
+// outlives the receiver (a static .rodata slice like `return "Point"`) also
+// satisfies the contract, since borrowing nothing is ⊆ borrowing self.
+//
+// The cost of the `from(self)` declaration is borne by callers: a `%v` /
+// string() result is assumed to borrow the formatted value and may not
+// outlive it. In the dominant format-and-write-now path that window is a
+// single statement, so the cost is invisible; render_v writes the result
+// immediately. Preferred over Formatter when both are available; Formatter
+// remains the path for rendering that must stream into a writer.
 pub interface stringer {
-	string(self *self) byte[]
+	string(self *self) byte[] from(self)
 }
 
 // Formatter is implemented by types whose rendering must be constructed at
