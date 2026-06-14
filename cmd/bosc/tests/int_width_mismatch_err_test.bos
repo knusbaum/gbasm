@@ -1,0 +1,7 @@
+package main
+
+fn main() i64 {
+	a i64 := 10
+	b i32 := 5
+	return a + b
+}

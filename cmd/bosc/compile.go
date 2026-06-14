@@ -2326,8 +2326,7 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 		return
 	}
 
-	fmt.Printf("DEST: %#v\nSRC:%#v\nDEPOINT: %#v\n", dest, src, depoint)
-	panic("move TODO")
+	panic(fmt.Sprintf("internal compiler error: don't know how to move %s into %s", src.t, dest.t))
 }
 
 func materializePointerValue(of io.Writer, c *Context, s spot) spot {

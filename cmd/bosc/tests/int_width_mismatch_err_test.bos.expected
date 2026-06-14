@@ -1,0 +1,2 @@
+Compiling tests/int_width_mismatch_err_test.bos
+Fatal: mismatched number types in arithmetic: i64 and i32; Boson does not convert between number types implicitly — add an explicit cast such as i64(x)

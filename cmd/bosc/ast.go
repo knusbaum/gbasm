@@ -2942,8 +2942,23 @@ func (o *Op2) ASTType(c *Context) ASTType {
 		return boolASTType()
 	case n_add, n_sub, n_mul, n_div, n_bitand, n_bitor:
 		ft := o.First.ASTType(c)
+		st := o.Second.ASTType(c)
+		// An integer literal adopts the other operand's type.
 		if ft.Same(intlitASTType()) {
-			return o.Second.ASTType(c)
+			return st
+		}
+		if st.Same(intlitASTType()) {
+			return ft
+		}
+		// Both operands are concrete. Boson does not convert between
+		// number types implicitly, so the two must match exactly —
+		// `i64 + i32` is an error directing the author to cast, not a
+		// silent widening (and historically a codegen panic).
+		if !ft.SameRepr(st) {
+			panic(&interpreterError{
+				msg: fmt.Sprintf("mismatched number types in arithmetic: %s and %s; Boson does not convert between number types implicitly — add an explicit cast such as %s(x)", ft, st, ft.Name),
+				p:   o.Pos(),
+			})
 		}
 		return ft
 	}
