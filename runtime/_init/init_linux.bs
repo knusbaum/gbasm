@@ -91,19 +91,19 @@ pub function index_oob
 
 
 	lea rdi ioob
-	call puts
+	call putcstr
 
 	pop rdi
 	call puti
 
 	lea rdi ioob2
-	call puts
+	call putcstr
 
 	pop rdi
 	call puti
 
 	lea rdi ioob3
-	call puts
+	call putcstr
 
 	mov rdi 1
 	mov rax 0x3C
@@ -115,7 +115,7 @@ pub function nil_assert
 	prologue
 
 	lea rdi nilassert
-	call puts
+	call putcstr
 
 	mov rdi 1
 	mov rax 0x3C

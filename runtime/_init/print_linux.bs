@@ -135,3 +135,24 @@ function puti
 
 	epilogue
 	ret
+
+// putcstr(ptr *byte) void — write a NUL-terminated byte string to stdout.
+// puts takes a {ptr,len} slice header, but the trap handlers hold their
+// messages as inline C-strings; this measures the length and builds the
+// header puts expects. Stack after sub rsp 16:
+//   [rsp+0 .. rsp+7]   slice header: data pointer
+//   [rsp+8 .. rsp+15]  slice header: length
+function putcstr
+	prologue
+	sub rsp 16
+
+	// header.ptr = the string (rdi); strlen(rdi) -> rax = length.
+	mov qword[rsp+0] rdi
+	call strlen
+	mov qword[rsp+8] rax
+
+	lea rdi [rsp+0]
+	call puts
+
+	epilogue
+	ret

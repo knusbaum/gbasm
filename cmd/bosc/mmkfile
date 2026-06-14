@@ -333,8 +333,15 @@ test: go_tests bosc_tests {
         ${target}.o > ${target}.stdout
     fi
     ecode="$?"
-    if [[ "$ecode" != "0" ]]; then
-		echo $target exited with $ecode
+    # Expected exit code defaults to 0. A test that deliberately traps at
+    # runtime (e.g. a bounds-check or nil-assertion panic) ships a
+    # ${target}.exit file with the expected non-zero code.
+    expected_exit=0
+    if [[ -f "${target}.exit" ]]; then
+        expected_exit=$(cat ${target}.exit)
+    fi
+    if [[ "$ecode" != "$expected_exit" ]]; then
+		echo $target exited with $ecode, expected $expected_exit
 		echo -e 'stdout:\n```'
 		cat ${target}.stdout
 		echo '```'

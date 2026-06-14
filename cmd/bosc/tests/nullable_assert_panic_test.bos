@@ -1,0 +1,11 @@
+package main
+
+// Asserting non-null on a pointer that is nil at runtime (the compiler
+// can't prove it across the call) traps with a clear message.
+fn deref(p *?mut i64) i64 {
+	return *p?
+}
+
+fn main() {
+	_ := deref(nil)
+}
