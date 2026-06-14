@@ -20,8 +20,8 @@ interface speaker {
 fn main() i64 {
 	var b barer = 3
 	var a any = &b
-	var s speaker, var ok bool = a.(speaker)
-	if (ok) {
+	var s ?speaker = a.(speaker)
+	if (s != nil) {
 		string.puts("yes")
 	} else {
 		string.puts("no")

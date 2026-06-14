@@ -29,15 +29,15 @@ fn main() i64 {
 	var x tt = 5
 	// value-shape any: must pass .(Vi), fail .(Pi)
 	var av any = x
-	var v1 Vi, var ok1 bool = av.(Vi)
-	report("av.Vi=", ok1)
-	var p1 Pi, var ok2 bool = av.(Pi)
-	report("av.Pi=", ok2)
+	var v1 ?Vi = av.(Vi)
+	report("av.Vi=", v1 != nil)
+	var p1 ?Pi = av.(Pi)
+	report("av.Pi=", p1 != nil)
 	// pointer-shape any: must pass .(Pi), fail .(Vi)
 	var ap any = &x
-	var v2 Vi, var ok3 bool = ap.(Vi)
-	report("ap.Vi=", ok3)
-	var p2 Pi, var ok4 bool = ap.(Pi)
-	report("ap.Pi=", ok4)
+	var v2 ?Vi = ap.(Vi)
+	report("ap.Vi=", v2 != nil)
+	var p2 ?Pi = ap.(Pi)
+	report("ap.Pi=", p2 != nil)
 	return 0
 }

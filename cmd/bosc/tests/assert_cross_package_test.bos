@@ -9,8 +9,8 @@ import "ifaces"
 fn main() i64 {
 	var p geom.Point = geom.make(1, 2)
 	var a any = &p
-	var s ifaces.Stringer, var ok bool = a.(ifaces.Stringer)
-	if (ok) {
+	var s ?ifaces.Stringer = a.(ifaces.Stringer)
+	if (s != nil) {
 		string.puts(s.describe())
 	} else {
 		string.puts("no")

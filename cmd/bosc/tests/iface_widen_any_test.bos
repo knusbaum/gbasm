@@ -15,15 +15,15 @@ fn main() i64 {
 	var w W = W{buf: "hi"}
 	var v viewer = &w
 	var a any = v
-	var k Byter, var ok bool = a.(Byter)
-	if (ok) {
+	var k ?Byter = a.(Byter)
+	if (k != nil) {
 		string.puts("LAUNDERED")
 	} else {
 		string.puts("blocked")
 	}
 	string.putc(10)
-	var v2 viewer, var ok2 bool = a.(viewer)
-	if (ok2) {
+	var v2 ?viewer = a.(viewer)
+	if (v2 != nil) {
 		const r byte[] = v2.bytes()
 		string.puts(r)
 	} else {

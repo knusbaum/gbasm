@@ -547,7 +547,12 @@ func nullablePointerPathForIf(c *Context, cond AST) (FlowPath, ASTType, bool, bo
 	if !ok {
 		return FlowPath{}, ASTType{}, false, false
 	}
-	if t.Indirection == 0 || t.NilMask&1 == 0 {
+	if t.NilMask&1 == 0 {
+		return FlowPath{}, ASTType{}, false, false
+	}
+	// A nullable pointer (`*?`) or a nullable interface (`?T`, Indirection 0)
+	// can be narrowed by an `if (x != nil)` / `if (x == nil)` test.
+	if t.Indirection == 0 && !c.IsInterfaceType(t) {
 		return FlowPath{}, ASTType{}, false, false
 	}
 	return path, t, nonNullOnThen, true
@@ -5064,6 +5069,12 @@ func compareUsesInterface(c *Context, o *Op2) bool {
 func compileAsInterfaceValue(of io.Writer, c *Context, errNode AST, ifaceType ASTType, val AST) spot {
 	ifaceType = ifaceType.StripOwned()
 	valType := val.ASTType(c)
+	// Asserting/widening/comparing *from* a nullable interface dereferences its
+	// vtable (vtable[0] = typedesc); a null source would crash. Require it
+	// narrowed first, exactly like dispatch.
+	if vt := valType.StripOwned(); c.IsInterfaceType(vt) && vt.NilMask&1 != 0 {
+		CompileErrorF(errNode, "%s is a nullable interface and may be null; narrow it with `if (... != nil)` first", vt)
+	}
 	if c.IsInterfaceType(valType.StripOwned()) {
 		if !sameInterfaceType(c, ifaceType, valType) {
 			CompileErrorF(val, "Cannot compare interface values of types %s and %s", ifaceType, valType)
@@ -5075,7 +5086,37 @@ func compileAsInterfaceValue(of io.Writer, c *Context, errNode AST, ifaceType AS
 	return dst
 }
 
+// litIsNil reports whether an expression is the `nil` literal.
+func litIsNil(ast AST) bool {
+	lit, ok := ast.(*Literal)
+	return ok && lit.Val == nil
+}
+
 func compileInterfaceEquality(of io.Writer, c *Context, o *Op2, dest spot) spot {
+	// `k == nil` / `k != nil`: a (nullable) interface is null iff its vtable
+	// slot is 0. Compare that slot to 0 rather than attempting full interface
+	// equality — nil has no interface value to coerce against.
+	if litIsNil(o.First) || litIsNil(o.Second) {
+		ifaceOperand := o.First
+		if litIsNil(o.First) {
+			ifaceOperand = o.Second
+		}
+		iv := compileTop(of, c, ifaceOperand, nullspot)
+		defer iv.free(of)
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), boolASTType())
+		}
+		vt := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+		fmt.Fprintf(of, "\tmov %s [%s+8]\n", vt.ref, iv.ref) // vtable slot
+		fmt.Fprintf(of, "\tcmp %s 0\n", vt.ref)
+		if o.Type == n_deq {
+			fmt.Fprintf(of, "\tsete %s\n", dest.ref)
+		} else {
+			fmt.Fprintf(of, "\tsetne %s\n", dest.ref)
+		}
+		vt.free(of)
+		return dest
+	}
 	ft := o.First.ASTType(c).StripOwned()
 	st := o.Second.ASTType(c).StripOwned()
 	var ifaceType ASTType
@@ -5605,6 +5646,13 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 	ifaceType ASTType, ifaceDecl *InterfaceDecl, dest spot) spot {
 
 	mname := callNode.FName()
+	// A nullable interface (`?T`) may be null — dispatching through it would
+	// deref a null vtable. Reject until it is narrowed to non-null (the type
+	// read strips the nullable bit inside `if (k != nil)`), mirroring the
+	// rejection of a `*?` pointer deref.
+	if ifaceType.NilMask&1 != 0 {
+		CompileErrorF(a, "%s is a nullable interface and may be null; narrow it with `if (... != nil)` before calling %s", ifaceType, mname)
+	}
 	// Locate the method and its index in the interface.
 	methodIdx := -1
 	var isig InterfaceMethodSig
@@ -6215,44 +6263,23 @@ func compileInterfaceAssert(of io.Writer, c *Context, ast *TypeAssert, dest spot
 	src := compileAsInterfaceValue(of, c, ast.Val, srcT, ast.Val)
 	defer src.free(of)
 
-	resultType := ast.ASTType(c)
+	resultType := ast.ASTType(c) // ?T — a single nullable interface
 	if dest.empty() {
 		dest = newSpot(of, c, c.Temp(), resultType)
 	}
-	resDecl, _ := structDeclForType(c, resultType)
-	valOff, _ := resDecl.ByteOffset(c, "_0") // the asserted interface (16 bytes)
-	okOff, _ := resDecl.ByteOffset(c, "_1")  // success flag
 
-	// Load the four helper arguments and call. The helper is a raw .bs
-	// function returning (vtable in rax, ok in rdx). We pin the arg registers
-	// so arg compilation (already done) can't be evicted underneath us.
-	// Unlike compileTypeSwitchIfaceCase (which receives the already-loaded
-	// td/shp spots), the assert path must dereference the source vtable here to
-	// pull src_ti/src_shape, so it additionally acquires rax as the scratch
-	// base register for those two indirect loads.
+	// assert_to returns the itab vtable in rax (0 on failure) and ok in rdx.
+	// The result is the (possibly-null) interface [data, vtable]: on failure
+	// vtable is 0, which is exactly the null sentinel `if (k != nil)` tests, so
+	// no branch is needed — the ok flag is subsumed by the nullable type.
 	vtTmp, okTmp := emitAssertToCall(of, c, src.ref, descSym)
-
-	fail := c.Label("ifaceassertfail")
-	done := c.Label("ifaceassertdone")
-
-	fmt.Fprintf(of, "\tcmp %s 0\n", okTmp)
-	fmt.Fprintf(of, "\tje %s\n", fail)
-	// Success: result interface = [src_data, vtable]; ok = 1.
+	fmt.Fprintf(of, "\tforget %s\n", okTmp)
 	dataTmp := c.Temp()
 	fmt.Fprintf(of, "\tlocal %s 64\n", dataTmp)
 	fmt.Fprintf(of, "\tmov %s [%s+0]\n", dataTmp, src.ref)
-	fmt.Fprintf(of, "\tmov qword[%s+%d] %s\n", dest.ref, valOff, dataTmp)
-	fmt.Fprintf(of, "\tmov qword[%s+%d] %s\n", dest.ref, valOff+8, vtTmp)
-	fmt.Fprintf(of, "\tmov byte[%s+%d] 1\n", dest.ref, okOff)
+	fmt.Fprintf(of, "\tmov qword[%s+0] %s\n", dest.ref, dataTmp)
+	fmt.Fprintf(of, "\tmov qword[%s+8] %s\n", dest.ref, vtTmp)
 	fmt.Fprintf(of, "\tforget %s\n", dataTmp)
-	fmt.Fprintf(of, "\tjmp %s\n", done)
-	// Failure: zero the interface and ok = 0.
-	fmt.Fprintf(of, "\tlabel %s\n", fail)
-	fmt.Fprintf(of, "\tmov qword[%s+%d] 0\n", dest.ref, valOff)
-	fmt.Fprintf(of, "\tmov qword[%s+%d] 0\n", dest.ref, valOff+8)
-	fmt.Fprintf(of, "\tmov byte[%s+%d] 0\n", dest.ref, okOff)
-	fmt.Fprintf(of, "\tlabel %s\n", done)
-	fmt.Fprintf(of, "\tforget %s\n", okTmp)
 	fmt.Fprintf(of, "\tforget %s\n", vtTmp)
 
 	dest.t = resultType

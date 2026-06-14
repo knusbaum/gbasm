@@ -1,0 +1,2 @@
+Compiling tests/iface_nullable_assert_source_err_test.bos
+Fatal: K is a nullable interface and may be null; narrow it with `if (... != nil)` first

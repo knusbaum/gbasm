@@ -690,13 +690,13 @@ fn ferr_stop(err error) bool {
 
 // render_v handles %v: try stringer, then Formatter, else a placeholder.
 fn render_v(w io.writer, a any) i64, bool, error {
-	var s stringer, var ok bool = a.(stringer)
-	if (ok) {
+	var s ?stringer = a.(stringer)
+	if (s != nil) {
 		const k, var err = str(w, s.string())
 		return k, ferr_stop(err), err
 	}
-	var f Formatter, var ok2 bool = a.(Formatter)
-	if (ok2) {
+	var f ?Formatter = a.(Formatter)
+	if (f != nil) {
 		// Wrap w so the Formatter's writes are counted into printf's total.
 		var cw counting_writer = counting_writer{inner: w, n: 0}
 		const err error = f.format(&cw)

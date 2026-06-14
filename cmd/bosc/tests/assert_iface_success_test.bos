@@ -14,8 +14,8 @@ interface speaker {
 fn main() i64 {
 	var g greeter = 7
 	var a any = &g
-	var s speaker, var ok bool = a.(speaker)
-	if (ok) {
+	var s ?speaker = a.(speaker)
+	if (s != nil) {
 		string.puts(s.greet())
 	} else {
 		string.puts("no")

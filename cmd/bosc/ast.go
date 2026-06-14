@@ -833,7 +833,10 @@ func (c *Context) TypeForVar(name string) (ASTType, bool) {
 		return ASTType{}, false
 	}
 	if t, ok := c.bindings[name]; ok {
-		if t.Indirection > 0 && t.NilMask&1 != 0 && c.NullFact(VarFlowPath(name)) == NullKnownNonNull {
+		// A nullable pointer (`*?`) or nullable interface (`?T`) narrowed to
+		// non-null by flow reads as its non-nullable form.
+		if t.NilMask&1 != 0 && c.NullFact(VarFlowPath(name)) == NullKnownNonNull &&
+			(t.Indirection > 0 || c.IsInterfaceType(t)) {
 			t.NilMask &^= 1
 		}
 		return t, true
@@ -3302,6 +3305,16 @@ type TypeAssert struct {
 }
 
 func (a *TypeAssert) ASTType(c *Context) ASTType {
+	// An interface-target assertion yields a single *nullable* interface
+	// (`?T`): the vtable is 0 on failure, and the result must be narrowed via
+	// `if (k != nil)` before dispatch. A concrete-target assertion yields the
+	// 2-value `(T, bool)` — a concrete value plus a success flag (a concrete
+	// value has no nullable form).
+	if c != nil && c.IsInterfaceType(a.T) {
+		nt := a.T
+		nt.NilMask |= 1
+		return nt
+	}
 	return ASTType{
 		AnonFields:  []Binding{{Name: "_0", Type: a.T}, {Name: "_1", Type: boolASTType()}},
 		MultiReturn: true,

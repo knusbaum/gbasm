@@ -1,0 +1,17 @@
+package main
+import "string"
+
+// A type assertion to an interface yields a nullable interface (`?T`): null
+// on failure. Dispatching through it without narrowing is rejected, exactly
+// like dereferencing a `*?` pointer.
+interface Speaker { speak(s *self) byte[] }
+type T i64 { speak(t *T) byte[] { return "hi" } }
+
+fn main() i64 {
+	var t T = 3
+	var a any = &t
+	var k ?Speaker = a.(Speaker)
+	const r byte[] = k.speak()
+	string.puts(r)
+	return 0
+}

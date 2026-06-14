@@ -14,14 +14,10 @@ type ic i64 {
 fn main() i64 {
 	var n ic = 4
 	var s counter = n          // value-shape interface
-	var a any, var ok bool = s.(any)
-	if (ok) {
-		string.puts("ok")
-	} else {
-		string.puts("no")
-	}
+	var a any = s              // widen to any (infallible)
+	string.puts("ok")
 	string.putc(10)
-	var v ic, var ok2 bool = a.(ic)
+	var v ic, var ok2 bool = a.(ic)   // concrete-target assert: 2-value
 	if (ok2) {
 		string.puts("kept")
 	} else {

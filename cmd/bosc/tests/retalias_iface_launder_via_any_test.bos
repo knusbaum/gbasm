@@ -19,8 +19,8 @@ fn main() i64 {
 	var s byte[] = "data"
 	var h Holder = Holder{buf: s}
 	var a any = &h
-	var bt Byter, var ok bool = a.(Byter)
-	if (ok) {
+	var bt ?Byter = a.(Byter)
+	if (bt != nil) {
 		string.puts("LAUNDERED")
 	} else {
 		string.puts("blocked")
