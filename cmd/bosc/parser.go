@@ -65,6 +65,7 @@ const (
 	n_typeassert            // x.(T) — runtime type assertion
 	n_typeswitch            // switch (v x.(type)) { case T {...} ... }
 	n_typecase              // single case in a type switch
+	n_from                  // `from(name, ...)` borrow clause on an interface return slot
 )
 
 func (t nodetype) String() string {
@@ -175,6 +176,8 @@ func (t nodetype) String() string {
 		return "n_valuesdecl"
 	case n_valuescase:
 		return "n_valuescase"
+	case n_from:
+		return "n_from"
 	}
 	return "UNKNOWN"
 }
@@ -1531,8 +1534,17 @@ func (p *Parser) parseInterfaceMethodSig() *Node {
 	params := p.parseParams()
 	p.expect(tok_rparen)
 	var rettype *Node
+	// One n_from clause per return slot, parsed *interleaved* with the slot
+	// types (the `from` must be consumed before the multi-return comma test,
+	// or `T from(x), U` never sees the comma). Emitted as trailing args only
+	// when some slot actually declares `from`, so no-from sigs are unchanged.
+	var fromClauses []*Node
+	anyFrom := false
 	if isTypeStart(p.current().t) {
 		rettype = p.parseTypeName()
+		fc := p.parseFromClause()
+		fromClauses = append(fromClauses, fc)
+		anyFrom = anyFrom || len(fc.args) > 0
 		if p.current().t == tok_comma {
 			rettypePos := rettype.p
 			fieldNodes := []*Node{
@@ -1543,6 +1555,9 @@ func (p *Parser) parseInterfaceMethodSig() *Node {
 				p.advance()
 				tn := p.parseTypeName()
 				fieldNodes = append(fieldNodes, &Node{t: n_stfield, p: tn.p, sval: fmt.Sprintf("_%d", i), args: []*Node{tn}})
+				fc := p.parseFromClause()
+				fromClauses = append(fromClauses, fc)
+				anyFrom = anyFrom || len(fc.args) > 0
 				i++
 			}
 			rettype = &Node{t: n_typename, p: rettypePos, sval: "<multiretu>", args: fieldNodes}
@@ -1551,7 +1566,40 @@ func (p *Parser) parseInterfaceMethodSig() *Node {
 		rettype = &Node{t: n_typename, p: p.current().p, sval: "void"}
 	}
 	args := append(params, rettype)
+	if anyFrom {
+		// Positional per-slot borrow clauses trail the rettype; ToAST reads
+		// them as args[nparams+1:].
+		args = append(args, fromClauses...)
+	}
 	return &Node{t: n_interface_method, p: sigpos, ival: uint64(len(params)), sval: fname.sval, args: args}
+}
+
+// parseFromClause parses an optional `from(name, ...)` borrow clause following
+// an interface-method return-slot type, returning an n_from node whose args
+// are the named-parameter symbols (empty args = no clause present). `from` is
+// contextual — recognized only in this position, an ordinary identifier
+// everywhere else.
+func (p *Parser) parseFromClause() *Node {
+	cur := p.current()
+	if cur.t != tok_ident || cur.sval != "from" {
+		return &Node{t: n_from, p: cur.p}
+	}
+	p.advance()
+	p.expect(tok_lparen)
+	var names []*Node
+	for p.current().t != tok_rparen {
+		nm := p.parseTok()
+		if nm.t != n_symbol {
+			panic(&interpreterError{fmt.Sprintf("Expected a parameter name in from(...), but found: %v", nm), nm.p})
+		}
+		names = append(names, nm)
+		if p.current().t != tok_comma {
+			break
+		}
+		p.advance()
+	}
+	p.expect(tok_rparen)
+	return &Node{t: n_from, p: cur.p, args: names}
 }
 
 // parseInterfaceDecl parses: interface Name { sig1 sig2 ... }

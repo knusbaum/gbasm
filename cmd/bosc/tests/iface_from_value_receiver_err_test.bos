@@ -1,0 +1,8 @@
+package main
+
+interface valrecv {
+	get(self self) byte[] from(self)
+}
+
+fn main() {
+}

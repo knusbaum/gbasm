@@ -1,0 +1,2 @@
+Compiling tests/iface_from_value_receiver_err_test.bos
+Failed to parse: from(self) is not allowed on a value receiver (method get): a result cannot borrow a by-value copy of the receiver

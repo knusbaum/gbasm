@@ -1,0 +1,2 @@
+Compiling tests/iface_from_unknown_param_err_test.bos
+Failed to parse: from(...): "bogus" is not a parameter of method get

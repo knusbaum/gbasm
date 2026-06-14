@@ -3103,7 +3103,13 @@ type InterfaceMethodSig struct {
 	Name   string
 	Params []Binding
 	Return ASTType
-	p      position
+	// ReturnAliases is the method's *declared* borrow contract from `from(...)`
+	// clauses: ReturnAliases[slot] = sorted parameter indices that return slot
+	// may borrow (receiver = index 0), matching FuncDecl.ReturnAliases on the
+	// inferred side. nil = no `from` clause anywhere (borrows nothing); a
+	// present-but-empty per-slot set means that slot declares no borrow.
+	ReturnAliases [][]int
+	p             position
 }
 
 // InterfaceDecl is the AST node for `interface Name { sig... }`.
@@ -3117,6 +3123,92 @@ type InterfaceDecl struct {
 func (*InterfaceDecl) ASTType(*Context) ASTType { return voidASTType() }
 func (d *InterfaceDecl) Note() string           { return fmt.Sprintf("interface %s", d.Name) }
 func (d *InterfaceDecl) Pos() position          { return d.p }
+
+// interfaceReturnSlotTypes splits an interface method's return ASTType into
+// one type per return slot: the per-field types of a multi-return, else the
+// single return type (empty for void).
+func interfaceReturnSlotTypes(ret ASTType) []ASTType {
+	if ret.MultiReturn && len(ret.AnonFields) > 0 {
+		ts := make([]ASTType, len(ret.AnonFields))
+		for i, f := range ret.AnonFields {
+			ts[i] = f.Type
+		}
+		return ts
+	}
+	if ret.Name == "void" && ret.Indirection == 0 && ret.Element == nil &&
+		ret.FuncSig == nil && ret.AnonFields == nil {
+		return nil
+	}
+	return []ASTType{ret}
+}
+
+// typeCanBorrow reports whether a return slot of type t can be a view of
+// caller storage (pointer, slice/array, struct, or interface). Plain scalar
+// leaves and function pointers cannot, so a `from(...)` on such a slot is a
+// declaration error. Deliberately permissive on aggregates (a struct may
+// transitively hold a view); the field-level precision is a future extension.
+func typeCanBorrow(c *Context, t ASTType) bool {
+	if t.Indirection > 0 || t.Element != nil || t.AnonFields != nil {
+		return true
+	}
+	if c != nil {
+		if _, ok := c.InterfaceForName(t.Name); ok {
+			return true
+		}
+		if _, ok := c.StructDeclForName(t.Name); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveInterfaceFrom resolves an interface method's per-slot `from(...)`
+// clauses into its declared ReturnAliases: ReturnAliases[slot] = sorted,
+// deduped parameter indices the slot may borrow (receiver = index 0), matching
+// the inferred-side convention in FuncDecl.ReturnAliases. fromArgs is one
+// n_from node per return slot (positional). Enforces the v1 restrictions:
+// unknown-name, D6 value-receiver reject, no variadic source, view-capable
+// slot only.
+func resolveInterfaceFrom(c *Context, isig *InterfaceMethodSig, variadic []bool, fromArgs []*Node) [][]int {
+	slotTypes := interfaceReturnSlotTypes(isig.Return)
+	if len(fromArgs) != len(slotTypes) {
+		ParseErrorF(fromArgs[0], "from(...): %d borrow clauses for %d return slots in method %s",
+			len(fromArgs), len(slotTypes), isig.Name)
+	}
+	out := make([][]int, len(fromArgs))
+	for slot, fc := range fromArgs {
+		var idxs []int
+		for _, nm := range fc.args {
+			name := nm.sval
+			idx := -1
+			if name == "self" {
+				idx = 0
+			} else {
+				for pi := range isig.Params {
+					if isig.Params[pi].Name == name {
+						idx = pi
+						break
+					}
+				}
+			}
+			if idx < 0 {
+				ParseErrorF(nm, "from(...): %q is not a parameter of method %s", name, isig.Name)
+			}
+			if idx == 0 && len(isig.Params) > 0 && isig.Params[0].Type.Indirection == 0 {
+				ParseErrorF(nm, "from(self) is not allowed on a value receiver (method %s): a result cannot borrow a by-value copy of the receiver", isig.Name)
+			}
+			if idx < len(variadic) && variadic[idx] {
+				ParseErrorF(nm, "from(...): cannot borrow the variadic parameter %q in method %s", name, isig.Name)
+			}
+			idxs = append(idxs, idx)
+		}
+		if len(idxs) > 0 && !typeCanBorrow(c, slotTypes[slot]) {
+			ParseErrorF(fc, "from(...): return slot %d of method %s has non-borrowable type %s; only pointers, slices, structs, and interfaces can borrow", slot, isig.Name, slotTypes[slot].String())
+		}
+		out[slot] = sortDedup(idxs)
+	}
+	return out
+}
 
 // TypeWithMethodsDecl is the AST node for `type TypeName Base { methods... }`.
 type TypeWithMethodsDecl struct {
@@ -4037,6 +4129,7 @@ func (n *Node) toASTTop(c *Context) AST {
 			isig.Name = sig.sval
 			isig.p = sig.p
 			nparams := int(sig.ival)
+			var variadic []bool
 			sargs := sig.args
 			for i := 0; i < nparams; i++ {
 				a := sargs[0]
@@ -4045,9 +4138,15 @@ func (n *Node) toASTTop(c *Context) AST {
 					Type:    mkTypename(a.args[0]),
 					IsConst: true,
 				})
+				variadic = append(variadic, a.ival&2 != 0)
 				sargs = sargs[1:]
 			}
 			isig.Return = mkTypename(sargs[0])
+			// Trailing args after the return type are the per-slot `from(...)`
+			// borrow clauses (only present when some slot declares `from`).
+			if fromArgs := sargs[1:]; len(fromArgs) > 0 {
+				isig.ReturnAliases = resolveInterfaceFrom(c, &isig, variadic, fromArgs)
+			}
 			decl.Methods = append(decl.Methods, isig)
 		}
 		c.DefineInterface(n.p, n.sval, &decl)

@@ -1,0 +1,8 @@
+package main
+
+interface bad {
+	get(self *self) byte[] from(bogus)
+}
+
+fn main() {
+}
