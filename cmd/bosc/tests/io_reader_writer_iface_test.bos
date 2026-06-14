@@ -31,7 +31,7 @@ fn main() i64 {
 
 	// Owned FD opened against /dev/null, borrowed into io.reader.
 	// /dev/null returns EOF (0 bytes) on read.
-	var null owned io.FD, const openerr error := io.open("/dev/null", 0, 0)
+	var null owned io.FD, openerr error := io.open("/dev/null", 0, 0)
 	var buf byte[8]
 	n i64 := readbyte(&null, buf[:])
 	if (n != 0) {

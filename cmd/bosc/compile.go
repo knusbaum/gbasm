@@ -1375,7 +1375,7 @@ func lvalueIsWritable(c *Context, a AST) (bool, string) {
 	switch v := a.(type) {
 	case *Symbol:
 		if c.IsConst(v.Name) {
-			return false, fmt.Sprintf("Cannot assign to const binding %q", v.Name)
+			return false, fmt.Sprintf("Cannot assign to immutable binding %q", v.Name)
 		}
 		return true, ""
 	case *Deref:
@@ -2947,7 +2947,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				// Name already declared in this scope — re-binding, not a new declaration.
 				// Apply the same writability check as regular assignment.
 				if c.IsConst(b.Name) {
-					CompileErrorF(a, "Cannot assign to const binding %q", b.Name)
+					CompileErrorF(a, "Cannot assign to immutable binding %q", b.Name)
 				}
 			} else {
 				c.BindVar(a, b.Name, bindType, b.IsConst)
@@ -3021,7 +3021,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				CompileErrorF(tgt, "Variable %q undeclared.", sym.Name)
 			}
 			if c.IsConst(sym.Name) {
-				CompileErrorF(tgt, "Cannot assign to const binding %q", sym.Name)
+				CompileErrorF(tgt, "Cannot assign to immutable binding %q", sym.Name)
 			}
 			if _, reason := coerceType(c, declType, field.Type); reason != coerceOK {
 				reportCoerceFailure(tgt, declType, field.Type, reason,

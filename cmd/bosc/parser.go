@@ -1244,7 +1244,7 @@ func (p *Parser) parseBindingSpec(isConst bool) *Node {
 	name := p.current().sval
 	p.advance()
 	var typeNode *Node
-	if p.current().t == tok_eq || p.current().t == tok_decl || p.current().t == tok_comma {
+	if p.current().t == tok_decl || p.current().t == tok_comma {
 		typeNode = &Node{t: n_typename, p: pos, sval: "<infer>"}
 	} else {
 		typeNode = p.parseTypeName()
@@ -1268,7 +1268,7 @@ func (p *Parser) parseBindingDecl(isConst bool) *Node {
 	name := p.current().sval
 	p.advance()
 	var typeNode *Node
-	if p.current().t == tok_eq || p.current().t == tok_decl || p.current().t == tok_comma {
+	if p.current().t == tok_decl || p.current().t == tok_comma {
 		// No explicit type: use sentinel for type inference.
 		typeNode = &Node{t: n_typename, p: pos, sval: "<infer>"}
 	} else {
@@ -1279,9 +1279,8 @@ func (p *Parser) parseBindingDecl(isConst bool) *Node {
 		constVal = 1
 	}
 	args := []*Node{typeNode}
-	// Accept both the legacy '=' and the new ':=' declaration operator
-	// (phase-1 migration: both spellings parse to the same node).
-	if p.current().t == tok_eq || p.current().t == tok_decl {
+	// Declarations use ':='; '=' is assignment only.
+	if p.current().t == tok_decl {
 		p.advance()
 		args = append(args, p.parseExpression())
 	}
@@ -1388,18 +1387,17 @@ func (p *Parser) parseMultiBind(first *Node) *Node {
 	bindings := []*Node{first}
 	for p.current().t == tok_comma {
 		p.advance()
-		isConst := false
+		// Each target is immutable by default; `var` opts into mutability.
+		isConst := true
 		if p.current().t == tok_var {
 			p.advance()
-		} else if p.current().t == tok_const {
-			p.advance()
-			isConst = true
+			isConst = false
 		}
 		b := p.parseBindingSpec(isConst)
 		bindings = append(bindings, b)
 	}
-	if p.current().t != tok_eq && p.current().t != tok_decl {
-		panic(&interpreterError{"multi-bind: expected '=' or ':=' after binding list", p.current().p})
+	if p.current().t != tok_decl {
+		panic(&interpreterError{"multi-bind: expected ':=' after binding list", p.current().p})
 	}
 	p.advance()
 	init := p.parseExpression()
@@ -1482,12 +1480,11 @@ func (p *Parser) parseStatement() *Node {
 	targets := []*Node{first}
 	for p.current().t == tok_comma {
 		p.advance()
-		// A per-target var/const prefix only appears in a declaration; an
-		// assignment lvalue never has one.
-		if p.current().t == tok_var || p.current().t == tok_const {
-			isConst := p.current().t == tok_const
+		// A per-target `var` prefix only appears in a declaration; an
+		// assignment lvalue never has one. Bare targets are immutable.
+		if p.current().t == tok_var {
 			p.advance()
-			targets = append(targets, p.parseBindingSpec(isConst))
+			targets = append(targets, p.parseBindingSpec(false))
 		} else {
 			targets = append(targets, p.parseBoolOp())
 		}
@@ -1539,13 +1536,6 @@ func (p *Parser) parseExpression() (r *Node) {
 		first := p.parseBindingDecl(false)
 		// Multi-bind: `var a T1, const b T2 = expr` — first binding has no initializer
 		// (args len == 1) and the next token is ','.
-		if len(first.args) == 1 && p.current().t == tok_comma {
-			return p.parseMultiBind(first)
-		}
-		return first
-	} else if p.current().t == tok_const {
-		p.advance()
-		first := p.parseBindingDecl(true)
 		if len(first.args) == 1 && p.current().t == tok_comma {
 			return p.parseMultiBind(first)
 		}
@@ -1874,14 +1864,6 @@ func (p *Parser) parseTopLevel() *Node {
 		case tok_var:
 			p.advance()
 			n := p.parseBindingDecl(false)
-			if len(n.args) == 1 && p.current().t == tok_comma {
-				ParseErrorF(n, "pub multi-bind declarations are not supported")
-			}
-			n.isPub = true
-			return n
-		case tok_const:
-			p.advance()
-			n := p.parseBindingDecl(true)
 			if len(n.args) == 1 && p.current().t == tok_comma {
 				ParseErrorF(n, "pub multi-bind declarations are not supported")
 			}

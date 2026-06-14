@@ -16,7 +16,7 @@ fn main() i64 {
 	string.puts("\n")
 
 	// explicit types, mixed var/const
-	var q2 i64, const rem2 i64 := divide(100, 7)
+	var q2 i64, rem2 i64 := divide(100, 7)
 	string.puti(q2)
 	string.puts("\n")
 	string.puti(rem2)

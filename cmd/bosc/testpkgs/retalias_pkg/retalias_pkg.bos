@@ -6,7 +6,7 @@ package retalias_pkg
 // rejected at its own call site if it misused it. This is the path the
 // .bo-carried alias fact supports.
 pub fn first_word(s byte[]) byte[] {
-	var i i64 = 0
+	var i i64 := 0
 	for (; i < len(s); i = i + 1) {
 		if (s[i] == 32) {
 			return s[0:i]

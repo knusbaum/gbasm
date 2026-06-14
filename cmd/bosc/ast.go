@@ -3409,7 +3409,7 @@ type SliceOp struct {
 }
 
 // isLvalueMutable reports whether the lvalue expression a refers to writable
-// storage: a non-const binding, a *mut pointee, or an element of a mut slice.
+// storage: a non-`var` binding, a *mut pointee, or an element of a mut slice.
 // This mirrors the logic in lvalueIsWritable (compile.go) but returns bool
 // rather than an error reason. Used by SliceOp.ASTType to propagate mut.
 func isLvalueMutable(c *Context, a AST) bool {

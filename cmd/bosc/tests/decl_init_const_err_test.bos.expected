@@ -1,2 +1,2 @@
 Compiling tests/decl_init_const_err_test.bos
-Fatal: Cannot assign to const binding "x"
+Fatal: Cannot assign to immutable binding "x"

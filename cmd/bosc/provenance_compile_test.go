@@ -127,7 +127,7 @@ fn ok() byte[] {
 			// Now legal: alias of a borrowed param returned — recordable.
 			name: "alias of borrowed param return allowed (return-alias inference)",
 			body: `fn ok(s byte[]) byte[] {
-	var alias byte[] = s
+	var alias byte[] := s
 	return alias
 }`,
 		},
@@ -220,7 +220,7 @@ type Outer struct { inner Inner }
 fn ok(s byte[]) Outer {
 	var o Outer
 	o.inner.buf = s
-	var o2 Outer = o
+	var o2 Outer := o
 	return o2
 }`,
 		},
@@ -438,7 +438,7 @@ func TestSliceProvenanceSourceMatrix(t *testing.T) {
 			name: "global slice alias may be returned",
 			body: `var g byte[8]
 fn ok() byte[] {
-	var s byte[] = g[:]
+	var s byte[] := g[:]
 	return s
 }`,
 		},
@@ -456,7 +456,7 @@ fn bad() byte[] {
 			body: `type B struct { bufs byte[8][1] }
 fn bad() byte[] {
 	var b B
-	var s byte[] = b.bufs[0][:]
+	var s byte[] := b.bufs[0][:]
 	return s
 }`,
 			wantErr: "Borrowed slice escapes through return",

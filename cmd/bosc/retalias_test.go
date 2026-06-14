@@ -54,7 +54,7 @@ type W struct { buf byte[] } {
 	bytes(w *W) byte[] { return w.buf }
 }
 fn get(w *W) byte[] {
-	var v viewer = w
+	var v viewer := w
 	return v.bytes()
 }
 fn main() i64 { return 0 }`)
@@ -186,7 +186,7 @@ fn mk2(s byte[]) byte[], i64 {
 	return s[0:4], 7
 }
 fn take2(s byte[]) byte[] {
-	var v byte[], var n i64 = mk2(s)
+	var v byte[], var n i64 := mk2(s)
 	return v
 }`,
 			fn:   "take2",
@@ -200,7 +200,7 @@ fn take2(s byte[]) byte[] {
 type DB struct { buf byte[] }
 fn get2(p *DB) DB { return *p }
 fn use2(p *DB) byte[] {
-	const b DB = get2(p)
+	b DB := get2(p)
 	return b.buf
 }`,
 			fn:   "use2",
@@ -245,7 +245,7 @@ fn as_g2(b *GB) G2 { return b }`,
 			// scope here — straight-line reassignment is what the fix covers).
 			name: "reassigned pointer records reassigned param",
 			body: `type T struct { v i64 }
-fn g(p *T, r *T) *T { var q *T = p; q = r; return q }`,
+fn g(p *T, r *T) *T { var q *T := p; q = r; return q }`,
 			fn:   "g",
 			want: [][]int{{1}},
 		},
@@ -275,7 +275,7 @@ fn id(p *T) *T { return p }`,
 			// alias to a caller and be unsound.
 			name: "branch merge of two borrowed params records union",
 			body: `fn merge2(a byte[], b byte[], cond bool) byte[] {
-	var t byte[] = a
+	var t byte[] := a
 	if (cond) { t = b }
 	return t
 }`,
@@ -307,7 +307,7 @@ fn outer(p byte[]) B { return mk(p) }`,
 		},
 		{
 			// Hole A, sentinel path: a struct returned from a call BOUND TO A
-			// VAR then returned (`var b B = mk(p); return b`). The direct form
+			// VAR then returned (`var b B := mk(p); return b`). The direct form
 			// (`return mk(p)`) goes through the engine's call-expansion read; this var-
 			// bound form has no single Origin, so recordStructReturnCallFieldFacts
 			// records the borrowed-argument provenance onto b's sentinel field
@@ -317,7 +317,7 @@ fn outer(p byte[]) B { return mk(p) }`,
 			name: "struct from call bound to var records param",
 			body: `type B struct { buf byte[] }
 fn mk(s byte[]) B { return B{buf: s} }
-fn outer(p byte[]) B { var b B = mk(p); return b }`,
+fn outer(p byte[]) B { var b B := mk(p); return b }`,
 			fn:   "outer",
 			want: [][]int{{0}},
 		},
@@ -362,7 +362,7 @@ fn A(s byte[]) byte[] { return B(s) }`,
 		{
 			name: "intermediate binding threads borrow",
 			body: `fn tail(s byte[]) byte[] { return s[1:len(s)] }
-fn ok(s byte[]) byte[] { const t byte[] = tail(s); return t }`,
+fn ok(s byte[]) byte[] { t byte[] := tail(s); return t }`,
 			fn:   "ok",
 			want: [][]int{{0}},
 		},

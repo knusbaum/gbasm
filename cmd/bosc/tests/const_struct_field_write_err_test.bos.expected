@@ -1,2 +1,2 @@
 Compiling tests/const_struct_field_write_err_test.bos
-Fatal: Cannot assign to const binding "p"
+Fatal: Cannot assign to immutable binding "p"
