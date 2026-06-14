@@ -1,0 +1,15 @@
+package main
+
+type pair struct {
+	a owned *mut i64
+	b owned *mut i64
+}
+
+fn main() {
+	var p owned *owned mut pair = new(pair{a: alloc(i64), b: alloc(i64)})
+	var alias *pair = p
+	var a owned *mut i64 = p.a
+	free(a)
+	free(p.b)
+	free(p)
+}

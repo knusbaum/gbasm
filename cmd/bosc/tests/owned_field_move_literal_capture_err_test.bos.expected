@@ -1,0 +1,2 @@
+Compiling tests/owned_field_move_literal_capture_err_test.bos
+Fatal: Cannot alias "f" while owned field "f.a" is moved out; the alias could read the moved-out field

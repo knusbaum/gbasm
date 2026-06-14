@@ -152,6 +152,11 @@ func compileArrayLiteralInto(of io.Writer, c *Context, a AST, dest spot, lit *Ar
 	elemT := *dest.t.Element
 	elemSize := elemT.Size(c)
 	for i, e := range lit.Elements {
+		// Capturing a whole inconsistent aggregate into an array element
+		// forms an alias that could read its moved-out field.
+		if name := aggregateBindingName(e); name != "" {
+			checkAggregateNotAliasedWhileInconsistent(c, name, e)
+		}
 		// Every element flows into a slot of type elemT. Route through
 		// coerceType so the closed-symbolic-set rule covers array
 		// initializers — pre-unification this site had no check at all,
@@ -707,16 +712,131 @@ func checkOwnedSourceAvailable(c *Context, val AST) {
 		fieldType := v.ASTType(c)
 		if parentOwnsFields(baseType) && fieldType.HasOwned() {
 			if fieldType.Indirection == 0 || fieldType.OwnedMask&1 == 0 {
+				// Value-typed owned fields have no pointer identity to hand
+				// off and no placeholder to leave behind, so they can only
+				// be consumed by disposing the whole aggregate.
 				CompileErrorF(val, "Cannot move owned field %s out of an owned aggregate", v.Member)
 			}
+			// Moving a non-null owned field out leaves its slot zeroed with
+			// no nil check on the field's type. A live alias of the
+			// aggregate could read that slot and crash, so refuse to
+			// partially-consume an aliased aggregate. (Nullable fields are
+			// exempt: the alias would read nil and must narrow.)
 			if fieldType.NilMask&1 == 0 {
-				CompileErrorF(val, "Cannot move non-null pointer field %s; use *?T if the field may be emptied", v.Member)
+				if base, ok := v.Val.(*Symbol); ok && c.HasLiveAlias(base.Name) {
+					CompileErrorF(val, "Cannot move owned field %s out of \"%s\" while it is aliased; the alias could read the moved-out field", v.Member, base.Name)
+				}
 			}
+			// A non-null owned *pointer* field MAY be moved out. Doing so
+			// zeroes the slot (see the *Dot case in markMovedIfOwnedSource)
+			// and marks the field consumed, leaving the aggregate in an
+			// inconsistent state that the escape gate
+			// (checkAggregateMayEscape) prevents from crossing a scope
+			// boundary. Nullable fields already worked this way with nil as
+			// the placeholder.
 			if path, ok := FlowPathForExpr(val); ok && c.OwnedFieldConsumed(path) {
 				CompileErrorF(val, "Cannot move \"%s\": it was already moved", path.Key())
 			}
 		}
 	}
+}
+
+// inconsistentOwnedField reports the first non-null owned field of the
+// aggregate rooted at `path` (declared type `t`) that has been moved out
+// (consumed). Such an aggregate is "inconsistent": the moved-out field has no
+// nil placeholder, and the local consumption fact cannot cross a scope
+// boundary, so the aggregate must not escape (see checkAggregateMayEscape). A
+// consumed *nullable* field does not count — nil is a safe, representable
+// state that keeps the aggregate passable.
+func inconsistentOwnedField(c *Context, path FlowPath, t ASTType) (string, bool) {
+	pointee := t
+	if t.Indirection > 0 {
+		pointee = pointeeType(t)
+	}
+	def, ok := structDeclForType(c, pointee)
+	if !ok {
+		return "", false
+	}
+	for _, field := range def.Fields {
+		fieldType := fieldTypeForBase(pointee, field.Type)
+		if !fieldType.HasOwned() || fieldType.Indirection == 0 || fieldType.NilMask&1 != 0 {
+			continue
+		}
+		if c.OwnedFieldConsumed(path.Append(field.Name)) {
+			return field.Name, true
+		}
+	}
+	return "", false
+}
+
+// checkAggregateMayEscape rejects letting an owned aggregate binding leave the
+// current function scope (verb: "pass", "return", "move") while it has a
+// moved-out non-null owned field. The receiving scope cannot see the local
+// consistency facts, so it would observe a field that looks live but is
+// zeroed. Only the shape-blind intrinsics dispose/free may consume such an
+// aggregate, and those are lowered on separate paths that never reach here.
+func checkAggregateMayEscape(c *Context, name string, errNode AST, verb string) {
+	declared, ok := c.DeclaredTypeForVar(name)
+	if !ok {
+		return
+	}
+	if field, bad := inconsistentOwnedField(c, VarFlowPath(name), declared); bad {
+		CompileErrorF(errNode,
+			"Cannot %s \"%s\" while owned field \"%s.%s\" is moved out; only dispose/free are allowed on a partially-consumed aggregate — consume or re-initialize \"%s.%s\" first",
+			verb, name, name, field, name, field)
+	}
+}
+
+// checkAggregateNotAliasedWhileInconsistent rejects forming a new alias of an
+// aggregate (taking `&f`, or copying a pointer-to-aggregate into another
+// binding) while it has a moved-out non-null owned field. The alias would
+// outlive the local consistency fact and could read the zeroed slot — the
+// symmetric counterpart of the move-while-aliased check, covering an alias
+// formed *after* the move rather than before it.
+func checkAggregateNotAliasedWhileInconsistent(c *Context, name string, errNode AST) {
+	declared, ok := c.DeclaredTypeForVar(name)
+	if !ok {
+		return
+	}
+	if field, bad := inconsistentOwnedField(c, VarFlowPath(name), declared); bad {
+		CompileErrorF(errNode,
+			"Cannot alias \"%s\" while owned field \"%s.%s\" is moved out; the alias could read the moved-out field",
+			name, name, field)
+	}
+}
+
+// checkedAssignPointer records dst as an alias of src in the pointer-flow
+// state, first rejecting the alias if src's origin/slot is an inconsistent
+// aggregate (one with a moved-out non-null owned field). Gating at the
+// recording point covers any binding-alias that funnels through here —
+// `var x = f`, `var x = &f` — without a per-syntax gate. It no-ops for
+// non-aggregate sources (the inconsistency predicate returns false). Other
+// alias forms that do not reach a clean AssignPointer (assignment `x = f`,
+// struct/array-literal capture) keep their own syntactic gates.
+func checkedAssignPointer(c *Context, dst flow.Binding, src flow.PointerExpr, errNode AST) {
+	name := ""
+	if src.KnownOrigin {
+		name = string(src.Origin)
+	} else if src.KnownSlot {
+		name = string(src.SlotTarget)
+	}
+	if name != "" {
+		checkAggregateNotAliasedWhileInconsistent(c, name, errNode)
+	}
+	c.PointerFlow().AssignPointer(dst, src)
+}
+
+// aggregateBindingName returns the binding name an escape-site expression
+// refers to (the aggregate itself `f`, or `&f`), or "" if the expression is
+// not a whole-aggregate reference.
+func aggregateBindingName(arg AST) string {
+	switch v := arg.(type) {
+	case *Symbol:
+		return v.Name
+	case *Address:
+		return v.Var
+	}
+	return ""
 }
 
 func borrowedPointerExpr(c *Context, a AST) bool {
@@ -1804,6 +1924,12 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 		}
 		fieldType := fieldTypeForBase(ctxType, declaredType)
 		srcType := f.Val.ASTType(c)
+		// Capturing a whole inconsistent aggregate into a struct field (as a
+		// bare pointer `f` or `&f`) forms an alias that could read its
+		// moved-out field.
+		if name := aggregateBindingName(f.Val); name != "" {
+			checkAggregateNotAliasedWhileInconsistent(c, name, f.Val)
+		}
 		checkBorrowedPointerDoesNotEscape(c, f.Val, fmt.Sprintf("field %v.%s", lit.Type, f.Name))
 		checkAddressOfOwnedForDest(c, f.Val, fieldType)
 		// Interface field: route through the interface coercion path so
@@ -2627,6 +2753,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			emitGlobalVarDecl(of, c, a, ast)
 			return nullspot
 		}
+		// Aliasing a whole inconsistent aggregate into this binding
+		// (`var alias = f` / `var alias = &f`) is gated centrally at the
+		// pointer-flow recording point (checkedAssignPointer, below), not
+		// here. A field initializer (`var a = f.a`) is a move, gated
+		// elsewhere.
 		if ast.Type.Name == "<infer>" {
 			if c.parent == nil {
 				CompileErrorF(a, "type inference not supported for file-scope variables")
@@ -2746,7 +2877,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// Origin invalidates this binding's reads via CheckDerefValidity.
 			pexpr := pointerExprForAST(c, ast.Init, ast.Name)
 			if pexpr.KnownOrigin || pexpr.KnownSlot {
-				c.PointerFlow().AssignPointer(flow.Binding(ast.Name), pexpr)
+				checkedAssignPointer(c, flow.Binding(ast.Name), pexpr, a)
 			}
 			// Propagate field pointer facts on struct copy.
 			if sym, ok := ast.Init.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) && dstt.Indirection == 0 {
@@ -3157,6 +3288,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// call-position selectors, etc.) is handled by other compileTop
 		// cases and never reaches here.
 		{
+			// A field whose value was moved out must not be read: its slot
+			// was zeroed on move-out, and a non-null field type carries no
+			// nil check, so a deref would crash. Reads during the move-out
+			// itself and during free happen before the field is marked
+			// consumed, so they do not trip this. Same message as a local
+			// use-after-move.
+			if path, ok := FlowPathForExpr(ast); ok && c.OwnedFieldConsumed(path) {
+				CompileErrorF(ast, "Use of %q after it was moved", path.Key())
+			}
 			r := ResolveSelector(c, ast)
 			if r.Kind == ResolvedValuesCase {
 				// Emit the case's private tag as a value of the values
@@ -3295,6 +3435,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// compute element / field addresses) or are rejected (no
 		// stable storage for them at runtime).
 		name, hasName := ast.NamedTarget()
+		if hasName {
+			// Taking the address of an inconsistent aggregate would create an
+			// alias that could read its moved-out non-null field.
+			checkAggregateNotAliasedWhileInconsistent(c, name, ast)
+		}
 		if !hasName {
 			// Function-scope `&"literal"`: the only address-of-literal form
 			// permitted at runtime. Materialize (once per distinct literal) a
@@ -3538,6 +3683,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return newslice
 
 	case *Assignment:
+		// Copying a whole inconsistent aggregate (`alias = f` / `alias = &f`)
+		// forms a second handle that could read the moved-out field. Field
+		// RHS (`x = f.a`) is a move, handled separately and not gated here.
+		if name := aggregateBindingName(ast.Val); name != "" {
+			checkAggregateNotAliasedWhileInconsistent(c, name, a)
+		}
 		dstt := ast.Target.ASTType(c)
 		targetSym, targetIsSymbol := ast.Target.(*Symbol)
 		if targetIsSymbol {
@@ -3600,7 +3751,22 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			parent := ResolveSelector(c, dot.Val)
 			if parent.Kind == ResolvedRuntimeValue || parent.Kind == ResolvedStructField {
 				if parentOwnsFields(parent.Type) && dstt.HasOwned() {
-					CompileErrorF(a, "Cannot assign to owned field %s of an owned aggregate after initialization", dot.Member)
+					// Assigning to an owned field is legal only to
+					// re-initialize one whose previous value was already
+					// moved out; assigning to a live field would drop its
+					// obligation (a leak). Mirrors the owned-binding rule.
+					path, hasPath := FlowPathForExpr(dot)
+					if hasPath && c.OwnedFieldConsumed(path) {
+						// Re-init: the slot was zeroed on the prior move; the
+						// store below re-establishes it. Field is live again.
+						c.SetOwnedFieldConsumed(path, false)
+					} else {
+						target := dot.Member
+						if hasPath {
+							target = path.Key()
+						}
+						CompileErrorF(a, "Cannot assign to owned field %q before consuming its current value", target)
+					}
 				}
 			}
 		}
@@ -3895,6 +4061,22 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 						CompileErrorF(a, "Owned binding \"%s\" has inconsistent state across loop backedges", name)
 					}
 				}
+				// Owned fields must agree across every back-edge too (the
+				// fall-through and each continue-path). A field consumed on
+				// one path but live on another would be re-moved (a
+				// double-free) on the next iteration.
+				seen := map[FlowPath]bool{}
+				for path := range backedgeStates[0].OwnedFields {
+					seen[path] = true
+				}
+				for path := range state.OwnedFields {
+					seen[path] = true
+				}
+				for path := range seen {
+					if backedgeStates[0].OwnedFields[path] != state.OwnedFields[path] {
+						CompileErrorF(a, "Owned field \"%s\" has inconsistent state across loop backedges", path.Key())
+					}
+				}
 			}
 		}
 		fmt.Fprintf(of, "\tlabel %s\n", cont)
@@ -3938,6 +4120,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 					CompileErrorF(a, "Owned binding \"%s\" is consumed inside a loop body; this would be invalid on the second iteration", name)
 				}
 			}
+			// Same for owned fields: a field live before the loop but moved
+			// out at the back-edge (without re-initialization) would be
+			// re-moved on the next iteration — a use-after-move/double-free.
+			for path, consumed := range backedgeStates[0].OwnedFields {
+				if consumed && !snapBeforeLoop.OwnedFields[path] {
+					CompileErrorF(a, "Owned field \"%s\" is consumed inside a loop body; this would be invalid on the second iteration", path.Key())
+				}
+			}
 		}
 		return nullspot
 	case *Op2:
@@ -3968,6 +4158,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fillAnonymousLiteralIfNeeded(sl, retType)
 		}
 		valType := ast.Val.ASTType(c)
+		// A partially-consumed aggregate cannot be returned: the caller's
+		// scope cannot see the local consistency facts.
+		if name := aggregateBindingName(ast.Val); name != "" {
+			checkAggregateMayEscape(c, name, ast, "return")
+		}
 		// Resolve through type aliases so `type myptr *T` followed by
 		// `return p` runs the same pointer-escape checks as a bare *T return.
 		if c.ResolveUnderlying(retType).Indirection > 0 {
@@ -4446,6 +4641,13 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 			fillAnonymousLiteralIfNeeded(sl, param)
 		}
 		argt := arg.ASTType(c)
+		// A partially-consumed aggregate cannot cross the call boundary —
+		// borrow or owning — because the callee names the concrete shape and
+		// would observe the moved-out field. dispose/free are lowered on
+		// separate intrinsic paths and never reach here.
+		if name := aggregateBindingName(arg); name != "" {
+			checkAggregateMayEscape(c, name, arg, "pass")
+		}
 		checkAddressOfOwnedForDest(c, arg, param)
 		// Interface coercion at a call site: concrete pointer or small concrete value → fat pointer.
 		// destBinding is "" because the destination is the callee's parameter
@@ -6041,9 +6243,9 @@ func compileTypeAssert(of io.Writer, c *Context, ast *TypeAssert, dest spot) spo
 	fail := c.Label("assertfail")
 	done := c.Label("assertdone")
 
-	fmt.Fprintf(of, "\tmov %s [%s+8]\n", vtab.ref, src.ref)   // vtable ptr
-	fmt.Fprintf(of, "\tmov %s [%s+0]\n", td.ref, vtab.ref)    // slot 0 typedesc
-	fmt.Fprintf(of, "\tmov %s [%s+8]\n", shp.ref, vtab.ref)   // slot 1 shape word
+	fmt.Fprintf(of, "\tmov %s [%s+8]\n", vtab.ref, src.ref) // vtable ptr
+	fmt.Fprintf(of, "\tmov %s [%s+0]\n", td.ref, vtab.ref)  // slot 0 typedesc
+	fmt.Fprintf(of, "\tmov %s [%s+8]\n", shp.ref, vtab.ref) // slot 1 shape word
 	fmt.Fprintf(of, "\tlea %s %s\n", wantTd.ref, tdSym)
 	fmt.Fprintf(of, "\tcmp %s %s\n", td.ref, wantTd.ref)
 	fmt.Fprintf(of, "\tjne %s\n", fail)
@@ -6136,9 +6338,9 @@ func emitAssertToCall(of io.Writer, c *Context, srcRef, descSym string) (vtTmp, 
 	fmt.Fprintf(of, "\tacquire rcx\n")
 	fmt.Fprintf(of, "\tacquire rax\n")
 	fmt.Fprintf(of, "\tmov rax [%s+8]\n", srcRef) // src vtable ptr
-	fmt.Fprintf(of, "\tmov rdi [rax+0]\n")         // src_ti (concrete typedesc)
-	fmt.Fprintf(of, "\tmov rsi [rax+8]\n")         // src_shape
-	fmt.Fprintf(of, "\tmov rdx [%s+0]\n", srcRef)  // src_data
+	fmt.Fprintf(of, "\tmov rdi [rax+0]\n")        // src_ti (concrete typedesc)
+	fmt.Fprintf(of, "\tmov rsi [rax+8]\n")        // src_shape
+	fmt.Fprintf(of, "\tmov rdx [%s+0]\n", srcRef) // src_data
 	fmt.Fprintf(of, "\tlea rcx %s\n", descSym)
 	fmt.Fprintf(of, "\tcall _iface.assert_to\n")
 	okTmp = c.Temp()
@@ -6536,6 +6738,20 @@ func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTTy
 			}
 			fmt.Fprintf(of, "\tmov [%s+0] %s\n", destRef, tmp.ref)
 			tmp.free(of)
+		} else if val.nameIsAddress {
+			// memory-backed 8-byte scalar whose name resolves to memory: a
+			// file-scope global, or a local made volatile by an earlier
+			// `&` of it. bas can't encode a mem-to-mem mov into the data
+			// slot, so load the value through a scratch register first.
+			// `mov r10 <name>` lets bas resolve the name to its storage
+			// (RIP-relative global, or volatile spill slot) and load the
+			// value — a `qword[name]` form would instead dereference it.
+			// r10 is grabbed explicitly for the same reason as the
+			// small-struct path above.
+			fmt.Fprintf(of, "\tacquire r10\n")
+			fmt.Fprintf(of, "\tmov r10 %s\n", val.ref)
+			fmt.Fprintf(of, "\tmov [%s+0] r10\n", destRef)
+			fmt.Fprintf(of, "\trelease r10\n")
 		} else {
 			fmt.Fprintf(of, "\tmov [%s+0] %s\n", destRef, val.ref)
 		}

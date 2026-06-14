@@ -1,0 +1,17 @@
+package main
+
+import "fmt"
+
+// The alias is formed AFTER the field is moved out. Forming it must still be
+// rejected — otherwise the alias reads the zeroed non-null field and crashes.
+type foo struct {
+	a owned *mut i64
+}
+
+fn main() {
+	var f owned foo = foo{a: alloc(i64)}
+	free(f.a)
+	var alias *foo = &f
+	fmt.print("%d\n", *alias.a)
+	dispose(f)
+}

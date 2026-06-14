@@ -763,14 +763,19 @@ fn inspect(b box) {
 
 `owned(expr)` remains an explicit assertion escape hatch: it promotes the expression to an owned type without proving that every owned field came from an owned source. This is useful for construction patterns that the compiler does not yet track precisely.
 
-Direct reassignment of an owned field through an owned aggregate is rejected. Replacing such a field safely requires partial-disposal / typestate support, which is intentionally deferred:
+A **non-null owned pointer field** may now be moved out of an owned aggregate, so an aggregate holding owned resources can be destructed field by field (see [`PROPOSAL_owned_field_move.md`](PROPOSAL_owned_field_move.md)). Moving a field out copies the pointer to the destination, zeroes the field's slot, and records the field's obligation as consumed — just like moving a local `owned` pointer. The rules:
+
+- Moving the field out leaves the aggregate **inconsistent** (the field has no nil placeholder; the slot is zeroed and the non-null type carries no nil check). While inconsistent, the aggregate may not **escape its scope** — it can't be passed to a function, returned, moved to another binding, or aliased (`&f` / `var x = f`) — because the local consistency fact can't cross those boundaries. Only the shape-blind intrinsics `dispose` and `free` may consume it. Reading a moved-out field is a use-after-move error.
+- **Re-initialization** restores consistency: assigning to a moved-out field (`f.a = new(...)`) is legal and marks it live again; once no non-null owned field is consumed, the aggregate may escape normally. Assigning to a *live* owned field is still rejected (it would leak its current value):
 
 ```
-var b owned box = make_box()
-b.x = 1           // COMPILE ERROR
+var b owned box = make_box()       // box{ x owned i64 }
+b.x = 1                            // COMPILE ERROR: assign to live owned field; consume it first
 ```
 
-Owned nullable pointer fields may be moved out of an owned aggregate. Moving such a field copies the pointer to the destination, writes `nil` back into the original field, and records that the field's ownership obligation has been consumed:
+(Value-typed owned fields — `owned i64`, `owned T` — still cannot be moved out: they have no pointer identity to hand off, and are consumed only by disposing the whole aggregate.)
+
+Owned nullable pointer fields may also be moved out of an owned aggregate, and — unlike non-null fields — this leaves the aggregate **consistent** (`nil` is a representable, safe state), so it stays freely passable. Moving such a field copies the pointer to the destination, writes `nil` back into the original field, and records that the field's ownership obligation has been consumed:
 
 ```
 type node struct {
@@ -885,7 +890,7 @@ Note that `copy` takes `*T`, not `*owned T`. It does not need to own the source 
 
 ### Future direction: typestate and witnessed borrows
 
-Two related limitations exist in the current system:
+Two related limitations exist in the current system. (A third — partial consumption of an aggregate's **owned fields** — has been **implemented**; see [Owned struct fields](#owned-struct-fields) and [`PROPOSAL_owned_field_move.md`](PROPOSAL_owned_field_move.md). A non-null owned field can be moved out, tracked as a local "inconsistent aggregate" fact that may not cross a scope boundary. The remaining two below are still future work.)
 
 **Partial consumption of stacked types.** `owned *owned T` cannot have one obligation consumed independently of the other. Doing so would require the variable's type to change at a specific program point — that is typestate. This forces BYOM patterns to use separate variables for separate obligations rather than stacking them.
 

@@ -1,0 +1,25 @@
+package main
+
+import "fmt"
+
+// Move a non-null owned field out, re-initialize it, and the aggregate is
+// consistent again — passable to a borrowing function.
+type holder struct {
+	item owned *mut i64
+}
+
+fn peek(h *holder) i64 {
+	return *h.item
+}
+
+fn main() {
+	var h owned holder = holder{item: alloc(i64)}
+	*h.item = 1
+	var old owned *mut i64 = h.item
+	free(old)
+	h.item = alloc(i64)
+	*h.item = 2
+	fmt.print("peek=%d\n", peek(&h))
+	free(h.item)
+	dispose(h)
+}

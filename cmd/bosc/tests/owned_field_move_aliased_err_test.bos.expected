@@ -1,0 +1,2 @@
+Compiling tests/owned_field_move_aliased_err_test.bos
+Fatal: Cannot move owned field a out of "p" while it is aliased; the alias could read the moved-out field

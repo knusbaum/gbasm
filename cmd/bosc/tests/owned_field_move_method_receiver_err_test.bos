@@ -1,0 +1,20 @@
+package main
+
+import "fmt"
+
+// Calling a method on an inconsistent aggregate passes it as the receiver —
+// an escape that must be rejected (the method could read the moved-out field).
+type foo struct {
+	a owned *mut i64
+} {
+	peek(self *foo) i64 {
+		return *self.a
+	}
+}
+
+fn main() {
+	var f owned foo = foo{a: alloc(i64)}
+	free(f.a)
+	fmt.print("%d\n", f.peek())
+	dispose(f)
+}

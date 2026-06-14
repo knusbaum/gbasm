@@ -1,0 +1,2 @@
+Compiling tests/owned_field_move_return_inconsistent_err_test.bos
+Fatal: Cannot return "p" while owned field "p.a" is moved out; only dispose/free are allowed on a partially-consumed aggregate — consume or re-initialize "p.a" first

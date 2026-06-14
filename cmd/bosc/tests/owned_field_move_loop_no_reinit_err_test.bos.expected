@@ -1,0 +1,2 @@
+Compiling tests/owned_field_move_loop_no_reinit_err_test.bos
+Fatal: Owned field "f.a" is consumed inside a loop body; this would be invalid on the second iteration

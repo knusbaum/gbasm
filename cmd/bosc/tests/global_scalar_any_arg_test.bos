@@ -1,0 +1,24 @@
+package main
+
+import "fmt"
+
+// Regression: a memory-backed scalar passed directly as a variadic `any`
+// argument must be loaded through a register before being stored into the
+// interface data slot. Previously this emitted a mem-to-mem `mov [slot] name`,
+// which bas could not encode. Two memory-backed sources exercise the path:
+//   - a file-scope global scalar (var or const), and
+//   - a local made volatile by an earlier `&` of it.
+var gv i64 = 42
+const gc i64 = -7
+
+fn bump(p *mut i64) {
+	*p = *p + 1
+}
+
+fn main() {
+	fmt.print("gv=%d gc=%d\n", gv, gc)
+
+	var x i64 = 10
+	bump(&x) // &x makes x volatile (memory-backed)
+	fmt.print("x=%d\n", x)
+}

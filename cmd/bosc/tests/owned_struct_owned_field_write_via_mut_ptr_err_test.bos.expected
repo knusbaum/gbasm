@@ -1,2 +1,2 @@
 Compiling tests/owned_struct_owned_field_write_via_mut_ptr_err_test.bos
-Fatal: Cannot assign to owned field y of an owned aggregate after initialization
+Fatal: Cannot assign to owned field "fp.y" before consuming its current value

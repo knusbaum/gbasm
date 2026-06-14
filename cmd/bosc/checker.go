@@ -126,7 +126,7 @@ type CheckerState struct {
 
 func NewCheckerState(parent *CheckerState) *CheckerState {
 	return &CheckerState{
-		parent:             parent,
+		parent:           parent,
 		nullFacts:        make(map[string]NullState),
 		ownedFieldFacts:  make(map[string]bool),
 		borrowedBindings: make(map[string]bool),
@@ -354,7 +354,6 @@ func (c *Context) IsMoved(name string) bool {
 	}
 	return c.parent.IsMoved(name)
 }
-
 
 // OwnedBindingsSnapshot returns a map of name->moved-state for all owned
 // bindings visible in this context and its parents. Used for branch analysis.
@@ -671,6 +670,17 @@ func (c *Context) HasLiveOwnedAlias(target string) bool {
 		}
 	}
 	return false
+}
+
+// HasLiveAlias reports whether any live binding aliases target's storage,
+// counting borrow-shaped (`*T`) aliases too. Unlike HasLiveOwnedAlias —
+// which only matters for re-init safety, where a borrow harmlessly observes
+// the new value — a plain `*T` view of an aggregate can still *read a field*,
+// so a non-null owned field must not be moved out while such a view is live
+// (the moved-out slot is zeroed and the non-null field type carries no nil
+// check, so the alias read would crash).
+func (c *Context) HasLiveAlias(target string) bool {
+	return len(c.PointerFlow().AliasesOf(flow.Binding(target))) > 0
 }
 
 // OwnedObligationLiveInSnap is the snapshot-based variant of

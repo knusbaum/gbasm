@@ -1,0 +1,23 @@
+package main
+
+import "fmt"
+
+// Destruct an aggregate with two non-null owned pointer fields: move each out,
+// free it, then free the now fully-consumed aggregate.
+type pair struct {
+	a owned *mut i64
+	b owned *mut i64
+}
+
+fn main() {
+	var p owned *owned mut pair = new(pair{a: alloc(i64), b: alloc(i64)})
+	*p.a = 10
+	*p.b = 20
+	var a owned *mut i64 = p.a
+	var b owned *mut i64 = p.b
+	fmt.print("a=%d b=%d\n", *a, *b)
+	free(a)
+	free(b)
+	free(p)
+	fmt.print("destroyed\n")
+}

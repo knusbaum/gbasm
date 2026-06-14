@@ -1,0 +1,21 @@
+package main
+
+import "fmt"
+
+// Capturing an inconsistent aggregate into a struct-literal field forms an
+// alias that could read the moved-out field; must be rejected.
+type foo struct {
+	a owned *mut i64
+}
+
+type holder struct {
+	p *foo
+}
+
+fn main() {
+	var f owned *owned mut foo = new(foo{a: alloc(i64)})
+	free(f.a)
+	var h holder = holder{p: f}
+	fmt.print("%d\n", *h.p.a)
+	free(f)
+}

@@ -1,0 +1,16 @@
+package main
+
+// Moving an owned field out inside a loop body without re-initializing it
+// would re-move an already-consumed field on the next iteration.
+type foo struct {
+	a owned *mut i64
+}
+
+fn main() {
+	var f owned foo = foo{a: alloc(i64)}
+	var i i64 = 0
+	for (i = 0; i < 3; i = i + 1) {
+		free(f.a)
+	}
+	dispose(f)
+}

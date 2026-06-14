@@ -1,0 +1,2 @@
+Compiling tests/owned_field_move_use_after_err_test.bos
+Fatal: Use of "p.a" after it was moved
