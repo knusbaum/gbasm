@@ -43,7 +43,7 @@ btourd { go build ./cmd/btourd }
 
 include ./boson.mmk
 
-playground-runtime : target/builtin.bo target/io.bo target/fmt.bo target/_io_sys.bo target/_heap.bo target/_init.bo target/_iface.bo {
+playground-runtime : bld bas bosc target/builtin.bo target/io.bo target/fmt.bo target/_io_sys.bo target/_heap.bo target/_init.bo target/_iface.bo {
     set -e
     mkdir -p "$PLAYGROUND_BUNDLE/objects"
     cp target/builtin.bo "$PLAYGROUND_BUNDLE/objects/builtin.bo"
@@ -69,7 +69,13 @@ tour: btourd bplay-runner playground-runtime
 
 test: go_test cmd/bas/test cmd/bosc/test
 
-go_test {
+# `go test ./...` includes the tour and bpipeline tests, which run real
+# lessons against the prebuilt runtime bundle (and shell out to the
+# toolchain). Depend on `all` + `playground-runtime` so those objects are
+# rebuilt from current source first; otherwise the lesson tests run against
+# a stale bundle (or skip when it's missing). Prefer `mmk go_test` over a
+# direct `go test ./...` for this reason.
+go_test : all playground-runtime {
     go test -count 1 ./...
 }
 

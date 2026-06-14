@@ -154,10 +154,19 @@ working tree commonly carries them as untracked build outputs.
 ```
 make test                    # everything: Go unit tests + bas + bosc suites
 mmk test                     # equivalent to `make test`; this is the real runner
-mmk go_test                  # Go unit tests only (encoder, parser, checker, flow)
+mmk go_test                  # `go test ./...` — front-end unit tests AND the
+                             # tour/bpipeline lesson-runners; depends on `all`
+                             # + `playground-runtime`, so it rebuilds the
+                             # toolchain and runtime bundle from source first
 mmk cmd/bas/test             # ~70 .bs integration tests
 mmk cmd/bosc/test            # ~490 .bos integration tests
 ```
+
+Prefer `mmk go_test` over a bare `go test ./...`: the tour/bpipeline tests
+run real lessons against the **prebuilt** runtime bundle (`target/playground`),
+so a direct `go test` can run them against stale objects after a `runtime/*`
+change — or skip them when the bundle isn't built. `mmk go_test` wires the
+bundle rebuild as a dependency.
 
 The subproject mmkfiles in `cmd/bas/` and `cmd/bosc/` rebuild the
 toolchain itself before running. They also pre-assemble the runtime
