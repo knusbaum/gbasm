@@ -1703,11 +1703,11 @@ func (t ASTType) ZeroInitializable(c *Context) bool {
 		return t.Element.ZeroInitializable(c)
 	}
 	if c != nil && c.IsInterfaceType(t) {
-		// An interface's zero value is a nil fat pointer (null vtable);
-		// dispatching through it derefs null. Like a non-nullable pointer, it
-		// requires an initializer rather than zero-initializing to an
-		// unusable nil interface.
-		return false
+		// A non-nullable interface's zero value is a nil fat pointer (null
+		// vtable); dispatching through it derefs null. Like a non-nullable
+		// pointer, it requires an initializer. A *nullable* interface (`?T`)
+		// zero-initializes to null, mirroring `*?T`.
+		return t.NilMask&1 != 0
 	}
 	if underlying := c.ResolveUnderlying(t); underlying.Name != t.Name ||
 		underlying.Indirection != t.Indirection ||

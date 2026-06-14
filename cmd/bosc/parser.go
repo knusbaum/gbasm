@@ -449,6 +449,15 @@ func (p *Parser) parseTypeName() *Node {
 		}
 	}
 
+	// Nullable base type (`?T`): the value itself may be null, recorded at the
+	// current level (bit `indirection`, = 0 for a bare `?T`). Currently only
+	// meaningful for interface types — a nullable interface whose vtable may be
+	// 0 — mirroring `*?T` for pointers; ToAST rejects `?` on non-interfaces.
+	if p.current().t == tok_question {
+		p.advance()
+		nilmask |= 1 << indirection
+	}
+
 	c := p.current()
 
 	// Anonymous struct type: `struct { field Type, ... }`.
