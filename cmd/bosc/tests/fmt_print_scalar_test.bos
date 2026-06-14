@@ -3,8 +3,8 @@ import "fmt"
 
 // Layer 5: every scalar directive plus the %% escape.
 fn main() i64 {
-	fmt.print("d=%d u=%u x=%x c=%c t=%t pct=%%\n",
+	fmt.print("d=%d u=%d x=%x c=%c t=%v pct=%%\n",
 		0 - 5, u64(12345), u64(255), byte(65), (1 == 1))
-	fmt.print("more: %d and %t\n", 100, (1 == 0))
+	fmt.print("more: %d and %v\n", 100, (1 == 0))
 	return 0
 }

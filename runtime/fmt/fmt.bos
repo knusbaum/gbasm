@@ -481,13 +481,15 @@ pub fn print(format byte[], args ...any) i64, error {
 
 // printf renders format into w, consuming one arg per directive. Directives:
 //
-//   %d  args[i].(i64)        signed decimal
-//   %u  args[i].(u64)        unsigned decimal
-//   %x  args[i].(u64)        "0x"-prefixed hex
-//   %s  args[i].(*(byte[]))  dereference and write bytes verbatim (strict)
-//   %c  args[i].(byte)       one byte
-//   %t  args[i].(bool)       "true"/"false"
-//   %v  stringer, then Formatter; else %!v(<type>) placeholder
+// A verb names a rendering; the argument's own type (carried by the `any`)
+// decides correctness — there is no verb whose job is to announce the type.
+//
+//   %d  decimal — any integer type, signed or unsigned by its own type
+//   %x  "0x"-prefixed hex — any integer type
+//   %s  a byte[] (string), written verbatim
+//   %c  an integer as a character (its low byte)
+//   %v  natural: integers in decimal, bool as true/false, byte[] as text,
+//       else stringer/Formatter, else a %!v(...) placeholder
 //   %%  literal '%'          (consumes no arg)
 //
 // Returns (written, err): written is total bytes successfully written; err is
@@ -599,36 +601,74 @@ fn wmismatch(w io.writer, verb byte) i64, bool, error {
 	return total, no(), io.io_err.OK
 }
 
+// try_signed extracts a signed integer of any width from `a`, sign-extended
+// to i64. Returns (value, true) on a match, (0, false) otherwise. The any's
+// own type — not the verb — decides which assertion matches.
+fn try_signed(a any) i64, bool {
+	v8 i8, ok8 := a.(i8)
+	if (ok8) { return i64(v8), yes() }
+	v16 i16, ok16 := a.(i16)
+	if (ok16) { return i64(v16), yes() }
+	v32 i32, ok32 := a.(i32)
+	if (ok32) { return i64(v32), yes() }
+	v64 i64, ok64 := a.(i64)
+	if (ok64) { return v64, yes() }
+	return 0, no()
+}
+
+// try_unsigned extracts an unsigned integer of any width (including `byte`)
+// from `a`, zero-extended to u64. Returns (value, true) on a match.
+fn try_unsigned(a any) u64, bool {
+	v8 u8, ok8 := a.(u8)
+	if (ok8) { return u64(v8), yes() }
+	v16 u16, ok16 := a.(u16)
+	if (ok16) { return u64(v16), yes() }
+	v32 u32, ok32 := a.(u32)
+	if (ok32) { return u64(v32), yes() }
+	v64 u64, ok64 := a.(u64)
+	if (ok64) { return v64, yes() }
+	vb byte, okb := a.(byte)
+	if (okb) { return u64(vb), yes() }
+	return 0, no()
+}
+
 // render_one renders a single directive's arg. Returns (written, stop, err):
 // stop signals a hard write failure that aborts printf. A type mismatch is
 // not a stop — it writes a marker, returns a non-OK err (latched by the
 // caller), and lets printf continue.
+//
+// A verb names a *rendering*; the value's own type (carried by the `any`)
+// decides correctness. So `%d` prints any integer in decimal — a signed
+// type signed, an unsigned type unsigned — and there is no separate verb
+// just to announce the argument's type.
 fn render_one(w io.writer, verb byte, a any) i64, bool, error {
-	if (verb == 100) {                    // 'd'
-		n i64, ok bool := a.(i64)
-		if (ok) {
-			k, err := int(w, n)
+	if (verb == 100) {                    // 'd' — decimal, any integer type
+		s i64, oks bool := try_signed(a)
+		if (oks) {
+			k, err := int(w, s)
+			return k, ferr_stop(err), err
+		}
+		u u64, oku bool := try_unsigned(a)
+		if (oku) {
+			k, err := uint(w, u)
 			return k, ferr_stop(err), err
 		}
 		return mismatch_result(w, verb)
 	}
-	if (verb == 117) {                    // 'u'
-		n u64, ok bool := a.(u64)
-		if (ok) {
-			k, err := uint(w, n)
+	if (verb == 120) {                    // 'x' — hex, any integer type
+		s i64, oks bool := try_signed(a)
+		if (oks) {
+			k, err := hex(w, u64(s))
+			return k, ferr_stop(err), err
+		}
+		u u64, oku bool := try_unsigned(a)
+		if (oku) {
+			k, err := hex(w, u)
 			return k, ferr_stop(err), err
 		}
 		return mismatch_result(w, verb)
 	}
-	if (verb == 120) {                    // 'x'
-		n u64, ok bool := a.(u64)
-		if (ok) {
-			k, err := hex(w, n)
-			return k, ferr_stop(err), err
-		}
-		return mismatch_result(w, verb)
-	}
-	if (verb == 115) {                    // 's'
+	if (verb == 115) {                    // 's' — a byte[] (string)
 		// Accept both a read-only pointer-to-slice (&"literal", &constSlice)
 		// and a write-through one (&mutableVar) — `&` of a var carries the
 		// MUT_PTR shape, while a static string-literal header is a plain PTR.
@@ -645,23 +685,20 @@ fn render_one(w io.writer, verb byte, a any) i64, bool, error {
 		}
 		return mismatch_result(w, verb)
 	}
-	if (verb == 99) {                     // 'c'
-		c byte, ok bool := a.(byte)
-		if (ok) {
-			k, err := char(w, c)
+	if (verb == 99) {                     // 'c' — an integer as a character
+		u u64, oku bool := try_unsigned(a)
+		if (oku) {
+			k, err := char(w, byte(u))
+			return k, ferr_stop(err), err
+		}
+		s i64, oks bool := try_signed(a)
+		if (oks) {
+			k, err := char(w, byte(s))
 			return k, ferr_stop(err), err
 		}
 		return mismatch_result(w, verb)
 	}
-	if (verb == 116) {                    // 't'
-		v bool, ok bool := a.(bool)
-		if (ok) {
-			k, err := bool(w, v)
-			return k, ferr_stop(err), err
-		}
-		return mismatch_result(w, verb)
-	}
-	if (verb == 118) {                    // 'v'
+	if (verb == 118) {                    // 'v' — natural, by the value's type
 		return render_v(w, a)
 	}
 	// Unknown verb: emit "%!<verb>(BADTYPE)" and latch.
@@ -705,7 +742,34 @@ fn render_v(w io.writer, a any) i64, bool, error {
 		}
 		return cw.n, no(), io.io_err.OK
 	}
-	// Neither: emit "%!v(<type>)". A readable per-value type name is not
+	// Base types render naturally, by the value's own type: integers in
+	// decimal (signed or unsigned), bool as true/false, byte[] as its text.
+	si i64, oksi bool := try_signed(a)
+	if (oksi) {
+		k, err := int(w, si)
+		return k, ferr_stop(err), err
+	}
+	ui u64, okui bool := try_unsigned(a)
+	if (okui) {
+		k, err := uint(w, ui)
+		return k, ferr_stop(err), err
+	}
+	bv bool, okbv bool := a.(bool)
+	if (okbv) {
+		k, err := bool(w, bv)
+		return k, ferr_stop(err), err
+	}
+	ps *(byte[]), okps bool := a.(*(byte[]))
+	if (okps) {
+		k, err := str(w, *ps)
+		return k, ferr_stop(err), err
+	}
+	psm *mut (byte[]), okpsm bool := a.(*mut (byte[]))
+	if (okpsm) {
+		k, err := str(w, *psm)
+		return k, ferr_stop(err), err
+	}
+	// Unrenderable: emit "%!v(...)". A readable per-value type name is not
 	// expressible from Boson today (the typedesc name field is not surfaced
 	// to source), so the placeholder uses a fixed marker.
 	k, stop bool, err error := wfallback(w)

@@ -3,10 +3,10 @@ import "fmt"
 import "io"
 import "string"
 
-// Layer 5: a %d directive against a byte arg fails the assertion. printf
+// Layer 5: a %d directive against a bool arg fails (bool is not a number) the assertion. printf
 // writes an inline marker, continues, and latches a non-OK error.
 fn main() i64 {
-	_, err := fmt.print("val=%d done\n", byte(65))
+	_, err := fmt.print("val=%d done\n", (1 == 0))
 	if (err != io.io_err.OK) {
 		string.puts("error latched\n")
 	} else {

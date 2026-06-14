@@ -20,7 +20,7 @@ fn main() i64 {
 	c u32 := 4000000000
 	xc any := c
 	vc u32, okc := xc.(u32)
-	if (okc) { fmt.print("u32=%u\n", u64(vc)) }
+	if (okc) { fmt.print("u32=%d\n", u64(vc)) }
 
 	d byte := 'A'
 	xd any := d
@@ -30,7 +30,7 @@ fn main() i64 {
 	e bool := 1 > 0
 	xe any := e
 	ve bool, oke := xe.(bool)
-	if (oke) { fmt.print("bool=%t\n", ve) }
+	if (oke) { fmt.print("bool=%v\n", ve) }
 
 	return 0
 }
