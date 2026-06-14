@@ -1,0 +1,36 @@
+package main
+
+import "fmt"
+
+// Every base type must box into `any` and round-trip back. The narrow
+// integer types exercise the widening into the any data slot: i8/i16/i32
+// sign-extend, u8/u16/u32/byte zero-extend. (i32 sign-extension was once
+// a MOVSX/MOVSXD assembler gap.)
+fn main() i64 {
+	a i8 := -1
+	xa any := a
+	va i8, oka := xa.(i8)
+	if (oka) { fmt.print("i8=%d\n", i64(va)) }
+
+	b i32 := -2000000000
+	xb any := b
+	vb i32, okb := xb.(i32)
+	if (okb) { fmt.print("i32=%d\n", i64(vb)) }
+
+	c u32 := 4000000000
+	xc any := c
+	vc u32, okc := xc.(u32)
+	if (okc) { fmt.print("u32=%u\n", u64(vc)) }
+
+	d byte := 'A'
+	xd any := d
+	vd byte, okd := xd.(byte)
+	if (okd) { fmt.print("byte=%d\n", i64(vd)) }
+
+	e bool := 1 > 0
+	xe any := e
+	ve bool, oke := xe.(bool)
+	if (oke) { fmt.print("bool=%t\n", ve) }
+
+	return 0
+}

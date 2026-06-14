@@ -930,6 +930,29 @@ func (f *Function) fixMovzx32To64(ops []interface{}) (string, []interface{}, boo
 	return "MOV", []interface{}{destReg32, src}, true
 }
 
+// fixMovsx32To64 handles `movsx dest64 src32`. MOVSX in the ISA only has
+// r64, r/m8 and r64, r/m16 forms; sign-extending a 32-bit source to 64 bits
+// is the separate MOVSXD instruction (opcode 0x63). The compiler emits a
+// uniform MOVSX for all signed widenings, so retarget the 32→64 case to
+// MOVSXD (operands unchanged: r64, r/m32).
+//
+// Returns (newInstr, newOps, true) if the translation applies; otherwise
+// (instr, ops, false) is returned unchanged.
+func (f *Function) fixMovsx32To64(ops []interface{}) (string, []interface{}, bool) {
+	if len(ops) != 2 {
+		return "MOVSX", ops, false
+	}
+	dest, ok := ops[0].(*Ralloc)
+	if !ok || dest.size != 64 {
+		return "MOVSX", ops, false
+	}
+	src, ok := ops[1].(*Ralloc)
+	if !ok || src.size != 32 {
+		return "MOVSX", ops, false
+	}
+	return "MOVSXD", ops, true
+}
+
 func (f *Function) fixLEAVar(ops []interface{}) (string, []interface{}) {
 	//fmt.Printf("FIX LEA VAR\n")
 	// TODO: Is this really a good idea?
@@ -1023,6 +1046,12 @@ func (f *Function) Instr(instr string, ops ...interface{}) error {
 
 	if instr == "MOVZX" {
 		if newInstr, newOps, fixed := f.fixMovzx32To64(ops); fixed {
+			instr, ops = newInstr, newOps
+		}
+	}
+
+	if instr == "MOVSX" {
+		if newInstr, newOps, fixed := f.fixMovsx32To64(ops); fixed {
 			instr, ops = newInstr, newOps
 		}
 	}
