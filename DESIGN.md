@@ -84,6 +84,7 @@ Three orthogonal qualifiers can apply to types:
 
 - **`mut`** — write-through mutability for pointers and slices. `*mut T` lets you write to T through the pointer; `*T` does not. Nests independently at each pointer level (`*mut *T`, `**mut T`).
 - **`?` on pointers** — nullability marker. `*T` is non-null; `*?T` may be `nil`. Non-null pointers can be used where nullable pointers are expected. Nullable pointers require a proof or assertion before non-null use: `if (p) { ... }` narrows `p` to non-null inside the true branch, `if (!p) { ... } else { ... }` narrows it in the else branch, and postfix `p?` inserts a runtime nil check and produces a non-null pointer.
+- **`?` on interfaces** — same marker. `T` (interface) is always valid; `?T` may be null (vtable = 0). A non-nullable interface can't be constructed null, so the *only* producer of a null interface is a fallible cast (see [type assertion](#interface-to-interface-assertion)), which yields `?T`. A `?T` must be narrowed before dispatch — `if (k != nil) { k.method() }` narrows `?T → T` in the true branch (a vtable-`!= 0` test) — and dispatching, or asserting/widening from, an un-narrowed `?T` is rejected, exactly like dereferencing a `*?` pointer.
 - **`owned`** — compile-time ownership obligation that must be discharged before the variable goes out of scope. See [Ownership](#ownership).
 - **`const` / `var`** — binding mutability: whether the named binding itself can be rebound. Distinct from `mut`. Defaults: `const` for function parameters (use `var` to opt out), explicit on local declarations.
 
@@ -1737,14 +1738,22 @@ switch (v args[i].(type)) {
 `x.(I)` where `I` is an interface asks "does the concrete value inside `x`
 *also* satisfy interface `I`?" — answered at runtime. Type switches accept
 interface cases (`case SomeIface`) alongside concrete cases, with the same
-top-down first-match-wins ordering. The result is the same
-`multiretu{I, bool}` shape as concrete assertion; on success the asserted
-interface shares `x`'s data word verbatim and carries a vtable the runtime
-built for the `(typedesc, shape, I)` triple.
+top-down first-match-wins ordering. Unlike a *concrete*-target assertion
+(`x.(T)` → `multiretu{T, bool}`), an interface-target assertion yields a single
+**nullable interface `?I`**: on success it shares `x`'s data word verbatim and
+carries a vtable the runtime built for the `(typedesc, shape, I)` triple; on
+failure its vtable is `0` (null). The maybe-ness is in the type — there is no
+separate `ok` flag — so the result must be narrowed before use:
+
+```
+var k ?Stringer = x.(Stringer)
+if (k != nil) { puts(k.string()) }   // narrowed to Stringer; dispatch allowed
+```
 
 The lowering loads `(typedesc, shape_word, data)` from the source fat pointer
 and calls `_iface.assert_to(src_ti, src_shape, src_data, dst_desc)` (the helper
-returns the itab vtable in `rax` and a success flag in `rdx`). The helper walks
+returns the itab vtable in `rax`, `0` on failure; the assertion stores it
+directly as the result's vtable, so no separate success flag is needed). The helper walks
 the source typedesc's lazy **itab cache** keyed by `(iface_desc, shape)`: a hit
 returns the cached vtable in O(1); a miss allocates one itab via `_heap.alloc`,
 fills each required method by a two-axis lookup over the typedesc method table
