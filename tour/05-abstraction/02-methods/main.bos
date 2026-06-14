@@ -1,0 +1,14 @@
+package main
+
+import "fmt"
+
+type celsius i64 {
+	to_f(self *celsius) i64 {
+		return i64(*self) * 9 / 5 + 32
+	}
+}
+
+fn main() {
+	var c celsius = 100
+	fmt.print("%d C = %d F\n", i64(c), c.to_f())
+}

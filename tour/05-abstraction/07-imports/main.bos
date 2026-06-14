@@ -1,0 +1,9 @@
+package main
+
+import "fmt"
+import "io"
+
+fn main() {
+	fmt.print("via fmt.print\n")
+	const n, var err = fmt.str(&io.STDOUT, "via fmt.str to io.STDOUT\n")
+}

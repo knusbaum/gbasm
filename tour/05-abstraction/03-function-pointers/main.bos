@@ -1,0 +1,16 @@
+package main
+
+import "fmt"
+
+fn add(a i64, b i64) i64 { return a + b }
+fn sub(a i64, b i64) i64 { return a - b }
+
+fn apply(op fn(i64, i64) i64, a i64, b i64) i64 {
+	return op(a, b)
+}
+
+fn main() {
+	var f fn(i64, i64) i64 = &add
+	fmt.print("add: %d\n", apply(f, 7, 3))
+	fmt.print("sub: %d\n", apply(&sub, 7, 3))
+}

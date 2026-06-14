@@ -1,0 +1,2 @@
+via fmt.print
+via fmt.str to io.STDOUT

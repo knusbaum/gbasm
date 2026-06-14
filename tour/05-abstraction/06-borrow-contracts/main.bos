@@ -1,0 +1,23 @@
+package main
+
+import "fmt"
+
+interface viewer {
+	view(self *self) byte[] from(self)
+}
+
+type doc struct {
+	body byte[]
+} {
+	view(d *doc) byte[] { return d.body }
+}
+
+fn show(v viewer) {
+	var b byte[] = v.view()
+	fmt.print("%s\n", &b)
+}
+
+fn main() {
+	var d doc = doc{body: "contents"}
+	show(&d)
+}

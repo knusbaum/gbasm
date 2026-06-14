@@ -7,7 +7,7 @@ package tourcontent
 
 import "embed"
 
-//go:embed 01-basics 02-data 03-pointers 04-ownership
+//go:embed 01-basics 02-data 03-pointers 04-ownership 05-abstraction
 var content embed.FS
 
 // FS returns the embedded lesson tree, rooted at the section directories

@@ -1,0 +1,31 @@
+package main
+
+import "fmt"
+
+interface shape {
+	area(self *self) i64
+}
+
+type square struct {
+	side i64
+} {
+	area(s *square) i64 { return s.side * s.side }
+}
+
+type rect struct {
+	w i64
+	h i64
+} {
+	area(r *rect) i64 { return r.w * r.h }
+}
+
+fn describe(s shape) {
+	fmt.print("area = %d\n", s.area())
+}
+
+fn main() {
+	var sq square = square{side: 4}
+	var r rect = rect{w: 3, h: 5}
+	describe(&sq)
+	describe(&r)
+}
