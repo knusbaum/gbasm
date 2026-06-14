@@ -141,12 +141,10 @@ function renderResult(data) {
     ? `<span class="pass">✓ check passed</span>`
     : `<span class="fail">✗ check failed</span>\n\n${escapeHTML(check.message || "")}`;
 
-  if (check.passed) {
-    setStatus("ok", "check passed");
-  } else {
-    setStatus("error", "check failed");
-    selectPanel("check");
-  }
+  // Stay on the output panel after a run — the point of the tour is to
+  // experiment and see your output. The status line and the check tab still
+  // report whether the check passed; we don't yank the view away from it.
+  setStatus(check.passed ? "ok" : "error", check.passed ? "check passed" : "check failed");
 }
 
 function firstFailedStepOutput(run) {
