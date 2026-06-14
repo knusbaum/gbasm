@@ -12,6 +12,6 @@ never read or write past the end. Boson enforces this two ways:
   out-of-range access traps and the program is killed, rather than corrupting
   memory.
 
-The loop below stays in range and runs cleanly. Try it, then experiment:
+The loop to the right stays in range and runs cleanly. Try it, then experiment:
 change `nums[i]` to `nums[5]` for a compile error, or loop to `i <= len(nums)`
 for a runtime trap.

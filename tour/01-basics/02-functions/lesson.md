@@ -8,7 +8,7 @@ and an optional return type. Each parameter is written `name type`, and the
 body returns with `return`.
 
 `main` is just the function the program starts from — it takes no arguments
-and returns nothing here. Below, `add` takes two `i64` parameters and
+and returns nothing here. To the right, `add` takes two `i64` parameters and
 returns their sum, which `main` prints with the `%d` verb.
 
 Try adding a second function and calling it from `main`.
