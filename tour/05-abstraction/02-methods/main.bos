@@ -9,6 +9,6 @@ type celsius i64 {
 }
 
 fn main() {
-	var c celsius = 100
+	var c celsius := 100
 	fmt.print("%d C = %d F\n", i64(c), c.to_f())
 }

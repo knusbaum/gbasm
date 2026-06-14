@@ -3,9 +3,9 @@ package main
 import "fmt"
 
 fn main() {
-	var nums i64[4] = [10, 20, 30, 40]
-	var view i64[] = nums[1:3]
-	var i i64 = 0
+	var nums i64[4] := [10, 20, 30, 40]
+	var view i64[] := nums[1:3]
+	var i i64 := 0
 	for (i = 0; i < len(view); i = i + 1) {
 		fmt.print("view[%d] = %d\n", i, view[i])
 	}

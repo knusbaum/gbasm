@@ -24,8 +24,8 @@ fn describe(s shape) {
 }
 
 fn main() {
-	var sq square = square{side: 4}
-	var r rect = rect{w: 3, h: 5}
+	var sq square := square{side: 4}
+	var r rect := rect{w: 3, h: 5}
 	describe(&sq)
 	describe(&r)
 }

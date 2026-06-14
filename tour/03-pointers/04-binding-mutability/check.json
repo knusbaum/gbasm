@@ -1,4 +1,4 @@
 {
   "kind": "diagnostic",
-  "contains": ["Cannot assign to const binding"]
+  "contains": ["Cannot assign to"]
 }

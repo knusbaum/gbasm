@@ -3,11 +3,11 @@ package main
 import "fmt"
 
 fn main() {
-	const flags i64 = 0x0F
-	const masked i64 = flags & 0x06
+	flags i64 := 0x0F
+	masked i64 := flags & 0x06
 	fmt.print("masked = %d\n", masked)
 
-	var neg i64 = -1
+	var neg i64 := -1
 	fmt.print("as signed:   %d\n", neg)
 	fmt.print("as unsigned: %u\n", u64(neg))
 }

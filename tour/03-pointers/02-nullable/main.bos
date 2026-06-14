@@ -3,14 +3,14 @@ package main
 import "fmt"
 
 fn main() {
-	var x i64 = 7
-	var p *?i64 = &x
+	var x i64 := 7
+	var p *?i64 := &x
 	if (p != nil) {
 		fmt.print("p points at %d\n", *p)
 	}
 	fmt.print("via ?: %d\n", *p?)
 
-	var q *?i64 = nil
+	var q *?i64 := nil
 	if (q == nil) {
 		fmt.print("q is nil\n")
 	}

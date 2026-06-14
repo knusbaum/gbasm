@@ -6,7 +6,7 @@ type celsius i64
 type fahrenheit i64
 
 fn main() {
-	var c celsius = 100
-	var f fahrenheit = fahrenheit(i64(c) * 9 / 5 + 32)
+	var c celsius := 100
+	var f fahrenheit := fahrenheit(i64(c) * 9 / 5 + 32)
 	fmt.print("%d C = %d F\n", i64(c), i64(f))
 }

@@ -8,7 +8,7 @@ fn inspect(p *i64) {
 }
 
 fn main() {
-	var conn owned i64 = 55
+	var conn owned i64 := 55
 	inspect(&conn) // borrow — conn is still owned afterward
 	dispose(conn)  // the caller still owns conn; satisfy the obligation
 	fmt.print("closed\n")

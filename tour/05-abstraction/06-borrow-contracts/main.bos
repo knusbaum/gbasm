@@ -13,11 +13,11 @@ type doc struct {
 }
 
 fn show(v viewer) {
-	var b byte[] = v.view()
+	var b byte[] := v.view()
 	fmt.print("%s\n", &b)
 }
 
 fn main() {
-	var d doc = doc{body: "contents"}
+	var d doc := doc{body: "contents"}
 	show(&d)
 }

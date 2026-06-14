@@ -8,7 +8,7 @@ type session struct {
 }
 
 fn main() {
-	var s owned session = session{id: 5, count: 0}
+	var s owned session := session{id: 5, count: 0}
 	s.count = 3
 	fmt.print("session %d, count %d\n", s.id, s.count)
 	dispose(s) // disposing the struct satisfies the owned field too

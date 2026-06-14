@@ -7,7 +7,7 @@ fn bump(p *mut i64) {
 }
 
 fn main() {
-	var x i64 = 10
+	var x i64 := 10
 	bump(&x)
 	bump(&x)
 	fmt.print("x = %d\n", x)

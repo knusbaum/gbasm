@@ -11,11 +11,11 @@ type dog i64 {
 }
 
 fn main() {
-	var d dog = 1
-	var a any = &d
-	var n ?named = a.(named) // fallible assertion -> nullable interface
+	var d dog := 1
+	var a any := &d
+	var n ?named := a.(named) // fallible assertion -> nullable interface
 	if (n != nil) {
-		var nm byte[] = n.name()
+		var nm byte[] := n.name()
 		fmt.print("name: %s\n", &nm)
 	} else {
 		fmt.print("not named\n")

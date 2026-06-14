@@ -8,7 +8,7 @@ type point struct {
 }
 
 fn main() {
-	var p point = point{x: 3, y: 4}
+	var p point := point{x: 3, y: 4}
 	p.x = p.x + 10
 	fmt.print("p = (%d, %d)\n", p.x, p.y)
 }
