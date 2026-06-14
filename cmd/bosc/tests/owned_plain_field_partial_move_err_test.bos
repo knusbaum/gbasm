@@ -9,7 +9,7 @@ type box struct {
 }
 
 fn destroy(b owned box) {
-	var child owned child = b.child
+	var child owned child := b.child
 	dispose(child)
 	dispose(b)
 }

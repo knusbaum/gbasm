@@ -5,9 +5,9 @@ type foo struct {
 }
 
 fn main() {
-	var f1 owned foo = foo{x: 1}
-	var f2 owned foo = foo{x: 2}
-	var fp *owned foo = &f1
+	var f1 owned foo := foo{x: 1}
+	var f2 owned foo := foo{x: 2}
+	var fp *owned foo := &f1
 	fp = &f2
 	dispose(fp)
 	dispose(f1)

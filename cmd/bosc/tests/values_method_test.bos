@@ -19,7 +19,7 @@ type color values {
 }
 
 fn main() {
-	var c color = color.GREEN
+	var c color := color.GREEN
 	string.puts(c.name())
 	string.puts("\n")
 	c = color.BLUE

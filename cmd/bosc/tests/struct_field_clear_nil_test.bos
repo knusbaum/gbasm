@@ -7,17 +7,17 @@ type Foo struct {
 	xp *i64
 }
 
-var gx i64 = 99
+var gx i64 := 99
 
 fn bad() Foo {
-	var s Foo = Foo{x: 10, xp: &gx}
+	var s Foo := Foo{x: 10, xp: &gx}
 	s.xp = &s.x
 	s.xp = &gx
 	return s
 }
 
 fn main() {
-	var s Foo = bad()
+	var s Foo := bad()
 	string.puti(s.x)
 	string.puts("\n")
 }

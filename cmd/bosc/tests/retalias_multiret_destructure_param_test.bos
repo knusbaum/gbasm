@@ -8,12 +8,12 @@ fn mkslice(s byte[]) byte[], i64 {
 	return s[0:4], 7
 }
 fn take(s byte[]) byte[] {
-	var v byte[], var n i64 = mkslice(s)
+	var v byte[], var n i64 := mkslice(s)
 	return v
 }
 fn main() i64 {
-	var data byte[] = "abcdef"
-	var r byte[] = take(data)
+	var data byte[] := "abcdef"
+	var r byte[] := take(data)
 	string.puts(r)
 	string.puts("\n")
 	return 0

@@ -15,8 +15,8 @@ fn take(x owned myint) {
 }
 
 fn main() {
-	var x owned myint = 5
-	var d Describer = &x
+	var x owned myint := 5
+	var d Describer := &x
 	take(x)
-	var s byte[] = d.describe()
+	var s byte[] := d.describe()
 }

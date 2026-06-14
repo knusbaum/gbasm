@@ -20,8 +20,8 @@ fn step(x *mut i64) *mut i64 {
 }
 
 fn main() i64 {
-	var v i64 = 14
-	var p *mut i64 = count_down(&v)
+	var v i64 := 14
+	var p *mut i64 := count_down(&v)
 	string.puti(*p)
 	string.puts("\n")
 	string.puti(v)

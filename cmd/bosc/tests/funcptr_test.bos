@@ -10,7 +10,7 @@ fn add(x i64, y i64) i64 { return x + y }
 fn sub(x i64, y i64) i64 { return x - y }
 
 // File-scope function-pointer global, initialized at link time.
-var op fn(i64, i64) i64 = &add
+var op fn(i64, i64) i64 := &add
 
 // Function-pointer-typed parameter, called through inside the body.
 fn apply(f fn(i64, i64) i64, a i64, b i64) i64 {
@@ -39,7 +39,7 @@ fn main() {
 	string.putc('\n')
 
 	// Function-scope local, initialized at runtime via lea.
-	var fp fn(i64, i64) i64 = &sub
+	var fp fn(i64, i64) i64 := &sub
 	string.puti(fp(10, 4))
 	string.putc('\n')
 
@@ -55,7 +55,7 @@ fn main() {
 	string.putc('\n')
 
 	// Return a function pointer; bind it then call through.
-	var chosen fn(i64, i64) i64 = pick(0)
+	var chosen fn(i64, i64) i64 := pick(0)
 	string.puti(chosen(50, 8))
 	string.putc('\n')
 	chosen = pick(1)
@@ -63,7 +63,7 @@ fn main() {
 	string.putc('\n')
 
 	// Struct field holding a function pointer.
-	var d dispatch = dispatch{op: &add}
+	var d dispatch := dispatch{op: &add}
 	string.puti(d.op(7, 8))
 	string.putc('\n')
 

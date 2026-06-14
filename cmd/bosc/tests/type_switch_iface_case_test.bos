@@ -21,14 +21,14 @@ fn classify(a any) i64 {
 }
 
 fn main() i64 {
-	var n i64 = 9
-	var av any = n
+	var n i64 := 9
+	var av any := n
 	classify(av)            // int (concrete case wins)
-	var w widget = 1
-	var aw any = &w
+	var w widget := 1
+	var aw any := &w
 	classify(aw)            // widget (interface case)
-	var m i64 = 2
-	var am any = &m
+	var m i64 := 2
+	var am any := &m
 	classify(am)            // other (*i64 matches neither)
 	return 0
 }

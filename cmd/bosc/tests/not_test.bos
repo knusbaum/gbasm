@@ -13,7 +13,7 @@ fn main() {
 	} else {
 		string.puts("nonzero\n")
 	}
-	var p *?mut i64 = nil
+	var p *?mut i64 := nil
 	if(!p) {
 		string.puts("nil\n")
 	}

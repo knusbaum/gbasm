@@ -8,8 +8,8 @@ import "string"
 // applied to the previous statement.
 
 fn main() {
-	var x i64 = 7
-	var px *mut i64 = &x
+	var x i64 := 7
+	var px *mut i64 := &x
 
 	// `(close-paren)' ends the first statement; `*px` on the next
 	// line is a Deref, not a multiplication of `string.puti(*px)` by
@@ -28,14 +28,14 @@ fn main() {
 	// `var y = 5` / `-1` leading-minus merge case is now structurally
 	// impossible. The `*px` case above still exercises leading-operator
 	// auto-insertion.)
-	var y i64 = 5
+	var y i64 := 5
 	string.puti(y)
 	string.putc('\n')
 
 	// Continuation lines work because the trailing operator isn't
 	// a statement-ender. Splitting an expression across newlines is
 	// silently fine.
-	var z i64 = 1 +
+	var z i64 := 1 +
 		2 +
 		3
 	string.puti(z)

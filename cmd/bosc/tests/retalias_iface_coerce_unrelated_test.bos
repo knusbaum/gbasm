@@ -11,7 +11,7 @@ type Sink struct {
 	pos i64
 } {
 	write(s *mut Sink, data byte[]) i64, error {
-		var i i64 = 0
+		var i i64 := 0
 		for (; i < len(data); i = i + 1) {
 			s.buf[s.pos] = data[i]
 			s.pos = s.pos + 1

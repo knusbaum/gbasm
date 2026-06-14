@@ -6,7 +6,7 @@ import "string"
 // return-parameter aliasing records ReturnAliases=[[0]]; the caller may
 // use the view as long as the argument outlives it.
 fn first_word(s byte[]) byte[] {
-	var i i64 = 0
+	var i i64 := 0
 	for (; i < len(s); i = i + 1) {
 		if (s[i] == 32) {
 			return s[0:i]
@@ -16,8 +16,8 @@ fn first_word(s byte[]) byte[] {
 }
 
 fn main() i64 {
-	var src byte[] = "hello world"
-	var w byte[] = first_word(src)
+	var src byte[] := "hello world"
+	var w byte[] := first_word(src)
 	string.puts(w)
 	string.puts("\n")
 	return 0

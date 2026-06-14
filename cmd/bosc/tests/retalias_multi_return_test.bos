@@ -9,8 +9,8 @@ fn split(s byte[], at i64) byte[], byte[] {
 }
 
 fn main() i64 {
-	var src byte[] = "abcdef"
-	var lo byte[], var hi byte[] = split(src, 2)
+	var src byte[] := "abcdef"
+	var lo byte[], var hi byte[] := split(src, 2)
 	string.puts(lo)
 	string.puts("\n")
 	string.puts(hi)

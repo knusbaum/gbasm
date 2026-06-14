@@ -13,7 +13,7 @@ fn forward_node(n *node) i64 {
 }
 
 fn main() {
-	const n owned *owned mut node = new(node{val: 42})
+	n owned *owned mut node := new(node{val: 42})
 	forward_node(n)
 	free(n)
 }

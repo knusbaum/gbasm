@@ -17,7 +17,7 @@ fn main() i64 {
 	emit(&"hello")
 	// Also exercise &"literal" at a variadic ...any site via the assertion
 	// path is covered by fmt tests; here we pin the bare pointer form.
-	var p *(byte[]) = &"again"
+	var p *(byte[]) := &"again"
 	string.puts(*p)
 	string.putc(10)
 	return 0

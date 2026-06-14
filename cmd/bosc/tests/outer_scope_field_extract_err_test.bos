@@ -8,9 +8,9 @@ type Foo struct {
 }
 
 fn main() {
-	var p *?i64 = nil
+	var p *?i64 := nil
 	{
-		var s Foo = Foo{x: 10, xp: nil}
+		var s Foo := Foo{x: 10, xp: nil}
 		s.xp = &s.x
 		p = s.xp
 	}

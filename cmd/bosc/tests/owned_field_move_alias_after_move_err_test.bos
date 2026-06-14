@@ -9,9 +9,9 @@ type foo struct {
 }
 
 fn main() {
-	var f owned foo = foo{a: alloc(i64)}
+	var f owned foo := foo{a: alloc(i64)}
 	free(f.a)
-	var alias *foo = &f
+	var alias *foo := &f
 	fmt.print("%d\n", *alias.a)
 	dispose(f)
 }

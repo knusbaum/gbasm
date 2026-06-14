@@ -8,7 +8,7 @@ import "string"
 // — see the fmt DEVIATION note — so the "chain" is a sequence of statements.)
 fn main() i64 {
 	var backing byte[256]
-	var b fmt.Builder = fmt.Builder{buf: backing[:], pos: 0, err_: io.io_err.OK}
+	var b fmt.Builder := fmt.Builder{buf: backing[:], pos: 0, err_: io.io_err.OK}
 	b.str("x=")
 	b.int(0 - 5)
 	b.str(" h=")

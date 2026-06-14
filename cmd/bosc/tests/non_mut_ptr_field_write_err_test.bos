@@ -3,7 +3,7 @@ package main
 type point struct { x i64 }
 
 fn main() {
-	var p point = point{x: 1}
-	var q *point = &p
+	var p point := point{x: 1}
+	var q *point := &p
 	q.x = 99
 }

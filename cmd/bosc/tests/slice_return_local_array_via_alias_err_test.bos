@@ -9,7 +9,7 @@ package main
 
 fn bad() byte[] {
 	var local byte[64]
-	var alias byte[] = local[:]
+	var alias byte[] := local[:]
 	return alias
 }
 

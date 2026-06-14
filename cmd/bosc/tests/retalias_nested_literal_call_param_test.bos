@@ -9,8 +9,8 @@ type Outer struct { inner B }
 fn mk(s byte[]) B { return B{buf: s} }
 fn outer2(p byte[]) Outer { return Outer{inner: mk(p)} }
 fn main() i64 {
-	var data byte[] = "ok"
-	var o Outer = outer2(data)
+	var data byte[] := "ok"
+	var o Outer := outer2(data)
 	string.puts(o.inner.buf)
 	string.puts("\n")
 	return 0

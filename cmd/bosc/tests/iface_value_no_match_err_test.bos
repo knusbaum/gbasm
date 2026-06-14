@@ -15,5 +15,5 @@ type only_ptr i64 {
 }
 
 fn main() {
-	var x labeled = only_ptr(1)
+	var x labeled := only_ptr(1)
 }

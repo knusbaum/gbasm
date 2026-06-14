@@ -8,7 +8,7 @@ type box struct {
 }
 
 fn make_box() owned box {
-	var x owned i64 = 11
+	var x owned i64 := 11
 	return box{
 		x: x,
 		y: 22
@@ -23,7 +23,7 @@ fn borrow_box(b box) {
 }
 
 fn main() {
-	var b owned box = make_box()
+	var b owned box := make_box()
 	borrow_box(b)
 	dispose(b)
 }

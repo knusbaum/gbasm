@@ -9,7 +9,7 @@ import "string"
 // overflow remain valid.
 fn main() i64 {
 	var backing byte[4]
-	var b fmt.Builder = fmt.Builder{buf: backing[:], pos: 0, err_: io.io_err.OK}
+	var b fmt.Builder := fmt.Builder{buf: backing[:], pos: 0, err_: io.io_err.OK}
 	b.str("ab")           // fits: pos=2
 	b.str("cdef")         // would need 4, only 2 left -> latches ENOSPC
 	b.str("zz")           // no-op (already latched)

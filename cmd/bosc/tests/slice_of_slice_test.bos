@@ -6,7 +6,7 @@ import "string"
 // type parsing and codegen for byte[][]. We never call it here — this test
 // is purely a type-level exercise (declaration, sizing, fn-param type).
 fn show(ss byte[][], i i64) {
-	var s byte[] = ss[i]
+	var s byte[] := ss[i]
 	string.puts(s)
 	string.putc('\n')
 }

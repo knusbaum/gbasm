@@ -14,8 +14,8 @@ fn do_helloer(h helloer) {
 }
 
 fn main() {
-	var i owned i64 = 10
-	var t thingy = thingy(i)
+	var i owned i64 := 10
+	var t thingy := thingy(i)
 	do_helloer(&t)
 	dispose(i)
 	do_helloer(&t)

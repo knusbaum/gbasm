@@ -13,9 +13,9 @@ type holder struct {
 }
 
 fn main() {
-	var f owned *owned mut foo = new(foo{a: alloc(i64)})
+	var f owned *owned mut foo := new(foo{a: alloc(i64)})
 	free(f.a)
-	var h holder = holder{p: f}
+	var h holder := holder{p: f}
 	fmt.print("%d\n", *h.p.a)
 	free(f)
 }

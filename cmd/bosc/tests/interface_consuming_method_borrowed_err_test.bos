@@ -11,7 +11,7 @@ interface Error {
 }
 
 fn main(args byte[][]) {
-	var m myError = 1
-	var e Error = &m
+	var m myError := 1
+	var e Error := &m
 	e.destroy()
 }

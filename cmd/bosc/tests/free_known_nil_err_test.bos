@@ -1,6 +1,6 @@
 package main
 
 fn main() {
-	var p owned *?mut i64 = nil
+	var p owned *?mut i64 := nil
 	free(p)
 }

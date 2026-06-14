@@ -10,13 +10,13 @@ import "string"
 // or pass the error onward as the generic interface.
 
 fn main() {
-	const f, var openerr = io.open("/dev/null", io.O_RDONLY, 0)
+	f, var openerr := io.open("/dev/null", io.O_RDONLY, 0)
 	if (openerr != io.io_err.OK) {
 		string.puts("open failed\n")
 		dispose(f)
 		return
 	}
-	const err = io.copy(&io.STDOUT, &f)
+	err := io.copy(&io.STDOUT, &f)
 	if (err == io.io_err.OK) {
 		string.puts("copy from /dev/null returned OK as expected\n")
 	} else {

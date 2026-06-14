@@ -9,11 +9,11 @@ import "ifaces"
 // iface_desc. canonicalSig canonicalizes both to the same fully-qualified
 // text, so the assertion matches across the .bo boundary.
 fn main() i64 {
-	var p geom.Point = geom.make(1, 2)
-	var a any = &p
-	var c ?ifaces.Combiner = a.(ifaces.Combiner)
+	var p geom.Point := geom.make(1, 2)
+	var a any := &p
+	var c ?ifaces.Combiner := a.(ifaces.Combiner)
 	if (c != nil) {
-		var other geom.Point = geom.make(3, 4)
+		var other geom.Point := geom.make(3, 4)
 		string.puts(c.combine(&other))
 	} else {
 		string.puts("no")

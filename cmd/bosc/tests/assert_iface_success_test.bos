@@ -12,9 +12,9 @@ interface speaker {
 }
 
 fn main() i64 {
-	var g greeter = 7
-	var a any = &g
-	var s ?speaker = a.(speaker)
+	var g greeter := 7
+	var a any := &g
+	var s ?speaker := a.(speaker)
 	if (s != nil) {
 		string.puts(s.greet())
 	} else {

@@ -20,20 +20,20 @@ fn writeline(w io.writer, msg byte[]) {
 }
 
 fn readbyte(r io.reader, buf mut byte[]) i64 {
-	var n, err = r.read(buf)
+	var n, err := r.read(buf)
 	return n
 }
 
 fn main() i64 {
 	// Borrowed FD (copy of STDOUT) into io.writer.
-	var out io.FD = io.STDOUT
+	var out io.FD := io.STDOUT
 	writeline(&out, "hello via io.writer\n")
 
 	// Owned FD opened against /dev/null, borrowed into io.reader.
 	// /dev/null returns EOF (0 bytes) on read.
-	var null owned io.FD, const openerr error = io.open("/dev/null", 0, 0)
+	var null owned io.FD, const openerr error := io.open("/dev/null", 0, 0)
 	var buf byte[8]
-	const n i64 = readbyte(&null, buf[:])
+	n i64 := readbyte(&null, buf[:])
 	if (n != 0) {
 		string.puts("expected EOF from /dev/null\n")
 	}

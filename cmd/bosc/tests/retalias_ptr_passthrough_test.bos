@@ -12,8 +12,8 @@ fn id(p *box) *box {
 }
 
 fn main() i64 {
-	var b box = box{val: 42}
-	var p *box = id(&b)
+	var b box := box{val: 42}
+	var p *box := id(&b)
 	string.puti(p.val)
 	string.puts("\n")
 	return 0

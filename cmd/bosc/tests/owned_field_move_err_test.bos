@@ -7,7 +7,7 @@ type node struct {
 fn main() {
 	var x owned i64
 	x = 1
-	var curr owned node = node{val: x}
+	var curr owned node := node{val: x}
 	var val owned i64
 	val = curr.val
 	dispose(val)

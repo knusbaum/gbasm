@@ -3,7 +3,7 @@ package main
 import "string"
 
 fn main() i64 {
-	var x owned i64 = 10
+	var x owned i64 := 10
 	dispose(x)
 	x = 20
 	string.puti(x)

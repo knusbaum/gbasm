@@ -6,6 +6,6 @@ fn passthrough(bs owned byte[]) owned byte[] {
 
 fn main() {
 	var buf byte[10]
-	var bs byte[] = buf[:]
+	var bs byte[] := buf[:]
 	passthrough(bs)
 }

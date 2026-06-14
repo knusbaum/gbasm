@@ -8,7 +8,7 @@ type Foo struct {
 }
 
 fn main() {
-	var s Foo = Foo{x: 10, xp: nil}
+	var s Foo := Foo{x: 10, xp: nil}
 	s.xp = &s.x
 	string.puti(*s.xp)
 	string.puts("\n")

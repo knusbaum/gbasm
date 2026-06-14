@@ -6,6 +6,6 @@ type pair struct {
 }
 
 fn main() {
-	var p pair = pair{a: 1, b: 2}
-	var n i64 = i64(p)
+	var p pair := pair{a: 1, b: 2}
+	var n i64 := i64(p)
 }

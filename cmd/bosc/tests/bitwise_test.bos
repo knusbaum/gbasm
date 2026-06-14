@@ -3,16 +3,16 @@ package main
 import "string"
 
 fn main(args byte[][]) {
-	var a i64 = 0xFF00
-	var b i64 = 0x0FF0
+	var a i64 := 0xFF00
+	var b i64 := 0x0FF0
 	string.puti(a & b)
 	string.puts("\n")
 	string.puti(a | b)
 	string.puts("\n")
-	const flags i64 = 0x01 | 0x04
+	flags i64 := 0x01 | 0x04
 	string.puti(flags)
 	string.puts("\n")
-	const mask i64 = flags & 0x04
+	mask i64 := flags & 0x04
 	string.puti(mask)
 	string.puts("\n")
 }

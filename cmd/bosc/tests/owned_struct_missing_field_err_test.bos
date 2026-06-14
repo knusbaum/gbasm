@@ -6,7 +6,7 @@ type box struct {
 }
 
 fn main() {
-	var b owned box = box{
+	var b owned box := box{
 		y: 2
 	}
 	dispose(b)

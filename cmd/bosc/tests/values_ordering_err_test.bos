@@ -6,8 +6,8 @@ type color values {
 }
 
 fn main() {
-	var a color = color.RED
-	var b color = color.GREEN
+	var a color := color.RED
+	var b color := color.GREEN
 	if (a < b) {
 	}
 }

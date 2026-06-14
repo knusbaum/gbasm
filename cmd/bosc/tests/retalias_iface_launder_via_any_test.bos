@@ -16,10 +16,10 @@ interface Byter {
 }
 
 fn main() i64 {
-	var s byte[] = "data"
-	var h Holder = Holder{buf: s}
-	var a any = &h
-	var bt ?Byter = a.(Byter)
+	var s byte[] := "data"
+	var h Holder := Holder{buf: s}
+	var a any := &h
+	var bt ?Byter := a.(Byter)
 	if (bt != nil) {
 		string.puts("LAUNDERED")
 	} else {

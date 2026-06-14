@@ -8,8 +8,8 @@ type pair struct {
 fn touch(p *pair) {}
 
 fn main() {
-	var p owned *owned mut pair = new(pair{a: alloc(i64), b: alloc(i64)})
-	var a owned *mut i64 = p.a
+	var p owned *owned mut pair := new(pair{a: alloc(i64), b: alloc(i64)})
+	var a owned *mut i64 := p.a
 	touch(p)
 	free(a)
 	free(p.b)

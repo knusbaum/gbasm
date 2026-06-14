@@ -6,9 +6,9 @@ import "string"
 // loader; integer-literal initializers are encoded directly into the data
 // section by the compiler.
 var counter i64
-var answer i64 = 42
-var bigU i32 = 65535
-var label byte = 'Z'
+var answer i64 := 42
+var bigU i32 := 65535
+var label byte := 'Z'
 var buf byte[8]
 
 fn main() {

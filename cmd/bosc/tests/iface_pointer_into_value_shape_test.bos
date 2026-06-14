@@ -23,7 +23,7 @@ fn show(v value_shape) {
 }
 
 fn main() {
-	var w widget = 42
-	var v value_shape = &w
+	var w widget := 42
+	var v value_shape := &w
 	show(v)
 }

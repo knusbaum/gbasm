@@ -5,7 +5,7 @@ import "fmt"
 // Pointer-typed bare ':=' declaration: 'IDENT *' is unambiguously a
 // declaration now that a bare multiply can't be a statement.
 fn main() {
-	var v i64 = 7
+	var v i64 := 7
 	p *mut i64 := &v
 	*p = 9
 	fmt.print("%d\n", v)

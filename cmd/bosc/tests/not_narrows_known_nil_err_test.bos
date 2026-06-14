@@ -4,7 +4,7 @@ type node struct { val i64 }
 
 fn check(p *?node) {
 	if (!p) {
-		var q *node = p?
+		var q *node := p?
 	}
 }
 

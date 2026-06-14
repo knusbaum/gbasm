@@ -6,5 +6,5 @@ type Res struct {
 
 fn main() {
 	var r Res
-	var res *owned Res = &r
+	var res *owned Res := &r
 }

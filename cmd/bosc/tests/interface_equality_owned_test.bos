@@ -35,8 +35,8 @@ fn say(name byte[], ok bool) {
 }
 
 fn main() {
-	var a owned labeled = make_one()
-	var b owned labeled = make_one()
+	var a owned labeled := make_one()
+	var b owned labeled := make_one()
 
 	// Two distinct heap allocations -> pointer-identity neq.
 	say("owned compare distinct", a != b)

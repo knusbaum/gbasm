@@ -9,9 +9,9 @@ type box struct {
 fn touch(p *mut i64) { *p = 1 }
 
 fn main() {
-	var b owned box = box{val: 1, child: nil}
-	var c owned *?owned mut leaf = b.child
-	var local i64 = 5
+	var b owned box := box{val: 1, child: nil}
+	var c owned *?owned mut leaf := b.child
+	var local i64 := 5
 	var cond bool
 	if (cond) {
 		touch(&local)

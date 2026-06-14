@@ -11,6 +11,6 @@ interface error_val {
 }
 
 fn main(args byte[][]) {
-	var e my_err = my_err(7)
-	var v error_val = e
+	var e my_err := my_err(7)
+	var v error_val := e
 }

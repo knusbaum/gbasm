@@ -19,7 +19,7 @@ type B struct {
 
 fn bad() B {
 	var local byte[64]
-	var h B = B{buf: local[:], pos: 0}
+	var h B := B{buf: local[:], pos: 0}
 	return h
 }
 

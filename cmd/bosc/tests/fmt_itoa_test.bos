@@ -8,7 +8,7 @@ import "string"
 // the min-i64 edge, the truncation contract, and n_digits.
 fn show(n i64) i64 {
 	var buf byte[32]
-	const s byte[] = fmt.itoa(buf[:], n)
+	s byte[] := fmt.itoa(buf[:], n)
 	string.puts(s)
 	string.puts(" (")
 	string.puti(fmt.n_digits(n))
@@ -25,7 +25,7 @@ fn main() i64 {
 	// Truncation: a 3-byte buffer holds only the first 3 chars of "12345";
 	// len of the returned slice is the kept count.
 	var small byte[3]
-	const s1 byte[] = fmt.itoa(small[:], 12345)
+	s1 byte[] := fmt.itoa(small[:], 12345)
 	string.puts(s1)
 	string.puts(" trunc=")
 	string.puti(len(s1))
@@ -34,13 +34,13 @@ fn main() i64 {
 	// "-12345" into 3 bytes keeps "-12" (len 3) and into 1 byte keeps "-"
 	// (len 1). Exercises write_decimal_trunc on the negative path.
 	var negsmall byte[3]
-	const s2 byte[] = fmt.itoa(negsmall[:], 0 - 12345)
+	s2 byte[] := fmt.itoa(negsmall[:], 0 - 12345)
 	string.puts(s2)
 	string.puts(" trunc=")
 	string.puti(len(s2))
 	string.putc(10)
 	var neg1 byte[1]
-	const s3 byte[] = fmt.itoa(neg1[:], 0 - 7)
+	s3 byte[] := fmt.itoa(neg1[:], 0 - 7)
 	string.puts(s3)
 	string.puts(" trunc=")
 	string.puti(len(s3))

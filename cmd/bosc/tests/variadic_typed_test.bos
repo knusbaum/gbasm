@@ -2,8 +2,8 @@ package main
 import "string"
 
 fn sum(xs ...i64) i64 {
-	var total i64 = 0
-	for (var i i64 = 0; i < len(xs); i = i + 1) {
+	var total i64 := 0
+	for (var i i64 := 0; i < len(xs); i = i + 1) {
 		total = total + xs[i]
 	}
 	return total

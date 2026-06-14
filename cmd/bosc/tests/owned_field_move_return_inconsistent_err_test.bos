@@ -6,14 +6,14 @@ type pair struct {
 }
 
 fn build() owned *owned mut pair {
-	var p owned *owned mut pair = new(pair{a: alloc(i64), b: alloc(i64)})
-	var a owned *mut i64 = p.a
+	var p owned *owned mut pair := new(pair{a: alloc(i64), b: alloc(i64)})
+	var a owned *mut i64 := p.a
 	free(a)
 	return p
 }
 
 fn main() {
-	var p owned *owned mut pair = build()
+	var p owned *owned mut pair := build()
 	free(p.a)
 	free(p.b)
 	free(p)

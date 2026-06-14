@@ -8,7 +8,7 @@ package main
 // of the merged binding is rejected exactly as a direct local-slice return.
 fn f(a byte[], cond bool) byte[] {
 	var loc byte[16]
-	var t byte[] = a
+	var t byte[] := a
 	if (cond) {
 		t = loc[0:8]
 	}

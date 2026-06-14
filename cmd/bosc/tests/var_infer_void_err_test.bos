@@ -3,6 +3,6 @@ package main
 import "string"
 
 fn main() i64 {
-	var x = string.puts("hi\n")
+	var x := string.puts("hi\n")
 	return 0
 }

@@ -1,6 +1,6 @@
 package main
 
 fn main() {
-	var q *?mut i64 = nil
-	var p *mut i64 = q
+	var q *?mut i64 := nil
+	var p *mut i64 := q
 }

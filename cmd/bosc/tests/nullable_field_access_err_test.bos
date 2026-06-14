@@ -5,7 +5,7 @@ type node struct {
 }
 
 fn walk(l *?node) {
-	var curr *?node = l
+	var curr *?node := l
 	for(; curr.next != nil; curr = curr.next) {}
 }
 

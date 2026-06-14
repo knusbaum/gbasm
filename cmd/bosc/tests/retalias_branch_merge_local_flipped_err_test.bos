@@ -7,7 +7,7 @@ package main
 // asserting the claimed order-independence of mergePointerExpr.
 fn f(a byte[], cond bool) byte[] {
 	var loc byte[16]
-	var t byte[] = a
+	var t byte[] := a
 	if (cond) {
 		t = a[0:1]
 	} else {

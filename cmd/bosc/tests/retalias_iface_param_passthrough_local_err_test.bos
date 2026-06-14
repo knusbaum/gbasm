@@ -12,8 +12,8 @@ interface Getter {
 }
 fn passthrough(g Getter) Getter { return g }
 fn leak() Getter {
-	var local box = box{val: 3}
-	var g Getter = &local
+	var local box := box{val: 3}
+	var g Getter := &local
 	return passthrough(g)
 }
 fn main() i64 { return 0 }

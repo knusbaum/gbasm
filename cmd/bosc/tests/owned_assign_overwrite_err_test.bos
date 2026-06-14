@@ -1,8 +1,8 @@
 package main
 
 fn main() {
-	var first owned *mut i64 = alloc(i64)
-	var second owned *mut i64 = alloc(i64)
+	var first owned *mut i64 := alloc(i64)
+	var second owned *mut i64 := alloc(i64)
 	first = second
 	dispose(first)
 }

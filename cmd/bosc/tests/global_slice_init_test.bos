@@ -5,9 +5,9 @@ import "string"
 // File-scope byte[] initialized from a string literal. Bosc emits a
 // 16-byte slice header { ptr, len } with the ptr slot relocated to a
 // string-constant the linker resolves at link time.
-var greeting byte[] = "Hello, world!\n"
-var empty byte[] = ""
-var with_escapes byte[] = "line one\nline two\n"
+var greeting byte[] := "Hello, world!\n"
+var empty byte[] := ""
+var with_escapes byte[] := "line one\nline two\n"
 
 fn main() {
 	string.puts(greeting)

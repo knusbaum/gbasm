@@ -5,7 +5,7 @@ type foo struct {
 }
 
 fn main() i64 {
-	var f owned foo = foo{x: 1}
+	var f owned foo := foo{x: 1}
 	dispose(f)
 	f = foo{x: 2}
 	return 0

@@ -5,8 +5,8 @@ type thing struct {
 }
 
 fn main() {
-	const a owned *owned mut thing = new(thing{val: 1})
-	const slot **mut thing = &a
+	a owned *owned mut thing := new(thing{val: 1})
+	slot **mut thing := &a
 	*slot = new(thing{val: 2})
 	free(a)
 }

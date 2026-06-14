@@ -15,6 +15,6 @@ type only_val i64 {
 }
 
 fn main() {
-	var x only_val = 1
-	var i labeled = &x
+	var x only_val := 1
+	var i labeled := &x
 }

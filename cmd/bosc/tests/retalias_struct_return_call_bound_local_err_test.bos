@@ -16,7 +16,7 @@ fn mk(s byte[]) B {
 
 fn outer() B {
 	var loc byte[16]
-	var b B = mk(loc[:])
+	var b B := mk(loc[:])
 	return b
 }
 

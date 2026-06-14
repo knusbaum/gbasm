@@ -17,7 +17,7 @@ fn pick(a byte[], b byte[], use_a bool) byte[] {
 }
 
 fn use(x byte[], y byte[], first bool) byte[] {
-	const t byte[] = pick(x, y, first)
+	t byte[] := pick(x, y, first)
 	return t
 }
 

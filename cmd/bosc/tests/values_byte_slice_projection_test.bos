@@ -9,7 +9,7 @@ type io_error values (byte[]) {
 }
 
 fn main() {
-	var e io_error = io_error.NOT_FOUND
+	var e io_error := io_error.NOT_FOUND
 	string.puts(byte[](e))
 	string.puts("\n")
 	e = io_error.PERMISSION_DENIED

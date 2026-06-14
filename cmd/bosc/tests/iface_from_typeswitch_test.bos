@@ -12,8 +12,8 @@ type W struct { buf byte[] } {
 }
 
 fn main() i64 {
-	var w W = W{buf: "hi"}
-	var a any = &w
+	var w W := W{buf: "hi"}
+	var a any := &w
 	switch (s a.(type)) {
 		case Byter { string.puts("byter") }
 		case viewer { string.puts("viewer") }

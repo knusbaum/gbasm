@@ -8,8 +8,8 @@ fn id(s byte[]) byte[] {
 }
 
 fn main() i64 {
-	var src byte[] = "passthrough"
-	var r byte[] = id(src)
+	var src byte[] := "passthrough"
+	var r byte[] := id(src)
 	string.puts(r)
 	string.puts("\n")
 	return 0

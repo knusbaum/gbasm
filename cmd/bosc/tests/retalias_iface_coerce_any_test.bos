@@ -10,9 +10,9 @@ type Holder struct { buf byte[] } {
 }
 
 fn main() i64 {
-	var s byte[] = "x"
-	var h Holder = Holder{buf: s}
-	var a any = &h
+	var s byte[] := "x"
+	var h Holder := Holder{buf: s}
+	var a any := &h
 	string.puts("ok")
 	string.putc(10)
 	return 0

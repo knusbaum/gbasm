@@ -8,21 +8,21 @@ import "io"
 type point struct { x i64, y i64 } {
 	format(p *point, w io.writer) error {
 		var buf byte[64]
-		var b fmt.Builder = fmt.Builder{buf: buf[:], pos: 0, err_: io.io_err.OK}
+		var b fmt.Builder := fmt.Builder{buf: buf[:], pos: 0, err_: io.io_err.OK}
 		b.str("(")
 		b.int(p.x)
 		b.str(", ")
 		b.int(p.y)
 		b.str(")")
 		if (b.error() != io.io_err.OK) { return b.error() }
-		var bs byte[] = b.bytes()
-		const _, var err = w.write(bs)
+		var bs byte[] := b.bytes()
+		_, var err := w.write(bs)
 		return err
 	}
 }
 
 fn main() i64 {
-	var pt point = point{x: 3, y: 4}
+	var pt point := point{x: 3, y: 4}
 	fmt.print("at %v\n", &pt)
 	return 0
 }

@@ -18,6 +18,6 @@ fn showError(err error) {
 }
 
 fn main(args byte[][]) {
-    var e myError = 0
+    var e myError := 0
     showError(&e)
 }

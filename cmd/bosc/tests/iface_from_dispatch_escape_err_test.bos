@@ -10,7 +10,7 @@ type box struct { data byte[8] } {
 
 fn leak() byte[] {
 	var local box
-	var v viewer = &local
+	var v viewer := &local
 	return v.view()
 }
 

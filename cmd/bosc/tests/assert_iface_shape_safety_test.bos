@@ -26,18 +26,18 @@ fn report(label byte[], ok bool) i64 {
 }
 
 fn main() i64 {
-	var x tt = 5
+	var x tt := 5
 	// value-shape any: must pass .(Vi), fail .(Pi)
-	var av any = x
-	var v1 ?Vi = av.(Vi)
+	var av any := x
+	var v1 ?Vi := av.(Vi)
 	report("av.Vi=", v1 != nil)
-	var p1 ?Pi = av.(Pi)
+	var p1 ?Pi := av.(Pi)
 	report("av.Pi=", p1 != nil)
 	// pointer-shape any: must pass .(Pi), fail .(Vi)
-	var ap any = &x
-	var v2 ?Vi = ap.(Vi)
+	var ap any := &x
+	var v2 ?Vi := ap.(Vi)
 	report("ap.Vi=", v2 != nil)
-	var p2 ?Pi = ap.(Pi)
+	var p2 ?Pi := ap.(Pi)
 	report("ap.Pi=", p2 != nil)
 	return 0
 }

@@ -3,7 +3,7 @@ package main
 type thingy i64
 
 fn main() {
-	var i owned i64 = 10
-	var t thingy = thingy(&i)
+	var i owned i64 := 10
+	var t thingy := thingy(&i)
 	dispose(i)
 }

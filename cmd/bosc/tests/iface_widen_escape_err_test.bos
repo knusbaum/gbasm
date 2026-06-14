@@ -7,9 +7,9 @@ interface viewer { bytes(self *self) byte[] from(self) }
 type W struct { buf byte[] } { bytes(w *W) byte[] { return w.buf } }
 
 fn leak() any {
-	var local W = W{buf: "x"}
-	var v viewer = &local
-	var a any = v
+	var local W := W{buf: "x"}
+	var v viewer := &local
+	var a any := v
 	return a
 }
 

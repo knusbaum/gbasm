@@ -5,8 +5,8 @@ type box struct {
 }
 
 fn main() {
-	var x owned i64 = 1
-	var b owned box = box{
+	var x owned i64 := 1
+	var b owned box := box{
 		x: x
 	}
 	b.x = 2

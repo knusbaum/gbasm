@@ -1,7 +1,7 @@
 package main
 
 fn main() {
-	var x owned i64 = 10
-	var xp *mut i64 = &x
+	var x owned i64 := 10
+	var xp *mut i64 := &x
 	dispose(x)
 }

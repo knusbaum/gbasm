@@ -13,7 +13,7 @@ type good i64 {
 type bad i64
 
 fn main() {
-	var x labeled = good(1)
+	var x labeled := good(1)
 	if (x == bad(1)) {
 	}
 }

@@ -15,7 +15,7 @@ fn greet(a Animal) void {
 }
 
 fn main() i64 {
-	var d dog = 0
+	var d dog := 0
 	greet(&d)
 	return 0
 }

@@ -21,7 +21,7 @@ type phrases struct {
 	farewell byte[16]
 }
 
-var ph phrases = phrases{
+var ph phrases := phrases{
 	greeting: "hello",
 	farewell: "goodbye",
 }
@@ -36,7 +36,7 @@ fn main() {
 	string.putc('\n')
 
 	// Field-then-slice on a global struct.
-	var s byte[] = ph.farewell[0:7]
+	var s byte[] := ph.farewell[0:7]
 	string.puts(s)
 	string.putc('\n')
 

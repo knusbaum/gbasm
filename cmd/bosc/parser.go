@@ -1244,7 +1244,7 @@ func (p *Parser) parseBindingSpec(isConst bool) *Node {
 	name := p.current().sval
 	p.advance()
 	var typeNode *Node
-	if p.current().t == tok_eq || p.current().t == tok_comma {
+	if p.current().t == tok_eq || p.current().t == tok_decl || p.current().t == tok_comma {
 		typeNode = &Node{t: n_typename, p: pos, sval: "<infer>"}
 	} else {
 		typeNode = p.parseTypeName()
@@ -1482,15 +1482,50 @@ func (p *Parser) parseStatement() *Node {
 	targets := []*Node{first}
 	for p.current().t == tok_comma {
 		p.advance()
-		targets = append(targets, p.parseBoolOp())
+		// A per-target var/const prefix only appears in a declaration; an
+		// assignment lvalue never has one.
+		if p.current().t == tok_var || p.current().t == tok_const {
+			isConst := p.current().t == tok_const
+			p.advance()
+			targets = append(targets, p.parseBindingSpec(isConst))
+		} else {
+			targets = append(targets, p.parseBoolOp())
+		}
+	}
+	if p.current().t == tok_decl {
+		// Multi-declaration (`a, b := …`, `n, var err := …`): every target is
+		// a binding. Bare names parsed as expressions become immutable,
+		// type-inferred specs.
+		bindings := make([]*Node, len(targets))
+		for i, t := range targets {
+			bindings[i] = asBindingSpec(t)
+		}
+		p.advance()
+		init := p.parseExpression()
+		return &Node{t: n_multibind, p: pos, args: append(bindings, init)}
 	}
 	if p.current().t != tok_eq {
-		panic(&interpreterError{"multi-assignment: expected '=' after the comma-separated target list", p.current().p})
+		panic(&interpreterError{"multi-assignment: expected '=' or ':=' after the comma-separated target list", p.current().p})
 	}
 	p.advance()
 	init := p.parseExpression()
 	args := append(targets, init)
 	return &Node{t: n_multibind, p: pos, ival: 1, args: args}
+}
+
+// asBindingSpec normalizes a multi-declaration target into a binding-spec
+// node. A target already parsed as a binding (n_var, from a var/const prefix)
+// is returned as-is; a bare name parsed as an expression (n_symbol) becomes an
+// immutable, type-inferred binding.
+func asBindingSpec(t *Node) *Node {
+	switch t.t {
+	case n_var:
+		return t
+	case n_symbol:
+		return &Node{t: n_var, p: t.p, sval: t.sval, ival: 1,
+			args: []*Node{{t: n_typename, p: t.p, sval: "<infer>"}}}
+	}
+	panic(&interpreterError{fmt.Sprintf("invalid declaration target in ':=': %s", t.t), t.p})
 }
 
 func (p *Parser) parseExpression() (r *Node) {
@@ -1855,6 +1890,15 @@ func (p *Parser) parseTopLevel() *Node {
 		default:
 			panic(&interpreterError{"pub must be followed by fn, type, interface, var, or const", pubPos})
 		}
+	}
+	// A keyword-less declaration at file scope (`x i64 := 5`) is immutable,
+	// same as in statement position.
+	if p.current().t == tok_ident && p.startsBareDecl() {
+		first := p.parseBindingDecl(true)
+		if len(first.args) == 1 && p.current().t == tok_comma {
+			return p.parseMultiBind(first)
+		}
+		return first
 	}
 	return p.parseExpression()
 }

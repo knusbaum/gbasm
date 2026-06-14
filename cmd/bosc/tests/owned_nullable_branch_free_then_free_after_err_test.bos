@@ -5,7 +5,7 @@ fn cond() bool {
 }
 
 fn main() {
-	var p owned *?mut i64 = nil
+	var p owned *?mut i64 := nil
 	if (cond()) {
 	} else {
 		p = alloc(i64)

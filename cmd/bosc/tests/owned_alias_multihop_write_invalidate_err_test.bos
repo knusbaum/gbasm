@@ -10,9 +10,9 @@ type box struct {
 }
 
 fn destroy(a owned *owned mut box) {
-	var b *mut box = a
-	var c *mut box = b
-	var child owned *?owned mut leaf = a.child
+	var b *mut box := a
+	var c *mut box := b
+	var child owned *?owned mut leaf := a.child
 	c.child = nil
 	free(a)
 	if(child) {

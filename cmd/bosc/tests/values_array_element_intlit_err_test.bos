@@ -6,5 +6,5 @@ type color values {
 }
 
 fn main() {
-	var cs color[2] = [0, color.GREEN]
+	var cs color[2] := [0, color.GREEN]
 }

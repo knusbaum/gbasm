@@ -3,20 +3,20 @@ package main
 import "string"
 
 fn divide(a i64, b i64) i64, i64 {
-	var q i64 = a / b
+	var q i64 := a / b
 	return q, a - q * b
 }
 
 fn main() i64 {
 	// inferred types
-	var q, rem = divide(17, 5)
+	var q, rem := divide(17, 5)
 	string.puti(q)
 	string.puts("\n")
 	string.puti(rem)
 	string.puts("\n")
 
 	// explicit types, mixed var/const
-	var q2 i64, const rem2 i64 = divide(100, 7)
+	var q2 i64, const rem2 i64 := divide(100, 7)
 	string.puti(q2)
 	string.puts("\n")
 	string.puti(rem2)

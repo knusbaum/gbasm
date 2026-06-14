@@ -10,7 +10,7 @@ fn pair(n i64) i64 {
 	return n + 1
 }
 
-var result i64 = pair(41)
+var result i64 := pair(41)
 
 fn main() {
 	string.puti(result)

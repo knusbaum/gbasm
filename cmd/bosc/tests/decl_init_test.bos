@@ -3,7 +3,7 @@ package main
 import "string"
 
 fn mkowned() owned i64 {
-	var v i64 = 99
+	var v i64 := 99
 	return v
 }
 
@@ -19,35 +19,35 @@ fn consume(v owned i64) {
 
 fn main() {
 	// Plain var with integer literal.
-	var a i64 = 42
+	var a i64 := 42
 	string.puti(a)
 	string.puts("\n")
 
 	// const with integer literal: bound and unmodifiable.
-	const b i64 = 100
+	b i64 := 100
 	string.puti(b)
 	string.puts("\n")
 
 	// Sub-word integer type.
-	var c i16 = -400
+	var c i16 := -400
 	string.puti(i64(c))
 	string.puts("\n")
 
 	// var with function-call initializer.
-	var d i64 = borrow(&a)
+	var d i64 := borrow(&a)
 	string.puti(d)
 	string.puts("\n")
 
 	// Owned binding initialized from owned-producing function.
-	var e owned i64 = mkowned()
+	var e owned i64 := mkowned()
 	consume(e)
 
 	// const owned: same, but cannot be re-bound.
-	const f owned i64 = mkowned()
+	f owned i64 := mkowned()
 	consume(f)
 
 	// var x i64 = -1 — the -1 is a unary-minus on the literal 1.
-	var g i64 = -1
+	var g i64 := -1
 	string.puti(g)
 	string.puts("\n")
 }

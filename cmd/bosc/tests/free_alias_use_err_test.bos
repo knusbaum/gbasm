@@ -3,8 +3,8 @@ package main
 import "string"
 
 fn main() {
-	var p owned *mut i64 = alloc(i64)
-	var q *i64 = p
+	var p owned *mut i64 := alloc(i64)
+	var q *i64 := p
 	free(p)
 	string.puti(*q)
 }

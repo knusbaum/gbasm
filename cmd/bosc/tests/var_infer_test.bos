@@ -8,13 +8,13 @@ fn add(a i64, b i64) i64 {
 
 fn main() i64 {
 	// infer i64 from integer literal
-	var x = 42
+	var x := 42
 	// infer i64 from function return
-	var y = add(10, 20)
+	var y := add(10, 20)
 	// infer pointer type
-	var z = &x
+	var z := &x
 	// infer from expression
-	var w = x + y
+	var w := x + y
 
 	string.puti(x)
 	string.puts("\n")

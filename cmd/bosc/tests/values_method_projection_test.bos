@@ -27,13 +27,13 @@ fn open_for(kind i64) error_val {
 }
 
 fn main() {
-	var e1 error_val = open_for(2)
+	var e1 error_val := open_for(2)
 	string.puts(e1.message())
 	string.puts("\n")
-	var e2 error_val = open_for(1)
+	var e2 error_val := open_for(1)
 	string.puts(e2.message())
 	string.puts("\n")
-	var e3 error_val = open_for(0)
+	var e3 error_val := open_for(0)
 	string.puts(e3.message())
 	string.puts("\n")
 }

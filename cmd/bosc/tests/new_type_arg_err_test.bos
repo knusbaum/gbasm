@@ -5,6 +5,6 @@ type node struct {
 }
 
 fn main() {
-	var n owned *mut node = new(node)
+	var n owned *mut node := new(node)
 	free(n)
 }

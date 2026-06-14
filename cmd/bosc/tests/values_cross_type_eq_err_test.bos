@@ -11,8 +11,8 @@ type tag values {
 }
 
 fn main() {
-	var c color = color.RED
-	var t tag = tag.A
+	var c color := color.RED
+	var t tag := tag.A
 	if (c == t) {
 	}
 }

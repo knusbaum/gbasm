@@ -12,8 +12,8 @@ fn opaque(slot *?mut *leaf) {
 }
 
 fn main() {
-	var b owned box = box{child: nil}
-	var child owned *?owned mut leaf = b.child
+	var b owned box := box{child: nil}
+	var child owned *?owned mut leaf := b.child
 	var cond bool
 	if (cond) {
 		opaque(&b.child)

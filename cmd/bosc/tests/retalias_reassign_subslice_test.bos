@@ -11,7 +11,7 @@ import "string"
 // hole where the Assignment path under-recorded the binding's own origin.)
 fn first_word(s byte[]) byte[] {
 	var t byte[]
-	var i i64 = 0
+	var i i64 := 0
 	for (; i < len(s); i = i + 1) {
 		if (s[i] == 32) {
 			t = s[0:i]
@@ -23,8 +23,8 @@ fn first_word(s byte[]) byte[] {
 }
 
 fn main() i64 {
-	var src byte[] = "hello world"
-	var w byte[] = first_word(src)
+	var src byte[] := "hello world"
+	var w byte[] := first_word(src)
 	string.puts(w)
 	string.puts("\n")
 	return 0

@@ -10,14 +10,14 @@ fn mkslice(s byte[]) byte[], i64 { return s[0:4], 7 }
 fn mkglob() byte[], i64 { return gbuf[0:4], 9 }
 fn refresh() byte[] {
 	var l byte[16]
-	var v byte[], var n i64 = mkslice(l[0:8])
+	var v byte[], var n i64 := mkslice(l[0:8])
 	v, n = mkglob()
 	return v
 }
 fn main() i64 {
 	gbuf[0] = 79
 	gbuf[1] = 75
-	var r byte[] = refresh()
+	var r byte[] := refresh()
 	string.putc(r[0])
 	string.putc(r[1])
 	string.puts("\n")

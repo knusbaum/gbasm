@@ -18,7 +18,7 @@ fn main() i64 {
 	string.putc(10)
 	// unknown verb consumes its arg and writes a marker; the trailing text
 	// after it still renders, proving processing continued.
-	const n, var err = fmt.print("a%qb=%d", 7, 9)
+	n, var err := fmt.print("a%qb=%d", 7, 9)
 	string.putc(10)
 	if (err != io.io_err.OK) {
 		string.puts("q latched\n")

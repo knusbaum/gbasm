@@ -3,7 +3,7 @@ package main
 import "string"
 
 fn main() {
-	var a i64[3] = [1, 2, 3]
+	var a i64[3] := [1, 2, 3]
 	a[0] = 99
 	string.puti(a[0]); string.putc('\n')
 	string.puti(a[1]); string.putc('\n')

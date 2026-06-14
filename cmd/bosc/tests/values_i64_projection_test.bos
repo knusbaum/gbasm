@@ -9,7 +9,7 @@ type io_error values (i64) {
 }
 
 fn main() {
-	var e io_error = io_error.NOT_FOUND
+	var e io_error := io_error.NOT_FOUND
 	string.puti(i64(e))
 	string.puts("\n")
 	e = io_error.PERMISSION_DENIED

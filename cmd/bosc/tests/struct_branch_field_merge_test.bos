@@ -11,7 +11,7 @@ var gx i64
 var gy i64
 
 fn mkfoo(var set i64) Foo {
-	var s Foo = Foo{x: 10, xp: nil}
+	var s Foo := Foo{x: 10, xp: nil}
 	if (set) {
 		s.xp = &gx
 	} else {
@@ -21,8 +21,8 @@ fn mkfoo(var set i64) Foo {
 }
 
 fn main() {
-	var a Foo = mkfoo(0)
-	var b Foo = mkfoo(1)
+	var a Foo := mkfoo(0)
+	var b Foo := mkfoo(1)
 	string.puti(a.x)
 	string.puts("\n")
 	string.puti(b.x)

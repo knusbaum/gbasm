@@ -5,8 +5,8 @@ import "string"
 // File-scope `&someGlobal` initializers — produce an 8-byte pointer
 // slot the linker fills with the symbol's resolved virtual address.
 
-var counter i64 = 42
-var pcounter *i64 = &counter
+var counter i64 := 42
+var pcounter *i64 := &counter
 
 type config struct {
 	threshold i64
@@ -14,7 +14,7 @@ type config struct {
 	greeting  byte[]  // slice field, init from string literal
 }
 
-var cfg config = config{
+var cfg config := config{
 	threshold: 100,
 	current:   &counter,
 	greeting:  "configured\n",

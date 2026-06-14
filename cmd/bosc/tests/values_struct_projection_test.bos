@@ -14,8 +14,8 @@ type v values (pair) {
 }
 
 fn main() {
-	var e v = v.A
-	var p pair = pair(e)
+	var e v := v.A
+	var p pair := pair(e)
 	string.puti(p.a)
 	string.puts(" ")
 	string.puti(p.b)

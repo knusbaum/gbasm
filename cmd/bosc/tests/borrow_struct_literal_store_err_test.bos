@@ -9,7 +9,7 @@ type holder struct {
 }
 
 fn bad(n *node) {
-	var h holder = holder{n: n}
+	var h holder := holder{n: n}
 }
 
 fn main() {}

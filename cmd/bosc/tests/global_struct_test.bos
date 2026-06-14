@@ -15,9 +15,9 @@ type rect struct {
 }
 
 // Top-level struct globals: flat literal, nested literal, mutation.
-var origin point = point{x: 0, y: 0}
-var p1 point = point{x: 11, y: 22}
-var r rect = rect{
+var origin point := point{x: 0, y: 0}
+var p1 point := point{x: 11, y: 22}
+var r rect := rect{
 	tl:    point{x: 1, y: 2},
 	br:    point{x: 30, y: 40},
 	color: 7,

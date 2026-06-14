@@ -3,9 +3,9 @@ package main
 type foo i64
 
 fn main() i64 {
-	var x owned foo = 0
-	var y *owned foo = &x
-	var z *owned foo = &x
+	var x owned foo := 0
+	var y *owned foo := &x
+	var z *owned foo := &x
 	dispose(y)
 	dispose(z)
 	return 0

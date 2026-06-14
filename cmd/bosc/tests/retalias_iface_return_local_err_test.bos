@@ -11,7 +11,7 @@ interface Getter {
 }
 fn as_getter(b *box) Getter { return b }
 fn leak() Getter {
-	var local box = box{val: 3}
+	var local box := box{val: 3}
 	return as_getter(&local)
 }
 fn main() i64 { return 0 }

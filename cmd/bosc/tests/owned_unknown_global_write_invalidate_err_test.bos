@@ -12,7 +12,7 @@ type box struct {
 var saved *?mut box
 
 fn destroy(b owned *owned mut box) {
-	var child owned *?owned mut leaf = b.child
+	var child owned *?owned mut leaf := b.child
 	if(saved) {
 		saved?.child = nil
 	}

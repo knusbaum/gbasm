@@ -6,5 +6,5 @@ type cursor struct {
 }
 
 fn main() {
-	var c cursor = cursor{value: 10}
+	var c cursor := cursor{value: 10}
 }

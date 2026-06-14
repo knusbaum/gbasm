@@ -9,8 +9,8 @@ fn poke(var w wrap) {
 }
 
 fn main() {
-	var x i64 = 1
-	var w wrap = wrap{p: &x}
+	var x i64 := 1
+	var w wrap := wrap{p: &x}
 	poke(w)
 	string.puti(x); string.putc('\n')
 }

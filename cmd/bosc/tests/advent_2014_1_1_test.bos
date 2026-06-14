@@ -31,7 +31,7 @@ fn skip(bs byte[]) i64 {
 // of bs into a slice field of *out would be rejected by the
 // borrowed-pointer-target escape rule; the index dodges that entirely.
 fn readRow(var bs mut byte[], out *mut state) {
-	const origLen i64 = len(bs)
+	origLen i64 := len(bs)
 	var onea byte[10]
 	var twoa byte[10]
 

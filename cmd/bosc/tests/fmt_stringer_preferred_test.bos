@@ -12,13 +12,13 @@ import "io"
 type tag struct { label i64 } {
 	string(t *tag) byte[] { return "STRINGER" }
 	format(t *tag, w io.writer) error {
-		const _, var err = w.write("FORMATTER")
+		_, var err := w.write("FORMATTER")
 		return err
 	}
 }
 
 fn main() i64 {
-	var t tag = tag{label: 1}
+	var t tag := tag{label: 1}
 	fmt.print("got %v\n", &t)
 	return 0
 }

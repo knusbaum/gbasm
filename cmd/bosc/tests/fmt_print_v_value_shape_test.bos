@@ -12,7 +12,7 @@ type label i64 {
 }
 
 fn main() i64 {
-	var l label = 5
+	var l label := 5
 	// By value: 8-byte value coerces into `any` inline, but the value shape
 	// cannot satisfy the *self-receiver stringer → placeholder.
 	fmt.print("byval=%v\n", l)

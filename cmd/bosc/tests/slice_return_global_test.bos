@@ -25,7 +25,7 @@ fn main() {
 	buf[5] = 'X'
 	buf[6] = 'Y'
 	buf[7] = 'Z'
-	const bs byte[] = get_view()
+	bs byte[] := get_view()
 	string.puts(bs)
 	string.puts("\n")
 }

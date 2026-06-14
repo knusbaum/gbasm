@@ -7,9 +7,9 @@ interface Describer { describe(d *self) byte[] }
 type myint i64 { describe(m *myint) byte[] { return "myint" } }
 
 fn main() i64 {
-	var x owned myint = 5
-	var d owned Describer = &x
-	var a owned any = d
+	var x owned myint := 5
+	var d owned Describer := &x
+	var a owned any := d
 	dispose(d)
 	dispose(a)
 	return 0

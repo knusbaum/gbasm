@@ -25,6 +25,6 @@ fn show(e error_val) {
 }
 
 fn main(args byte[][]) {
-	var e error_val = make_error()
+	var e error_val := make_error()
 	show(e)
 }

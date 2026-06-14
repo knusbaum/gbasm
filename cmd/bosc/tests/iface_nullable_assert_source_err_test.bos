@@ -7,9 +7,9 @@ interface U { f(s *self) byte[] }
 type T i64 { f(t *T) byte[] { return "x" } }
 
 fn main() i64 {
-	var t T = 3
-	var a any = &t
-	var k ?K = a.(K)
-	var u ?U = k.(U)
+	var t T := 3
+	var a any := &t
+	var k ?K := a.(K)
+	var u ?U := k.(U)
 	return 0
 }

@@ -4,9 +4,9 @@ import "geom"
 
 // Concrete assertion against a type declared in another package: .(*geom.Point).
 fn main() i64 {
-	var p geom.Point = geom.make(3, 4)
-	var a any = &p
-	var q *mut geom.Point, var ok bool = a.(*mut geom.Point)
+	var p geom.Point := geom.make(3, 4)
+	var a any := &p
+	var q *mut geom.Point, var ok bool := a.(*mut geom.Point)
 	if (ok) {
 		string.puts("got")
 	} else {
@@ -14,7 +14,7 @@ fn main() i64 {
 	}
 	string.putc(10)
 	// Wrong shape: value-target must fail.
-	var v i64, var ok2 bool = a.(i64)
+	var v i64, var ok2 bool := a.(i64)
 	if (ok2) {
 		string.puts("bad")
 	} else {

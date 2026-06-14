@@ -5,7 +5,7 @@ fn inspect(v i64) {}
 fn main() {
 	var x owned i64
 	x = 1
-	var y owned i64 = x
+	var y owned i64 := x
 	inspect(x)
 	dispose(y)
 }

@@ -5,6 +5,6 @@ type cursor struct {
 }
 
 fn main() {
-	var c owned *mut cursor = alloc(cursor)
+	var c owned *mut cursor := alloc(cursor)
 	free(c)
 }

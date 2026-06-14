@@ -10,9 +10,9 @@ type box struct { buf byte[] } {
 }
 
 fn main() i64 {
-	var b box = box{buf: "hello"}
-	var v viewer = &b
-	const r byte[] = v.view()
+	var b box := box{buf: "hello"}
+	var v viewer := &b
+	r byte[] := v.view()
 	string.puts(r)
 	string.putc(10)
 	return 0

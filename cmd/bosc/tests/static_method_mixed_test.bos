@@ -19,7 +19,7 @@ type counter i64 {
 fn main() i64 {
 	counter.describe()
 
-	var c counter = 10
+	var c counter := 10
 	string.puti(c.value())
 	string.puts("\n")
 	c.inc()

@@ -6,7 +6,7 @@ import "fmt"
 type plain struct { a i64, b i64 }
 
 fn main() i64 {
-	var p plain = plain{a: 1, b: 2}
+	var p plain := plain{a: 1, b: 2}
 	fmt.print("got %v end\n", &p)
 	return 0
 }

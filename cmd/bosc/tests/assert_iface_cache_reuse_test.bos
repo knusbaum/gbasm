@@ -12,7 +12,7 @@ interface speaker {
 }
 
 fn try(a any) i64 {
-	var s ?speaker = a.(speaker)
+	var s ?speaker := a.(speaker)
 	if (s != nil) {
 		string.puts(s.greet())
 		string.putc(10)
@@ -24,8 +24,8 @@ fn try(a any) i64 {
 }
 
 fn main() i64 {
-	var g greeter = 1
-	var a any = &g
+	var g greeter := 1
+	var a any := &g
 	// First assertion: cache miss, allocates itab. Second: cache hit.
 	try(a)
 	try(a)

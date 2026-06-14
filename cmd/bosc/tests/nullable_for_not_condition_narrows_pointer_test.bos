@@ -2,8 +2,8 @@ package main
 
 fn main() {
 	var x i64
-	var p *?mut i64 = nil
-	var q *mut i64 = &x
+	var p *?mut i64 := nil
+	var q *mut i64 := &x
 	for(; !p; p = &x) {
 		x = 1
 	}

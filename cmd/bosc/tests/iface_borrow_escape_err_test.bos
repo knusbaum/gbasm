@@ -11,11 +11,11 @@ interface Animal {
 }
 
 fn make() Animal {
-	var d dog = 0
-	var a Animal = &d
+	var d dog := 0
+	var a Animal := &d
 	return a
 }
 
 fn main() {
-	var a Animal = make()
+	var a Animal := make()
 }

@@ -6,6 +6,6 @@ type io_error values (i64) {
 }
 
 fn main() {
-	var e io_error = io_error.NOT_FOUND
-	var s byte[] = byte[](e)
+	var e io_error := io_error.NOT_FOUND
+	var s byte[] := byte[](e)
 }

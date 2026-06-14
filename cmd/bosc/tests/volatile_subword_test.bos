@@ -9,9 +9,9 @@ fn main() {
 	var b i16
 	b = 7
 
-	var pa *mut i16 = &a
+	var pa *mut i16 := &a
 
-	var pb *mut i16 = &b
+	var pb *mut i16 := &b
 
 	// i16: volatile first operand — *pa should see 42 after a = a * 7.
 	a = a * 7
@@ -28,7 +28,7 @@ fn main() {
 	var c u32
 	c = 10
 
-	var pc *mut u32 = &c
+	var pc *mut u32 := &c
 
 	// u32: volatile multiplication — c = 10 * 5 = 50.
 	c = c * 5

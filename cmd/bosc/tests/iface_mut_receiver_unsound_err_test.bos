@@ -21,7 +21,7 @@ fn use(r reader) void {
 }
 
 fn main() i64 {
-	const c counter = 0
+	c counter := 0
 	use(&c)
 	return 0
 }

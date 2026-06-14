@@ -10,8 +10,8 @@ fn add_to_a(var p big) big {
 }
 
 fn main() {
-	var b big = big{a: 1, b: 2}
-	var c big = add_to_a(b)
+	var b big := big{a: 1, b: 2}
+	var c big := add_to_a(b)
 	string.puti(b.a); string.putc('\n')
 	string.puti(b.b); string.putc('\n')
 	string.puti(c.a); string.putc('\n')

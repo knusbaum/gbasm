@@ -20,9 +20,9 @@ interface smallC {
 }
 
 fn main() i64 {
-	var x owned res = 9
-	var a owned bigC = &x
-	var b owned smallC = a
+	var x owned res := 9
+	var a owned bigC := &x
+	var b owned smallC := a
 	b.destroy()
 	return 0
 }

@@ -8,10 +8,10 @@ interface Speaker { speak(s *self) byte[] }
 type T i64 { speak(t *T) byte[] { return "hi" } }
 
 fn main() i64 {
-	var t T = 3
-	var a any = &t
-	var k ?Speaker = a.(Speaker)
-	const r byte[] = k.speak()
+	var t T := 3
+	var a any := &t
+	var k ?Speaker := a.(Speaker)
+	r byte[] := k.speak()
 	string.puts(r)
 	return 0
 }

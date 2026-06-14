@@ -12,7 +12,7 @@ fn describe(x any) {
 }
 
 fn main() i64 {
-	var bb byte = 5
+	var bb byte := 5
 	describe(bb)
 	return 0
 }

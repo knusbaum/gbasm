@@ -7,9 +7,9 @@ import "ifaces"
 // ifaces.Stringer (interface) declared in package ifaces. Assert across
 // both .bo boundaries.
 fn main() i64 {
-	var p geom.Point = geom.make(1, 2)
-	var a any = &p
-	var s ?ifaces.Stringer = a.(ifaces.Stringer)
+	var p geom.Point := geom.make(1, 2)
+	var a any := &p
+	var s ?ifaces.Stringer := a.(ifaces.Stringer)
 	if (s != nil) {
 		string.puts(s.describe())
 	} else {

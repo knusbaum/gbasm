@@ -6,6 +6,6 @@ type node struct {
 }
 
 fn main() {
-	var n owned *mut node = new(node{value: 7})
+	var n owned *mut node := new(node{value: 7})
 	free(n)
 }

@@ -6,8 +6,8 @@ type Foo struct {
 }
 
 fn bad() Foo {
-	var s Foo = Foo{x: 10, xp: &s.x}
-	var t Foo = s
+	var s Foo := Foo{x: 10, xp: &s.x}
+	var t Foo := s
 	return t
 }
 

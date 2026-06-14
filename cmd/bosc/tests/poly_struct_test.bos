@@ -23,7 +23,7 @@ fn main() i64 {
 	var arr byte[100]
 
 	var p poly
-	const x i64, const y i64, const n i64 = dosth(arr[:])
+	x i64, const y i64, const n i64 := dosth(arr[:])
 	p.x = x
 	p.y = y
 	p.bs = arr[:n]

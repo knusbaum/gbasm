@@ -9,9 +9,9 @@ fn main() {
 	var y i64
 	y = 6
 
-	var px *mut i64 = &x
+	var px *mut i64 := &x
 
-	var py *mut i64 = &y
+	var py *mut i64 := &y
 
 	// Volatile first operand.
 	x = x / 7

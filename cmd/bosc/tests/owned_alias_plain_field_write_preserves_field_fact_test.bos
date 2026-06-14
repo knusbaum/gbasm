@@ -10,8 +10,8 @@ type box struct {
 }
 
 fn destroy(b owned *owned mut box) {
-	var alias *mut box = b
-	var child owned *?owned mut leaf = b.child
+	var alias *mut box := b
+	var child owned *?owned mut leaf := b.child
 	alias.val = 10
 	free(b)
 	if (child) {
@@ -20,6 +20,6 @@ fn destroy(b owned *owned mut box) {
 }
 
 fn main() {
-	const b owned *owned mut box = new(box{val: 1, child: nil})
+	b owned *owned mut box := new(box{val: 1, child: nil})
 	destroy(b)
 }

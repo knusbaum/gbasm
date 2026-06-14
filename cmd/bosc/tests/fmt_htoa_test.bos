@@ -7,7 +7,7 @@ import "string"
 // truncation, and n_hex_digits.
 fn show(n u64) i64 {
 	var buf byte[32]
-	const s byte[] = fmt.htoa(buf[:], n)
+	s byte[] := fmt.htoa(buf[:], n)
 	string.puts(s)
 	string.puts(" (")
 	string.puti(fmt.n_hex_digits(n))
@@ -21,7 +21,7 @@ fn main() i64 {
 	show(u64(4096))
 	show(u64(18446744073709551615))   // max u64 -> ffffffffffffffff
 	var small byte[2]
-	const s1 byte[] = fmt.htoa(small[:], u64(65535))   // ffff, truncated to ff
+	s1 byte[] := fmt.htoa(small[:], u64(65535))   // ffff, truncated to ff
 	string.puts(s1)
 	string.puts(" trunc=")
 	string.puti(len(s1))
@@ -29,7 +29,7 @@ fn main() i64 {
 	// Wider truncation: 0xdeadbeef (8 hex digits) into a 3-byte buffer keeps
 	// the leading "dea" (len 3).
 	var small3 byte[3]
-	const s2 byte[] = fmt.htoa(small3[:], u64(3735928559))   // 0xdeadbeef -> dea
+	s2 byte[] := fmt.htoa(small3[:], u64(3735928559))   // 0xdeadbeef -> dea
 	string.puts(s2)
 	string.puts(" trunc=")
 	string.puti(len(s2))

@@ -11,12 +11,12 @@ import "string"
 //   - the owned obligation is satisfied by close
 fn main() i64 {
     // Write to /dev/null through a FD — result discarded, proves type works.
-    var null owned io.FD, const openerr error = io.open("/dev/null", 1, 0)
+    var null owned io.FD, const openerr error := io.open("/dev/null", 1, 0)
     null.write("this goes nowhere\n")
     null.close()
 
     // Use a raw integer cast to build a FD, write through it, close it.
-    var fd owned io.FD = owned(io.FD(1))
+    var fd owned io.FD := owned(io.FD(1))
     fd.write("cross pkg type alias\n")
     fd.close()
 

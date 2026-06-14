@@ -13,9 +13,9 @@ interface Describer {
 }
 
 fn main() i64 {
-	var x myint = 42
-	var d Describer = &x
-	var s byte[] = d.describe()
+	var x myint := 42
+	var d Describer := &x
+	var s byte[] := d.describe()
 	string.puts(s)
 	string.puts("\n")
 	return 0

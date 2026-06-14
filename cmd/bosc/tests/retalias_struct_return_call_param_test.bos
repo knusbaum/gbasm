@@ -20,8 +20,8 @@ fn outer(p byte[]) B {
 }
 
 fn main() i64 {
-	var storage byte[] = "hello"
-	var b B = outer(storage)
+	var storage byte[] := "hello"
+	var b B := outer(storage)
 	string.puts(b.buf)
 	string.puts("\n")
 	return 0

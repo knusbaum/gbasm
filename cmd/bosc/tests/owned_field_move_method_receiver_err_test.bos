@@ -13,7 +13,7 @@ type foo struct {
 }
 
 fn main() {
-	var f owned foo = foo{a: alloc(i64)}
+	var f owned foo := foo{a: alloc(i64)}
 	free(f.a)
 	fmt.print("%d\n", f.peek())
 	dispose(f)

@@ -9,8 +9,8 @@ type box struct {
 }
 
 fn main() i64 {
-	var f owned foo = foo{x: 1}
-	var b owned box = box{fp: &f}
+	var f owned foo := foo{x: 1}
+	var b owned box := box{fp: &f}
 	f = foo{x: 20}
 	dispose(b)
 	dispose(f)

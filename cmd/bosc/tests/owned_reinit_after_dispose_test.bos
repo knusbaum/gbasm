@@ -7,7 +7,7 @@ type foo struct {
 }
 
 fn main() {
-	var f owned foo = foo{x: 1}
+	var f owned foo := foo{x: 1}
 	dispose(f)
 	f = foo{x: 20}
 	string.puti(f.x)

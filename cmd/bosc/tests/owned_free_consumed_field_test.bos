@@ -9,7 +9,7 @@ type box struct {
 }
 
 fn destroy(b owned *owned mut box) {
-	var child owned *?owned mut leaf = b.child
+	var child owned *?owned mut leaf := b.child
 	free(b)
 	if(child) {
 		free(child)
@@ -17,6 +17,6 @@ fn destroy(b owned *owned mut box) {
 }
 
 fn main() {
-	const b owned *owned mut box = new(box{child: nil})
+	b owned *owned mut box := new(box{child: nil})
 	destroy(b)
 }

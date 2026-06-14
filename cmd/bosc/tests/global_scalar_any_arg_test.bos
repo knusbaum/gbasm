@@ -8,8 +8,8 @@ import "fmt"
 // which bas could not encode. Two memory-backed sources exercise the path:
 //   - a file-scope global scalar (var or const), and
 //   - a local made volatile by an earlier `&` of it.
-var gv i64 = 42
-const gc i64 = -7
+var gv i64 := 42
+gc i64 := -7
 
 fn bump(p *mut i64) {
 	*p = *p + 1
@@ -18,7 +18,7 @@ fn bump(p *mut i64) {
 fn main() {
 	fmt.print("gv=%d gc=%d\n", gv, gc)
 
-	var x i64 = 10
+	var x i64 := 10
 	bump(&x) // &x makes x volatile (memory-backed)
 	fmt.print("x=%d\n", x)
 }

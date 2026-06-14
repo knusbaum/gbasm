@@ -9,8 +9,8 @@ import "string"
 // encoder up to generate it.
 
 var nums i64[4]
-var p0 *i64 = &nums[0]
-var p2 *i64 = &nums[2]
+var p0 *i64 := &nums[0]
+var p2 *i64 := &nums[2]
 
 fn main() {
 	nums[0] = 100

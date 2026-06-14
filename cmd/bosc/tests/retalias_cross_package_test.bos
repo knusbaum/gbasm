@@ -8,8 +8,8 @@ import "retalias_pkg"
 // the returned view correctly — the argument (a local backing the slice)
 // outlives the use within this function.
 fn main() i64 {
-	var src byte[] = "cross package"
-	var w byte[] = retalias_pkg.first_word(src)
+	var src byte[] := "cross package"
+	var w byte[] := retalias_pkg.first_word(src)
 	string.puts(w)
 	string.puts("\n")
 	return 0

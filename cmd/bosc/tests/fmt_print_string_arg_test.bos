@@ -4,7 +4,7 @@ import "fmt"
 // Layer 5: %s with a *(byte[]) argument. Both an addressed local and an
 // addressed string literal (the function-scope &"literal" companion) work.
 fn main() i64 {
-	var name byte[] = "world"
+	var name byte[] := "world"
 	fmt.print("hi %s\n", &name)
 	fmt.print("lit %s\n", &"literal")
 	fmt.print("%s and %s\n", &name, &"both")

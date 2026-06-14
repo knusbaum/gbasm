@@ -5,7 +5,7 @@ type node struct {
 }
 
 fn destroy(l owned *?owned mut node) {
-	var curr owned *?owned mut node = l
+	var curr owned *?owned mut node := l
 	var next owned *?owned mut node
 	for(; curr != nil; curr = next) {
 		next = curr.next
@@ -15,11 +15,11 @@ fn destroy(l owned *?owned mut node) {
 }
 
 fn main() {
-	var head owned *?owned mut node = owned(alloc(node))
-	var tail owned *?owned mut node = owned(alloc(node))
-	var raw_tail *?mut node = tail
+	var head owned *?owned mut node := owned(alloc(node))
+	var tail owned *?owned mut node := owned(alloc(node))
+	var raw_tail *?mut node := tail
 	raw_tail.next = nil
-	var raw_head *?mut node = head
+	var raw_head *?mut node := head
 	raw_head.next = tail
 	dispose(tail)
 	destroy(head)

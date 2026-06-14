@@ -21,6 +21,6 @@ fn main() {
 	arr[1] = "two"
 	arr[2] = "three"
 
-	var ss byte[][] = arr[:]
+	var ss byte[][] := arr[:]
 	show(ss)
 }

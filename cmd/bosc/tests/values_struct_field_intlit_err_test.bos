@@ -10,5 +10,5 @@ type box struct {
 }
 
 fn main() {
-	var b box = box{c: 0}
+	var b box := box{c: 0}
 }

@@ -24,7 +24,7 @@ fn ok(s byte[]) Outer {
 
 fn main() {
 	var arr byte[8]
-	var r Outer = ok(arr[:])
+	var r Outer := ok(arr[:])
 	string.puti(len(r.inner.buf))
 	string.puts("\n")
 }

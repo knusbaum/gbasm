@@ -8,7 +8,7 @@ type SelfRef struct {
 }
 
 fn main() {
-	var s SelfRef = SelfRef{
+	var s SelfRef := SelfRef{
 		x: 10
 		xp: &s.x
 	}

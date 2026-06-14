@@ -9,8 +9,8 @@ type holder struct {
 }
 
 fn main() i64 {
-	var f owned foo = foo{x: 1}
-	var h owned holder = holder{fp: &f}
+	var f owned foo := foo{x: 1}
+	var h owned holder := holder{fp: &f}
 	*h.fp = foo{x: 20}
 	dispose(h)
 	return 0

@@ -6,7 +6,7 @@ import "string"
 // file causes the test runner to invoke this with the listed words,
 // so args is { argv[0], "alpha", "beta", "gamma" } at runtime.
 fn main(args byte[][]) {
-	var n i64 = len(args)
+	var n i64 := len(args)
 	string.puti(n)
 	string.putc('\n')
 

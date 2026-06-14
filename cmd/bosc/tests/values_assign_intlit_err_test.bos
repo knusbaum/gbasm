@@ -6,6 +6,6 @@ type color values {
 }
 
 fn main() {
-	var c color = color.RED
+	var c color := color.RED
 	c = 0
 }

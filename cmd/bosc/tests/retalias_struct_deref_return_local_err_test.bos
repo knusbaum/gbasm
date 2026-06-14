@@ -6,7 +6,7 @@ package main
 type B struct { buf byte[] }
 fn get(p *B) B { return *p }
 fn use(p *B) byte[] {
-	const b B = get(p)
+	b B := get(p)
 	return b.buf
 }
 fn boom() byte[] {

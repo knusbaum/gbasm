@@ -2,6 +2,6 @@ package main
 
 // Length mismatch with the declared fixed-array length must be rejected
 // at compile time rather than zero-padded or truncated.
-var nums i64[4] = [1, 2, 3]
+var nums i64[4] := [1, 2, 3]
 
 fn main() {}

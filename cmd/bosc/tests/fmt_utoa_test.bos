@@ -7,7 +7,7 @@ import "string"
 // range, the truncation contract, and n_udigits.
 fn show(n u64) i64 {
 	var buf byte[32]
-	const s byte[] = fmt.utoa(buf[:], n)
+	s byte[] := fmt.utoa(buf[:], n)
 	string.puts(s)
 	string.puts(" (")
 	string.puti(fmt.n_udigits(n))
@@ -20,7 +20,7 @@ fn main() i64 {
 	show(u64(12345))
 	show(u64(18446744073709551615))   // max u64
 	var small byte[2]
-	const s1 byte[] = fmt.utoa(small[:], u64(12345))
+	s1 byte[] := fmt.utoa(small[:], u64(12345))
 	string.puts(s1)
 	string.puts(" trunc=")
 	string.puti(len(s1))

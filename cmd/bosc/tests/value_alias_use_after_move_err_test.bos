@@ -5,8 +5,8 @@ fn take(x owned i64) {
 }
 
 fn main() {
-	var i owned i64 = 10
-	var t i64 = i
+	var i owned i64 := 10
+	var t i64 := i
 	take(i)
-	var r i64 = t
+	var r i64 := t
 }

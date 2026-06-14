@@ -11,10 +11,10 @@ type box struct {
 }
 
 fn main() {
-	var p owned *mut i64 = alloc(i64)
+	var p owned *mut i64 := alloc(i64)
 	*p = 42
-	var b owned box = box{next: p}
-	var next owned *mut i64 = b.next // move the non-null owned field out
+	var b owned box := box{next: p}
+	var next owned *mut i64 := b.next // move the non-null owned field out
 	fmt.print("next=%d\n", *next)
 	free(next) // clean up the field's resource
 	dispose(b) // aggregate now consistent (only owned field consumed)

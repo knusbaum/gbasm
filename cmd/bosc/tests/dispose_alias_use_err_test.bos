@@ -3,8 +3,8 @@ package main
 import "string"
 
 fn main() {
-	var myint owned i64 = 10
-	var myintp *i64 = &myint
+	var myint owned i64 := 10
+	var myintp *i64 := &myint
 	dispose(myint)
 	string.puti(*myintp)
 }

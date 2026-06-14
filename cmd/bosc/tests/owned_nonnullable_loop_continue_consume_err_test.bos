@@ -6,7 +6,7 @@ fn cond() bool {
 }
 
 fn main() {
-	var p owned *mut i64 = alloc(i64)
+	var p owned *mut i64 := alloc(i64)
 	var i i64
 	for(; i < 1; i = i + 1) {
 		if (cond()) {

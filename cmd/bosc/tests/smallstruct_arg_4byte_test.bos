@@ -17,6 +17,6 @@ fn whatever(f foo) {
 }
 
 fn main() {
-	var x foo = foo{a: 1, b: 2, c: 3, d: 4}
+	var x foo := foo{a: 1, b: 2, c: 3, d: 4}
 	whatever(x)
 }

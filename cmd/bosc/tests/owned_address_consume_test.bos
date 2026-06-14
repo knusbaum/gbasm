@@ -10,7 +10,7 @@ fn consume(t *owned thingy) {
 }
 
 fn main() i64 {
-	var x owned thingy = 0
+	var x owned thingy := 0
 	consume(owned(&x))
 	return 0
 }

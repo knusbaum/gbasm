@@ -8,14 +8,14 @@ type Foo struct {
 }
 
 fn bad() Foo {
-	var s Foo = Foo{x: 10, xp: nil}
+	var s Foo := Foo{x: 10, xp: nil}
 	s.xp = &s.x
 	s = Foo{x: 20, xp: nil}
 	return s
 }
 
 fn main() {
-	var s Foo = bad()
+	var s Foo := bad()
 	string.puti(s.x)
 	string.puts("\n")
 }

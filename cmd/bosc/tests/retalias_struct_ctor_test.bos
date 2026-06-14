@@ -12,7 +12,7 @@ type Builder struct {
 	pos i64
 } {
 	append(b *mut Builder, s byte[]) {
-		var i i64 = 0
+		var i i64 := 0
 		for (; i < len(s); i = i + 1) {
 			b.buf[b.pos] = s[i]
 			b.pos = b.pos + 1
@@ -29,7 +29,7 @@ fn new_builder(buf mut byte[]) Builder {
 
 fn main() i64 {
 	var storage byte[32]
-	var b Builder = new_builder(storage[:])
+	var b Builder := new_builder(storage[:])
 	b.append("ab")
 	b.append("cd")
 	string.puts(b.bytes())

@@ -22,7 +22,7 @@ fn borrow_box(b box) {
 }
 
 fn main() {
-	var b owned box = make_box()
+	var b owned box := make_box()
 	borrow_box(b)
 	dispose(b)
 }

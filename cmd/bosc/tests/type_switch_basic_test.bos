@@ -10,8 +10,8 @@ fn describe(x any) {
 }
 
 fn main() i64 {
-	var m i64 = 42
-	var bb byte = 7
+	var m i64 := 42
+	var bb byte := 7
 	describe(m)
 	describe(&m)
 	describe(bb)

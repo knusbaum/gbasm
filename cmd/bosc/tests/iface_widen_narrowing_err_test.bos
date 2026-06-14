@@ -9,8 +9,8 @@ interface Byter { bytes(self *self) byte[] }
 type W struct { buf byte[] } { bytes(w *W) byte[] { return w.buf } }
 
 fn main() i64 {
-	var w W = W{buf: "hi"}
-	var v viewer = &w
-	var b Byter = v
+	var w W := W{buf: "hi"}
+	var v viewer := &w
+	var b Byter := v
 	return 0
 }

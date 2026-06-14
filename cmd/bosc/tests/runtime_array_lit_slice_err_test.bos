@@ -6,5 +6,5 @@ package main
 // anonymous global). Reject the runtime form with a directed error.
 
 fn main() {
-	var s i64[] = [1, 2, 3]
+	var s i64[] := [1, 2, 3]
 }

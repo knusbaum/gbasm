@@ -3,8 +3,8 @@ package main
 import "errors"
 
 fn main() {
-	var a errors.io_error = errors.io_error.NOT_FOUND
-	var b errors.io_error = errors.io_error.BUSY
+	var a errors.io_error := errors.io_error.NOT_FOUND
+	var b errors.io_error := errors.io_error.BUSY
 	if (a < b) {
 	}
 }

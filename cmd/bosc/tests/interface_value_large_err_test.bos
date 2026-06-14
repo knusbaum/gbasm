@@ -14,6 +14,6 @@ interface error_val {
 }
 
 fn main(args byte[][]) {
-	var b big = big{a: 1, b: 2}
-	var e error_val = b
+	var b big := big{a: 1, b: 2}
+	var e error_val := b
 }

@@ -1,5 +1,5 @@
 package main
 
 fn main() {
-	var p *mut i64 = nil
+	var p *mut i64 := nil
 }

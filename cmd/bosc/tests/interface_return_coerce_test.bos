@@ -27,10 +27,10 @@ fn wrap_cat(c *cat) Animal {
 }
 
 fn main() i64 {
-	var d dog = 0
-	var c cat = 0
+	var d dog := 0
+	var c cat := 0
 
-	var a Animal = wrap_dog(&d)
+	var a Animal := wrap_dog(&d)
 	string.puts(a.speak())
 	string.puts("\n")
 

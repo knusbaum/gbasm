@@ -9,7 +9,7 @@ type color values {
 }
 
 fn main() {
-	var c color = color.RED
+	var c color := color.RED
 	if (c == color.RED) {
 		string.puts("red\n")
 	}

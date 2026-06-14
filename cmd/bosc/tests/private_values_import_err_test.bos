@@ -3,5 +3,5 @@ package main
 import "visibility"
 
 fn main() {
-	var x visibility.hidden_values = visibility.hidden_values.A
+	var x visibility.hidden_values := visibility.hidden_values.A
 }

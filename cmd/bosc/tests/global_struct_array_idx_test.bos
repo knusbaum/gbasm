@@ -12,7 +12,7 @@ type buffer struct {
 	count i64
 }
 
-var g buffer = buffer{
+var g buffer := buffer{
 	bytes: "0123456789",
 	count: 10,
 }
@@ -21,7 +21,7 @@ fn main() {
 	// Pull the field out (postfix dot-then-index on a dot chain isn't
 	// part of this test's concern — global_struct_test covers chained
 	// reads) and walk it with a runtime index.
-	var local_bytes byte[10] = g.bytes
+	var local_bytes byte[10] := g.bytes
 	var i i64
 	for (i = 0; i < g.count; i = i + 1) {
 		string.putc(local_bytes[i])

@@ -22,7 +22,7 @@ type outer struct {
 
 // One level of nesting: outer has a pointer to a fresh anonymous
 // middle, which has a pointer to a fresh anonymous inner.
-var nest outer = outer{
+var nest outer := outer{
 	name: "nested\n",
 	mid: &middle{
 		tag: 7,
@@ -33,7 +33,7 @@ var nest outer = outer{
 // Two siblings, each producing its own anonymous chain — checks that
 // the anonymous-global namer doesn't collide and each var sees its
 // own targets.
-var nest2 outer = outer{
+var nest2 outer := outer{
 	name: "second\n",
 	mid: &middle{
 		tag: 13,

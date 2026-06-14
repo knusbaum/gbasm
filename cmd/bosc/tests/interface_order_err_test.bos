@@ -13,8 +13,8 @@ type code values {
 }
 
 fn main() {
-	var a labeled = code.OK
-	var b labeled = code.OK
+	var a labeled := code.OK
+	var b labeled := code.OK
 	if (a < b) {
 	}
 }

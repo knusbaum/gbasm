@@ -19,8 +19,8 @@ fn use(x byte[], y byte[], first bool) byte[] {
 }
 
 fn main() i64 {
-	var p byte[] = "primary"
-	var q byte[] = "backup"
+	var p byte[] := "primary"
+	var q byte[] := "backup"
 	string.puts(use(p, q, yes()))
 	string.puts("\n")
 	string.puts(use(p, q, no()))

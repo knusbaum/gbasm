@@ -9,7 +9,7 @@ type thingy i64 {
 }
 
 fn main() i64 {
-	var x thingy = 0
+	var x thingy := 0
 	x.hello()
 	return 0
 }

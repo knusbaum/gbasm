@@ -14,8 +14,8 @@ fn A(s byte[]) byte[] {
 }
 
 fn main() i64 {
-	var src byte[] = "abcdef"
-	var r byte[] = A(src)
+	var src byte[] := "abcdef"
+	var r byte[] := A(src)
 	string.puts(r)
 	string.puts("\n")
 	return 0

@@ -12,7 +12,7 @@ interface Animal {
 }
 
 fn main() i64 {
-	var d dog = 0
-	var a Animal = &d
+	var d dog := 0
+	var a Animal := &d
 	return 0
 }

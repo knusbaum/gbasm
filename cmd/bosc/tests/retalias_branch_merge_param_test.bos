@@ -9,7 +9,7 @@ import "string"
 // This is LEGITIMATE (no local escapes) and must be allowed; the caller
 // uses the view while both args are still live.
 fn choose(a byte[], b byte[], use_a bool) byte[] {
-	var t byte[] = a
+	var t byte[] := a
 	if (use_a) {
 		// no-op branch: keep t = a
 	} else {
@@ -19,12 +19,12 @@ fn choose(a byte[], b byte[], use_a bool) byte[] {
 }
 
 fn main() i64 {
-	var x byte[] = "first"
-	var y byte[] = "second"
-	var p byte[] = choose(x, y, (1 == 1))
+	var x byte[] := "first"
+	var y byte[] := "second"
+	var p byte[] := choose(x, y, (1 == 1))
 	string.puts(p)
 	string.puts("\n")
-	var q byte[] = choose(x, y, (1 == 0))
+	var q byte[] := choose(x, y, (1 == 0))
 	string.puts(q)
 	string.puts("\n")
 	return 0

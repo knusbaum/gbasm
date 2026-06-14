@@ -9,5 +9,5 @@ fn pair(n i64) i64 {
 }
 
 fn main() {
-	var n i64 = pair(41)
+	var n i64 := pair(41)
 }

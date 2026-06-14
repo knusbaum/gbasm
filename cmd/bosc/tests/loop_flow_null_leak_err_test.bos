@@ -3,7 +3,7 @@ package main
 type node struct { val i64 }
 
 fn main() {
-	var p *?node = nil
+	var p *?node := nil
 	for(;;) {
 		p = nil
 		if (!p) {
@@ -11,5 +11,5 @@ fn main() {
 		}
 		break
 	}
-	var v i64 = p.val
+	var v i64 := p.val
 }

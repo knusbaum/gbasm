@@ -22,7 +22,7 @@ fn take(x owned Describer) {
 }
 
 fn main() {
-	var x owned myint = 5
+	var x owned myint := 5
 	take(&x)
 	take(&x)
 	string.puts("unreachable\n")

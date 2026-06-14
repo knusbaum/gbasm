@@ -6,7 +6,7 @@ type Foo struct {
 }
 
 fn mkfoo(var set i64) Foo {
-	var s Foo = Foo{x: 10, xp: nil}
+	var s Foo := Foo{x: 10, xp: nil}
 	if (set) {
 		s.xp = &s.x
 	}

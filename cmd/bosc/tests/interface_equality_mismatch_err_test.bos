@@ -15,8 +15,8 @@ type good i64 {
 }
 
 fn main() {
-	var left left_iface = good(1)
-	var right right_iface = good(1)
+	var left left_iface := good(1)
+	var right right_iface := good(1)
 	if (left == right) {
 	}
 }
