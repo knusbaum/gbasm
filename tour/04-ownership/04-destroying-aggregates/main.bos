@@ -1,0 +1,20 @@
+package main
+
+import "fmt"
+
+type conn struct {
+	id     i64
+	handle owned *mut i64
+}
+
+fn main() {
+	var c owned conn = conn{id: 7, handle: alloc(i64)}
+	*c.handle = 42
+	fmt.print("conn %d holds %d\n", c.id, *c.handle)
+
+	// Destruct: move the owned field out, free it, dispose the aggregate.
+	var handle owned *mut i64 = c.handle
+	free(handle)
+	dispose(c)
+	fmt.print("closed\n")
+}

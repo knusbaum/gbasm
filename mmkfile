@@ -28,6 +28,8 @@ bdoc { go build ./cmd/bdoc }
 bplayd { go build ./cmd/bplayd }
 ## Build the Boson playground sandbox runner
 bplay-runner { go build ./cmd/bplay-runner }
+## Build the Boson tour server
+btourd { go build ./cmd/btourd }
 
 [clean bld]  { rm -f bld }
 [clean bas]  { rm -f bas }
@@ -35,6 +37,7 @@ bplay-runner { go build ./cmd/bplay-runner }
 [clean bdoc] { rm -f bdoc }
 [clean bplayd] { rm -f bplayd }
 [clean bplay-runner] { rm -f bplay-runner }
+[clean btourd] { rm -f btourd }
 
 [clean all] :+ [clean cmd/bas] [clean cmd/bosc]
 
@@ -58,6 +61,11 @@ EOF
 }
 
 playground: bplayd bplay-runner playground-runtime
+
+## Build the tour server and its run sandbox. The tour reuses the
+## playground runtime bundle (identical runtime objects); there is no
+## separate tour bundle.
+tour: btourd bplay-runner playground-runtime
 
 test: go_test cmd/bas/test cmd/bosc/test
 

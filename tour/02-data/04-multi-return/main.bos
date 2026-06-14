@@ -1,0 +1,13 @@
+package main
+
+import "fmt"
+
+fn divmod(a i64, b i64) i64, i64 {
+	var q i64 = a / b
+	return q, a - q * b
+}
+
+fn main() {
+	var q, rem = divmod(17, 5)
+	fmt.print("17 / 5 = %d remainder %d\n", q, rem)
+}

@@ -1,0 +1,12 @@
+package main
+
+import "fmt"
+
+fn add(a i64, b i64) i64 {
+	return a + b
+}
+
+fn main() {
+	const sum i64 = add(2, 3)
+	fmt.print("2 + 3 = %d\n", sum)
+}

@@ -1,0 +1,14 @@
+package main
+
+import "fmt"
+
+fn take(x owned i64) {
+	dispose(x)
+}
+
+fn main() {
+	var y owned i64 = 10
+	var yptr *i64 = &y
+	take(y)
+	fmt.print("%d\n", *yptr)
+}

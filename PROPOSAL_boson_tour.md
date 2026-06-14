@@ -54,10 +54,11 @@ What is shared:
 
 - The compile/sandbox/run pipeline — `bosc`, `bas`, `bld`, the runtime
   cache, and the sandbox runner described in
-  [PROPOSAL_boson_playground.md](PROPOSAL_boson_playground.md). This
-  should live as a reusable Go library (`internal/bpipeline` or similar)
-  that both `bplayd` and `btourd` link against. Alternatively, the tour
-  service can shell out to its own instance of the playground backend
+  [PROPOSAL_boson_playground.md](PROPOSAL_boson_playground.md). This now
+  lives as a reusable Go library, `internal/bpipeline`, that both
+  `bplayd` and `btourd` link against. (`bplayd` was refactored onto it
+  with no behavior change; the runner protocol moved with it.) The tour
+  links the library directly rather than shelling out to a playground
   binary.
 - The diagnostic-parsing logic, the runtime allowlist, and the resource
   limit defaults.
@@ -116,6 +117,10 @@ output is easier to understand.
 
 ## Proposed lesson sequence
 
+The bundle available to tour programs exposes `builtin`, `io`, and `fmt`
+as importable packages; lessons use `fmt` for output (the old `string`
+helper package is not in the tour bundle).
+
 ### Basics
 
 1. Hello world and `package main`.
@@ -154,20 +159,24 @@ output is easier to understand.
 22. Methods on named types.
 23. Function-pointer types.
 24. Interfaces and static dispatch table generation.
-25. Cross-package imports at a conceptual level.
+25. Nullable interfaces (`?I`), type assertion, and interface-to-interface
+    widening.
+26. Interface borrow contracts (`from(...)`) — what a method promises about
+    pointers it returns.
+27. Cross-package imports at a conceptual level.
 
 ### Values Types
 
-26. Declaring `values` types.
-27. Cases and projection casts.
-28. Values comparisons.
-29. Values in interfaces or structs.
+28. Declaring `values` types.
+29. Cases and projection casts.
+30. Values comparisons.
+31. Values in interfaces or structs.
 
 ### Runtime Packages
 
-30. `string` output helpers.
-31. `io.FD` and typed file operations.
-32. `_heap` through the allocator interface, if exposed in user-facing form.
+32. `fmt` formatted output (`print`/`printf` and the format verbs).
+33. `io.FD` and typed file operations.
+34. `_heap` through the allocator interface, if exposed in user-facing form.
 
 ## UI
 
@@ -246,35 +255,49 @@ walkthrough.
 
 ## Implementation plan
 
-The tour depends on the playground proposal having extracted the
-compile/sandbox/run pipeline into a reusable library. That extraction is
-playground work; the tour starts once it exists.
+The tour depended on extracting the compile/sandbox/run pipeline into a
+reusable library. That extraction is **done**: the pipeline now lives in
+`internal/bpipeline`, and `bplayd` was refactored onto it with no behavior
+change. The remaining steps below are the rig itself, of which 1–5 are
+implemented:
 
-1. Define the lesson file format and add a tiny lesson loader.
-2. Build 8-10 initial lessons covering basics, data, pointers, and
-   ownership.
-3. Stand up `cmd/btourd` linking the shared pipeline library; serve the
-   lesson index and a single lesson run endpoint.
-4. Add the tour verifier to CI.
-5. Build the tour frontend (lesson navigation, prose, embedded editor and
-   output) using the same frontend tooling as the playground: npm + esbuild
-   + CodeMirror 6, no additional build-time tools introduced. The editor
-   component can be reused from the playground if it is extracted into a
-   shared module.
+1. **Done.** Lesson file format + loader in `internal/tour` (front matter,
+   `check.json` with `stdout` and inline `diagnostic` kinds). Content lives
+   at repo-root `tour/`, embedded via `go:embed` (`package tourcontent`).
+2. Build out the lesson sequence. Two sample lessons exist today
+   (`01-basics/01-hello`, `02-ownership/01-use-after-move`) to prove the
+   rig; the full curriculum is follow-up content work.
+3. **Done.** `cmd/btourd` links `internal/bpipeline` + `internal/tour` and
+   serves the index, per-lesson payload, and run endpoints.
+4. **Done.** A tour verifier rides `go test ./...` (the `tour` package
+   test compiles and runs every lesson through the pipeline and applies
+   its check; it skips cleanly when the toolchain/bundle are not built).
+5. **Done.** The tour frontend is hand-rolled vanilla JS served via
+   `go:embed` (`cmd/btourd/static/`), matching the playground — which is
+   itself vanilla JS, not npm/esbuild/CodeMirror. No frontend build step
+   is introduced. A richer editor (e.g. CodeMirror) would be a separate,
+   opt-in decision affecting both services.
 6. Expand lessons through interfaces, values types, and runtime packages.
-7. Add optional checks once plain stdout lessons are stable.
+7. Add richer checks once plain stdout/diagnostic lessons are stable.
 
 ## Open questions
 
-- Should compile-fail lessons appear inline in the main path, or in a
-  separate "diagnostics" section?
+Resolved:
+
+- **Compile-fail lessons appear inline in the main path.** A lesson sets
+  `check.json` kind `diagnostic` instead of supplying `expected.stdout`;
+  the check asserts the program fails to compile with a message containing
+  the listed substrings. Errors are taught where the concept lives.
+- **The shared pipeline lives in this repository** as `internal/bpipeline`,
+  alongside the toolchain it wraps. Splitting to a sibling repo is
+  premature while both `bplayd` and `btourd` ship from here.
+
+Still open:
+
 - Should the tour support multiple source files once Boson supports
   multi-package projects?
 - Should lessons pin to exact language versions after Boson has releases?
-- Should the shared pipeline live in this repository alongside the
-  toolchain, or move to a sibling repo if both `bplayd` and `btourd`
-  develop independent release cadences?
 - Should the tour frontend share an editor module with the playground
-  frontend, or stay independent so each can iterate on UI without
-  coordination?
+  frontend? Today each ships its own vanilla-JS frontend independently; a
+  shared module only pays off if a richer editor is adopted.
 

@@ -1,0 +1,10 @@
+package main
+
+import "fmt"
+
+fn main() {
+	const limit i64 = 10
+	var count = 0
+	count = count + limit
+	fmt.print("count = %d\n", count)
+}

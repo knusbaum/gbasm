@@ -1,0 +1,15 @@
+package main
+
+import "fmt"
+
+const base i64 = 100
+var counts i64[3] = [5, 10, 15]
+
+fn main() {
+	var total i64 = base
+	var i i64 = 0
+	for (i = 0; i < len(counts); i = i + 1) {
+		total = total + counts[i]
+	}
+	fmt.print("base = %d, total = %d\n", base, total)
+}

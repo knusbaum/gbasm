@@ -1,0 +1,10 @@
+package main
+
+import "fmt"
+
+fn main() {
+	const greeting byte[] = "Boson"
+	fmt.print("greeting = %s\n", &greeting)
+	fmt.print("length   = %d\n", len(greeting))
+	fmt.print("first byte = %c\n", greeting[0])
+}

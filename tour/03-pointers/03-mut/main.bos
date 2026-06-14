@@ -1,0 +1,14 @@
+package main
+
+import "fmt"
+
+fn bump(p *mut i64) {
+	*p = *p + 1
+}
+
+fn main() {
+	var x i64 = 10
+	bump(&x)
+	bump(&x)
+	fmt.print("x = %d\n", x)
+}

@@ -1,0 +1,9 @@
+package main
+
+import "fmt"
+
+fn main() {
+	const limit i64 = 5
+	limit = 6
+	fmt.print("%d\n", limit)
+}

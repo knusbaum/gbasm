@@ -1,0 +1,10 @@
+package main
+
+import "fmt"
+
+fn main() {
+	var handle owned i64 = 7
+	fmt.print("using handle %d\n", handle)
+	dispose(handle) // obligation satisfied; no runtime effect
+	fmt.print("released\n")
+}

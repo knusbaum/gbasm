@@ -1,0 +1,14 @@
+package main
+
+import "fmt"
+
+fn deref(p *i64) i64 {
+	return *p
+}
+
+fn main() {
+	var x i64 = 42
+	var p *i64 = &x
+	fmt.print("x via p = %d\n", deref(p))
+	fmt.print("*p      = %d\n", *p)
+}
