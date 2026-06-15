@@ -1,0 +1,8 @@
+package main
+type S8 struct { a i64 }
+fn main() i64 {
+	x := S8{a: 5}
+	y := S8{a: 5}
+	if (x == y) { return 1 }
+	return 0
+}

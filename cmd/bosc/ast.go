@@ -2941,11 +2941,43 @@ type Op2 struct {
 	Second AST
 }
 
+// aggregateKindName names t when it is an aggregate that `==`/`!=` must reject
+// — a struct, fixed array, or slice. Scalars and pointers return ("", false).
+// Equality of an aggregate is an author decision (the memberwise default would
+// silently become pointer-identity as fields evolve), so the operator is
+// rejected in favor of an explicit equality function.
+func aggregateKindName(c *Context, t ASTType) (string, bool) {
+	if t.Indirection > 0 || t.FuncSig != nil {
+		return "", false
+	}
+	if t.IsArray() {
+		return "array", true
+	}
+	if t.IsSlice() {
+		return "slice", true
+	}
+	if t.AnonFields != nil {
+		return "struct", true
+	}
+	if _, ok := structDeclForType(c, t); ok {
+		return "struct", true
+	}
+	return "", false
+}
+
 func (o *Op2) ASTType(c *Context) ASTType {
 	// TODO: this will be expanded as more types are added.
 	// For now, it's only num that can have operations.
 	switch o.Type {
 	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_booland, n_boolor:
+		if o.Type == n_deq || o.Type == n_neq {
+			if kind, bad := aggregateKindName(c, o.First.ASTType(c)); bad {
+				panic(&interpreterError{msg: fmt.Sprintf("%ss are not comparable with ==; write an explicit equality function", kind), p: o.Pos()})
+			}
+			if kind, bad := aggregateKindName(c, o.Second.ASTType(c)); bad {
+				panic(&interpreterError{msg: fmt.Sprintf("%ss are not comparable with ==; write an explicit equality function", kind), p: o.Pos()})
+			}
+		}
 		return boolASTType()
 	case n_add, n_sub, n_mul, n_div, n_bitand, n_bitor:
 		ft := o.First.ASTType(c)
