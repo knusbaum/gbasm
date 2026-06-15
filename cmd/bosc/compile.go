@@ -2577,7 +2577,14 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		v := compileTop(of, c, ast, dest)
 		return v
 	case *Index:
-		w := compileTop(of, c, ast.Val, nullspot)
+		// This is an lvalue index (`base[i]` as an assignment target / `&`
+		// operand), so the base is itself an lvalue — compile it as one to get
+		// its *address*. compileTop (rvalue) would COPY a memory-backed base
+		// like a struct's array field (`w.arr`) into a temp, and the index
+		// would then write into the throwaway copy instead of `w`. The Dot
+		// lvalue case above already addresses its base via compileLval; this
+		// keeps Index consistent.
+		w := compileLval(of, c, ast.Val, nullspot)
 		vt := ast.ASTType(c)
 		max := newSpot(of, c, c.Temp(), numASTType())
 		var addr spot

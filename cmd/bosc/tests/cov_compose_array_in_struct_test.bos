@@ -1,0 +1,11 @@
+package main
+import "fmt"
+type S8 struct { a i64 }
+type S16 struct { a i64
+ b i64 }
+type AStruct struct { arr S8[2] }
+fn main() {
+	var w := AStruct{}
+	w.arr[0].a = 5
+	w.arr[1].a = 7
+	fmt.print("%d\n%d\n", w.arr[0].a, w.arr[1].a)}
