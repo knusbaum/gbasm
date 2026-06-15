@@ -3899,9 +3899,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				fmt.Fprintf(of, "\tcall _init.index_oob\n")
 				fmt.Fprintf(of, "\tlabel %s\n", l)
 			}
-			if vt.Size(c) > 8 {
-				// Multi-word element (struct, slice, etc.): memcpy via a
-				// computed pointer.
+			if typeIsMemoryBacked(c, vt) {
+				// Memory-backed element (struct, array): its value lives at the
+				// element address, so compute &elem and memcpy it into dest.
+				// A scalar `mov dest [addr+off]` would load the element's first
+				// word and then treat it as the element — for a struct, later
+				// field access dereferences that word and faults. Must fire for
+				// all sizes, not just >8: an 8-byte struct element is exactly the
+				// case the old `Size > 8` gate missed.
 				elemAddrT := vt
 				elemAddrT.Indirection++
 				elemAddr := newSpot(of, c, c.Temp(), elemAddrT)
@@ -3947,12 +3952,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		fmt.Fprintf(of, "\tlabel %s\n", l)
 
 		scale := vt.Size(c)
-		switch scale {
-		case 1, 2, 4, 8:
-			// x86 base+index*scale addressing handles these directly.
+		if !typeIsMemoryBacked(c, vt) && (scale == 1 || scale == 2 || scale == 4 || scale == 8) {
+			// Scalar element with a hardware-addressable size: direct value
+			// load via x86 base+index*scale addressing.
 			fmt.Fprintf(of, "\tmov %s [%s+%s*%d]\n", dest.ref, base.ref, index.ref, scale)
-		default:
-			// Multi-word element: compute &elem and memcpy.
+		} else {
+			// Memory-backed element (struct, array), or an odd size: compute
+			// &elem and memcpy. A direct value load would load only the first
+			// word and mis-treat it as the element (faulting on later field
+			// access) — the same bug the constant-index path had above.
 			elemAddrT := vt
 			elemAddrT.Indirection++
 			elemAddr := newSpot(of, c, c.Temp(), elemAddrT)

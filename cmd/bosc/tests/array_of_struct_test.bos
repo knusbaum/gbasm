@@ -1,0 +1,45 @@
+package main
+
+import "string"
+
+// T is 8 bytes (the case the old index codegen mis-loaded as a value);
+// U is 16 bytes (the already-working >8 path) — both must index correctly.
+type T struct {
+	a i64
+}
+
+type U struct {
+	a i64
+	b i64
+}
+
+fn p(n i64) {
+	string.puti(n)
+	string.puts("\n")
+}
+
+fn main() {
+	var arr T[3]
+	arr[0].a = 5
+	arr[1].a = 7
+	arr[2].a = 9
+	p(arr[0].a) // 5
+	p(arr[2].a) // 9
+
+	// whole-element store must copy, not alias
+	var x := T{a: 10}
+	arr[0] = x
+	x.a = 20
+	p(arr[0].a) // 10
+
+	// variable index read
+	i := 1
+	p(arr[i].a) // 7
+
+	// >8 element
+	var big U[2]
+	big[1].a = 3
+	big[1].b = 4
+	p(big[1].a) // 3
+	p(big[1].b) // 4
+}
