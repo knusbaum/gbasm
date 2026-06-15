@@ -82,17 +82,28 @@ tests. The audit cadence bounds this; we accept it because the alternatives
 
 A check must be able to **fail** — "ran without crashing" is not an oracle.
 
-| Inv | Oracle shapes |
-|-----|---------------|
-| I1 | copy → **mutate source → read copy, assert OLD**; across channels {`:=`, `=` re-init, by-value arg, return, literal field, literal element, field→bind, elem→bind}; full-fidelity (read *every* member); copy-chain |
-| I2 | mutate-through-pointer (X sees it, a prior copy doesn't); two refs share; slice header-independence; `*mut` param mutates caller |
-| I3 | write-read-back; no-cross-contamination (adjacent slots keep their own); self-overlap (`x=f(x)`, `arr[i]=arr[j]`, `s.a=s.b`); **two access paths** (direct `s.arr[i]` + `p:=&s.arr[i]`, mutate one observe the other) |
-| I4 | zero-init; partial-literal zeroes the rest |
-| I5 | scalars/pointers: value-equal→true, differ→false; **aggregates: `==` must REJECT** (`_err`) |
-| I8 | `&mut x.f` writes through iff container mutable; immutable container → `&x.f` read-only (reject write); `*x.p` writes through a `*mut` field of an *immutable* container (per-level) |
-| I6 | `len`/window after copy/slice/pass/return |
-| I7 | cast round-trip; mixed-width **reject** |
-| I14 | bounds / nil → **trap** (exit-code oracle), not segfault |
+> **Cover both sides.** Every invariant has a *positive* side (the valid
+> behavior holds) and, wherever the invariant has an **enforced boundary**, a
+> *negative* side (a violation is **rejected** at compile time or **trapped** at
+> runtime, never silently wrong or crashing). Add negative tests for everything
+> where it makes sense — a positive-only corpus silently loses the enforcement
+> when a refactor drops it (e.g. ordering `<` on aggregates compiled silently
+> because only `==`/`!=` had a reject test). The negative side uses the **reject**
+> (`_err`) and **exit/trap** (`.exit`) oracle flavors; treat them as first-class,
+> not afterthoughts. The all-scalar/all-saturated regions (I9–I12) are already
+> covered this way — bring the value/type/flow invariants to the same standard.
+
+| Inv | Positive oracle | Negative oracle (reject / trap) |
+|-----|-----------------|---------------------------------|
+| I1 | copy → **mutate source → read copy, assert OLD**; channels {`:=`, `=`, arg, return, literal, field→bind, elem→bind}; full-fidelity; copy-chain | — (runtime property; no compile boundary) |
+| I2 | mutate-through-pointer; two refs share; slice header-independence; `*mut` param mutates caller | — |
+| I3 | write-read-back; no-cross-contamination; self-overlap; two access paths | — |
+| I4 | zero-init; partial-literal zeroes the rest | — |
+| I5 | scalars/pointers: value-equal→true, differ→false | **`==`/`!=` AND ordering `< > <= >=` on aggregates (struct/array/slice) → REJECT** (`_err`) |
+| I6 | `len`/window after copy/slice/pass/return | — |
+| I7 | cast round-trip | **mixed-width arithmetic → REJECT** (`_err`) |
+| I8 | `&mut x.f` writes through iff container mutable; `*x.p` writes through a `*mut` field of an *immutable* container (per-level) | **write through `*T` / immutable `&x.f` / `&arr[i]` → REJECT** (`_err`) |
+| I14 | — | **bounds / nil → TRAP** (`.exit` exit-code), not segfault |
 
 **S-THRESH** (the 8-byte boundary) is not a modifier but a check in its own
 right: the *same* op with the type grown `7→8→9→16→24`. It is the fault line;

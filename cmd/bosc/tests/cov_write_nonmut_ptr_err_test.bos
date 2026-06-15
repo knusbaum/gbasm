@@ -1,0 +1,9 @@
+package main
+import "fmt"
+type S struct { a i64 }
+fn w(p *i64) { *p = 9 }
+fn main() {
+	var n := 0
+	w(&n)
+	fmt.print("%d\n", n)
+}

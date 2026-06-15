@@ -1,0 +1,2 @@
+Compiling tests/cov_eq_array_err_test.bos
+Fatal: arrays are not comparable with ==; write an explicit equality function

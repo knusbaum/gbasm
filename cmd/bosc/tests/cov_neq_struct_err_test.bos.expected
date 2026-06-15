@@ -1,0 +1,2 @@
+Compiling tests/cov_neq_struct_err_test.bos
+Fatal: structs are not comparable with ==; write an explicit equality function

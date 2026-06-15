@@ -1,0 +1,2 @@
+Compiling tests/cov_eq_slice_err_test.bos
+Fatal: slices are not comparable with ==; write an explicit equality function

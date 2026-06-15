@@ -1,0 +1,11 @@
+package main
+import "fmt"
+type S struct { a i64 }
+
+fn main() {
+	var src S[2]
+	arr := src
+	p := &arr[0]
+	p.a = 9
+	fmt.print("%d\n", arr[0].a)
+}
