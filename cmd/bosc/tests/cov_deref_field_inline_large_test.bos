@@ -1,0 +1,13 @@
+package main
+import "fmt"
+type S1 struct { a byte }
+type S8 struct { a i64 }
+type S9 struct { a i64
+ b byte }
+type S16 struct { a i64
+ b i64 }
+
+fn main() {
+	var x := S16{a:7, b:1}
+	px := &x
+	fmt.print("%d\n", (*px).a)}

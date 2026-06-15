@@ -3763,8 +3763,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// [src]` would load only the first word and then mis-treat it as
 			// the struct (faulting on field access). Must fire for all sizes,
 			// not just >8: an 8-byte struct is exactly what the old `Size > 8`
-			// gate missed.
-			v.t.Indirection -= 1
+			// gate missed. Retype to the *clean* pointee type `t` (masks
+			// already shifted above), not `v.t` with one level dropped — the
+			// latter leaves stale pointer-level mut/nil bits, so an inline use
+			// like `(*px).a` fails the type postcondition ("S16 but produced
+			// S16").
+			v.t = t
 			return v
 		} else {
 			if dest.empty() {
