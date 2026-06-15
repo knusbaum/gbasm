@@ -2446,7 +2446,13 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, src.ref)
 		return
 	}
-	if src.t.Indirection == 0 && src.t.Size(c) > 8 {
+	if typeIsMemoryBacked(c, src.t) {
+		// Memory-backed values (structs, fixed arrays) live at an address;
+		// `dest`/`src` names ARE addresses. A scalar `mov dest src` would move
+		// the addresses, aliasing the two slots — so a write through one is
+		// visible through the other. Copy the bytes through. This must fire for
+		// *all* memory-backed sizes, not just >8: an 8-byte struct (e.g. a
+		// single-i64 field) is exactly the case the old `Size > 8` gate missed.
 		spot_memcpy(of, c, dest, src, src.t.Size(c))
 		return
 	}

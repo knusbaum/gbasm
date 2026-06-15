@@ -1,0 +1,31 @@
+package main
+
+import "string"
+
+// T is exactly 8 bytes (one i64 field) — the case the old `move` Size>8 gate
+// missed, emitting `mov y x` (address aliasing) instead of a byte copy.
+type T struct {
+	a i64
+}
+
+fn show(label byte[], v T) {
+	string.puts(label)
+	string.puti(v.a)
+	string.puts("\n")
+}
+
+fn main() {
+	var x := T{a: 10}
+	y := x   // value copy: y must be independent of x
+	x.a = 20 // mutating x must NOT change y
+
+	show("y=", y) // 10
+	show("x=", x) // 20
+
+	// the other direction, via a separate var
+	var p := T{a: 1}
+	q := p
+	p.a = 99
+	show("q=", q) // 1
+	show("p=", p) // 99
+}
