@@ -93,6 +93,29 @@ tests. The audit cadence bounds this; we accept it because the alternatives
 - **I14 Traps, not crashes** — out-of-bounds / nil deref trap with a defined exit,
   never segfault.
 
+### Safety / dispatch / access — added by the test audit (existing tests, no prior row)
+- **I15 Nullability** — a nullable pointer/interface is never dereferenced or
+  dispatched without a non-null proof; `if (p)` / `p?` narrow `*?T → *T`, the
+  else-branch narrows the complement, and an un-narrowed use is **rejected**.
+  *(tests: `nullable`/`nonnullable`/`not` ~22)*
+- **I16 Interface dispatch soundness** — a method call through an interface
+  dispatches to the concrete type's method; coercion to the fat pointer is
+  correct; an un-narrowed `?T` interface cannot be dispatched (**reject**); a
+  fallible cast yields `?T` and its result must be narrowed. *(tests:
+  `iface`/`interface`/`assert` ~66)*
+- **I17 Visibility** — a `private` declaration is not accessible from another
+  package (**reject**); `pub` is. *(tests: `private` ~6)*
+
+### Feature-area correctness — behavioral cells, not new invariants
+- **Variadics (`...any`)** — args are packed/unpacked with fidelity (an I3/I1
+  cell through the variadic-packing path). *(tests: `variadic` ~10)*
+- **Values types / static methods** — static dispatch resolves correctly; a
+  `values` block's cases behave. *(tests: `values`/`value`/`static` ~35)*
+- **Cross-package** — symbol resolution and cross-package struct layout are
+  consistent (an I3 cell across the package boundary / `StructShape`). *(tests:
+  `cross` ~9)*
+- *Out of scope:* `fmt` (~31) is stdlib formatting, not a language invariant.
+
 > Every memory-backed bug found so far is a violation of **I1** or **I3**.
 
 ## 3. Checks (falsifiable oracle per invariant)
@@ -121,6 +144,9 @@ A check must be able to **fail** — "ran without crashing" is not an oracle.
 | I7 | cast round-trip | **mixed-width arithmetic → REJECT** (`_err`) |
 | I8 | `&mut x.f` writes through iff container mutable; `*x.p` writes through a `*mut` field of an *immutable* container (per-level) | **write through `*T` / immutable `&x.f` / `&arr[i]` → REJECT** (`_err`) |
 | I14 | — | **bounds / nil → TRAP** (`.exit` exit-code), not segfault |
+| I15 | narrowed nullable derefs/dispatches; else-branch narrows complement | **un-narrowed `?T` deref/dispatch → REJECT** (`_err`) |
+| I16 | dispatch hits the concrete method; coercion correct; narrowed `?T` dispatches | **un-narrowed `?T` dispatch / bad assertion → REJECT** (`_err`) |
+| I17 | `pub` accessible cross-package | **`private` cross-package use → REJECT** (`_err`) |
 
 **S-THRESH** (the 8-byte boundary) is not a modifier but a check in its own
 right: the *same* op with the type grown `7→8→9→16→24`. It is the fault line;
@@ -138,23 +164,28 @@ tests) · **·** N/A.
 
 | Inv \ position | local binding | struct field | array/slice elem | nested (`a.b.c`, `a.f[i]`) | param (by-val) | return | global |
 |---|---|---|---|---|---|---|---|
-| I1 value-independence | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? |
-| I2 reference sharing | ✓ | ? | ✓ (slice backing) | ? | ✓ (`*mut` param) | ? | ? |
-| I3 storage fidelity | ✓ | ✓ | ✓ | ✓ (`#4` was here) | ✓ | ✓ | ? |
-| I4 init / zero | ✓ | ✓ (partial-lit) | ? | ? | · | · | ? |
+| I1 value-independence | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ○ (init only, no indep) |
+| I2 reference sharing | ✓ | ○ | ✓ (slice backing) | ○ | ✓ (`*mut` param) | ○ | ○ |
+| I3 storage fidelity | ✓ | ✓ | ✓ | ✓ (`#4` was here) | ✓ | ✓ | ✓ (`global_*`) |
+| I4 init / zero | ✓ | ✓ (partial-lit) | ○ | ○ | · | · | ✓ (`global_*_init`) |
 | I5 aggregate `==`/ordering reject | ✓ | · | · | · | · | · | · |
-| I6 aggregate shape (len) | ? | ? | ? | ? | ? | ? | ? |
-| I7 numeric / cast | ✓ (reject) | ? | ? | · | ? | ? | ? |
-| I8 mutability (per-level `&`) | ✓ | ✓ (`#7`) | ✓ (`#7`) | ? | ? | · | ? |
-| I9 move consumes | ✓ | ? (`owned_field_move_*`) | ○ | ○ | ✓ | ✓ | · |
-| I10 discharge exactly once | ✓ | ? | ○ | ○ | ✓ | ✓ | · |
+| I6 aggregate shape (len) | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| I7 numeric / cast | ✓ (reject) | ○ | ○ | · | ○ | ○ | ○ |
+| I8 mutability (per-level `&`) | ✓ | ✓ (`#7`) | ✓ (`#7`) | ○ | ○ | · | ○ |
+| I9 move consumes | ✓ | ✓ (`owned_field_move_*`) | ○ | ○ | ✓ | ✓ | · |
+| I10 discharge exactly once | ✓ | ✓ (`owned_field_*`) | ○ | ○ | ✓ | ✓ | · |
 | I11 no use-after-discharge | ✓ | **○ `#8` (value-borrow)** / ✓ (ptr-borrow) | ○ | ○ | ✓ | ✓ | · |
-| I12 no escape | ✓ (`retalias`) | ? | ? | ? | ✓ | ✓ | · |
-| I13 conservative merge | ? | ? | ? | ? | · | · | · |
-| I14 traps | ✓ (bounds/nil) | ? | ✓ (bounds) | ? | · | · | ? |
+| I12 no escape | ✓ (`retalias`) | ✓ (`slice_return_*_struct`) | ✓ (`slice_return_array`) | ✓ (`*_array_of_arrays`) | ✓ | ✓ | · |
+| I13 conservative merge | ✓ (`loop_flow`, owned branch) | ○ | ○ | ○ | · | · | · |
+| I14 traps | ✓ (bounds/nil) | ○ | ✓ (bounds) | ○ | · | · | ○ |
+| I15 nullability | ✓ (`nullable_*`) | ✓ (`*_pointer_struct`) | ○ | ○ | ✓ (param narrow) | ○ | ○ |
+| I16 iface dispatch | ✓ (`iface_from_*`) | ○ | · | · | ✓ (`iface_unknown_param`) | ○ | ○ |
+| I17 visibility | · | ✓ (`private_field_*`) | · | · | · | · | ✓ (cross-pkg) |
+| variadics | ✓ (`variadic_*`) | · | · | · | ✓ (param) | · | · |
+| values/static | ○ | ○ | · | · | ○ | ○ | ✓ (`values_*`) |
+| cross-package | · | ✓ (`pair`/`private_*`) | · | · | ✓ | ✓ | ○ |
 
-The **`?` cells are §6.5's audit job** (map existing tests → cells). The **`○`
-cells are the gaps to fill** — chiefly the **ownership × {field, element,
+The **`○` cells are the gaps to fill** — chiefly the **ownership × {field, element,
 nested}** column the binding-level corpus never reached. Newly-enumerated
 ownership×position cells to probe (`#8` is the first):
 - **I11 × owned-element value-borrow** — `b i64 := owned_arr[i]; dispose(owned_arr); read b` (sibling of `#8`).
