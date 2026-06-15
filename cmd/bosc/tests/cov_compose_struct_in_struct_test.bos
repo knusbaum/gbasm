@@ -1,0 +1,10 @@
+package main
+import "fmt"
+type S8 struct { a i64 }
+type S16 struct { a i64
+ b i64 }
+type Outer struct { inner S8 }
+fn main() {
+	var o := Outer{inner: S8{a:0}}
+	o.inner.a = 5
+	fmt.print("%d\n", o.inner.a)}

@@ -52,11 +52,13 @@ loaded instead of its *bytes*. The correct predicate is `typeIsMemoryBacked` /
 | 2 | struct ≤8 × array index (local) | segfault on field read | **FIXED** `30261d5` | Index rvalue |
 | 3 | struct ≤8 × **deref** (`*px`, `(*px).a`, `q := *px`) | **segfault** | OPEN | `compile.go` ~3756 (`*Deref` ≤8 "small object just copy" value-loads) |
 | 4 | **array nested in struct** (`s.arr[i].f`, any size) | **silent wrong value** (`0`) — every form: write+read, whole-elem store, struct-in-array-in-struct | OPEN | nested base-address for a struct's array field |
-| 5 | struct `==` | **silent wrong** — compares addresses, two equal structs → not-equal | OPEN | `==` on memory-backed operands |
-| 6 | struct >8 × inline deref-field (`(*px).a`) | internal type error "compiler produced S1" (rejects) | OPEN | `*Deref` >8 type propagation |
+| 5 | struct `==` | **silent wrong** — compares addresses, two equal structs → not-equal | OPEN — **DECIDED: reject** aggregate `==` at compile time (see [`COVERAGE_MATRIX.md`](COVERAGE_MATRIX.md) I5) | `==` on memory-backed operands |
+| 6 | struct >8 × inline deref-field (`(*px).a`) | internal type error (rejects) | OPEN | `*Deref` >8 type propagation |
+| 7 | `&value-field`/`&elem` of a *mutable* container (`&w.inner`, `&arr[i]`) | yields read-only `*T` (can't get a `*mut` view) | OPEN — **DECIDED: implement** per-level mutability (I8) | `Address.ASTType` projection branch ~2755 omits the mut-bit shift/set the named-`&x` path (~2710) does |
 
 Severity note: #4 and #5 are **silent wrong values** — the worst kind, no crash.
-#3 crashes. #6 rejects (loud).
+#3 crashes. #6 rejects (loud). #7 is an under-implementation (rejects valid
+code). #5 → reject; #7 → implement, both decided.
 
 Known *loud* limitations (explicit panics, not silent bugs — lower priority):
 - array copying through a deref: `panic("Array copying not implemented")` (~3750).

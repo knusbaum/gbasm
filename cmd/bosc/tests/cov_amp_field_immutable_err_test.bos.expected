@@ -1,0 +1,2 @@
+Compiling tests/cov_amp_field_immutable_err_test.bos
+Fatal: Cannot write field "a" through read-only pointer of type *S8; pointer must be *mut

@@ -1,0 +1,12 @@
+package main
+import "fmt"
+type S8 struct { a i64 }
+type O struct { inner S8 }
+type PS struct { x i64
+ y *mut i64 }
+fn main() {
+	var arr S8[2]
+	arr[0].a = 10
+	y := arr[0]
+	arr[0].a = 20
+	fmt.print("%d\n", y.a)}

@@ -1,0 +1,15 @@
+package main
+import "fmt"
+type S1 struct { a byte }
+type S8 struct { a i64 }
+type S16 struct { a i64
+ b i64 }
+type S24 struct { a i64
+ b i64
+ c i64 }
+fn main() {
+	var arr S8[3]
+	arr[0].a = 1
+	arr[1].a = 2
+	arr[2].a = 3
+	fmt.print("%d\n%d\n%d\n", arr[0].a, arr[1].a, arr[2].a)}

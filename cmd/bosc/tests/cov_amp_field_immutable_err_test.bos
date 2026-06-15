@@ -1,0 +1,10 @@
+package main
+import "fmt"
+type S8 struct { a i64 }
+type O struct { inner S8 }
+fn main() {
+	s := O{inner: S8{a: 0}}
+	p := &s.inner
+	p.a = 9
+	fmt.print("%d\n", s.inner.a)
+}

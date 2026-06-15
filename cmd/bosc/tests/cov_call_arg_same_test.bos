@@ -1,0 +1,9 @@
+package main
+import "fmt"
+type S8 struct { a i64 }
+type S16 struct { a i64
+ b i64 }
+fn add2(a S8, b S8) i64 { return a.a + b.a }
+fn main() {
+	x := S8{a:5}
+	fmt.print("%d\n", add2(x, x))}

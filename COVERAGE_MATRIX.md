@@ -42,15 +42,27 @@ tests. The audit cadence bounds this; we accept it because the alternatives
   distinct locations don't interfere. (No partial copies, wrong addressing, overlap.)
 - **I4 Default initialization** — unwritten storage reads as zero; a partial
   literal zeroes the remainder.
-- **I5 Equality** — `==`/`!=` mean value (in)equality, consistently — *or* are
-  rejected at compile time. (Decision owed; see §6.)
+- **I5 Equality** — `==`/`!=` are for scalars (value) and pointers (identity)
+  only; **aggregates (struct/array/slice) are rejected at compile time**.
+  *DECIDED.* Memberwise `==` silently changes meaning as fields evolve (add a
+  pointer field and it becomes identity-compare), and the change is invisible at
+  the use site — so equality of an aggregate must be an explicit author
+  decision (`fn eq(a, b) bool`), not an operator default. (Future ergonomics:
+  opt-in *derived* equality, Rust-style — not now.)
 - **I6 Aggregate shape** — length/window preserved through copy / slice / pass / return.
 
 ### Type system
 - **I7 No implicit numeric conversion** — mixed-width arithmetic/assignment
   rejected; casts behave (sign/zero extension). *[partly covered]*
-- **I8 Mutability** — no write through an immutable binding or non-`mut`
-  pointer/slice. *[covered]*
+- **I8 Mutability (per-level)** — no write through an immutable binding or
+  non-`mut` pointer/slice. Mutability is **per indirection level** (`MutMask`):
+  reaching a **value** field/element by projection needs the *container* writable
+  to yield a `*mut` view (`&mut x.f` iff `x` is mutable); reaching **through a
+  pointer** field (`*x.p`) is governed by the pointer's *own* pointee-mut bit,
+  independent of the container ("const pointer to mutable value"). `&` of a
+  projection must shift existing bits up (preserving inner pointer-muts) and set
+  the new outer bit from the value-path writability — **currently not implemented
+  for projections (#7); see §6.**
 
 ### Ownership / lifetime — already invariant-framed and SATURATED (`owned`/`retalias`)
 - **I9 Move consumes** · **I10 Discharge exactly once** · **I11 No
@@ -76,7 +88,8 @@ A check must be able to **fail** — "ran without crashing" is not an oracle.
 | I2 | mutate-through-pointer (X sees it, a prior copy doesn't); two refs share; slice header-independence; `*mut` param mutates caller |
 | I3 | write-read-back; no-cross-contamination (adjacent slots keep their own); self-overlap (`x=f(x)`, `arr[i]=arr[j]`, `s.a=s.b`); **two access paths** (direct `s.arr[i]` + `p:=&s.arr[i]`, mutate one observe the other) |
 | I4 | zero-init; partial-literal zeroes the rest |
-| I5 | value-equal distinct → true, differ-in-any-member → false (or **reject**) |
+| I5 | scalars/pointers: value-equal→true, differ→false; **aggregates: `==` must REJECT** (`_err`) |
+| I8 | `&mut x.f` writes through iff container mutable; immutable container → `&x.f` read-only (reject write); `*x.p` writes through a `*mut` field of an *immutable* container (per-level) |
 | I6 | `len`/window after copy/slice/pass/return |
 | I7 | cast round-trip; mixed-width **reject** |
 | I14 | bounds / nil → **trap** (exit-code oracle), not segfault |
@@ -107,6 +120,8 @@ audit watches.
 | CL-GLOBAL | static-init emitter | global struct + array init | `globals.go` | distinct emitter from locals |
 | CL-CALL | arg spill + param + return-by-value | pass & return a struct | call/return lowering | arg vs return; size |
 | **CL-COMPOSE** | **each nesting is its OWN class** | array-in-struct, struct-in-array, `a.b.c`, 2D, `p.f`… | composition of anchors | **never assume a composition is covered by its parts** (forked → bug 4) |
+| CL-ADDR | `&`-of-projection mutability (`&x.f`, `&arr[i]`) | `&value-field` of mutable vs immutable container; `&pointer-field` | `Address.ASTType` projection branch ~2755 (vs named ~2710) | value-field vs pointer-field; container mut (**under-implemented → #7**) |
+| CL-EQ | `==`/`!=` lowering | struct `==` (must reject) | comparison lowering / type check | aggregate vs scalar/pointer |
 
 Inner sweep per cell (parameters, not separate cells): type kind {struct,
 array-of-scalar, array-of-struct, slice-of-scalar, slice-of-struct}; **size
@@ -129,14 +144,24 @@ partial, zero}. Reuse one fixed type set (`S1b/S8/S9/S16/S24`) across all cells.
 
 ## 6. Status — known invariant violations
 
-| Inv | Cell | Symptom | Status |
-|-----|------|---------|--------|
-| I1 | CL-MEMVAL, struct ≤8 | copy aliases | **fixed** `450a36c` |
-| I3 | CL-ELEM-ARR, struct ≤8 (local) | segfault | **fixed** `30261d5` |
-| I1/I3 | CL-PTR, deref ≤8 struct | segfault | **open (#3)** |
-| I3 | CL-COMPOSE, array-in-struct | silent wrong value | **open (#4)** |
-| I5 | struct `==` | address-compare (silent wrong) | **open (#5)** — decide: field-wise vs reject |
-| — | CL-PTR, inline deref-field >8 | internal type error (rejects) | **open (#6)** |
+Every open issue has a **failing `cov_*` test driving it** (turns green on fix);
+fixed ones have a passing regression test.
+
+| Inv | Cell | Symptom | Status | Driving test(s) |
+|-----|------|---------|--------|-----------------|
+| I1 | CL-MEMVAL, struct ≤8 | copy aliases | **fixed** `450a36c` | `cov_value_indep_*` (green) |
+| I3 | CL-ELEM-ARR, struct ≤8 (local) | segfault | **fixed** `30261d5` | `cov_fidelity_array_elem` (green) |
+| I1/I3 | CL-PTR, deref ≤8 struct | segfault | **open #3** | `cov_ref_deref_{small,1byte}` |
+| I3 | CL-COMPOSE, array-in-struct (any size) | silent wrong value | **open #4** | `cov_{compose_array_in_struct,array_in_struct_16byte}` |
+| I5 | CL-EQ, struct `==` | address-compare | **open #5** — DECIDED: **reject** | `cov_equality_struct_err` |
+| — | CL-PTR, inline deref-field >8 | internal type error (rejects) | **open #6** | `cov_deref_field_inline_large` |
+| I8 | CL-ADDR, `&value-field`/`&elem` of mutable container | read-only (can't get `*mut` view) | **open #7** — DECIDED: **implement** (per-level §I8) | `cov_amp_{field,elem}_mut` |
+
+Decisions folded in: **#5 reject** (aggregate `==` is a compile error); **#7
+implement** the per-level projection mutability rule (shift inner bits, set outer
+from value-path writability), keeping the owned-slot gate. Guards already green:
+`cov_amp_field_immutable_err` (immutable container stays read-only),
+`cov_ptr_field_writethrough` (`*x.p` through an immutable container works).
 
 Known *loud* limitations (explicit panics, not silent): array copy through a
 deref (~3750); slicing element types >8 (~4033).
@@ -144,3 +169,8 @@ deref (~3750); slicing element types >8 (~4033).
 ## 7. Audit log
 - (initial) — model established; first audit = `AUDIT_memory_backed_values.md`
   (white-box proxy grep + invariant probes), surfacing the §6 violations.
+- (coverage built) — 33 `cov_*` tests realize the hot zone: 24 green value-tests
+  + 1 green `_err` guard (regression net for the sound core), 8 red driving the
+  5 open issues (#3:2, #4:2, #5:1, #6:1, #7:2). Folded in the #5 (reject) and #7
+  (implement, per-level mutability) decisions; added CL-ADDR and CL-EQ classes.
+  Coverage complete — ready to fix, each fix turning its driving test green.

@@ -1,0 +1,12 @@
+package main
+import "fmt"
+type S8 struct { a i64 }
+type S16 struct { a i64
+ b i64 }
+type C struct { v i64 }
+type B struct { c C }
+type A struct { b B }
+fn main() {
+	var a := A{}
+	a.b.c.v = 5
+	fmt.print("%d\n", a.b.c.v)}

@@ -117,7 +117,7 @@ A second `type Name <kind> { ... }` form, `type Name values { ... }`, declares a
 
 Arithmetic: `+`, `-`, `*`, `/`. Multiplication and division dispatch to signed (`imul`/`idiv`) or unsigned (`mul`/`div`) instructions based on the operand types.
 
-Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`. Signed and unsigned comparisons select the appropriate `setl`/`setb`/etc. variant.
+Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`. Equality (`==`/`!=`) applies to scalars (value equality) and pointers (identity); ordering (`<`, `>`, `<=`, `>=`) applies to scalars only. Signed and unsigned comparisons select the appropriate `setl`/`setb`/etc. variant. **Aggregates — structs, arrays, and slices — are not comparable with `==`/`!=`**; the compiler rejects it and directs you to write an explicit equality function. A memberwise `==` would silently change meaning as a struct's fields evolve — adding a pointer field turns value-equality into pointer-identity — and the change is invisible at the use site, so equality of an aggregate must be an explicit author decision, not an operator default.
 
 Logical: `&&`, `||`.
 
@@ -487,6 +487,16 @@ After a variable is moved into a consuming function, it is **invalid** for the r
 t owned transaction := create_transaction(...)
 commit_transaction(t)   // t moved — invalid
 abort_transaction(t)    // COMPILE ERROR: t already moved
+```
+
+Moving an owned value to a **new owner in the same scope** — `t2 owned transaction := t` — transfers the obligation to the new owner rather than discharging it. The source binding `t` is invalid afterward, but a borrow taken *before* the move stays valid: it now answers to the new owner and remains usable until that owner is itself consumed. (This holds for scalar values via both declaration and assignment, and for aggregates via declaration; re-binding an aggregate owner by *assignment* is a current limitation.)
+
+```
+t owned transaction := create_transaction(...)
+view i64 := t          // borrow: no obligation
+t2 owned transaction := t   // obligation transfers to t2; t invalid
+describe(view)         // ok — view answers to t2's live resource
+commit_transaction(t2) // discharges the obligation; view now invalid
 ```
 
 `var` bindings can be re-established after a move by assigning a new value:

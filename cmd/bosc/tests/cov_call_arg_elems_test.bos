@@ -1,0 +1,11 @@
+package main
+import "fmt"
+type S8 struct { a i64 }
+type S16 struct { a i64
+ b i64 }
+fn add2(a S8, b S8) i64 { return a.a + b.a }
+fn main() {
+	var arr S8[2]
+	arr[0].a = 5
+	arr[1].a = 6
+	fmt.print("%d\n", add2(arr[0], arr[1]))}

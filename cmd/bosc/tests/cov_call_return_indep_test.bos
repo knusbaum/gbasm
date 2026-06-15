@@ -1,0 +1,12 @@
+package main
+import "fmt"
+type S8 struct { a i64 }
+type S16 struct { a i64
+ b i64 }
+fn mkS16() S16 { return S16{a:5, b:6} }
+fn main() {
+	var x := mkS16()
+	fmt.print("%d\n%d\n", x.a, x.b)
+	y := x
+	x.a = 99
+	fmt.print("%d\n", y.a)}

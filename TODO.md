@@ -69,3 +69,17 @@ The tour never teaches `fn main(args byte[][])` (argv) or `fn main() i64`
 (exit code) — every lesson uses `fn main()`. Add a short lesson once
 slices and strings are introduced (Data section), then drop the
 forward-reference now sitting in the Functions lesson.
+
+---
+
+## Distribution / Packaging
+
+### Installable distribution for users
+There is no good way for a user to install Boson today. You build `bosc`/
+`bas`/`bld` from source with `mmk`, and the runtime is found ad hoc via
+`BOSONPATH`/the playground bundle. We want a real distribution: package the
+toolchain binaries plus the runtime packages (`_init`, `_heap`, string, fmt,
+io, …) into an installable artifact (tarball / OS package / installer) that
+drops the tools on `PATH` and lets the compiler find the runtime without
+manual `BOSONPATH` fiddling. Decide the runtime-discovery story (install prefix
+vs. embedded bundle) as part of it.

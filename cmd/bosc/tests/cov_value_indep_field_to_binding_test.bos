@@ -1,0 +1,11 @@
+package main
+import "fmt"
+type S8 struct { a i64 }
+type O struct { inner S8 }
+type PS struct { x i64
+ y *mut i64 }
+fn main() {
+	var o := O{inner: S8{a:10}}
+	y := o.inner
+	o.inner.a = 20
+	fmt.print("%d\n", y.a)}
