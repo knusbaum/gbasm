@@ -1,0 +1,2 @@
+Compiling tests/owned_struct_assign_rebind_err_test.bos
+Fatal: Reassigning an owned aggregate "slot" from another owned binding is not yet supported; move it at its declaration ("x := y") or assign a freshly-built value

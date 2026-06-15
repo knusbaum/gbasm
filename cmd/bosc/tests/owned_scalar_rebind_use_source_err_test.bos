@@ -1,0 +1,14 @@
+package main
+
+import "fmt"
+
+fn describe(i i64) {
+	fmt.print("v %d\n", i)
+}
+
+fn main() {
+	handle owned i64 := 10
+	handle2 owned i64 := handle // handle moved into handle2
+	describe(handle)            // error: handle was moved
+	dispose(handle2)
+}

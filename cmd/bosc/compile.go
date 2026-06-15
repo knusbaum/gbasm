@@ -26,6 +26,21 @@ func CompileErrorF(a AST, f string, args ...any) {
 	})
 }
 
+// errUnconsumedOwned reports an owned binding that leaves scope without being
+// consumed. The diagnostic points at the binding's own declaration (where the
+// obligation was created) rather than the enclosing function/block; `fallback`
+// supplies a position only when no declaration position was recorded.
+func errUnconsumedOwned(c *Context, fallback AST, name string) {
+	p := fallback.Pos()
+	if bp, ok := c.BindingPos(name); ok {
+		p = bp
+	}
+	panic(&interpreterError{
+		msg: fmt.Sprintf("Owned binding %q goes out of scope without being consumed; call dispose() or pass it to a consuming function", name),
+		p:   p,
+	})
+}
+
 // reportCoerceFailure picks the diagnostic for a non-OK coerceType result.
 // The closed-symbolic-set rejection has one fixed wording across every
 // coercion site; the generic Accepts-style mismatch keeps whatever
@@ -806,6 +821,33 @@ func checkAggregateNotAliasedWhileInconsistent(c *Context, name string, errNode 
 	}
 }
 
+// assertOwnerAdoptsLiveOrigin enforces the cross-cutting invariant behind the
+// owned-move machinery: an *owned* binding may never adopt an already-consumed
+// origin. An owner references a live resource by definition, so a legitimate
+// adopt always sees a live origin — the source was just transferred (kept
+// live), never consumed. A violation means a bind/assign site let its move-kind
+// decision (consume) and its origin-link decision (adopt the source) disagree,
+// leaving the new owner born stale. That is a compiler bug, not a user error,
+// so it panics rather than emitting a diagnostic.
+//
+// Only owned destinations are checked: a *borrow* (non-owned dest) may validly
+// adopt an origin that is consumed later — that is how use-after-consume is
+// detected — and at adopt time its source is still live anyway. Routing every
+// adopt through this one check makes coverage independent of how many bind/
+// assign branches exist: any miscoupled site exercised by any test trips here.
+func assertOwnerAdoptsLiveOrigin(c *Context, dst flow.Binding, src flow.PointerExpr) {
+	if !src.KnownOrigin {
+		return
+	}
+	declared, ok := c.DeclaredTypeForVar(string(dst))
+	if !ok || !declared.HasOwned() {
+		return
+	}
+	if valid, reason := c.PointerFlow().CheckDerefValidity(src); !valid {
+		panic(fmt.Sprintf("compiler invariant violated: owned binding %q adopts a non-live origin (%s); the move-kind and origin-link decisions at this bind/assign site disagree", string(dst), reason))
+	}
+}
+
 // checkedAssignPointer records dst as an alias of src in the pointer-flow
 // state, first rejecting the alias if src's origin/slot is an inconsistent
 // aggregate (one with a moved-out non-null owned field). Gating at the
@@ -824,7 +866,23 @@ func checkedAssignPointer(c *Context, dst flow.Binding, src flow.PointerExpr, er
 	if name != "" {
 		checkAggregateNotAliasedWhileInconsistent(c, name, errNode)
 	}
+	assertOwnerAdoptsLiveOrigin(c, dst, src)
 	c.PointerFlow().AssignPointer(dst, src)
+}
+
+// checkReadable rejects an rvalue read whose flow provenance is no longer live
+// — a use of a value whose underlying resource was consumed or freed. It is the
+// single definition of "readable": an expression may be read iff its
+// provenance (pointerExprForAST) passes CheckDerefValidity. The two rvalue-read
+// leaves — a bare Symbol read, and the pointer operand of a Deref — both route
+// through here. Address-of (`&x.f`) and interface-coercion sites also consult
+// CheckDerefValidity, but they are distinct operations with their own
+// diagnostics and are deliberately NOT folded in: merging them would conflate
+// reading, taking an address, and crossing a boundary.
+func checkReadable(c *Context, e AST) {
+	if ok, reason := c.PointerFlow().CheckDerefValidity(pointerExprForAST(c, e, "")); !ok {
+		CompileErrorF(e, "%s", reason)
+	}
 }
 
 // aggregateBindingName returns the binding name an escape-site expression
@@ -1383,7 +1441,21 @@ func (c *Context) markMutRelied(name string) {
 func (c *Context) recordUsedCandidate(name string, p position) {
 	if !isDiscard(name) {
 		c.usedCandidates[name] = p
+		c.bindingPos[name] = p
 	}
+}
+
+// BindingPos returns the declaration position of `name`, searching this scope
+// and its parents. The second result is false when no position was recorded
+// (e.g. a forward-declared top-level binding bound outside the normal decl
+// path); callers should fall back to a node position in that case.
+func (c *Context) BindingPos(name string) (position, bool) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		if p, ok := ctx.bindingPos[name]; ok {
+			return p, true
+		}
+	}
+	return position{}, false
 }
 
 // markUsed records that `name` was read, address-taken, passed, or
@@ -1898,7 +1970,9 @@ func updatePointerFlowForAssignment(c *Context, target AST, dst ASTType, val AST
 	// produces a value-alias whose origin gets invalidated on c.Move.
 	// When the source has no link (UnknownPointer), assigning still clears
 	// any stale link the destination held from a prior owned source.
-	c.PointerFlow().AssignPointer(flow.Binding(sym.Name), pointerExprForAST(c, val, sym.Name))
+	src := pointerExprForAST(c, val, sym.Name)
+	assertOwnerAdoptsLiveOrigin(c, flow.Binding(sym.Name), src)
+	c.PointerFlow().AssignPointer(flow.Binding(sym.Name), src)
 }
 
 func invalidateOwnedFieldFactsForMutableTarget(c *Context, target AST) {
@@ -1959,6 +2033,74 @@ func checkAddressOfOwnedForDest(c *Context, val AST, dst ASTType) {
 		return
 	}
 	CompileErrorF(a, "Cannot take mutable address of owned binding \"%s\"", name)
+}
+
+// ownedScalarRebindSource reports whether `val` initializes or assigns an owned
+// *scalar* destination by rebinding another owned scalar binding
+// (`h2 owned i64 := h`). Such a move is a transfer to a new same-scope owner:
+// the destination adopts the source's origin (kept live), so borrows of the
+// source stay valid until the new owner is itself consumed. It returns the
+// source Symbol so the caller can transfer rather than consume it.
+//
+// Memory-backed destinations (structs and >8-byte aggregates) are excluded —
+// they keep the conservative consume path, because re-parenting their
+// field-level origins on a by-value move is not yet handled.
+func ownedScalarRebindSource(c *Context, dstt ASTType, val AST) (*Symbol, bool) {
+	if !dstt.HasOwned() || c.ResolveUnderlying(dstt).Indirection != 0 || typeIsMemoryBacked(c, dstt) {
+		return nil, false
+	}
+	sym, ok := val.(*Symbol)
+	if !ok || c.IsGlobalBinding(sym.Name) {
+		return nil, false
+	}
+	declared, ok := c.DeclaredTypeForVar(sym.Name)
+	if !ok || !declared.HasOwned() || c.ResolveUnderlying(declared).Indirection != 0 {
+		return nil, false
+	}
+	return sym, true
+}
+
+// ownedAggregateRebindSource is the memory-backed counterpart of
+// ownedScalarRebindSource: an owned *aggregate* (struct/large value)
+// destination being moved another owned binding. The scalar form is supported
+// (transfer); the aggregate form is not yet, so the assignment path uses this
+// to reject the case with a directed message rather than mis-track the origin.
+func ownedAggregateRebindSource(c *Context, dstt ASTType, val AST) (*Symbol, bool) {
+	if !dstt.HasOwned() || c.ResolveUnderlying(dstt).Indirection != 0 || !typeIsMemoryBacked(c, dstt) {
+		return nil, false
+	}
+	sym, ok := val.(*Symbol)
+	if !ok || c.IsGlobalBinding(sym.Name) {
+		return nil, false
+	}
+	declared, ok := c.DeclaredTypeForVar(sym.Name)
+	if !ok || !declared.HasOwned() || c.ResolveUnderlying(declared).Indirection != 0 {
+		return nil, false
+	}
+	return sym, true
+}
+
+// moveOwnedSourceForLocalOwner performs the owned-source move at a site that
+// binds the value into a new same-scope owner (a `var`/`:=` initializer or an
+// assignment to an owned binding). An owned scalar rebound from another owned
+// scalar binding is a *transfer*: the source binding dies but its origin stays
+// live under the destination, which adopts it — so outstanding borrows of the
+// source remain valid until the destination is consumed. Every other shape
+// (pointers, structs, non-binding sources) delegates to markMovedIfOwnedSource,
+// which consumes value sources as before.
+//
+// The bool result reports whether a transfer (origin kept live) happened. The
+// decl-init caller uses it to decide whether the destination may safely adopt
+// the source's origin: it may only when the origin was actually transferred,
+// never when the source was consumed.
+func moveOwnedSourceForLocalOwner(of io.Writer, c *Context, dstt ASTType, val AST) bool {
+	if sym, ok := ownedScalarRebindSource(c, dstt, val); ok {
+		checkOwnedSourceAvailable(c, sym)
+		c.MoveTransfer(sym.Name)
+		return true
+	}
+	markMovedIfOwnedSource(of, c, dstt, val)
+	return false
 }
 
 func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST) {
@@ -2623,7 +2765,7 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 	compileTop(of, c, ast.Body, nullspot)
 	c.reportUnused() // parameters live in the function context, not the body block
 	for _, name := range c.UnconsumedOwned() {
-		CompileErrorF(ast, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
+		errUnconsumedOwned(c, ast, name)
 	}
 	if ast.Name == "main" {
 		note(of, "\n\t// default return 0 from main\n")
@@ -3013,7 +3155,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				move(of, c, s, val)
 				val.free(of)
 			}
-			markMovedIfOwnedSource(of, c, dstt, ast.Init)
+			didTransfer := moveOwnedSourceForLocalOwner(of, c, dstt, ast.Init)
 			updateNullFactForAssignment(c, VarFlowPath(ast.Name), dstt, ast.Init, srct)
 			// Type-aliased pointers (`type myptr *T`) have Indirection==0 on the
 			// ASTType for their name; resolve through the alias so they get the
@@ -3027,10 +3169,23 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// Record the source's flow link on the destination. For pointer-
 			// typed bindings this is the *p alias relationship; for value-typed
 			// non-owned destinations coerced from an owned source it is the
-			// value-alias relationship. Either way, c.Move on the linked
-			// Origin invalidates this binding's reads via CheckDerefValidity.
+			// value-alias relationship. For an owned *scalar* destination
+			// rebound from another owned scalar (`t2 owned T := t1`),
+			// moveOwnedSourceForLocalOwner transferred the source (kept its
+			// origin live), so t2 may adopt it — and any borrow of t1 reads
+			// through the same live origin until t2 is consumed.
+			//
+			// An owned value/struct destination whose source was *consumed*
+			// (didTransfer == false) must NOT adopt the source's origin: that
+			// origin is now dead, and re-aliasing onto it would leave the new
+			// owner permanently stale. Skip the re-link there and keep the
+			// fresh self-origin assigned at decl above. Gating on didTransfer
+			// (rather than a separate type predicate) keeps this in lockstep
+			// with the move decision, so a consumed source can never be
+			// adopted regardless of its shape.
+			ownedValueDestNoTransfer := ast.Type.HasOwned() && c.ResolveUnderlying(ast.Type).Indirection == 0 && !didTransfer
 			pexpr := pointerExprForAST(c, ast.Init, ast.Name)
-			if pexpr.KnownOrigin || pexpr.KnownSlot {
+			if !ownedValueDestNoTransfer && (pexpr.KnownOrigin || pexpr.KnownSlot) {
 				checkedAssignPointer(c, flow.Binding(ast.Name), pexpr, a)
 			}
 			// Propagate field pointer facts on struct copy.
@@ -3294,7 +3449,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if fallsThrough(ast) {
 			// Scope-exit: every owned binding declared in this block must be consumed.
 			for _, name := range sc.UnconsumedOwned() {
-				CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
+				errUnconsumedOwned(sc, a, name)
 			}
 		}
 		sc.reportUnused()
@@ -3550,12 +3705,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		return dest
 	case *Deref:
-		{
-			ptr := pointerExprForAST(c, ast.Val, "")
-			if ok, reason := c.PointerFlow().CheckDerefValidity(ptr); !ok {
-				CompileErrorF(a, "%s", reason)
-			}
-		}
+		checkReadable(c, ast.Val)
 		v := compileTop(of, c, ast.Val, nullspot)
 		t := v.t
 		if t.Indirection == 0 {
@@ -3943,6 +4093,17 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				// storage; once those aliases are themselves consumed
 				// the re-init is allowed.
 				CompileErrorF(a, "Cannot re-initialize \"%s\": a live owned pointer still references its storage", targetSym.Name)
+			} else if _, isRebind := ownedAggregateRebindSource(c, dstt, ast.Val); isRebind {
+				// Re-initializing an owned *aggregate* binding by moving
+				// another owned binding into it is not yet supported. The
+				// scalar case transfers the source's (live) origin so borrows
+				// of the resource survive; doing the same for an aggregate
+				// needs a distinct origin identity for the re-inited binding
+				// so a stale borrow of its prior value is not revived — a
+				// flow-model change the value path does not yet make. Moving
+				// at declaration (`x := y`) is supported; reject here rather
+				// than mis-track.
+				CompileErrorF(a, "Reassigning an owned aggregate \"%s\" from another owned binding is not yet supported; move it at its declaration (\"x := y\") or assign a freshly-built value", targetSym.Name)
 			}
 		}
 		// Deref-target obligation check: when overwriting *p and the
@@ -4131,7 +4292,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				move(of, c, lv, val)
 				val.free(of)
 			}
-			markMovedIfOwnedSource(of, c, dstt, ast.Val)
+			moveOwnedSourceForLocalOwner(of, c, dstt, ast.Val)
 			if targetIsSymbol && dstt.HasOwned() {
 				c.Unmove(targetSym.Name)
 			}
@@ -4158,7 +4319,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		//fmt.Fprintf(of, "\tmov [%s] %s\n", lv.ref, val.ref)
 		lv.free(of)
 		val.free(of)
-		markMovedIfOwnedSource(of, c, dstt, ast.Val)
+		moveOwnedSourceForLocalOwner(of, c, dstt, ast.Val)
 		if targetIsSymbol && dstt.HasOwned() {
 			c.Unmove(targetSym.Name)
 		}
@@ -4378,7 +4539,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				CompileErrorF(a, "bare return in non-void function (return type is %s)", retType)
 			}
 			for _, name := range c.UnconsumedOwnedVisible() {
-				CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
+				errUnconsumedOwned(c, a, name)
 			}
 			c.Return(of)
 			return nullspot
@@ -4518,7 +4679,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				markMovedIfOwnedSource(of, c, retType, ast.Val)
 			}
 			for _, name := range c.UnconsumedOwnedVisible() {
-				CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
+				errUnconsumedOwned(c, a, name)
 			}
 			c.Return(of)
 			return nullspot
@@ -4532,7 +4693,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				markMovedIfOwnedSource(of, c, retType, ast.Val)
 			}
 			for _, name := range c.UnconsumedOwnedVisible() {
-				CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
+				errUnconsumedOwned(c, a, name)
 			}
 			c.Return(of)
 			return nullspot
@@ -4580,7 +4741,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			markMovedIfOwnedSource(of, c, retType, ast.Val)
 		}
 		for _, name := range c.UnconsumedOwnedVisible() {
-			CompileErrorF(a, "Owned binding \"%s\" goes out of scope without being consumed; call dispose() or pass it to a consuming function", name)
+			errUnconsumedOwned(c, a, name)
 		}
 		c.Return(of)
 
@@ -4635,9 +4796,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// method boundary opaquely (interface dispatch, fn args, method
 		// receiver) — there is no other place the local tracker can flag
 		// the staleness before the link is lost to the callee's scope.
-		if ok, reason := c.PointerFlow().CheckDerefValidity(c.PointerFlow().Pointer(flow.Binding(ast.Name))); !ok {
-			CompileErrorF(a, "%s", reason)
-		}
+		checkReadable(c, a)
 		s := spot{ref: ast.Name, t: ast.ASTType(c), nameIsAddress: c.NameIsAddress(ast.Name)}
 		if dest.same(&nullspot) {
 			return s

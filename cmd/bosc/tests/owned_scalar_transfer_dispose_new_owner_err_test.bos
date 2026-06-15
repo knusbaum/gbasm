@@ -1,0 +1,11 @@
+package main
+
+import "fmt"
+
+fn main() {
+	handle owned i64 := 10
+	handle2 owned i64 := handle // transfer; handle2 owns the resource
+	c i64 := handle2            // borrow the new owner
+	dispose(handle2)            // resource gone
+	fmt.print("%d\n", c)        // error: c views a disposed resource
+}

@@ -1,0 +1,2 @@
+Compiling tests/owned_scalar_assign_live_overwrite_err_test.bos
+Fatal: Cannot assign to owned binding "slot" before consuming its current value

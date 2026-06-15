@@ -1,0 +1,14 @@
+package main
+
+import "fmt"
+
+fn describe(i i64) {
+	fmt.print("v %d\n", i)
+}
+
+fn main() {
+	handle owned i64 := 10
+	b i64 := handle
+	dispose(handle) // resource gone
+	describe(b)     // error: b views a disposed resource
+}

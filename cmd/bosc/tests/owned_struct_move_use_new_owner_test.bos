@@ -1,0 +1,20 @@
+package main
+
+import "fmt"
+
+type box struct {
+	x owned i64
+	y i64
+}
+
+fn show(b box) {
+	fmt.print("box %d %d\n", b.x, b.y)
+}
+
+fn main() {
+	b1 owned box := box{ x: 7, y: 8 }
+	// Variable-to-variable owned struct move: b2 is the new owner.
+	b2 owned box := b1
+	show(b2)
+	dispose(b2)
+}

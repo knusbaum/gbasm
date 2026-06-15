@@ -1,0 +1,2 @@
+Compiling tests/owned_scalar_rebind_use_source_err_test.bos
+Fatal: Use of "handle" after it was moved

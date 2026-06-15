@@ -1,0 +1,19 @@
+package main
+
+import "fmt"
+
+fn describe(i i64) {
+	fmt.print("v %d\n", i)
+}
+
+fn main() {
+	var slot owned i64 := 5
+	dispose(slot) // slot's first obligation discharged; slot may be re-initialized
+
+	handle owned i64 := 10
+	b i64 := handle
+	slot = handle // re-init slot by transferring handle into it
+	describe(b)    // borrow still valid
+	describe(slot) // new owner readable (this path was previously broken)
+	dispose(slot)
+}

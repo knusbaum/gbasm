@@ -79,6 +79,12 @@ type Context struct {
 	// at scope exit is dead. The discard `_` is never a candidate.
 	usedCandidates map[string]position
 	used           map[string]bool
+	// bindingPos records the source position of every binding's declaration
+	// (locals and parameters), keyed by name in its defining scope. Populated
+	// alongside usedCandidates at each decl. Used to point diagnostics — e.g.
+	// the unconsumed-owned error — at the declaration rather than the
+	// enclosing function/block.
+	bindingPos map[string]position
 	// maps struct names to their declarations.
 	structs map[string]*StructDecl
 	// maps function names to their declarations.
@@ -165,6 +171,7 @@ func NewContext() *Context {
 		mutRelied:       make(map[string]bool),
 		usedCandidates:  make(map[string]position),
 		used:            make(map[string]bool),
+		bindingPos:      make(map[string]position),
 		structs:         make(map[string]*StructDecl),
 		funcs:           make(map[string]*FuncDecl),
 		imports:         make(map[string]map[string]*FuncDecl),

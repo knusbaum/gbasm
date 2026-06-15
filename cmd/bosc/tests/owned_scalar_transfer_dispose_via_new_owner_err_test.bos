@@ -1,0 +1,11 @@
+package main
+
+import "fmt"
+
+fn main() {
+	handle owned i64 := 10
+	b i64 := handle             // borrow the resource via the source
+	handle2 owned i64 := handle // transfer ownership to handle2
+	dispose(handle2)            // the shared resource is freed through the new owner
+	fmt.print("%d\n", b)        // error: b views the now-freed resource
+}

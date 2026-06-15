@@ -307,7 +307,19 @@ func (c *Context) MoveConsume(name string) {
 				pf.InvalidateOrigin(ptrExpr.Origin, flow.TargetDead)
 			}
 		} else {
-			pf.InvalidateOrigin(flow.Origin(name), flow.TargetMoved)
+			// Invalidate the binding's *linked* origin, not Origin(name).
+			// Normally they coincide (a value binding's NewLocalOrigin is
+			// keyed by its own name), but after an owned-scalar transfer the
+			// new owner's binding name differs from the shared origin it
+			// adopted. Consuming this binding must invalidate that shared
+			// origin so borrows of the transferred resource go stale — the
+			// same rule the pointer branch above already uses.
+			ptrExpr := pf.Pointer(flow.Binding(name))
+			if ptrExpr.KnownOrigin {
+				pf.InvalidateOrigin(ptrExpr.Origin, flow.TargetMoved)
+			} else {
+				pf.InvalidateOrigin(flow.Origin(name), flow.TargetMoved)
+			}
 		}
 		return
 	}

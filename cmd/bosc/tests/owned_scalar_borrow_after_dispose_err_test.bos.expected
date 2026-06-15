@@ -1,0 +1,2 @@
+Compiling tests/owned_scalar_borrow_after_dispose_err_test.bos
+Fatal: cannot dereference pointer to "handle": the target was consumed

@@ -1,0 +1,17 @@
+package main
+
+import "fmt"
+
+type T struct {
+	a i64
+}
+
+fn main() {
+	var slot owned T := T{a: 1}
+	dispose(slot)
+
+	s owned T := T{a: 2}
+	slot = s // not yet supported: owned-aggregate reassignment from a binding
+	fmt.print("%d\n", slot.a)
+	dispose(slot)
+}

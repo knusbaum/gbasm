@@ -1,0 +1,20 @@
+package main
+
+import "fmt"
+
+fn describe(i i64) {
+	fmt.print("v %d\n", i)
+}
+
+fn main() {
+	handle owned i64 := 10
+	// borrow into a non-owned binding
+	b i64 := handle
+	// move ownership to a new same-scope owner
+	handle2 owned i64 := handle
+	// the borrow is still valid (resource lives on under handle2)...
+	describe(b)
+	// ...and so is the new owner
+	describe(handle2)
+	dispose(handle2)
+}

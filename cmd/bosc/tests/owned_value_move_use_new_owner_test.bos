@@ -1,0 +1,23 @@
+package main
+
+import "fmt"
+
+// commit consumes an owned ticket id.
+fn commit(id owned i64) {
+	fmt.print("commit %d\n", id)
+	dispose(id)
+}
+
+// describe borrows the id (non-owning i64 param): the caller keeps ownership.
+fn describe(id i64) {
+	fmt.print("describe %d\n", id)
+}
+
+fn main() {
+	ticket owned i64 := 1001
+	// Move ownership to a new owner. ticket is now consumed; ticket2 owns it.
+	ticket2 owned i64 := ticket
+	// The new owner is fully usable: borrow it, then consume it.
+	describe(ticket2)
+	commit(ticket2)
+}

@@ -1,0 +1,8 @@
+package main
+
+fn main() {
+	var slot owned i64 := 5
+	handle owned i64 := 10
+	slot = handle // error: slot's current obligation is still live
+	dispose(slot)
+}
