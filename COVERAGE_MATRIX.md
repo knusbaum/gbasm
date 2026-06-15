@@ -192,3 +192,10 @@ deref (~3750); slicing element types >8 (~4033).
   follow-on (Address codegen spot type must match Address.ASTType) the full-suite
   gate caught after the cov set was already green — confirming the gate "red cell
   green AND full suite green," not just the cov cell.
+- (negatives) — added the negative side (reject/trap oracles) of the enforced
+  invariants: aggregate `==`/`!=` (array, slice, struct) and I8 write-through-
+  non-mut / `&`-immutable rejects (all enforcement already held). Negative
+  probing surfaced one **missing enforcement** — relational `< > <= >=` on
+  aggregates compiled silently (#5 covered only `==`/`!=`) — fixed in `9ed6644`.
+  `cov_*` now **39/39**, full bosc suite **596 PASS**. Lesson banked in §3: cover
+  both sides; a positive-only corpus hides dropped enforcement.
