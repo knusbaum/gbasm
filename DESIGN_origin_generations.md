@@ -1,10 +1,15 @@
 # Design note — Origin generations
 
-Status: planned, not started. Prereq context: the owned-scalar transfer work
-(borrows survive a same-scope rebind) and the `assertOwnerAdoptsLiveOrigin` /
-`checkReadable` consolidations are already in. This note plans the follow-on
-that lets owned **aggregate** re-init work and closes the whole "revived
-borrow" class structurally.
+Status: planned, not started. **Reviewed** — see §10 for the decisions that
+came out of review (notably: choose **(G)**, *not* eager creation). A blocking
+prerequisite surfaced while investigating: a separate **struct value-copy
+aliasing bug** (`y := x` for a memory-backed struct shares storage instead of
+copying) is being fixed first; generations resume after.
+
+Prereq context: the owned-scalar transfer work (borrows survive a same-scope
+rebind) and the `assertOwnerAdoptsLiveOrigin` / `checkReadable` consolidations
+are already in. This note plans the follow-on that lets owned **aggregate**
+re-init work and closes the whole "revived borrow" class structurally.
 
 ## 1. Problem
 
@@ -82,7 +87,7 @@ The split has a useful asymmetry:
 > orphans every borrow chain through that binding (the `&x` fallback comment at
 > `compile.go:1670` already documents exactly this trap).
 
-### 4.1 Eager origin creation removes get-or-create entirely (recommended)
+### 4.1 Decision: keep lazy creation, *name* the get-or-create — option (G)
 
 Only **owned** value locals get an origin at declaration (`compile.go` ~3092,
 gated `else if ast.Type.HasOwned()`); pointer bindings get `DeclarePointer`;
@@ -90,34 +95,48 @@ gated `else if ast.Type.HasOwned()`); pointer bindings get `DeclarePointer`;
 a pointer into it is formed — `&x` (`1670`) or `&arr[i]` (`1708`) — where
 `pointerExprForAST` does get-or-create (`return existing link, else
 NewLocalOrigin(name)`). That lazy create is the *only* reason `pointerExprForAST`
-ever mints, and it is the hazardous middle case.
+ever mints.
 
-**Recommendation: mint a self-origin for every value local at its declaration**
-(drop the `HasOwned` gate at ~3092 — give plain locals an `OriginLocal` too).
-Then by the time `&x` / `&arr[i]` runs the link always exists, the create
-branches (`1670`, `1708`) are **dead**, and `pointerExprForAST` only ever
-*gets*. This yields the total invariant we want: every binding's current origin
-is `Pointer(binding).Origin`, always present — no "not yet created" state to
-reason about, and the most dangerous sites are deleted rather than merely
-documented.
+Two ways to defuse the get-or-create hazard were considered:
+- **(E) eager creation** — give every value local a self-origin at declaration
+  (drop the `HasOwned` gate at ~3092), so `&x` always *gets* and the create
+  branches go dead. Yields a clean total invariant.
+- **(G) name the operation** — leave creation lazy; route the `&x` fallbacks
+  through a named `originForRead` (get-or-create-*once*, idempotent — never a
+  fresh generation) so it can't be mistaken for a fresh mint. No change to
+  *when* origins are created.
 
-The other two `New*` calls in `pointerExprForAST` are *not* get-or-create and
-stay as mints: `1675` mints an anonymous `&literal` storage, `1831` mints a
-synthesized escape-restricted origin for a derived alias. Both are genuinely-new
-identities.
+**Decision: (G).** Reasons (from review + investigation):
+1. Get-or-create exists *only* for non-owned value locals, whose origins are
+   pure **escape-tracking** artifacts — no consume/dispose/revival semantics.
+   It is **orthogonal** to what generations fixes (owned re-init revival). Eager
+   creation deletes it as a side effect of an unrelated escape-land change.
+2. Eager creation perturbs the flow facts of every non-owned local. The decl
+   re-link at `compile.go:3188` (`!ownedValueDestNoTransfer && pexpr.KnownOrigin`)
+   already fires for `var y = x` whenever `x` has an origin — so giving all
+   locals origins makes it fire universally. Empirically this is **inert for
+   scalars and structs** at the borrow-check level (no rejection/escape change),
+   but it engages aggregate origin-presence machinery (field-pointer
+   propagation, slice-escape, the inconsistent-aggregate gate in
+   `checkedAssignPointer`) — exactly the region generations already touches, for
+   **zero benefit** to the revival fix.
+3. (G) is behavior-preserving *by construction*; (E) is only verifiable by
+   running the suite.
 
-Cost / audit for eager creation:
-- A few inert origins (locals never addressed) — negligible per-function.
-- **One audit**: search for branches that treat origin **absence**
-  (`!KnownOrigin`) as a signal ("plain untracked local, skip"). Eager-minting
-  makes value-local origins always present; anything that relied on absence to
-  mean "untracked" changes. This is a grep over `KnownOrigin` guards, not a
-  per-site judgment. (An always-present `OriginLocal` that no pointer escapes is
-  inert, so a clean audit means eager creation is behavior-preserving.)
+(E) is not wrong — if the total-invariant elegance is ever wanted, it is its own
+change with its own suite run, not riding in on the ownership fix.
 
-Do eager creation as its **own green step before** the struct change: it removes
-get-or-create so the generations work is left with only unambiguous *get* and
-*mint*.
+The other two `New*` calls in `pointerExprForAST` (`1675` anonymous `&literal`
+storage, `1831` synthesized derived alias) are genuine mints, unaffected by (G).
+
+Note on the over-link (`var y i64 = x` linking `y` to `x`'s origin): this is
+imprecise but **sound and load-bearing**. It cannot be gated on "source is
+owned": the transitive chain `fd owned; b i64 := fd; t i64 := b` requires the
+re-link to fire even though `b`'s type is non-owned, because `b` carries `fd`'s
+origin — consuming `fd` must still invalidate `t`. Origins don't record
+ownership; soundness rides on "is this origin consumed," and non-owned origins
+are never consumed, so over-linking to them is inert. Leave it; a code comment
+at `3188`/`1670` is the right amount.
 
 ## 5. Site audit (the actual work)
 
@@ -136,9 +155,9 @@ These are the sites the type change flags automatically.
   binding's current link origin instead (a re-inited binding's live gen must be
   the one that dies at scope exit).
 - `checker.go:321` — the `MoveConsume` fallback `InvalidateOrigin(flow.Origin(name))`
-  (when the binding has no `KnownOrigin` link). With eager creation (§4.1) an
-  owned binding always has a link, so this fallback becomes dead — make it a
-  no-op or an assert and confirm nothing reaches it.
+  (when the binding has no `KnownOrigin` link). An owned binding always has a
+  link, so this fallback should be unreachable for owned consumes — keep it but
+  route it through `currentOriginOf`, or assert and confirm nothing reaches it.
 - `compile.go:1848` — `merged.Origin == ap.Origin` compares two origin *values*;
   **unaffected** (still a valid identity comparison once Origin is a struct).
 
@@ -157,16 +176,19 @@ These are the sites the type change flags automatically.
 minted for), which is exactly what every name-keyed lookup above intends.
 
 ### 5c. `New*Origin` call sites (the *mint* side — hand-classify)
-The type change does **not** flag these. After eager creation (§4.1) the
-get-or-create cases (`1670`, `1708`) are gone, leaving only genuine mints, so
-this list should reduce to:
-- declaration / re-init self-origins (`compile.go:3092`, `3280`, `3379`) — mint.
-- `NewBorrowedOrigin` for params (`1091`, `2724`, `2732`) — mint (once per param).
-- `NewAllocatedOrigin` for `alloc()` (`1737`) — mint.
-- `1675` (`&literal` storage), `1831` (synthesized derived alias) — mint.
-The four `New*` minters (flow/state.go ~468–525) draw a fresh `Gen`; each call
-above is once-per-lifetime, so a fresh gen is correct. **Verify** no remaining
-call is reached more than once for the same intended identity.
+The type change does **not** flag these; classify each of the ~11 calls:
+- declaration / re-init self-origins (`compile.go:3092`, `3280`, `3379`) — **mint**.
+- `NewBorrowedOrigin` for params (`1091`, `2724`, `2732`) — **mint** (once per param).
+- `NewAllocatedOrigin` for `alloc()` (`1737`) — **mint**.
+- `1675` (`&literal` storage), `1831` (synthesized derived alias) — **mint**.
+- the `&x`/`&arr[i]` fallbacks (`1670`, `1708`) — **get-or-create**. Under (G)
+  these route through a named `originForRead` (create-once, *not* a fresh gen),
+  so they never mint a new generation. This is the hazard the naming defuses.
+
+The four `New*` minters (flow/state.go ~468–525) draw a fresh `Gen` when used as
+a *mint*; `originForRead` mints only if the binding has no origin yet (its first
+and only one). **Verify** no *mint* call is reached more than once for the same
+intended identity.
 
 ## 6. Merge
 
@@ -187,25 +209,28 @@ post-join read is sound.
 - Delete `ownedAggregateRebindSource` and the directed rejection; owned
   aggregate assignment-rebind (`s = k`) works via a fresh identity, no revival.
 - Re-init becomes uniform across {scalar, aggregate} × {`:=`, `=`}.
-- `pointerExprForAST` only ever *gets* — no minting in a provenance query.
 - `assertOwnerAdoptsLiveOrigin` and `checkReadable` are unchanged and still
   valid (they assert/consult identity liveness, which generations only make more
   precise).
 
 ## 8. Migration (each step ends green)
 
-1. **Eager origin creation.** Drop the `HasOwned` gate so every value local gets
-   a self-origin at declaration. Audit `!KnownOrigin`-as-untracked branches.
-   Behavior-preserving; removes the get-or-create sites (`1670`, `1708`). Suite
-   green.
-2. **Representation.** Introduce the `Origin` struct + shared counter; convert
-   the four `New*` minters to fresh-gen. Fix every site in §5 (the *get* sites
-   are compiler-flagged; the *mint* sites in §5c are now unambiguous). Keep the
-   aggregate rejection in place — currently-accepted programs are unaffected, and
-   the rejection still blocks the aggregate case. Suite green.
-3. **Lift the restriction.** Remove `ownedAggregateRebindSource` + its rejection;
-   let aggregate assignment-rebind mint a fresh identity like decl-init does.
-   Convert `owned_struct_assign_rebind_err_test` → a positive run-test.
+1. **Name the operations — option (G).** Split the conflated uses into
+   `currentOrigin` (get, the link), `NewOrigin` (mint fresh gen), and
+   `originForRead` (get-or-create-once). Route the `&x`/`&arr[i]` fallbacks
+   (`1670`, `1708`) through `originForRead`. No change to *when* origins are
+   created — behavior-preserving. Suite green.
+2. **Representation (two sub-steps).** (2a) Introduce the `Origin` struct (or
+   opaque handle — see §10) + shared counter threaded through *every* `NewState()`
+   path, with `Gen` always `0` — pure type churn, no behavior change. (2b) Make
+   the *mint* sites (§5c) draw fresh gens; fix every §5 site (gets are
+   compiler-flagged; mints are §5c). Keep the aggregate rejection in place.
+   Splitting 2a/2b means a break tells you which half failed. Suite green.
+3. **Lift the restriction** — *gated on the field-level check (§10)*. Remove
+   `ownedAggregateRebindSource` + its rejection; let aggregate assignment-rebind
+   mint a fresh identity. Convert `owned_struct_assign_rebind_err_test` → a
+   positive run-test. Do **not** start this until the `fieldPointers` question is
+   answered.
 4. **Revival regression tests** (the point of the whole change): for scalar AND
    aggregate, decl AND assign — borrow a binding, dispose/consume it, re-init it,
    then read the *old* borrow → must stay REJECTED. Plus the merge-divergence
@@ -217,11 +242,53 @@ post-join read is sound.
   prone edits; an off-by-one there silently looks up the wrong binding. Cover
   with an owned-alias-into-inconsistent-aggregate test (the existing
   `owned_alias_*` tests exercise `checkedAssignPointer`'s name use).
-- The `!KnownOrigin`-as-untracked audit (§4.1) is the gate on eager creation
-  being behavior-preserving — do it before relying on the total invariant.
 - `joinOrigins` already stores `[]Origin`; with the struct type those copies are
   by value — confirm no map-key or equality assumptions on the old string type
   leak through (e.g. anything using an `Origin` as a map key still works; struct
   keys are comparable, so they do).
 - Keep `Origin` comparable (no slices/maps in the struct) so it stays a valid
   map key and `==` target.
+
+## 10. Review outcomes — decisions and still-open questions
+
+**Decided:**
+- **(G), not eager creation** (§4.1). Keep lazy origin creation; name the
+  operations.
+- **Shared gen counter** lives as a *pointer* field on `State` (clones copy the
+  pointer → one shared sequence; single-threaded → plain increment). Must be
+  threaded through **every** `NewState()` call site, including `Clone()`'s `nil`
+  branch (state.go:81) and `Merge`'s `out := NewState()` (state.go:136) — an
+  orphaned `NewState()` would mint from a fresh sequence and collide.
+
+**Still open — settle before implementing the relevant step:**
+- **Representation: `{Name, Gen}` vs opaque handle.** `{Name, Gen}` is less
+  plumbing at the `string(origin)` sites, but the join-origin key (state.go
+  `newJoinOrigin`, content-addressed and *deduped* — "same pair reuses one
+  origin") must then fold in the members' *gens*, not just names, or two joins
+  over different generations of the same names collide. The alternative — `type
+  Origin uint32` opaque handle + a side table `handle→{kind, validity, name,
+  joinMembers}` — makes identity structurally never-reused and handles joins
+  natively (member-set→handle dedup), at the cost of a `NameOf` indirection at
+  the display sites. Leaning opaque handle as "more correct." **Decide explicitly
+  and verify the join dedup still collapses with generationed members.**
+- **Field-level identity (the gate on §8 step 3).** `fieldPointers` is a
+  *separate* map keyed by the string `"binding.field"` — name-keyed exactly like
+  `origins` was. Lifting the owned-*aggregate* rebind rejection is the whole goal,
+  and aggregates are where owned fields live, so the revival problem almost
+  certainly has a field-level twin (`&s.f` borrow → consume → re-init `s` → read
+  the old borrow). The design is binding-level only; "binding-level generations
+  suffice" is an **assumption, not a finding**. Verify with a field-level revival
+  probe before starting step 3.
+- **Scope reconfirm.** This grew past the original "medium refactor" estimate
+  (representation may need rework; field-level may be required) to lift one
+  re-init form that has a clean workaround (`s2 owned T := s1`, or assign a
+  freshly-built value). Minimal-viable path: steps 1–2 (G + struct/handle +
+  counter, keep the rejection, prove behavior-preserving), *then* decide whether
+  the field-level work to actually lift the rejection is worth it.
+
+**Blocking prerequisite (separate bug):** `y := x` for a memory-backed struct
+shares storage instead of copying — mutating `x` changes `y` (`20 20`), while the
+scalar equivalent copies (`10 20`). Independent of generations/over-linking/`&x`
+(reproduces with no pointers); almost certainly pre-existing codegen (the
+owned-transfer work touched flow tracking, not struct-copy emission). Being fixed
+first.
