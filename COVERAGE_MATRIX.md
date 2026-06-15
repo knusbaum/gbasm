@@ -167,8 +167,16 @@ fixed ones have a passing regression test.
 | I5 | CL-EQ, struct `==` | address-compare | **fixed** `6761623` — reject | `cov_equality_struct_err` (green) |
 | — | CL-PTR, inline deref-field >8 | internal type error | **fixed** `ed7480a` | `cov_deref_field_inline_large` (green) |
 | I8 | CL-ADDR, `&value-field`/`&elem` of mutable container | read-only (no `*mut` view) | **fixed** `22ac391` — per-level §I8 | `cov_amp_{field,elem}_mut` (green) |
+| I11 | owned-field **value** borrow (`b i64 := s.h`), then dispose struct | **silent** use-after-dispose — not tracked (binding-level `b := fd` IS) | **open #8** | `cov_owned_field_borrow_use_after_dispose_err` |
 
-**All known violations fixed.** #5 was reject (aggregate `==` is a compile
+Field-level borrow soundness otherwise confirmed (green guards): a field *pointer*
+borrow (`&s.f`) tracks via the struct origin, so dispose invalidates it and
+re-init does not revive it (`cov_field_ptr_use_after_dispose_err`,
+`cov_field_ptr_no_revival_err`) — this is also the evidence that binding-level
+origin-generations suffice (`DESIGN_origin_generations.md` §10).
+
+**Memory-backed value violations all fixed; #8 (an owned-field tracking gap)
+open.** #5 was reject (aggregate `==` is a compile
 error); #7 implemented the per-level projection mutability rule (value-field/elem
 gets the outer mut from writability; pointer/owned/nullable fields untouched;
 owned-slot gate preserved). Guards green throughout: `cov_amp_field_immutable_err`

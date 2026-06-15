@@ -271,24 +271,28 @@ post-join read is sound.
   natively (member-set→handle dedup), at the cost of a `NameOf` indirection at
   the display sites. Leaning opaque handle as "more correct." **Decide explicitly
   and verify the join dedup still collapses with generationed members.**
-- **Field-level identity (the gate on §8 step 3).** `fieldPointers` is a
-  *separate* map keyed by the string `"binding.field"` — name-keyed exactly like
-  `origins` was. Lifting the owned-*aggregate* rebind rejection is the whole goal,
-  and aggregates are where owned fields live, so the revival problem almost
-  certainly has a field-level twin (`&s.f` borrow → consume → re-init `s` → read
-  the old borrow). The design is binding-level only; "binding-level generations
-  suffice" is an **assumption, not a finding**. Verify with a field-level revival
-  probe before starting step 3.
-- **Scope reconfirm.** This grew past the original "medium refactor" estimate
-  (representation may need rework; field-level may be required) to lift one
-  re-init form that has a clean workaround (`s2 owned T := s1`, or assign a
-  freshly-built value). Minimal-viable path: steps 1–2 (G + struct/handle +
-  counter, keep the rejection, prove behavior-preserving), *then* decide whether
-  the field-level work to actually lift the rejection is worth it.
+- **Field-level identity — RESOLVED (binding-level generations suffice).** The
+  feared revival twin (`&s.f` borrow → consume → re-init `s` → read the old
+  borrow) **does not exist for borrows**: a field *pointer* borrow (`&s.f`) is
+  tracked via the **struct's origin** (`Origin("s")`), not a separate revivable
+  `fieldPointers` entry — so dispose invalidates it and re-init does not revive
+  it (probed; guards `cov_field_ptr_use_after_dispose_err` and
+  `cov_field_ptr_no_revival_err` are green). Once `Origin("s")` is generationed
+  (never reused), field borrows ride the same generation and stay dead across a
+  re-init. `fieldPointers` holds *forward facts* (what `s.f` points at), not
+  revivable borrows. So **binding-level generations are sufficient to lift the
+  rebind soundly**; the field-level work is *not* required.
+  - *Separate bug found while probing (orthogonal to generations):* owned-field
+    **value** borrows (`b i64 := s.h`, `h` owned) are not tracked at all, so
+    use-after-dispose is silently missed — driver `cov_owned_field_borrow_use_after_dispose_err`.
+    A tracking gap (the binding-level `b i64 := fd` IS tracked), not an
+    identity-reuse issue; fix independently.
+- **Scope — settled smaller.** With the field-level question resolved, the
+  minimal-viable path (steps 1–2: G + opaque-handle + counter) *also lifts the
+  rejection* — no separate field-level phase needed. The remaining scope is the
+  representation rework + the §5 site audit, which is the "medium refactor" we
+  estimated.
 
-**Blocking prerequisite (separate bug):** `y := x` for a memory-backed struct
-shares storage instead of copying — mutating `x` changes `y` (`20 20`), while the
-scalar equivalent copies (`10 20`). Independent of generations/over-linking/`&x`
-(reproduces with no pointers); almost certainly pre-existing codegen (the
-owned-transfer work touched flow tracking, not struct-copy emission). Being fixed
-first.
+**Blocking prerequisite — CLEARED.** The `y := x` struct value-copy aliasing bug
+(and the array-of-struct/deref family) were fixed this session (`450a36c` and
+the surrounding commits). Generations is unblocked.
