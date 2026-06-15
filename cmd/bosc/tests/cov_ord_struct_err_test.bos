@@ -1,0 +1,9 @@
+package main
+import "fmt"
+type S struct { a i64 }
+
+fn main() {
+	x := S{a:1}
+	y := S{a:1}
+	if (x < y) { fmt.print("x\n") }
+}

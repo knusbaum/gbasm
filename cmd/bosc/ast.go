@@ -2986,13 +2986,29 @@ func (o *Op2) ASTType(c *Context) ASTType {
 	// For now, it's only num that can have operations.
 	switch o.Type {
 	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_booland, n_boolor:
-		if o.Type == n_deq || o.Type == n_neq {
-			if kind, bad := aggregateKindName(c, o.First.ASTType(c)); bad {
-				panic(&interpreterError{msg: fmt.Sprintf("%ss are not comparable with ==; write an explicit equality function", kind), p: o.Pos()})
+		// Comparison operators apply to scalars and pointers only; aggregates
+		// (struct/array/slice) have no defined comparison — equality would
+		// silently become memberwise/pointer-identity, ordering is undefined —
+		// so reject both `==`/`!=` and the relational operators in favor of an
+		// explicit function. (`&&`/`||` operate on bools and are not checked.)
+		rejectAggregate := func(sym, verb string) {
+			for _, operand := range []AST{o.First, o.Second} {
+				if kind, bad := aggregateKindName(c, operand.ASTType(c)); bad {
+					panic(&interpreterError{msg: fmt.Sprintf("%ss are not comparable with %s; write an explicit %s", kind, sym, verb), p: o.Pos()})
+				}
 			}
-			if kind, bad := aggregateKindName(c, o.Second.ASTType(c)); bad {
-				panic(&interpreterError{msg: fmt.Sprintf("%ss are not comparable with ==; write an explicit equality function", kind), p: o.Pos()})
-			}
+		}
+		switch o.Type {
+		case n_deq, n_neq:
+			rejectAggregate("==", "equality function")
+		case n_lt:
+			rejectAggregate("<", "comparison function")
+		case n_le:
+			rejectAggregate("<=", "comparison function")
+		case n_gt:
+			rejectAggregate(">", "comparison function")
+		case n_ge:
+			rejectAggregate(">=", "comparison function")
 		}
 		return boolASTType()
 	case n_add, n_sub, n_mul, n_div, n_bitand, n_bitor:
