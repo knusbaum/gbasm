@@ -3756,8 +3756,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		} else if t.ArraySize > 0 {
 			// it's an array.
 			panic("Array copying not implemented yet\n")
-		} else if t.Size(c) > 8 {
-			// It's a large object, meaning we need to pass it by pointer.
+		} else if typeIsMemoryBacked(c, t) {
+			// Memory-backed pointee (a struct, any size): the deref result IS
+			// the struct's address — return the pointer retyped as the pointee
+			// so later field access addresses through it. A value `mov dest
+			// [src]` would load only the first word and then mis-treat it as
+			// the struct (faulting on field access). Must fire for all sizes,
+			// not just >8: an 8-byte struct is exactly what the old `Size > 8`
+			// gate missed.
 			v.t.Indirection -= 1
 			return v
 		} else {
@@ -3765,7 +3771,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				fmt.Fprintf(of, "\t// New temp for deref, type: %#v\n", t)
 				dest = newSpot(of, c, c.Temp(), t)
 			}
-			// It's a small object. Just copy it.
+			// It's a small scalar. Just copy the value.
 			fmt.Fprintf(of, "\tmov %s [%s]\n", dest.ref, src)
 		}
 
