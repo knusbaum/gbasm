@@ -30,6 +30,20 @@ exactly how the ≤8/>8 split hid the struct-copy bug behind 17 passing `struct`
 tests. The audit cadence bounds this; we accept it because the alternatives
 (explode, or assume) are worse.
 
+**Two rules learned the hard way (the `#8` lesson):**
+
+1. **"Saturated" means the cross-product is enumerated with a falsifiable test
+   per equivalence class — *never* "there are a lot of tests in this directory."**
+   We trusted a test *count* (111 `owned` tests) to declare ownership covered,
+   and a real cell stayed open. Test-count is the exact fallacy this whole model
+   exists to fight; a region is only "covered" when its cells are enumerated.
+2. **Position is a first-class axis that crosses *every* invariant** —
+   `{binding, field, element, slice-element, nested, param, return, global}` ×
+   `{I1…I14}`, ownership included. We crossed it for the value model (that's the
+   `cov_*` corpus) but left ownership as a 1-D blob, so `I11 × owned-field-value-
+   borrow` (`#8`) was never a cell. Every enforced invariant gets the position
+   sweep, not just the value-mechanics ones (§3.5).
+
 ## 2. The invariants (the durable index / spec-in-progress)
 
 ### Value model — the region this effort gives invariant discipline for the first time
@@ -64,11 +78,14 @@ tests. The audit cadence bounds this; we accept it because the alternatives
   the new outer bit from the value-path writability — **currently not implemented
   for projections (#7); see §6.**
 
-### Ownership / lifetime — already invariant-framed and SATURATED (`owned`/`retalias`)
+### Ownership / lifetime — invariant-framed; **binding-level** well-covered, **× position not**
 - **I9 Move consumes** · **I10 Discharge exactly once** · **I11 No
   use-after-discharge** · **I12 No reference escapes its frame.**
-  *(These are why ownership is robust: it was always tested by invariant. The
-  value model wasn't — it was assumed. That asymmetry is the whole diagnosis.)*
+  *(Ownership was always tested by invariant, which is why it's robust at the
+  **binding** level. But it was never crossed with the position axis — owned
+  **fields** and **elements** — and that hole hid `#8` behind 111 passing tests.
+  "Saturated" applied to the binding column only; the field/element columns are
+  open. See §3.5.)*
 
 ### Control flow
 - **I13 Conservative merge** — flow facts (null, move) reconcile to the safe meet
@@ -111,6 +128,40 @@ apply it wherever a class's anchor branches on size.
 
 **Oracle flavors:** **stdout** (value differs), **reject** (`_err_test`),
 **exit/trap** (`.exit`). A cell names which.
+
+## 3.5 Invariant × position grid (the matrix to fill)
+
+Position crosses every enforced invariant. A cell is "covered" only when it has a
+falsifiable test (cov or existing-suite). Legend: **✓** covered · **○** open
+(gap, needs a test) · **?** audit pending (status unknown until we map existing
+tests) · **·** N/A.
+
+| Inv \ position | local binding | struct field | array/slice elem | nested (`a.b.c`, `a.f[i]`) | param (by-val) | return | global |
+|---|---|---|---|---|---|---|---|
+| I1 value-independence | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ? |
+| I2 reference sharing | ✓ | ? | ✓ (slice backing) | ? | ✓ (`*mut` param) | ? | ? |
+| I3 storage fidelity | ✓ | ✓ | ✓ | ✓ (`#4` was here) | ✓ | ✓ | ? |
+| I4 init / zero | ✓ | ✓ (partial-lit) | ? | ? | · | · | ? |
+| I5 aggregate `==`/ordering reject | ✓ | · | · | · | · | · | · |
+| I6 aggregate shape (len) | ? | ? | ? | ? | ? | ? | ? |
+| I7 numeric / cast | ✓ (reject) | ? | ? | · | ? | ? | ? |
+| I8 mutability (per-level `&`) | ✓ | ✓ (`#7`) | ✓ (`#7`) | ? | ? | · | ? |
+| I9 move consumes | ✓ | ? (`owned_field_move_*`) | ○ | ○ | ✓ | ✓ | · |
+| I10 discharge exactly once | ✓ | ? | ○ | ○ | ✓ | ✓ | · |
+| I11 no use-after-discharge | ✓ | **○ `#8` (value-borrow)** / ✓ (ptr-borrow) | ○ | ○ | ✓ | ✓ | · |
+| I12 no escape | ✓ (`retalias`) | ? | ? | ? | ✓ | ✓ | · |
+| I13 conservative merge | ? | ? | ? | ? | · | · | · |
+| I14 traps | ✓ (bounds/nil) | ? | ✓ (bounds) | ? | · | · | ? |
+
+The **`?` cells are §6.5's audit job** (map existing tests → cells). The **`○`
+cells are the gaps to fill** — chiefly the **ownership × {field, element,
+nested}** column the binding-level corpus never reached. Newly-enumerated
+ownership×position cells to probe (`#8` is the first):
+- **I11 × owned-element value-borrow** — `b i64 := owned_arr[i]; dispose(owned_arr); read b` (sibling of `#8`).
+- **I11 × owned-field/element ptr-borrow** — `&` form (cov_field_ptr_* covers field; element TBD).
+- **I9/I10 × owned element** — move/consume an owned array element; leak check.
+- **I12 × owned field/element** — `&owned_field` must not escape the frame.
+- **nested owned** — owned field of an owned field; consume the outer, observe.
 
 ## 4. Equivalence classes (the pruning — from CURRENT codegen)
 
