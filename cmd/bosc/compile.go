@@ -3828,8 +3828,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				// compileLval produces a register holding the address
 				// of an element/field, with type bumped by one
 				// Indirection — exactly what '&expr' is supposed to
-				// yield. Forward its result directly.
+				// yield. Stamp it with the `&`-result ASTType so the spot's
+				// type matches what Address.ASTType reports (notably the
+				// `*mut` bit a writable value-field/element projection gets);
+				// the computed address is the same either way.
 				lvspot := compileLval(of, c, ast.Lit, nullspot)
+				lvspot.t = ast.ASTType(c)
 				if dest.empty() {
 					return lvspot
 				}

@@ -2750,10 +2750,26 @@ func (a *Address) ASTType(c *Context) ASTType {
 				return t
 			}
 		}
-		// Address-of-literal: the type is *(literal's type), with no
-		// existing mut/owned bits to shift since the literal is fresh
-		// storage we're synthesizing.
 		t := a.Lit.ASTType(c)
+		// A projection to a *value* field/element — `&w.inner`, `&arr[i]` where
+		// the field/element is itself a value (Indirection 0) — addresses an
+		// lvalue into existing storage, so it follows `&x`'s rule: the result is
+		// `*mut T` when the projection lvalue is writable (the container is
+		// mutable). The field's own type has no pointer-level bits to disturb,
+		// so we set only the new outer write-through bit. Pointer/owned/nullable
+		// fields keep their existing per-level bits untouched (their own mut
+		// governs writing *through* them; shifting would corrupt owned/nullable
+		// projections), and address-of-literal (`&SomeStruct{...}`) is fresh
+		// storage. The owned-slot gate (checkAddressOfOwnedForDest) still
+		// rejects `*mut` views of an owner slot.
+		switch a.Lit.(type) {
+		case *Dot, *Index:
+			if t.Indirection == 0 {
+				if writable, _ := lvalueIsWritable(c, a.Lit); writable {
+					t.MutMask |= 1 << 1
+				}
+			}
+		}
 		t.Indirection += 1
 		return t
 	}
