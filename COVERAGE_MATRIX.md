@@ -12,6 +12,25 @@ compiler's mechanics is organized around three artifacts with three lifespans:
    still has a live invariant test through it, surface classes that have split.
    Run periodically **and after any codegen refactor** in an affected area.
 
+## 0. Scope & sibling domains
+
+This matrix tracks **semantic mechanics**: what happens to a value once you have
+one — how it copies, moves, aliases, and what the type system rejects. Every
+invariant here assumes a value already exists and asks how it behaves.
+
+Three *sibling* coverage domains are deliberately **out of scope**. The suite has
+real tests for each; they map to no cell here, and that is correct — do not try
+to fold them into invariant cells, and do not flag them as gaps in a future audit.
+
+| Sibling domain | What it covers | Example tests | Status |
+|---|---|---|---|
+| **Front-end / lexing** | source text → token/constant: number bases, string escapes, auto-`;`, precedence, parse forms | `hex_literal`, `octal_literal`, `binary_literal`, `string_test`, `addr_string_literal_edges` | untracked here (own axis) |
+| **Diagnostic quality** | the *message*, not the decision: position, the five-line snippet, the caret (`errctx`) | `*_collision_*`, `decl_coloneq_*` | the **reject decision** is in-scope (negative oracle); message *quality* is not |
+| **Library behavior** | stdlib semantics, not language mechanics | `fmt_*`, `io_*` (~33 files) | out of scope (the `fmt` note in §6 generalizes to `io` too) |
+
+Building out coverage for these is a separate effort from the value/ownership work
+this matrix governs. They are named here only so the boundary is explicit.
+
 ## 1. Why it's built this way
 
 - **Pure invariants → combinatorial explosion.** Being exhaustive about "value
@@ -114,7 +133,8 @@ tests. The audit cadence bounds this; we accept it because the alternatives
 - **Cross-package** — symbol resolution and cross-package struct layout are
   consistent (an I3 cell across the package boundary / `StructShape`). *(tests:
   `cross` ~9)*
-- *Out of scope:* `fmt` (~31) is stdlib formatting, not a language invariant.
+- *Out of scope:* `fmt` (~31) and `io` (~2) are stdlib behavior, not language
+  invariants — one of the three sibling domains named in §0.
 
 > Every memory-backed bug found so far is a violation of **I1** or **I3**.
 
