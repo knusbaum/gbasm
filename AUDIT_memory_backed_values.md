@@ -50,15 +50,15 @@ loaded instead of its *bytes*. The correct predicate is `typeIsMemoryBacked` /
 |---|------|---------|--------|------|
 | 1 | struct ≤8 × copy (`:=`/`=`) | aliases source (mutate src → copy changes) | **FIXED** `450a36c` | `move` |
 | 2 | struct ≤8 × array index (local) | segfault on field read | **FIXED** `30261d5` | Index rvalue |
-| 3 | struct ≤8 × **deref** (`*px`, `(*px).a`, `q := *px`) | **segfault** | OPEN | `compile.go` ~3756 (`*Deref` ≤8 "small object just copy" value-loads) |
-| 4 | **array nested in struct** (`s.arr[i].f`, any size) | **silent wrong value** (`0`) — every form: write+read, whole-elem store, struct-in-array-in-struct | OPEN | nested base-address for a struct's array field |
-| 5 | struct `==` | **silent wrong** — compares addresses, two equal structs → not-equal | OPEN — **DECIDED: reject** aggregate `==` at compile time (see [`COVERAGE_MATRIX.md`](COVERAGE_MATRIX.md) I5) | `==` on memory-backed operands |
-| 6 | struct >8 × inline deref-field (`(*px).a`) | internal type error (rejects) | OPEN | `*Deref` >8 type propagation |
-| 7 | `&value-field`/`&elem` of a *mutable* container (`&w.inner`, `&arr[i]`) | yields read-only `*T` (can't get a `*mut` view) | OPEN — **DECIDED: implement** per-level mutability (I8) | `Address.ASTType` projection branch ~2755 omits the mut-bit shift/set the named-`&x` path (~2710) does |
+| 3 | struct ≤8 × **deref** (`*px`, `(*px).a`, `q := *px`) | segfault | **FIXED** `a0da85f` | `*Deref` gated on typeIsMemoryBacked, returns the pointee address |
+| 4 | **array nested in struct** (`s.arr[i].f`, any size) | silent wrong value | **FIXED** `94a4e90` | compileLval Index base compiled as lvalue (was rvalue copy) |
+| 5 | struct `==` | silent wrong (address-compare) | **FIXED** `6761623` — reject | Op2.ASTType rejects aggregate `==`/`!=` |
+| 6 | struct >8 × inline deref-field (`(*px).a`) | internal type error | **FIXED** `ed7480a` | `*Deref` retypes to the clean dereferenced pointee |
+| 7 | `&value-field`/`&elem` of a *mutable* container | read-only `*T`, no `*mut` view | **FIXED** `22ac391` — per-level | `Address.ASTType` sets outer mut on a value field/elem; codegen stamps the matching type |
 
-Severity note: #4 and #5 are **silent wrong values** — the worst kind, no crash.
-#3 crashes. #6 rejects (loud). #7 is an under-implementation (rejects valid
-code). #5 → reject; #7 → implement, both decided.
+**All 7 fixed.** All from one fault line (value-vs-address of memory-backed
+types) except #5 (operator decision) and #7 (per-level mutability). Full bosc
+suite 590 PASS, `cov_*` 33/33, go_test 11/11.
 
 Known *loud* limitations (explicit panics, not silent bugs — lower priority):
 - array copying through a deref: `panic("Array copying not implemented")` (~3750).

@@ -151,17 +151,18 @@ fixed ones have a passing regression test.
 |-----|------|---------|--------|-----------------|
 | I1 | CL-MEMVAL, struct ≤8 | copy aliases | **fixed** `450a36c` | `cov_value_indep_*` (green) |
 | I3 | CL-ELEM-ARR, struct ≤8 (local) | segfault | **fixed** `30261d5` | `cov_fidelity_array_elem` (green) |
-| I1/I3 | CL-PTR, deref ≤8 struct | segfault | **open #3** | `cov_ref_deref_{small,1byte}` |
-| I3 | CL-COMPOSE, array-in-struct (any size) | silent wrong value | **open #4** | `cov_{compose_array_in_struct,array_in_struct_16byte}` |
-| I5 | CL-EQ, struct `==` | address-compare | **open #5** — DECIDED: **reject** | `cov_equality_struct_err` |
-| — | CL-PTR, inline deref-field >8 | internal type error (rejects) | **open #6** | `cov_deref_field_inline_large` |
-| I8 | CL-ADDR, `&value-field`/`&elem` of mutable container | read-only (can't get `*mut` view) | **open #7** — DECIDED: **implement** (per-level §I8) | `cov_amp_{field,elem}_mut` |
+| I1/I3 | CL-PTR, deref ≤8 struct | segfault | **fixed** `a0da85f` | `cov_ref_deref_{small,1byte}` (green) |
+| I3 | CL-COMPOSE, array-in-struct (any size) | silent wrong value | **fixed** `94a4e90` | `cov_{compose_array_in_struct,array_in_struct_16byte}` (green) |
+| I5 | CL-EQ, struct `==` | address-compare | **fixed** `6761623` — reject | `cov_equality_struct_err` (green) |
+| — | CL-PTR, inline deref-field >8 | internal type error | **fixed** `ed7480a` | `cov_deref_field_inline_large` (green) |
+| I8 | CL-ADDR, `&value-field`/`&elem` of mutable container | read-only (no `*mut` view) | **fixed** `22ac391` — per-level §I8 | `cov_amp_{field,elem}_mut` (green) |
 
-Decisions folded in: **#5 reject** (aggregate `==` is a compile error); **#7
-implement** the per-level projection mutability rule (shift inner bits, set outer
-from value-path writability), keeping the owned-slot gate. Guards already green:
-`cov_amp_field_immutable_err` (immutable container stays read-only),
-`cov_ptr_field_writethrough` (`*x.p` through an immutable container works).
+**All known violations fixed.** #5 was reject (aggregate `==` is a compile
+error); #7 implemented the per-level projection mutability rule (value-field/elem
+gets the outer mut from writability; pointer/owned/nullable fields untouched;
+owned-slot gate preserved). Guards green throughout: `cov_amp_field_immutable_err`
+(immutable container stays read-only), `cov_ptr_field_writethrough` (`*x.p`
+through an immutable container works). Whole `cov_*` corpus: **33/33 green**.
 
 Known *loud* limitations (explicit panics, not silent): array copy through a
 deref (~3750); slicing element types >8 (~4033).
@@ -174,3 +175,9 @@ deref (~3750); slicing element types >8 (~4033).
   5 open issues (#3:2, #4:2, #5:1, #6:1, #7:2). Folded in the #5 (reject) and #7
   (implement, per-level mutability) decisions; added CL-ADDR and CL-EQ classes.
   Coverage complete — ready to fix, each fix turning its driving test green.
+- (fixed) — all 5 open issues fixed (`94a4e90` #4, `a0da85f` #3, `ed7480a` #6,
+  `6761623` #5, `22ac391` #7), each paired with its now-green driving test. Full
+  bosc suite **590 PASS**, go_test 11/11, `cov_*` 33/33. The #7 fix needed a
+  follow-on (Address codegen spot type must match Address.ASTType) the full-suite
+  gate caught after the cov set was already green — confirming the gate "red cell
+  green AND full suite green," not just the cov cell.
