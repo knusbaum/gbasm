@@ -1,0 +1,23 @@
+package main
+
+import "fmt"
+
+fn destroy_handle(handle owned i64) {
+	fmt.print("Destroying handle: %d\n", handle)
+	dispose(handle)
+}
+
+fn create_handle() owned i64 {
+	return 10
+}
+
+fn main() {
+	handle owned i64 := create_handle()
+
+	// ownership of the handle was transferred to `other_handle`.
+	other_handle owned i64 := handle
+	// handle is now invalid
+
+	fmt.print("other_handle: %d\n", other_handle)
+	destroy_handle(other_handle)
+}

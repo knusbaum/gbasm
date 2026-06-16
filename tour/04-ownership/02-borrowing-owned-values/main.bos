@@ -1,0 +1,23 @@
+package main
+
+import "fmt"
+
+fn describe(i i64) {
+	fmt.print("The value is: %d\n", i)
+}
+
+fn main() {
+	handle owned i64 := 10
+	
+	// describe "borrows" our handle, but doesn't take ownership of it.
+	describe(handle)
+	
+	// we can "borrow" owned values in bindings too.
+	handle_borrow i64 := handle
+	describe(handle_borrow)
+
+	// we still have to dispose of the owned resource we created.
+	dispose(handle)
+	
+	// both handle and handle_borrow are now invalid.
+}

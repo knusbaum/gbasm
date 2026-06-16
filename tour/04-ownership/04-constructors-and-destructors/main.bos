@@ -1,0 +1,51 @@
+package main
+
+import "fmt"
+
+type transaction i64
+
+// new_transaction creates a transaction
+fn new_transaction() owned transaction {
+	t := transaction(1001)
+	// <imaginary initialization>
+	return t
+}
+
+// commit completes a transaction by committing it to the database
+fn commit(t owned transaction) {
+	fmt.print("committing transaction %d\n", i64(t))
+	// <imaginary commit code>
+	dispose(t)
+}
+
+// abort cancels a transaction
+fn abort(t owned transaction) {
+	fmt.print("aborting transaction %d\n", i64(t))
+	// <imaginary abort code>
+	dispose(t)
+}
+
+// describe prints a human-readable representation of a transaction.
+fn describe(t transaction) {
+	fmt.print("Transaction[%d]\n", i64(t))
+}
+
+fn main() {
+	txn := new_transaction()
+
+	describe(txn)
+
+	if (some_condition()) {
+		// txn's obligation moves into commit; txn is no longer valid.
+		commit(txn)
+	} else {
+		abort(txn)
+	}
+	fmt.print("done\n")
+}
+
+
+fn some_condition() bool {
+	return 1 == 1
+}
+
