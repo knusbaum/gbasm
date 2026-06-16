@@ -95,16 +95,20 @@ findings in `DESIGN_10_field_provenance.md`. Settled: coarse param-level
 summaries are sound for borrows (the caller flattens a named struct arg's field
 origins); field-level is *precision*, not soundness.
 
-**Soundness (do first — all caller-side, no `.bo` format change):**
-- Phase 1: pointee-field tracking — lift the `readProvenancePath` pointer-root
-  cutoff (`compile.go:1150`) + conservative invalidation on opaque `*mut`
-  escape. Closes heap-write/heap-new. *The real work.*
-- literal-arg flattening: extend `argAliasProvenance` (`retalias.go:132`) to
-  `*StructLiteral` args (~10 lines). Closes the call face.
-- #18: owned-aggregate return drops borrowed-field alias tracking — the owned-
-  struct-result caller path skips the `__callret` recording the non-owned path
-  uses. Concrete use-after-free. Held `cov_owned_aggregate_return_borrow_lost_err`.
-- Phase 0: global-face conservative reject (cheap, independent).
+**Soundness — DONE except pointer-aliasing:**
+- call face — literal-arg flattening in `argAliasProvenance` (`6b0093f`). ✓
+- #18 — owned-aggregate return adopts its borrowed-param provenance (`9c2d170`). ✓
+- global face — `checkPointerEscapeToGlobal` (`7a5c844`). ✓
+- heap-write/heap-new **direct** case — pointee-field tracking: lifted the
+  `readProvenancePath` pointer-root cutoff + record on store / `new` (`1b2361f`). ✓
+- **REMAINING — pointer aliasing:** a borrow stored through one pointer alias of
+  a heap pointee and read through another (`h2 := h; h2.p = &s.x; *h.p`) still
+  slips (pre-existing; path-keyed facts can't see the alias). Sound fix =
+  **pointee-IDENTITY keying** (paths resolving to the same pointee origin share
+  the fact); composes on the recording sites + lifted cutoff already built. Held
+  `cov_owned_field_borrow_heap_pointer_alias_err`. **Own focused pass.**
+  Invalidation: KEEP facts, do nothing on opaque writes (dropping is unsound —
+  see DESIGN_10).
 
 **Precision (PLANNED follow-on, after soundness):** the field-level `.bo` fact
 (`ReturnAliases [][]FieldAlias`, param-relative aliasing projection, k-limited,
