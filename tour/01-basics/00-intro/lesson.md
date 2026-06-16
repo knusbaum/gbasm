@@ -24,7 +24,7 @@ For example:
 | Polymorphism | `void` pointers and vtables | Interfaces | Comptime metaprogramming and vtables |
 | Dangling Pointers | Good luck! (memory corruption) | Borrow tracking | Runtime detection |
 | Errors | In-band signalling or "out" parameters | Multi-value return | Error sets |
-| Null | Good luck! (SIGSEGV) | Explicit nullability with check enforcement | Explicit nullability with check enforcement |
+| Null | Good luck! (SIGSEGV) | Explicit nullability with enforced checks | Explicit nullability with enforced checks |
 | Bounds Violations | Good luck! (memory corruption) | Arrays & slices, bounds-checked | Arrays & slices, bounds-checked |
 
 The rest of this tour walks through these and other features one at a time, with a
