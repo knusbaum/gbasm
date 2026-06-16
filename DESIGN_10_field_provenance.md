@@ -9,7 +9,7 @@ faces, all the same shape (`&s.x` stored into a field that outlives `s`):
 | **call** | `h := id(holder{p: &s.x})` (returned by value) | `cov_owned_field_borrow_escapes_call_err` |
 | **heap-new** | `h := new(holder{p: &s.x})` | `cov_owned_field_borrow_escapes_heap_err` |
 | **heap-write** | `h.p = &s.x` (through a `*mut`) | `cov_owned_field_borrow_escapes_heap_ptr_write_err` |
-| **global** | `g = &s.x` (g a global ptr) | (probe; no driver yet) |
+| **global** | `g = &s.x` (g a global ptr) | `cov_owned_field_borrow_escapes_global_err` |
 
 ## Status & build plan (read this first)
 
