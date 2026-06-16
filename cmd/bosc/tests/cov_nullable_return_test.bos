@@ -1,0 +1,11 @@
+package main
+import "fmt"
+// A function may return a nullable pointer aliasing its argument; the caller
+// narrows it before dereferencing.
+fn maybe(p *?mut i64) *?mut i64 { return p }
+fn main() {
+	var x i64 := 42
+	r *?mut i64 := maybe(&x)
+	if (r != nil) { fmt.print("%d\n", *r) }
+	fmt.print("done\n")
+}

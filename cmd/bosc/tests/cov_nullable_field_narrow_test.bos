@@ -1,0 +1,10 @@
+package main
+import "fmt"
+// A nullable pointer field narrows to non-null inside an `if (f != nil)` guard.
+type box struct { p *?mut i64 }
+fn main() {
+	var x i64 := 9
+	b box := box{p: &x}
+	if (b.p != nil) { fmt.print("%d\n", *b.p) }
+	fmt.print("done\n")
+}

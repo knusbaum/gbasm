@@ -197,8 +197,8 @@ tests) · **·** N/A.
 | I11 no use-after-discharge | ✓ | ✓ ptr-borrow / **○ `#8` value-borrow** | ✓ ptr-borrow / **○ `#8`-class value-borrow** | ✓ ptr-borrow / **○ `#8`-class value-borrow** | ✓ | ✓ | · |
 | I12 no escape | ✓ (`retalias`) | ✓ (`slice_return_*_struct`) | ✓ (`slice_return_array`) | ✓ (`*_array_of_arrays`) | ✓ | ✓ | · |
 | I13 conservative merge | ✓ (`loop_flow`, owned branch) | ○ | ○ | ○ | · | · | · |
-| I14 traps | ✓ (bounds/nil) | ○ | ✓ (bounds) | ○ | · | · | ○ |
-| I15 nullability | ✓ (`nullable_*`) | ✓ (`*_pointer_struct`) | ○ | ○ | ✓ (param narrow) | ○ | ○ |
+| I14 traps | ✓ (bounds/nil) | ✓ (`cov_trap_oob_field`) | ✓ (bounds) | ○ | · | · | ✓ (`cov_trap_oob_global`) |
+| I15 nullability | ✓ (`nullable_*`) | ✓ (`cov_nullable_field_narrow`) | **○ #15** | ○ | ✓ (param narrow) | ✓ alias / **○ #14 nil** (`cov_nullable_return`) | ○ |
 | I16 iface dispatch | ✓ (`iface_from_*`) | ○ | · | · | ✓ (`iface_unknown_param`) | ○ | ○ |
 | I17 visibility | · | ✓ (`private_field_*`) | · | · | · | · | ✓ (cross-pkg) |
 | variadics | ✓ (`variadic_*`) | · | · | · | ✓ (param) | · | · |
@@ -301,6 +301,8 @@ fixed ones have a passing regression test.
 | I3 | array **literal** coerces to the target element type at typed `:=` decl, but **not** at `=` assign or struct-field init — literal stays `<intlit>[N]` | **false rejection** of valid code (`a = [4,5,6]`, `box{arr: [1,2,3,4]}`); a missing context-typed-literal threading site, cf. CLAUDE.md "bare struct literals are context-typed" | **open #11 — deferred** | held: `cov_array_literal_{assign,struct_field}` (expect run output) |
 | I7 | widening an i32 **parameter** to i64 (`return i64(x)`) fails in `bas`: `MOVSX ... Failed to find an instruction for Move with Sign-Extension`. Locals widen fine (so it's an operand-form gap, likely missing MOVSXD r64,r/m32 path) | **build failure** on valid code | **open #12 — deferred** (encoder) | held: `cov_cast_widen_param` (expect run output) |
 | I7 | narrowing a **global** i64 to i16 fails in `bas`: `MOV [y(size=16), g:16] Failed to find an instruction` — 16-bit move from a symbol-ref operand | **build failure** on valid code | **open #13 — deferred** (encoder) | held: `cov_cast_global_narrow` (expect run output) |
+| I15 | returning a bare `nil` from a function whose return type is a nullable pointer → position-less `No such type "<nil>"` (return-type context not threaded to the nil literal). Returning a param works | **false rejection** of valid code | **open #14 — deferred** | held: `cov_nullable_return_nil` (expect run output) |
+| I15/I3 | a `nil` element in an array literal lacks pointer context (`nil requires pointer context`), even at a typed `:=` decl where int literals coerce — array-literal element typing doesn't reach `nil` | **false rejection** of valid code | **open #15 — deferred** | held: `cov_nullable_array_literal` (expect run output) |
 
 Field-level borrow soundness otherwise confirmed (green guards): a field *pointer*
 borrow (`&s.f`) tracks via the struct origin, so dispose invalidates it and

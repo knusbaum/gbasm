@@ -1,0 +1,10 @@
+package main
+import "fmt"
+// Bounds check fires on an out-of-range index into a struct-field array.
+type box struct { arr i64[3] }
+fn main() {
+	arr i64[3] := [10, 20, 30]
+	b box := box{arr: arr}
+	var i i64 := 0
+	for (i = 0; i < 5; i = i + 1) { fmt.print("%d\n", b.arr[i]) }
+}
