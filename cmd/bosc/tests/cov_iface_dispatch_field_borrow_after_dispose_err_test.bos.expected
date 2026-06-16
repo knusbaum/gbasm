@@ -1,0 +1,2 @@
+Compiling tests/cov_iface_dispatch_field_borrow_after_dispose_err_test.bos
+Fatal: cannot dereference pointer to "x": the target was consumed

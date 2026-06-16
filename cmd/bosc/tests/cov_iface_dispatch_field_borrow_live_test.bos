@@ -1,0 +1,15 @@
+package main
+import "fmt"
+interface speaker { val(s *self) i64 }
+type num struct { n i64 } {
+	val(p *num) i64 { return p.n }
+}
+type holder struct { s speaker }
+// Dispatching through an interface-typed field while its borrowed source is
+// still live is legal — guards #16 against over-rejection.
+fn main() {
+	x owned num := num{n: 7}
+	h holder := holder{s: &x}
+	fmt.print("%d\n", h.s.val())
+	dispose(x)
+}

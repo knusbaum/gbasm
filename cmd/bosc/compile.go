@@ -3591,8 +3591,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if recv := ast.ReceiverExpr(); recv != nil {
 			rt := recv.ASTType(c)
 			typeName := rt.Name
-			if c.IsInterfaceType(rt) {
-				CompileErrorF(a, "interface method dispatch on expression receiver not yet supported; bind to a variable first")
+			if c.IsInterfaceType(rt.StripOwned()) {
+				ifaceDecl, ok := c.InterfaceForName(rt.StripOwned().Name)
+				if !ok {
+					CompileErrorF(a, "no interface declaration for %s", rt.Name)
+				}
+				return compileInterfaceMethodCall(of, c, a, ast, rt.StripOwned(), ifaceDecl, dest, recv)
 			}
 			if method, mok := c.MethodForType(typeName, fname); mok {
 				return compileConcreteMethodCall(of, c, a, ast, rt, typeName, method, dest)
@@ -3622,7 +3626,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 					// Interface method dispatch: v.method(args) where v is an interface type.
 					if c.IsInterfaceType(vt) {
 						ifaceDecl, _ := c.InterfaceForName(vt.Name)
-						return compileInterfaceMethodCall(of, c, a, ast, vt, ifaceDecl, dest)
+						recv := &Symbol{Name: pkg, p: ast.p}
+						return compileInterfaceMethodCall(of, c, a, ast, vt, ifaceDecl, dest, recv)
 					}
 					// Concrete method call: v.method(args) → TypeName.method(receiver, args).
 					typeName := vt.Name // leaf type name regardless of pointer depth
@@ -6365,7 +6370,7 @@ func compileConcreteMethodCall(of io.Writer, c *Context, a AST, callNode *Funcal
 // interfaces it is the concrete value bits. The data word is passed as the
 // first argument (rdi); user-supplied args follow (rsi, rdx, ...).
 func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funcall,
-	ifaceType ASTType, ifaceDecl *InterfaceDecl, dest spot) spot {
+	ifaceType ASTType, ifaceDecl *InterfaceDecl, dest spot, recv AST) spot {
 
 	mname := callNode.FName()
 	// A nullable interface (`?T`) may be null — dispatching through it would
@@ -6397,29 +6402,61 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 			ifaceDecl.Name, mname, len(userParams), len(callNode.Args))
 	}
 
-	// The interface variable is memory-backed; its name is the base address.
-	ifaceRef := callNode.PkgName()
-	c.markUsed(ifaceRef) // dispatching through the interface reads it
+	// The interface fat pointer is memory-backed. A named-binding receiver's
+	// name IS its base address; a field/element receiver (h.s, a[i]) computes
+	// its lvalue address into a register. Move/borrow-validity flow facts key
+	// on the receiver's flow location, not a bare binding name.
+	recvSym, namedReceiver := recv.(*Symbol)
+	if namedReceiver && c.IsGlobalBinding(recvSym.Name) {
+		namedReceiver = false
+	}
+	if root, ok := rootSymbolName(recv); ok {
+		c.markUsed(root) // dispatching through the interface reads it
+	}
 	if receiverParam.HasOwned() {
 		if !ifaceType.HasOwned() {
 			CompileErrorF(a, "Cannot call consuming method %s.%s on non-owned %s", ifaceDecl.Name, mname, ifaceType)
 		}
-		if c.IsMoved(ifaceRef) {
-			CompileErrorF(a, "Cannot move \"%s\": it was already moved", ifaceRef)
+		// Consuming an interface held in a field/element would need path-level
+		// move tracking we do not have yet; require a named binding.
+		if !namedReceiver {
+			CompileErrorF(a, "consuming interface method %s.%s requires a named receiver; bind the interface to a variable first", ifaceDecl.Name, mname)
+		}
+		if c.IsMoved(recvSym.Name) {
+			CompileErrorF(a, "Cannot move \"%s\": it was already moved", recvSym.Name)
 		}
 	}
 
 	// Validate the data pointer's flow-state origin before dispatch. If the
 	// interface was constructed by borrowing &x and x has since been moved,
-	// disposed, or fallen out of scope, the data slot aliases storage that
-	// is no longer trustworthy. The field-pointer registered by
-	// emitInterfaceFatPtr carries the source's origin; CheckDerefValidity
-	// rejects the dispatch with the same wording the bare *T deref uses.
+	// disposed, or fallen out of scope, the data slot aliases storage that is
+	// no longer trustworthy. The origin is recorded either as the binding's
+	// "data" field-pointer (named receiver, by emitInterfaceFatPtr) or as the
+	// receiver path's pointer (struct-literal field construction, by
+	// recordStructLiteralFieldFacts). CheckDerefValidity rejects with the same
+	// wording the bare *T deref uses.
 	if !ifaceType.HasOwned() {
-		dataField := c.PointerFlow().GetFieldPointer(flow.Binding(ifaceRef), "data")
-		if ok, reason := c.PointerFlow().CheckDerefValidity(dataField); !ok {
+		var dataOrigin flow.PointerExpr
+		if namedReceiver {
+			dataOrigin = c.PointerFlow().GetFieldPointer(flow.Binding(recvSym.Name), "data")
+		} else if path, ok := FlowPathForExpr(recv); ok {
+			dataOrigin = c.PointerFlow().GetPathPointer(path.Key())
+		} else {
+			dataOrigin = c.PointerFlow().UnknownPointer()
+		}
+		if ok, reason := c.PointerFlow().CheckDerefValidity(dataOrigin); !ok {
 			CompileErrorF(a, "%s", reason)
 		}
+	}
+
+	// Base address of the 16-byte fat pointer.
+	var baseRef string
+	if namedReceiver {
+		baseRef = recvSym.Name
+	} else {
+		lv := compileLval(of, c, recv, nullspot)
+		baseRef = lv.ref
+		defer lv.free(of)
 	}
 
 	// Load data ptr, vtable ptr, and fn ptr into temps BEFORE setting up call
@@ -6427,8 +6464,8 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 	dataPtr := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
 	vtablePtr := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
 	fnPtr := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
-	fmt.Fprintf(of, "\tmov %s [%s+0]\n", dataPtr.ref, ifaceRef)
-	fmt.Fprintf(of, "\tmov %s [%s+8]\n", vtablePtr.ref, ifaceRef)
+	fmt.Fprintf(of, "\tmov %s [%s+0]\n", dataPtr.ref, baseRef)
+	fmt.Fprintf(of, "\tmov %s [%s+8]\n", vtablePtr.ref, baseRef)
 	// Slot 0 = typedesc, slot 1 = shape word, methods at slot 2+.
 	fmt.Fprintf(of, "\tmov %s [%s+%d]\n", fnPtr.ref, vtablePtr.ref, (methodIdx+2)*8)
 	vtablePtr.free(of)
@@ -6506,7 +6543,8 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 		}
 	}
 	if receiverParam.HasOwned() {
-		c.MoveConsume(ifaceRef)
+		// Guarded above: a consuming method requires a named receiver.
+		c.MoveConsume(recvSym.Name)
 	}
 
 	// Move user args into rsi, rdx, ...

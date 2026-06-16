@@ -1,0 +1,15 @@
+package main
+import "fmt"
+interface speaker { val(s *self) i64 }
+type num struct { n i64 } {
+	val(p *num) i64 { return p.n }
+}
+// #16: dispatching directly through an interface-typed struct field
+// (h.s.val()) fails with 'no method "val" on type speaker'. Extracting the
+// field to a local first works, so it should run.
+type holder struct { s speaker }
+fn main() {
+	var x num := num{n: 7}
+	h holder := holder{s: &x}
+	fmt.print("%d\n", h.s.val())
+}

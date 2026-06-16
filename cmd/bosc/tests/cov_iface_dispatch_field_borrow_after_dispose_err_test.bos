@@ -1,0 +1,16 @@
+package main
+import "fmt"
+interface speaker { val(s *self) i64 }
+type num struct { n i64 } {
+	val(p *num) i64 { return p.n }
+}
+type holder struct { s speaker }
+// An interface stored in a struct field borrows &x; dispatching through the
+// field after x is disposed must be rejected (the borrow-validity check keys
+// on the receiver path, not just a binding name). #16 soundness guard.
+fn main() {
+	x owned num := num{n: 7}
+	h holder := holder{s: &x}
+	dispose(x)
+	fmt.print("%d\n", h.s.val())
+}

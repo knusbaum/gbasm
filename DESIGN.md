@@ -1401,7 +1401,7 @@ Field separators inside a struct body may be `,`, a newline (the lexer inserts `
 
 - `v.method(args...)` where `v` has type `T` → `T.method(&v, args...)` if `method`'s first parameter is `*T`/`*mut T`/etc. (address taken automatically), or `T.method(v, args...)` if it is a bare `T` value receiver (the value is passed directly).
 - `p.method(args...)` where `p` has type `*T` or `*mut T` → `T.method(p, args...)` (passed directly, no extra indirection).
-- `(expr).method(args...)` where `expr` is an arbitrary expression of concrete type `T` → the expression is evaluated, its type looked up, and dispatched the same way. Interface-typed expression receivers are not yet supported; bind the value to a named variable first.
+- `(expr).method(args...)` where `expr` is an arbitrary expression of concrete type `T` → the expression is evaluated, its type looked up, and dispatched the same way. An interface-typed expression receiver (e.g. a field `h.s.method()`) is also supported: the receiver's address is computed via the lvalue path and the fat pointer is loaded from it, and the borrow-validity check keys on the receiver's flow path (so disposing the borrowed source before the dispatch is rejected). A **consuming** (`owned`-receiver) method still requires a named-binding receiver, since consuming an interface held in a field would need path-level move tracking.
 - `T.method(args...)` where `T` is a type with a zero-receiver static method → direct call to `pkg.T.method(args...)` with no implicit receiver.
 - Ownership qualifiers on the receiver are checked at the call site: calling a method with `owned *owned T` receiver on a non-owned binding is a compile error.
 - Calling a static method through an instance (`v.method(...)` where `T.method` has no receiver) is rejected with a directed error suggesting the `T.method(...)` form.
@@ -2461,7 +2461,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Integer literal bases: decimal, hexadecimal (`0xFF`), octal (`0o755`), and binary (`0b1010`)
 - Bitwise `&` and `|` operators on integer operands
 - Bare `return` (no value) in `void` functions or as an early exit
-- `(expr).method(...)` dispatch for arbitrary concrete-type expression receivers (interface-typed receivers still require binding first)
+- `(expr).method(...)` dispatch for arbitrary concrete-type expression receivers, and for interface-typed expression receivers (non-consuming methods; a `owned`-receiver method still requires a named binding)
 - Boson source string and character literal escapes: `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, `\'`, `\xHH`
 - Type-alias casts as file-scope static initializers (`var fd FD := FD(3)`, qualified form `io.FD(3)`)
 - Position tracking through a leading file-level doc comment preamble (errors point at the correct source line even when the file begins with comments)

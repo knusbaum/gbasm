@@ -2546,6 +2546,17 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 	// (expr).method(args) — receiver is an expression, not a named variable.
 	if recv := f.ReceiverExpr(); recv != nil {
 		rt := recv.ASTType(c)
+		// Interface receiver: resolve the method in the interface declaration
+		// and return its declared return type (dispatch is virtual).
+		if c.IsInterfaceType(rt.StripOwned()) {
+			if decl, ok := c.InterfaceForName(rt.StripOwned().Name); ok {
+				for _, m := range decl.Methods {
+					if m.Name == name {
+						return m.Return
+					}
+				}
+			}
+		}
 		if method, mok := c.MethodForType(rt.Name, name); mok {
 			return method.Return
 		}
