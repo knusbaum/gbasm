@@ -1,5 +1,5 @@
 ---
-title: Integers and Casts
+title: Scalar Types and Casts
 section: Basics
 order: 3
 ---
