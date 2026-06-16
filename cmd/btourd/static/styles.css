@@ -143,6 +143,33 @@ button:focus-visible, textarea:focus-visible {
   overflow-x: auto;
 }
 .prose pre code { background: none; padding: 0; }
+.prose table {
+  border-collapse: collapse;
+  margin: 0.9em 0;
+  display: block;
+  overflow-x: auto;
+}
+.prose th, .prose td {
+  border: 1px solid var(--line);
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 0.92em;
+  vertical-align: top;
+}
+.prose th { background: var(--panel-alt); font-weight: 620; }
+
+/* Prose-only lessons (no runnable program): hide the editor and its controls
+   but keep the Prev/Next bar so the reader can still navigate. The work column
+   collapses to just that bar (auto width) so the prose fills the freed space
+   instead of leaving a large empty pane. */
+body.no-editor #run,
+body.no-editor #reset,
+body.no-editor #source,
+body.no-editor .tabs,
+body.no-editor #output,
+body.no-editor #steps { display: none; }
+body.no-editor .layout { grid-template-columns: 220px 1fr auto; }
+body.no-editor .work { background: transparent; }
 
 .work {
   padding: 8px;
@@ -224,4 +251,11 @@ button.tab.active { background: var(--panel); }
   }
   .nav { border-right: 0; border-bottom: 1px solid var(--line); }
   .lesson { border-right: 0; border-bottom: 1px solid var(--line); }
+  /* On narrow screens, lay prose-only lessons out as nav / prose / Prev-Next
+     with the work row shrinking to the button bar rather than reserving the
+     editor's tall minimum. */
+  body.no-editor .layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(200px, 1fr) auto;
+  }
 }

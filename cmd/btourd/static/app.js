@@ -69,6 +69,11 @@ async function loadLesson(section, slug) {
   current = await resp.json();
   pristineSource = current.source;
 
+  // Prose-only lessons (intros/overviews) carry no program; hide the editor
+  // and run controls but keep prose + Prev/Next navigation.
+  const runnable = current.runnable !== false;
+  document.body.classList.toggle("no-editor", !runnable);
+
   // Prose is rendered to HTML server-side (goldmark); the title is the H1.
   proseEl.innerHTML =
     `<h1>${escapeHTML(current.title || "")}</h1>` + (current.proseHTML || "");
@@ -78,7 +83,8 @@ async function loadLesson(section, slug) {
   outputEl.textContent = "";
   stepsEl.textContent = "";
   selectPanel("output");
-  setStatus("ready", current.diagnostic ? "this lesson is expected to fail to compile" : "ready");
+  if (!runnable) setStatus("ready", "");
+  else setStatus("ready", current.diagnostic ? "this lesson is expected to fail to compile" : "ready");
 
   const key = `${section}/${slug}`;
   navEl.querySelectorAll("a").forEach((a) => a.classList.toggle("active", a.dataset.key === key));
@@ -103,7 +109,7 @@ function resetSource() {
 }
 
 async function runProgram() {
-  if (!current) return;
+  if (!current || current.runnable === false) return;
   runButton.disabled = true;
   setStatus("running", "Running...");
   outputEl.textContent = "";

@@ -15,6 +15,7 @@ package tour
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
@@ -41,7 +42,8 @@ type Lesson struct {
 	SectionName string // front matter section display name
 	Order       int    // sort order within the section
 	Prose       string // lesson.md body (after front matter)
-	Source      string // main.bos
+	Source      string // main.bos (empty when HasSource is false)
+	HasSource   bool   // a prose-only lesson (no main.bos) is not runnable
 	Expected    string // expected.stdout (when HasExpected)
 	HasExpected bool
 	Check       *Check // check.json, if present
@@ -128,9 +130,16 @@ func loadLesson(fsys fs.FS, section, slug string) (*Lesson, error) {
 	if err != nil {
 		return nil, fmt.Errorf("lesson %s/%s: %w", section, slug, err)
 	}
+	// main.bos is optional: a lesson without one is a prose-only page (an
+	// intro/overview), not runnable. Any read error other than "not found"
+	// is a real problem and surfaces.
 	src, err := fs.ReadFile(fsys, path.Join(dir, "main.bos"))
+	hasSource := true
 	if err != nil {
-		return nil, fmt.Errorf("lesson %s/%s: missing main.bos: %w", section, slug, err)
+		if !errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("lesson %s/%s: read main.bos: %w", section, slug, err)
+		}
+		hasSource = false
 	}
 
 	lesson := &Lesson{
@@ -141,6 +150,7 @@ func loadLesson(fsys fs.FS, section, slug string) (*Lesson, error) {
 		Order:       leadingNumber(slug),
 		Prose:       prose,
 		Source:      string(src),
+		HasSource:   hasSource,
 	}
 	if lesson.Title == "" {
 		return nil, fmt.Errorf("lesson %s/%s: front matter is missing 'title'", section, slug)
@@ -169,10 +179,16 @@ func loadLesson(fsys fs.FS, section, slug string) (*Lesson, error) {
 		lesson.HasExpected = true
 	}
 
-	// A runnable lesson must declare its expected output; a diagnostic lesson
-	// need not.
-	if !lesson.diagnostic() && !lesson.HasExpected {
-		return nil, fmt.Errorf("lesson %s/%s: runnable lesson is missing expected.stdout", section, slug)
+	if hasSource {
+		// A runnable lesson must declare its expected output; a diagnostic
+		// lesson need not.
+		if !lesson.diagnostic() && !lesson.HasExpected {
+			return nil, fmt.Errorf("lesson %s/%s: runnable lesson is missing expected.stdout", section, slug)
+		}
+	} else if lesson.HasExpected || lesson.Check != nil {
+		// A prose-only lesson has nothing to run, so run artifacts are a
+		// mistake (likely a missing or misnamed main.bos).
+		return nil, fmt.Errorf("lesson %s/%s: prose-only lesson (no main.bos) must not have expected.stdout or check.json", section, slug)
 	}
 	return lesson, nil
 }

@@ -81,6 +81,36 @@ func TestLoadRejectsRunnableWithoutExpected(t *testing.T) {
 	}
 }
 
+func TestLoadAllowsProseOnlyLesson(t *testing.T) {
+	fs := fstest.MapFS{
+		"01-basics/00-intro/lesson.md": {Data: []byte("---\ntitle: Welcome\nsection: Basics\norder: 0\n---\nIntro.\n")},
+	}
+	cat, err := Load(fs)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	l, ok := cat.Lookup("01-basics", "00-intro")
+	if !ok {
+		t.Fatal("intro lesson not loaded")
+	}
+	if l.HasSource {
+		t.Fatal("prose-only lesson should not report HasSource")
+	}
+	if l.Source != "" {
+		t.Fatalf("prose-only lesson has source %q", l.Source)
+	}
+}
+
+func TestLoadRejectsProseOnlyWithExpected(t *testing.T) {
+	fs := fstest.MapFS{
+		"01-basics/00-intro/lesson.md":       {Data: []byte("---\ntitle: Welcome\n---\nIntro.\n")},
+		"01-basics/00-intro/expected.stdout": {Data: []byte("hi\n")},
+	}
+	if _, err := Load(fs); err == nil {
+		t.Fatal("expected error for prose-only lesson carrying expected.stdout")
+	}
+}
+
 func TestVerifyStdout(t *testing.T) {
 	cat, _ := Load(sampleFS())
 	l, _ := cat.Lookup("01-basics", "01-hello")

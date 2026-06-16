@@ -20,12 +20,15 @@ import (
 	"github.com/knusbaum/gbasm/internal/tour"
 	tourcontent "github.com/knusbaum/gbasm/tour"
 	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
 )
 
 // markdown renders lesson prose. Lesson content is trusted (authored in this
 // repo), so the default CommonMark renderer is used without raw-HTML pass-
-// through. Configured once and reused; goldmark.Markdown is concurrency-safe.
-var markdown = goldmark.New()
+// through. The Table extension is enabled so lessons can use GFM tables
+// (e.g. the language-comparison table in the intro). Configured once and
+// reused; goldmark.Markdown is concurrency-safe.
+var markdown = goldmark.New(goldmark.WithExtensions(extension.Table))
 
 // renderMarkdown converts a lesson's Markdown prose to HTML. On the unlikely
 // error it falls back to the raw text wrapped in a <pre> so the lesson still
@@ -240,6 +243,7 @@ type lessonResponse struct {
 	SectionName string `json:"sectionName"`
 	ProseHTML   string `json:"proseHTML"`
 	Source      string `json:"source"`
+	Runnable    bool   `json:"runnable"`
 	Expected    string `json:"expected,omitempty"`
 	HasExpected bool   `json:"hasExpected"`
 	Diagnostic  bool   `json:"diagnostic"`
@@ -258,6 +262,7 @@ func (s *serverState) handleLesson(w http.ResponseWriter, r *http.Request) {
 		SectionName: l.SectionName,
 		ProseHTML:   renderMarkdown(l.Prose),
 		Source:      l.Source,
+		Runnable:    l.HasSource,
 		Expected:    l.Expected,
 		HasExpected: l.HasExpected,
 		Diagnostic:  l.Check != nil && l.Check.Kind == "diagnostic",
@@ -275,6 +280,10 @@ func (s *serverState) handleRun(w http.ResponseWriter, r *http.Request) {
 	l, ok := s.catalog.Lookup(r.PathValue("section"), r.PathValue("lesson"))
 	if !ok {
 		writeError(w, http.StatusNotFound, "no_such_lesson", "lesson not found")
+		return
+	}
+	if !l.HasSource {
+		writeError(w, http.StatusBadRequest, "not_runnable", "this lesson has no program to run")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxSourceBytes+maxStdinBytes+4096)
