@@ -1,0 +1,12 @@
+package main
+import "fmt"
+interface speaker { val(s *self) i64 }
+type num struct { n i64 } {
+	val(p *num) i64 { return p.n }
+}
+// Dispatch on an interface value bound at runtime to a global's address.
+var gx num := num{n: 5}
+fn main() {
+	gs speaker := &gx
+	fmt.print("%d\n", gs.val())
+}

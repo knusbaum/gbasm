@@ -199,7 +199,7 @@ tests) · **·** N/A.
 | I13 conservative merge | ✓ (`loop_flow`, owned branch) | ○ | ○ | ○ | · | · | · |
 | I14 traps | ✓ (bounds/nil) | ✓ (`cov_trap_oob_field`) | ✓ (bounds) | ○ | · | · | ✓ (`cov_trap_oob_global`) |
 | I15 nullability | ✓ (`nullable_*`) | ✓ (`cov_nullable_field_narrow`) | **○ #15** | ○ | ✓ (param narrow) | ✓ alias / **○ #14 nil** (`cov_nullable_return`) | ○ |
-| I16 iface dispatch | ✓ (`iface_from_*`) | ○ | · | · | ✓ (`iface_unknown_param`) | ○ | ○ |
+| I16 iface dispatch | ✓ (`iface_from_*`) | **○ #16** | · | · | ✓ (`iface_unknown_param`) | ✓ (`cov_iface_dispatch_return`) | ✓ dispatch / **○ #17 static-init** (`cov_iface_dispatch_global`) |
 | I17 visibility | · | ✓ (`private_field_*`) | · | · | · | · | ✓ (cross-pkg) |
 | variadics | ✓ (`variadic_*`) | · | · | · | ✓ (param) | · | · |
 | values/static | ○ | ○ | · | · | ○ | ○ | ✓ (`values_*`) |
@@ -303,6 +303,8 @@ fixed ones have a passing regression test.
 | I7 | narrowing a **global** i64 to i16 fails in `bas`: `MOV [y(size=16), g:16] Failed to find an instruction` — 16-bit move from a symbol-ref operand | **build failure** on valid code | **open #13 — deferred** (encoder) | held: `cov_cast_global_narrow` (expect run output) |
 | I15 | returning a bare `nil` from a function whose return type is a nullable pointer → position-less `No such type "<nil>"` (return-type context not threaded to the nil literal). Returning a param works | **false rejection** of valid code | **open #14 — deferred** | held: `cov_nullable_return_nil` (expect run output) |
 | I15/I3 | a `nil` element in an array literal lacks pointer context (`nil requires pointer context`), even at a typed `:=` decl where int literals coerce — array-literal element typing doesn't reach `nil` | **false rejection** of valid code | **open #15 — deferred** | held: `cov_nullable_array_literal` (expect run output) |
+| I16 | dispatch **directly** through an interface-typed struct field (`h.s.val()`) → `no method "val" on type speaker`; extracting the field to a local first works | **false rejection**; method resolution doesn't fire on a field-projected interface value | **open #16 — deferred** | held: `cov_iface_dispatch_field` (expect run output) |
+| I16 | a global interface var with a **static** address-of initializer (`var gs speaker := &gx`) → `address-of initializer assigned to non-pointer type`; runtime assignment works | **false rejection**; static-init path doesn't do the &x → interface coercion | **open #17 — deferred** | held: `cov_iface_global_static_init` (expect run output) |
 
 Field-level borrow soundness otherwise confirmed (green guards): a field *pointer*
 borrow (`&s.f`) tracks via the struct origin, so dispose invalidates it and
