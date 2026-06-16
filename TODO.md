@@ -83,3 +83,34 @@ io, …) into an installable artifact (tarball / OS package / installer) that
 drops the tools on `PATH` and lets the compiler find the runtime without
 manual `BOSONPATH` fiddling. Decide the runtime-discovery story (install prefix
 vs. embedded bundle) as part of it.
+
+---
+
+## Borrow checker: #10 field-buried borrow escape (+ #18)
+
+A borrow of local storage buried in an aggregate field can escape the frame
+(through a call, `new()`/heap, a heap-pointer write, or a global) and be used
+after the local is consumed, undetected. Four faces; full design + empirical
+findings in `DESIGN_10_field_provenance.md`. Settled: coarse param-level
+summaries are sound for borrows (the caller flattens a named struct arg's field
+origins); field-level is *precision*, not soundness.
+
+**Soundness (do first — all caller-side, no `.bo` format change):**
+- Phase 1: pointee-field tracking — lift the `readProvenancePath` pointer-root
+  cutoff (`compile.go:1150`) + conservative invalidation on opaque `*mut`
+  escape. Closes heap-write/heap-new. *The real work.*
+- literal-arg flattening: extend `argAliasProvenance` (`retalias.go:132`) to
+  `*StructLiteral` args (~10 lines). Closes the call face.
+- #18: owned-aggregate return drops borrowed-field alias tracking — the owned-
+  struct-result caller path skips the `__callret` recording the non-owned path
+  uses. Concrete use-after-free. Held `cov_owned_aggregate_return_borrow_lost_err`.
+- Phase 0: global-face conservative reject (cheap, independent).
+
+**Precision (PLANNED follow-on, after soundness):** the field-level `.bo` fact
+(`ReturnAliases [][]FieldAlias`, param-relative aliasing projection, k-limited,
+param-level interface grammar with coarsen-then-⊆ satisfaction). Stops over-
+rejecting independent/owned fields of a partially-borrowing aggregate. Full rep
+design in `DESIGN_10_field_provenance.md`.
+
+Held drivers: `cov_owned_field_borrow_escapes_{call,heap,heap_ptr_write}_err`,
+`cov_owned_aggregate_return_borrow_lost_err`.

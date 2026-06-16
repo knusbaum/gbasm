@@ -11,6 +11,29 @@ faces, all the same shape (`&s.x` stored into a field that outlives `s`):
 | **heap-write** | `h.p = &s.x` (through a `*mut`) | `cov_owned_field_borrow_escapes_heap_ptr_write_err` |
 | **global** | `g = &s.x` (g a global ptr) | (probe; no driver yet) |
 
+## Status & build plan (read this first)
+
+The design is settled and probed against the live compiler (see *Empirical
+findings* below). The work splits cleanly into **soundness** (do first) and
+**precision** (planned follow-on, not optional, not now):
+
+**Soundness — all caller-side, NO `.bo`/grammar change:**
+1. **Phase 1** — pointee-field tracking (lift the `readProvenancePath`
+   pointer-root cutoff + conservative invalidation). Closes heap-write,
+   heap-new. *The real work; everything composes on it.*
+2. **literal-arg flattening** — extend `argAliasProvenance` to struct-literal
+   args (~10 lines). Closes the #10 **call** face.
+3. **#18** — owned-aggregate-return borrow recording (the owned-struct-result
+   caller path skips the `__callret` recording the non-owned path uses).
+4. **Phase 0** — global-face conservative reject (independent, cheap).
+
+**Precision — PLANNED FOLLOW-ON (field-level `.bo` fact):**
+The `FieldAlias` representation below (param-relative aliasing projection of the
+return state, k-limiting, param-level interface grammar). It does *not* add
+soundness — it stops over-rejecting independent/owned fields of a partially-
+borrowing aggregate. Build after the soundness fixes land. Designed in full
+here so it's ready to pick up.
+
 **Not heap-modeling.** The safe `new(cursor{current: &x})` vs unsafe
 `new(holder{p: &s.x}); dispose(s)` differ only in whether the local is
 *consumed* while the escaped borrow is reachable. That distinction already
