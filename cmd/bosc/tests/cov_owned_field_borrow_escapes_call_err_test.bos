@@ -1,0 +1,19 @@
+package main
+
+import "fmt"
+
+// #10-class: a borrow of an owned field, buried in a struct field and routed
+// through a function call, loses its alias to the source — so dispose does not
+// invalidate it and the later read is wrongly accepted. (P3: a plain function,
+// no new() involved — the loss is not new()-specific.)
+type box    struct { x owned i64 }
+type holder struct { p *i64 }
+
+fn id(h holder) holder { return h }
+
+fn main() {
+	s owned box := box{x: 10}
+	h holder := id(holder{p: &s.x})
+	dispose(s)
+	fmt.print("%d\n", *h.p)
+}

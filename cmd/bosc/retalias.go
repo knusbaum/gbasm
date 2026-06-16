@@ -129,6 +129,30 @@ func argAliasProvenance(c *Context, arg AST) flow.PointerExpr {
 	if ap.KnownOrigin {
 		return ap
 	}
+	// Struct-LITERAL argument (`id(holder{p: &s.x})`): the literal carries its
+	// borrows in its field values, which never reach a named binding the
+	// FieldOrigins path below can read. Union the field-value origins directly
+	// so the borrow flows into the call result, matching the struct-symbol arm.
+	if sl, ok := unwrapReturnExpr(arg).(*StructLiteral); ok {
+		var merged flow.PointerExpr
+		for _, f := range sl.Fields {
+			if f.Val == nil {
+				continue
+			}
+			fp := argAliasProvenance(c, f.Val)
+			if !fp.KnownOrigin {
+				continue
+			}
+			if !merged.KnownOrigin {
+				merged = fp
+			} else if merged.Origin != fp.Origin {
+				merged = c.PointerFlow().JoinOrigins(merged, fp)
+			}
+		}
+		if merged.KnownOrigin {
+			return merged
+		}
+	}
 	if sym, ok := unwrapReturnExpr(arg).(*Symbol); ok && !c.IsGlobalBinding(sym.Name) {
 		if t, exists := c.TypeForVar(sym.Name); exists && t.Indirection == 0 && !t.IsSlice() {
 			// Struct values carry borrows in their fields; interface values
