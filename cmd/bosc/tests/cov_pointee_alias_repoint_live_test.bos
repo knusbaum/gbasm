@@ -1,0 +1,18 @@
+package main
+import "fmt"
+// Pointee-identity keying must not OVER-reject: re-pointing a pointee field
+// through an alias to LIVE storage means a later read no longer touches the
+// disposed source. Guards the precision side of cov_owned_field_borrow_pointee_
+// alias_err.
+type box struct { x owned i64 }
+type holder struct { p *i64 }
+fn main() {
+	s owned box := box{x: 10}
+	live i64 := 7
+	h owned *mut holder := new(holder{p: &s.x})
+	h2 *mut holder := h
+	h2.p = &live
+	dispose(s)
+	fmt.print("%d\n", *h.p)
+	free(h)
+}

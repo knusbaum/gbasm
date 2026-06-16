@@ -59,14 +59,17 @@ residual cost is the false-positive case above (conservative, sound). Verified:
 the minimal "record + lift the cutoff + keep facts" is both simpler and sounder
 than the dropped-fact scheme.
 
-**The real remaining hole is pointer ALIASING, not opaque calls.** Pointee-field
-facts are PATH-keyed (`h2.p`), so writing through one alias of a pointee
-and reading through another (`h2 *mut holder := h; h2.p = &s.x; *h.p`) misses
-it — a pre-existing false negative the cutoff-lift exposes but does not fix.
-Sound fix = **pointee-IDENTITY keying** (when two paths resolve to the same
-pointee origin, share the fact); it sits *on top of* the recording sites + the
-lifted cutoff (a foundation, not a rework). Its own focused pass; held driver
-`cov_owned_field_borrow_pointee_alias_err`.
+**Pointer ALIASING — CLOSED via pointee-identity keying.** Pointee-field facts
+were PATH-keyed (`h2.p`), so writing through one alias of a pointee and reading
+through another (`h2 *mut holder := h; h2.p = &s.x; *h.p`) missed it. Fixed by
+keying the fact on the root pointer's **pointee ORIGIN** (`pointeeFieldKey`)
+rather than its binding name: `h` and `h2 := h` already carry the same origin
+(both `Origin("h")` — the allocation), so `h.p` and `h2.p` resolve to one key.
+The tracker already computed the shared identity at the pointer level; the field
+layer just wasn't consulting it. Verified sound *and* precise: alias dangle
+rejected (`cov_owned_field_borrow_pointee_alias_err`), re-point-through-alias-to-
+live accepted (`cov_pointee_alias_repoint_live`), distinct allocations don't
+collide (`cov_pointee_distinct_alloc`). Full suite green, no over-rejection.
 
 ---
 
@@ -123,9 +126,10 @@ root scalar-write arm) + on `new(structLit)` (Phase 2, folded in).
   dropping on opaque writes is unsound.)
 This closed pointee-store + pointee-construct for the **direct** case (`cov_owned_field_
 borrow_escapes_pointee_{construct,store}_err` green), full suite green, no over-rejection.
-**REMAINING:** pointer-aliasing (write through one alias, read through another) —
-needs pointee-IDENTITY keying. Held driver `cov_owned_field_borrow_pointee_
-alias_err`. Own focused pass.
+**DONE (aliasing too):** pointer-aliasing (write through one alias, read through
+another) closed by pointee-identity keying (`pointeeFieldKey` — key on the root's
+pointee origin, which aliased pointers share). `cov_owned_field_borrow_pointee_
+alias_err` green; precision guards `cov_pointee_{alias_repoint_live,distinct_alloc}`.
 
 ### Phase 2 — pointee-construct face (small, builds on Phase 1)
 `h := new(T{f: &local})`: the struct literal is **right there** at the call

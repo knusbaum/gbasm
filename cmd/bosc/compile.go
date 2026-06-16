@@ -1142,6 +1142,20 @@ func walkLeafType(c *Context, rootType ASTType, fields string) (ASTType, bool) {
 // UnknownPointer when the chain doesn't reach a binding-rooted path,
 // the root is global, or the root is a pointer-typed local (in which
 // case the path crosses an opaque pointee).
+// pointeeFieldKey returns the fact key for a field reached through a POINTER
+// root, keyed by the root's pointee ORIGIN rather than its binding name. Two
+// pointers to the same allocation (`h`, `h2 := h`) carry the same origin, so a
+// fact written through one (`h2.p = &s.x`) and read through the other (`*h.p`)
+// resolve to the same key. Returns (key, false) when the root has no known
+// origin (then the pointee is opaque and stays untracked).
+func pointeeFieldKey(c *Context, path FlowPath) (string, bool) {
+	link := c.PointerFlow().Pointer(flow.Binding(path.Root))
+	if !link.KnownOrigin {
+		return "", false
+	}
+	return FlowPath{Root: string(link.Origin), Fields: path.Fields}.Key(), true
+}
+
 func readProvenancePath(c *Context, a AST) flow.PointerExpr {
 	path, ok := ProvenancePathForExpr(a)
 	if !ok || path.Fields == "" {
@@ -1156,12 +1170,21 @@ func readProvenancePath(c *Context, a AST) flow.PointerExpr {
 	}
 	// A recorded path fact wins for ANY root — including a POINTER root
 	// (`h.p` = `(*h).p`). A borrow stored through a pointer (`h.p = &s.x`) or
-	// constructed into heap (`h := new(holder{p: &s.x})`) is recorded at the
-	// pointee path, so reading it carries the borrow's origin and dispose-of-
-	// source invalidation fires. Pointer roots were previously cut off as
-	// opaque (#10 heap-write / heap-new); they stay opaque only when no fact
-	// was recorded for the pointee field.
-	if existing := c.PointerFlow().GetPathPointer(path.Key()); existing.KnownOrigin {
+	// constructed (`h := new(holder{p: &s.x})`) is recorded at the pointee
+	// field, so reading it carries the borrow's origin and dispose-of-source
+	// invalidation fires. For a pointer root the fact is keyed by the pointee
+	// ORIGIN (so aliased pointers `h`/`h2` pointing at the same allocation
+	// share one fact — #10 pointee-store/construct + pointee-alias), not the
+	// binding-name path. Pointer roots stay opaque only when no fact exists.
+	lookupKey := path.Key()
+	if rootT.Indirection > 0 {
+		k, ok := pointeeFieldKey(c, path)
+		if !ok {
+			return c.PointerFlow().UnknownPointer()
+		}
+		lookupKey = k
+	}
+	if existing := c.PointerFlow().GetPathPointer(lookupKey); existing.KnownOrigin {
 		return existing
 	}
 	if rootT.Indirection > 0 {
@@ -1289,8 +1312,12 @@ func updateFieldPointerFactsForAssignment(c *Context, target AST, targetIsSymbol
 	// lives behind the pointer; the field machinery is value-keyed).
 	if rootT.Indirection > 0 {
 		if dstt.Indirection > 0 || dstt.IsSlice() {
-			c.PointerFlow().ForgetFieldPointersUnder(path.Key())
-			c.PointerFlow().SetPathPointer(path.Key(), pointerExprForAST(c, val, ""))
+			// Key by the pointee ORIGIN so a write through one alias is visible
+			// when read through another (`h2.p = &s.x` then `*h.p`).
+			if key, ok := pointeeFieldKey(c, path); ok {
+				c.PointerFlow().ForgetFieldPointersUnder(key)
+				c.PointerFlow().SetPathPointer(key, pointerExprForAST(c, val, ""))
+			}
 		}
 		return
 	}

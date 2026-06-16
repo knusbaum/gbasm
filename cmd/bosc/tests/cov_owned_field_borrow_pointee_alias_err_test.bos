@@ -1,0 +1,19 @@
+package main
+import "fmt"
+// REMAINING Phase-1 hole (pre-existing): a borrow stored through one pointer
+// alias of a pointee and read through ANOTHER alias is not tracked —
+// pointee-field facts are PATH-keyed (h2.p), not POINTEE-IDENTITY-keyed, so
+// reading h.p (same pointee) misses it. Must be rejected; currently accepted.
+// Fix = pointee-identity keying (own focused pass; see DESIGN_10).
+type box struct { x owned i64 }
+type holder struct { p *i64 }
+fn main() {
+	s owned box := box{x: 10}
+	seed i64 := 99
+	h owned *mut holder := new(holder{p: &seed})
+	h2 *mut holder := h
+	h2.p = &s.x
+	dispose(s)
+	fmt.print("%d\n", *h.p)
+	free(h)
+}

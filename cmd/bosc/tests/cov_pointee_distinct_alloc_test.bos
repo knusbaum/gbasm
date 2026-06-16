@@ -1,0 +1,17 @@
+package main
+import "fmt"
+// Distinct allocations carry distinct origins, so disposing one source must not
+// poison a field of the OTHER. Guards against origin-key collision.
+type box struct { x owned i64 }
+type holder struct { p *i64 }
+fn main() {
+	s1 owned box := box{x: 10}
+	s2 owned box := box{x: 20}
+	h1 owned *mut holder := new(holder{p: &s1.x})
+	h2 owned *mut holder := new(holder{p: &s2.x})
+	dispose(s1)
+	fmt.print("%d\n", *h2.p)
+	dispose(s2)
+	free(h1)
+	free(h2)
+}
