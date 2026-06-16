@@ -1,0 +1,14 @@
+package main
+import "fmt"
+interface speaker { val(s *self) i64 }
+type num struct { n i64 } {
+	val(p *num) i64 { return p.n }
+}
+// #17: a global interface var initialized statically from &x fails
+// ("address-of initializer assigned to non-pointer type"). Assigning at
+// runtime works, so the static form should too.
+var gx num := num{n: 5}
+var gs speaker := &gx
+fn main() {
+	fmt.print("%d\n", gs.val())
+}

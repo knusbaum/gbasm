@@ -1924,6 +1924,7 @@ The supported forms compose recursively:
 - `&SomeStruct{...}` — recursively encodes the inner struct into a fresh anonymous global (`__static_0`, `__static_1`, …) and emits a pointer slot relocated to it.
 - `&someGlobalArr[N]` for compile-time-constant N — a single relocation to the array's symbol with `Addend = N * elementSize`. Pointer-into-array without any auxiliary storage.
 - Type-alias casts of a literal integer — `var fd FD := FD(3)` (or the qualified form `io.FD(3)`). The encoder evaluates the inner literal at compile time and writes the resulting bytes into the alias's slot.
+- `&someGlobal` (or `&SomeStruct{...}`) assigned to an **interface-typed** global — a 16-byte fat pointer `[data, vtable]` with *two* relocations: the data word reuses the pointer-data encoding above (so the data target resolves the same way a plain pointer global would), and the vtable word relocates to the per-`(type, shape, interface)` vtable global. The vtable symbol is named and registered for emission by the same helper the runtime coercion path uses, so a statically-built interface and a runtime-built one share one vtable. Interface-to-interface conversion and value-backed interfaces in static init are not supported (use a pointer source / assign at runtime).
 
 Anything else (function calls, runtime expressions, type mismatches, length mismatches) produces a specific diagnostic at compile time.
 

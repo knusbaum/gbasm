@@ -7214,20 +7214,20 @@ func compileTypeSwitchIfaceCase(of io.Writer, c *Context, ast *TypeSwitch, cs *T
 // source's origin. Registering the data field would then make the destination
 // interface look dead, which is the opposite of what an ownership transfer
 // means.
-func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTType, valAST AST, destRef, destBinding string) {
-	// Interface → interface widening rebuilds the vtable at runtime from the
-	// source's concrete typedesc (it has no static __vtable_T__I); delegate.
-	if c.IsInterfaceType(srct) {
-		emitInterfaceWiden(of, c, errNode, dstt, srct, valAST, destRef, destBinding)
-		return
-	}
+// interfaceVtableSymbol validates that a concrete source type srct satisfies
+// interface dstt, registers the per-(type, shape, interface) vtable global for
+// emission, and returns its symbol name (plus whether the coercion is
+// value-backed). Shared by the runtime fat-pointer construction
+// (emitInterfaceFatPtr) and the static-init encoder so both name and emit the
+// same vtable.
+func interfaceVtableSymbol(c *Context, errNode AST, dstt, srct ASTType) (vtableName string, valueBacked bool) {
 	// The vtable and its typedesc relocation are keyed off the *base* type of
 	// the source — the leaf at the bottom of the shape's constructor stack.
 	// For composite sources (`*byte[]`, `byte[][]`, `*byte[N]`) the bare
 	// srct.Name is empty; shapeBaseName walks to the named leaf (`byte`,
 	// `geom.Point`, ...) so the typedesc symbol resolves to a real base type.
 	concreteTypeName := shapeBaseName(srct)
-	valueBacked := validateInterfaceCoercion(c, errNode, dstt, srct)
+	valueBacked = validateInterfaceCoercion(c, errNode, dstt, srct)
 	ifaceDecl, _ := c.InterfaceForName(dstt.Name)
 	// Split qualified type names (e.g. "io.FD") so the vtable's method
 	// relocations target the correct owning package, and so the vtable
@@ -7250,11 +7250,22 @@ func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTTy
 		CompileErrorF(errNode, "Cannot convert value of type %s to interface %s: %s", srct, dstt.Name, serr.Error())
 	}
 	shapeWord, _ := shapeWordFor(srct)
-	vtableName := fmt.Sprintf("__vtable_%s_%s__%s",
+	vtableName = fmt.Sprintf("__vtable_%s_%s__%s",
 		strings.ReplaceAll(concreteTypeName, ".", "_"),
 		shapeMangle(levels),
 		strings.ReplaceAll(dstt.Name, ".", "_"))
 	c.NeedVtable(vtableName, bareType, dstt.Name, typePkg, ifaceDecl, shapeWord)
+	return vtableName, valueBacked
+}
+
+func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTType, valAST AST, destRef, destBinding string) {
+	// Interface → interface widening rebuilds the vtable at runtime from the
+	// source's concrete typedesc (it has no static __vtable_T__I); delegate.
+	if c.IsInterfaceType(srct) {
+		emitInterfaceWiden(of, c, errNode, dstt, srct, valAST, destRef, destBinding)
+		return
+	}
+	vtableName, valueBacked := interfaceVtableSymbol(c, errNode, dstt, srct)
 	if destBinding != "" && dstt.OwnedMask == 0 && !valueBacked {
 		c.PointerFlow().SetFieldPointer(flow.Binding(destBinding), "data", pointerExprForAST(c, valAST, ""))
 	}

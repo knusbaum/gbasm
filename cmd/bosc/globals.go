@@ -217,6 +217,14 @@ func encodeLiteralBytes(c *Context, dstt ASTType, l *Literal) ([]byte, []relocSp
 //     Compositional: a literal containing another `&literal` produces
 //     two anonymous globals, and so on, all queued in encoding order.
 func encodeAddressBytes(c *Context, dstt ASTType, a *Address) ([]byte, []relocSpec, error) {
+	// Interface destination: emit a 16-byte fat pointer [data, vtable]. The
+	// data word relocates to the addressed target (the same encoding the
+	// pointer path produces); the vtable word relocates to the per-(type,
+	// shape, interface) vtable global. This is the static-init analogue of
+	// emitInterfaceFatPtr's runtime construction.
+	if c.IsInterfaceType(dstt) {
+		return encodeInterfaceAddressBytes(c, dstt, a)
+	}
 	// The destination must be pointer-sized to hold a relocated
 	// address. Two valid shapes: a *T (Indirection > 0) or a
 	// function-pointer (FuncSig != nil).
@@ -269,6 +277,35 @@ func encodeAddressBytes(c *Context, dstt ASTType, a *Address) ([]byte, []relocSp
 	name := c.AddAnonGlobal(innerType.String(), innerBytes, innerRelocs)
 	out := make([]byte, 8)
 	return out, []relocSpec{{Offset: 0, Symbol: name, Addend: 0}}, nil
+}
+
+// encodeInterfaceAddressBytes builds a static interface fat pointer from an
+// `&...` initializer assigned to an interface-typed global. Layout: [data:8]
+// [vtable:8]. The data word reuses the ordinary pointer-data encoding (so
+// &global / &func / &Struct{...} all resolve, including the anon-global
+// queueing for &literal); the vtable word relocates to the vtable symbol named
+// by interfaceVtableSymbol, which also registers it for emission.
+func encodeInterfaceAddressBytes(c *Context, dstt ASTType, a *Address) ([]byte, []relocSpec, error) {
+	srct := a.ASTType(c)
+	if c.IsInterfaceType(srct) {
+		return nil, nil, fmt.Errorf("interface-to-interface conversion in a static initializer is not supported; assign at runtime")
+	}
+	vtableName, valueBacked := interfaceVtableSymbol(c, a, dstt, srct)
+	if valueBacked {
+		return nil, nil, fmt.Errorf("value-backed interface in a static initializer is not supported; use a pointer source (e.g. &global)")
+	}
+	// Reuse the pointer-data encoding for the data word at offset 0. srct is a
+	// pointer type (Indirection > 0), so it clears the pointer-shape guard and
+	// resolves &global / &func / &literal exactly as a plain pointer global
+	// would. The resulting relocation is already at offset 0.
+	dataBytes, relocs, err := encodeAddressBytes(c, srct, a)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := make([]byte, 16)
+	copy(out, dataBytes)
+	relocs = append(relocs, relocSpec{Offset: 8, Symbol: vtableName, Addend: 0})
+	return out, relocs, nil
 }
 
 // encodeArrayLiteralBytes serializes an array literal `[e1, e2, …]` for
