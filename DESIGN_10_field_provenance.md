@@ -89,22 +89,40 @@ site, so no callee summary is needed. When the initializer is `new(structLit)`,
 run `recordStructLiteralFieldFacts` against the **pointee path** `(*h)` instead
 of a value path. Reuses Phase 1's pointee-field storage. *Risk: low.*
 
-### Phase 3 — call face (the only face that *might* need objrep)
-`h := id(holder{p: &s.x})`: the construction is the **argument**, visible at the
-call site; `id`'s summary says (today, coarse) "return slot 0 aliases param 0".
-Two options, pick after a soundness pass:
-- **3a (no objrep):** when a struct-by-value return's summary names param P,
-  `CopyFieldPointers(argP, dest)` — a by-value struct return is a copy whose
-  fields carry the same borrows as `argP`'s fields, so copying argP's field
-  provenance to `dest` is sound *iff* the callee doesn't re-point fields it
-  doesn't also surface in the summary. Replaces the `__callret` collapse with a
-  precise field copy. **Likely sufficient and far cheaper.**
-- **3b (objrep):** only if 3a proves unsound for some callee shape — extend the
-  fact to field-level: `ReturnAliases [][]FieldAlias{ReturnPath, Param, ParamPath}`
-  (empty paths ≡ today's behavior, so the common case stays one byte). Touches
-  `ofile.go`/`function.go` types, `bwrite.go` ser/de, the `retaliases` directive
-  (`cmd/bas/main.go` ×2 + interface form), `bdump`, the importer. Mechanical but
-  wide, and a cross-package format bump.
+### Phase 3 — call face (genuinely needs objrep; no free alternative)
+This is the one face that **requires** a field-level fact in the `.bo`. The
+general case is a **cross-shape, field-to-field** mapping computed inside the
+callee:
+```
+type foo struct { x *i64 }
+type bar struct { y *i64 }
+fn doathing(f *foo) bar { return bar{ y: f.x } }   // return.y aliases param0(deref).x
+```
+`bar` is not `foo`; there is no `argP` whose fields can be copied onto `dest`.
+The only expression of the fact is the mapping itself: *"return slot 0, field
+`y`, aliases param 0, field `x`."* And it is **forced** to serialize: when
+`doathing` is imported, the caller has only the `.bo`, not the AST, so it cannot
+re-derive the mapping by any local analysis. There is no no-objrep path.
+
+- **The fact:** extend `ReturnAliases [][]int` →
+  `[][]FieldAlias{ReturnPath, Param, ParamPath}` (empty paths ≡ today's
+  behavior, so the common case stays one byte; `ParamPath` may carry a deref
+  marker for `*foo` params). Touches `ofile.go`/`function.go` types,
+  `bwrite.go` ser/de, the `retaliases` directive (`cmd/bas/main.go` ×2 +
+  interface form), `bdump`, and the importer. Mechanical but wide, and a
+  cross-package format bump.
+- **Production:** `returnExprParamAliases` (`retalias_engine.go:348`) already
+  reads the returned expression's field-origin union; extend it to emit the
+  *return-side field path* alongside each param-side origin instead of
+  collapsing to a slot-level `[]int`.
+- **Caller application:** replace the `__callret` collapse
+  (`recordStructCallResultAtPath`) with per-`FieldAlias` recording: for each
+  `(ReturnPath ← Param.ParamPath)`, set `dest.<ReturnPath>`'s origin to
+  `argAliasProvenance(args[Param]).<ParamPath>`.
+- **3a as an optional fast-path only:** when the return *is* a param (`return
+  h`, same shape), `CopyFieldPointers(argP, dest)` is a valid shortcut — but it
+  is **not** a substitute for the field-level fact and does not cover the
+  cross-shape case above.
 
 ### Builtins
 `new`/`alloc` need no summary — `new`'s provenance is the **local** struct
@@ -114,14 +132,18 @@ literal at the call site (Phase 2); `alloc` is fresh (none).
 
 ## What closes what
 
-- Phases 0–2 close **global, heap-write, heap-new** — *no `.bo`/grammar change*.
-- Phase 3a closes **call** without objrep if the field-copy is sound; 3b is the
-  fallback objrep bump.
+- Phases 0–2 close **global, heap-write, heap-new** — *no `.bo`/grammar change*
+  (the borrow is constructed at a locally-visible site in each).
+- Phase 3 closes **call** and **requires** the field-level `.bo` fact — the
+  general case is a cross-shape field-to-field mapping (`bar{y: f.x}`) computed
+  inside the callee and forced to serialize for cross-package imports. No
+  no-objrep alternative; 3a is only a `return param` fast-path, not a substitute.
 
-So the objrep/grammar work the original framing feared is the **last, least-
-certain** item, gating one face, with a no-format-change alternative (3a). The
-high-risk item is Phase 1 (moving the pointer-root provenance boundary +
-getting conservative invalidation complete); everything else composes off it.
+So the objrep/grammar work is needed for exactly **one** of the four faces (the
+call face) — but for that face it is unavoidable. The other three faces avoid it
+because their construction is locally visible. The high-risk item remains Phase
+1 (moving the pointer-root provenance boundary + complete conservative
+invalidation); everything else composes off it.
 
 ## Verification
 Every phase: full bosc + bas + `go test ./...` + `mmk go_test` green, plus the
