@@ -1,0 +1,9 @@
+package main
+import "fmt"
+type box struct { h owned i64 }
+fn main() {
+	s owned box := box{h: 10}
+	b i64 := s.h
+	dispose(s)
+	fmt.print("%d\n", b)
+}

@@ -1,0 +1,12 @@
+package main
+import "fmt"
+// Reading the value of an owned field while the owner is still live is legal —
+// the alias to the owner is invalidated only when the owner is consumed. Guards
+// against the #8 fix over-rejecting live reads.
+type box struct { h owned i64 }
+fn main() {
+	s owned box := box{h: 10}
+	b i64 := s.h
+	fmt.print("%d\n", b)
+	dispose(s)
+}

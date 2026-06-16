@@ -1,0 +1,16 @@
+package main
+
+import "fmt"
+
+// #8-class: a value copied out of a nested owned field, read after the
+// aggregate is disposed, must be rejected.
+type inner struct { h owned i64 }
+type outer struct { in owned inner }
+
+fn main() {
+	i owned inner := inner{h: 10}
+	o owned outer := outer{in: i}
+	b i64 := o.in.h
+	dispose(o)
+	fmt.print("%d\n", b)
+}

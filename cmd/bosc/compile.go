@@ -1150,10 +1150,62 @@ func readProvenancePath(c *Context, a AST) flow.PointerExpr {
 	if c.IsGlobalBinding(path.Root) {
 		return c.PointerFlow().UnknownPointer()
 	}
-	if t, ok := c.TypeForVar(path.Root); !ok || t.Indirection > 0 {
+	rootT, ok := c.TypeForVar(path.Root)
+	if !ok || rootT.Indirection > 0 {
 		return c.PointerFlow().UnknownPointer()
 	}
-	return c.PointerFlow().GetPathPointer(path.Key())
+	if existing := c.PointerFlow().GetPathPointer(path.Key()); existing.KnownOrigin {
+		return existing
+	}
+	// Reading the VALUE of an owned member copies storage that belongs to the
+	// root aggregate's obligation. Like owned-scalar coercion (`t := fd_owned`
+	// aliases fd), the copy must alias the owner so consuming the owner
+	// (dispose) makes the copy stale — otherwise a value read out of an owned
+	// field/element survives the consume undetected. Only fires when the root
+	// binding is owned in this context (a borrowed view strips field
+	// ownership) and the read lands on owned storage.
+	if rootT.HasOwned() && readAliasesOwnedStorage(c, rootT, path.Fields) {
+		return c.PointerFlow().Pointer(flow.Binding(path.Root))
+	}
+	return c.PointerFlow().UnknownPointer()
+}
+
+// readAliasesOwnedStorage reports whether reading the value at `fields` from a
+// root of `rootType` copies storage covered by an owned obligation: an owned
+// VALUE field (`s.h` with `h owned i64`), or an element of an owned array
+// (`a[i]` with `a owned i64[N]` — the owned bit sits on the whole-array value,
+// so every element read aliases the owner). A plain field of an owned struct
+// copies a free value and is excluded.
+func readAliasesOwnedStorage(c *Context, rootType ASTType, fields string) bool {
+	cur := rootType
+	for _, step := range strings.Split(fields, ".") {
+		if step == "[]" {
+			if cur.IsArray() && cur.HasOwned() {
+				return true
+			}
+			if !cur.IsArray() && !cur.IsSlice() {
+				return false
+			}
+			cur = cur.ElementType()
+			continue
+		}
+		decl, ok := structDeclForType(c, cur)
+		if !ok {
+			return false
+		}
+		found := false
+		for _, fd := range decl.Fields {
+			if fd.Name == step {
+				cur = fd.Type
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return cur.Indirection == 0 && cur.HasOwned()
 }
 
 // rootSymbolName walks a Dot/Index/NonNullAssert chain to the rooted Symbol
