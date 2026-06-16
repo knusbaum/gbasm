@@ -1,0 +1,11 @@
+package main
+import "fmt"
+// &(nested value field) of a mutable container yields a writable *mut view.
+type inner struct { x i64 }
+type outer struct { in inner }
+fn main() {
+	var o outer := outer{in: inner{x: 1}}
+	p *mut i64 := &o.in.x
+	*p = 44
+	fmt.print("%d\n", o.in.x)
+}

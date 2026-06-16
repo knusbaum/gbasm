@@ -184,14 +184,14 @@ tests) · **·** N/A.
 
 | Inv \ position | local binding | struct field | array/slice elem | nested (`a.b.c`, `a.f[i]`) | param (by-val) | return | global |
 |---|---|---|---|---|---|---|---|
-| I1 value-independence | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ○ (init only, no indep) |
+| I1 value-independence | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (`cov_value_indep_global_struct`) |
 | I2 reference sharing | ✓ | ✓ (`cov_ref_share_field`) | ✓ (slice backing) | ✓ (`cov_ref_share_nested`) | ✓ (`*mut` param) | ✓ (`cov_ref_share_return`) | ✓ (`cov_ref_share_global`) |
 | I3 storage fidelity | ✓ | ✓ | ✓ | ✓ (`#4` was here) | ✓ | ✓ | ✓ (`global_*`) |
 | I4 init / zero | ✓ | ✓ (partial-lit) | ✓ (`cov_zero_init_array_elem`) | ✓ (`cov_zero_init_nested_struct`) | · | · | ✓ (`global_*_init`) |
 | I5 aggregate `==`/ordering reject | ✓ | · | · | · | · | · | · |
 | I6 aggregate shape (len) | ✓ (`cov_len_array_slice_subslice`) | ✓ (`cov_array_field_typed_binding`) | ✓ (subslice) | ○ | ○ | ○ | ○ |
 | I7 numeric / cast | ✓ (`cov_cast_{widen,narrow}_local`) | ✓ (`cov_cast_field`) | ✓ (`cov_cast_elem`) | · | **○ #12** | **○ #12** | **○ #13** |
-| I8 mutability (per-level `&`) | ✓ | ✓ (`#7`) | ✓ (`#7`) | ○ | ○ | · | ○ |
+| I8 mutability (per-level `&`) | ✓ | ✓ (`#7`) | ✓ (`#7`) | ✓ (`cov_amp_nested_mut`) | ○ (`&param.field` blocked by #9) | · | ✓ (`cov_amp_global_mut`) |
 | I9 move consumes | ✓ (incl. `owned T[N]`, `cov_owned_fixed_array_move_*`) | ✓ (`owned_field_move_*`) | · (no per-elem owned) | · | ✓ | ✓ | · |
 | I10 discharge exactly once | ✓ (incl. `owned T[N]`, `cov_owned_fixed_array_{dispose,leak}`) | ✓ (`owned_field_*`) | · (no per-elem owned) | · | ✓ | ✓ | · |
 | I11 no use-after-discharge | ✓ | ✓ ptr-borrow / **○ `#8` value-borrow** | ✓ ptr-borrow / **○ `#8`-class value-borrow** | ✓ ptr-borrow / **○ `#8`-class value-borrow** | ✓ | ✓ | · |

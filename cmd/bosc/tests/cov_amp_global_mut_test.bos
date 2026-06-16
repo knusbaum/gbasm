@@ -1,0 +1,9 @@
+package main
+import "fmt"
+// &(global value) yields a writable *mut view.
+var g i64 := 5
+fn main() {
+	p *mut i64 := &g
+	*p = 66
+	fmt.print("%d\n", g)
+}

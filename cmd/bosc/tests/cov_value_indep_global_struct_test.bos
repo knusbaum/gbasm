@@ -1,0 +1,11 @@
+package main
+import "fmt"
+// Copying a global struct value yields an independent value: mutating the
+// global afterward does not change the copy.
+type pt struct { x i64; y i64 }
+var g pt := pt{x: 1, y: 2}
+fn main() {
+	c pt := g
+	g.x = 99
+	fmt.print("%d %d\n", c.x, g.x)
+}
