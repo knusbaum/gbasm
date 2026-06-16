@@ -151,3 +151,109 @@ held #10 drivers flip per face. Phase 1 must **not** regress the precise in-
 frame cases (`cov_owned_field_borrow_in_struct_*`, `new_struct_nonnullable_
 pointer`, `cov_ref_share_*`, cursor/self-ref patterns) — that over-rejection
 check is the gate for Phase 1.
+
+---
+
+## Phase 3 representation design (the `.bo`/grammar fact)
+
+### The fact
+
+Replace the slot-coarse `ReturnAliases [][]int` with a field-level fact:
+
+```go
+type FieldAlias struct {
+    ReturnPath string // dot-path within the return slot ("" = whole slot)
+    Param      int    // contributing parameter index
+    ParamPath  string // dot-path within that parameter ("" = whole param)
+}
+ReturnAliases [][]FieldAlias   // per return slot, a set of field aliases
+```
+
+- `doathing(f *foo) bar { return bar{y: f.x} }` → slot 0 =
+  `[{ReturnPath:"y", Param:0, ParamPath:"x"}]`.
+- **Backward-compatible:** today's `ReturnAliases[slot]=[p1,p2]` becomes
+  `[{"",p1,""},{"",p2,""}]`. Empty paths ≡ whole-slot-aliases-whole-param, so
+  passthrough (`return param`) and every existing fact are `{"",p,""}` — the
+  common case carries no path strings.
+
+### Path semantics — strings, implicit deref, no markers
+
+A path is a **dot-joined field string** (with `[]` for an index step), the same
+convention as `flow.FlowPath.Fields` and `ProvenancePathForExpr`. Crucially,
+**no explicit deref marker is needed on either side**, because the fact is
+*applied* by re-interpreting the path as field accesses on an expression, and
+field access auto-derefs one pointer level:
+
+- Param side: `ParamPath="x"` applied to arg `&foo_inst` (`*foo`) yields
+  `(&foo_inst).x` = `foo_inst.x`. Applied to a value arg `foo_inst` yields
+  `foo_inst.x`. Same path, deref falls out of the access.
+- Return side: `ReturnPath="y"` applied to the bound result `h` yields `h.y` —
+  for a value `bar` that's `h.y`; for a `*bar` result it's `(*h).y`. Same path.
+
+So a path is just `field(.field|[])*`; the value-vs-pointer distinction is
+resolved at application, not stored. (Multi-level pointer params/returns —
+`**foo` — are out of scope; auto-deref is single-level, matching field access.)
+
+### Termination — k-limiting (REQUIRED for the SCC fixpoint)
+
+`aliasSetSubset` (`compile.go:6966`) is the monotone convergence check; today
+its lattice is the finite set of param indices. Field paths make the lattice
+**potentially infinite**: a recursive type (`type node struct { next *node;
+v *i64 }`, `return node{next: f, v: f.v}`) can manufacture
+`next.next.next…`-deep paths, and the fixpoint would never converge.
+
+**Bound path depth to a fixed `k`.** Beyond depth `k`, **widen** the path to its
+length-`k` prefix (drop the deeper suffix), which conservatively over-attributes
+the borrow to the shallower aggregate — sound (the consume-invalidation still
+fires; it just may invalidate a slightly larger sub-tree than strictly
+necessary). The lattice is then finite (paths bounded by `k` × field-arity),
+so the existing monotone fixpoint terminates unchanged. `k` small (2–3) covers
+every non-recursive real case exactly and recursive ones soundly. This is the
+one genuinely new correctness obligation the field-level fact introduces.
+
+### Transport encoding
+
+- **`.bs` directive** (`compile.go:3503` emit, `cmd/bas/main.go:1045` parse;
+  interface form `compile.go:2979` / `main.go:508`). Keep the common whole-slot
+  token as a bare index for readability/diff-minimality; field-level aliases use
+  a triple token `<param>:<returnPath>:<paramPath>`:
+  ```
+  retaliases 0: 0:y:x          # {ReturnPath:y, Param:0, ParamPath:x}
+  retaliases 1: 2              # bare index ≡ {ReturnPath:"", Param:2, ParamPath:""}
+  ```
+  The directive splits slot at the *first* `:`; tokens after it never contain a
+  space, and `:` inside a token is unambiguous (exactly two per triple). Parser
+  accepts both a bare `<idx>` and the `<idx>:<rp>:<pp>` triple.
+- **`.bo`** (`bwrite.go:436` write / `:525` read). Per slot: `count`, then
+  `count` entries of `param(varint) + returnPath(string) + paramPath(string)`
+  via the existing `writeString`/`readString`. Common case adds two zero-length
+  strings (2 bytes) per alias; the zero-slot-count fast path (one byte for an
+  ordinary function) is unchanged.
+- **`bdump`** (`main.go:95`): print `slot S: .<returnPath> <- param<idx>.<paramPath>`.
+
+### In-memory + consumer touch sites
+
+- Types: `FuncDecl.ReturnAliases` (`ast.go:2360`), `Function.ReturnAliases`
+  (`function.go:747`), `InterfaceMethodSig.ReturnAliases` (`ast.go:3256`) →
+  `[][]FieldAlias`. `AliasesComputed` unchanged.
+- Importer: `ast.go:1207` (function), `:1317` (interface sig) — assignment is
+  type-compatible; no logic change.
+- Interface-satisfaction check `methodAliasesSatisfy` (`ast.go:667`): compare
+  `FieldAlias` sets, not int sets (a method satisfies the contract if its alias
+  set is a subset under the same widening).
+- Fixpoint `aliasSetSubset` (`compile.go:6966`): subset over `FieldAlias`
+  entries (post-k-limiting).
+- Production `returnExprParamAliases` (`retalias_engine.go:348`): emit
+  `(ReturnPath, Param, ParamPath)` from the returned expression's field-origin
+  union instead of collapsing to `[]int`.
+- Caller application: replace the `__callret` collapse
+  (`recordStructCallResultAtPath`, `retalias.go:235`) with per-`FieldAlias`
+  recording — `dest.<ReturnPath>` ← `argAliasProvenance(args[Param]).<ParamPath>`.
+  The `__callret` sentinel (`retalias.go:94`) is **deleted** once field paths
+  carry the fact precisely.
+
+### Migration note
+This is a `.bo` format bump. Since the whole runtime + all packages are rebuilt
+from source each `mmk`, no on-disk compatibility window is needed; bump and
+rebuild. The `retalias_*` regression suite + `TestReturnAliasInference` are the
+net (per `DESIGN_return_alias_engine.md` §"Keep").
