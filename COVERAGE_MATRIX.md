@@ -49,7 +49,7 @@ exactly how the ≤8/>8 split hid the struct-copy bug behind 17 passing `struct`
 tests. The audit cadence bounds this; we accept it because the alternatives
 (explode, or assume) are worse.
 
-**Two rules learned the hard way (the `#8` lesson):**
+**Three rules learned the hard way (the `#8` and `#18` lessons):**
 
 1. **"Saturated" means the cross-product is enumerated with a falsifiable test
    per equivalence class — *never* "there are a lot of tests in this directory."**
@@ -62,6 +62,29 @@ tests. The audit cadence bounds this; we accept it because the alternatives
    `cov_*` corpus) but left ownership as a 1-D blob, so `I11 × owned-field-value-
    borrow` (`#8`) was never a cell. Every enforced invariant gets the position
    sweep, not just the value-mechanics ones (§3.5).
+3. **Obligations CO-OCCUR in one value, and handling one must not suppress
+   another (the `#18` lesson).** Every invariant test uses a *single-obligation*
+   representative — a borrow test has no owned fields; an owned test has no
+   borrows. But a real value can carry several obligations at once: an **owned
+   aggregate with a borrowed field**, a nullable-owned pointer, a borrowed view
+   of an owned source. The implementation routinely **dispatches on the dominant
+   obligation** (`is this result owned?`) and the chosen branch can forget the
+   orthogonal concern — `#18` is exactly that: the owned-struct-result caller
+   path skipped the `__callret` borrow recording the non-owned path does, so an
+   owned aggregate returned from a call **lost its borrowed field's tracking**
+   (use-after-free accepted). Invariants are *not* independent in the code; the
+   pure-case corpus systematically can't see a dispatch branch that drops a
+   co-occurring obligation.
+   - **The missing dimension: obligation co-occurrence.** For each position,
+     test a value carrying **multiple obligation kinds simultaneously** — above
+     all **owned × borrowed** (the most divergent handling paths) — and assert
+     **both** enforce: the borrow is invalidated on consume of its source *and*
+     the owned obligation still discharges. (#18 is the first half failing;
+     the user's feared over-rejection — owned discharge trapped by the borrow —
+     is the second half, empirically fine but must be guarded.)
+   - This is the **class-split risk (§1) along the OWNED-vs-non-owned dispatch
+     axis** rather than the ≤8/>8 size axis — same shape of bug, new axis. The
+     audit (§5) must re-grep obligation dispatch splits, not just size proxies.
 
 ## 2. The invariants (the durable index / spec-in-progress)
 
@@ -259,6 +282,7 @@ audit watches.
 | **CL-COMPOSE** | **each nesting is its OWN class** | array-in-struct, struct-in-array, `a.b.c`, 2D, `p.f`… | composition of anchors | **never assume a composition is covered by its parts** (forked → bug 4) |
 | CL-ADDR | `&`-of-projection mutability (`&x.f`, `&arr[i]`) | `&value-field` of mutable vs immutable container; `&pointer-field` | `Address.ASTType` projection branch ~2755 (vs named ~2710) | value-field vs pointer-field; container mut (**under-implemented → #7**) |
 | CL-EQ | `==`/`!=` lowering | struct `==` (must reject) | comparison lowering / type check | aggregate vs scalar/pointer |
+| **CL-OBLIG** | **obligation handling that forks owned vs non-owned** (caller call-result, VarDecl, return) | a **mixed** value: owned aggregate **with** a borrowed field | `recordStructCallResultAtPath` / owned-result VarDecl fork | **the owned branch dropping an orthogonal fact** (borrow alias, null) — forked → `#18`. Test the co-occurrence, not each obligation alone |
 
 Inner sweep per cell (parameters, not separate cells): type kind {struct,
 array-of-scalar, array-of-struct, slice-of-scalar, slice-of-struct}; **size
@@ -269,14 +293,24 @@ partial, zero}. Reuse one fixed type set (`S1b/S8/S9/S16/S24`) across all cells.
 
 1. **Re-grep the proxies.** `nameIsAddress`, `typeIsMemoryBacked`, `Size(c) [<>=]
    8`, `case 1, 2, 4, 8`, `scale ==`, `Indirection`, plus each anchor in §4.
-2. **Per class:** confirm the representative test exists and passes; confirm the
+2. **Re-grep OBLIGATION dispatch splits (the #18 check).** `HasOwned`,
+   `dstt.OwnedMask`, `IsBorrowedBinding`, `IsMoved`, `NilMask`, and every
+   `if … owned … { … } else { … }` fork in the caller-result / VarDecl / return
+   paths. At each, confirm **both** branches preserve the orthogonal facts — a
+   borrowed field's alias (`__callret`/field-pointer), the null fact, the owned
+   obligation. The owned branch dropping the borrow recording is exactly `#18`.
+3. **Per class:** confirm the representative test exists and passes; confirm the
    class still *holds* — the shapes it collapses still reach the same anchor code.
-3. **Detect splits.** Where an anchor now branches on a new condition (a size
-   gate, a kind check) that didn't exist last audit, the class has forked — add a
-   representative for **each** new sub-class. (This is the check that should have
-   caught ≤8/>8.)
-4. **Re-confirm the size buckets** at every split point (S-THRESH: 7/8/9/16/24).
-5. **Record** the audit date and any class changes in §4, and append a dated line
+4. **Detect splits.** Where an anchor now branches on a new condition (a size
+   gate, a kind check, **an obligation check**) that didn't exist last audit, the
+   class has forked — add a representative for **each** new sub-class. (This is
+   the check that should have caught ≤8/>8 *and* owned-vs-non-owned.)
+5. **Re-confirm the size buckets** at every split point (S-THRESH: 7/8/9/16/24).
+6. **Sweep obligation co-occurrence.** For the position cells, include a
+   **mixed-obligation representative** — an owned aggregate with a borrowed field
+   — and assert both halves enforce (borrow invalidates on source-consume; owned
+   still discharges). Pure single-obligation tests do not cover this.
+7. **Record** the audit date and any class changes in §4, and append a dated line
    to §7.
 
 ## 6. Status — known invariant violations
@@ -358,3 +392,17 @@ deref (~3750); slicing element types >8 (~4033).
   `cov_mut_fixed_array_err`. (b) **bug #9**: a binding used only via `&x.field`
   is wrongly flagged unused (params + locals). Also confirmed the #8 root extends
   to owned-array element value-borrow. #8/#9 remain open per the fix-last plan.
+- (#18 / obligation co-occurrence) — while probing the #10 borrow-escape design
+  against the live compiler, found **#18**: an **owned aggregate returned from a
+  call** drops its **borrowed field's** alias tracking (the owned-struct-result
+  caller path skips the `__callret` recording the non-owned path uses) → a
+  concrete use-after-free is accepted; non-owned-return and in-frame versions are
+  caught. Diagnosis of why the matrix missed it: **every invariant test used a
+  single-obligation representative** — owned tests carry no borrows, borrow tests
+  carry no owned fields — so the owned-vs-non-owned dispatch fork was never
+  exercised with a co-occurring borrow. Added **rule 3** (§1, the #18 lesson:
+  obligations co-occur and must not suppress one another), class **CL-OBLIG**
+  (§4), the obligation-dispatch re-grep + co-occurrence sweep (§5 steps 2,6),
+  and held driver `cov_owned_aggregate_return_borrow_lost_err`. #18 is on the
+  #10 build plan (`DESIGN_10_field_provenance.md` / TODO.md), fixed with the
+  caller-side soundness batch.
