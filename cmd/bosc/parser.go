@@ -642,8 +642,13 @@ func (p *Parser) parseTypeName() *Node {
 				ownedmask |= 1 << (indirection + 1)
 			}
 		} else { // outermost is a fixed array
-			if mutmask&(1<<indirection) != 0 || ownedmask&(1<<indirection) != 0 {
-				panic(&interpreterError{"'mut'/'owned' is only valid on slice types, not fixed-size arrays", firstWrapperPos})
+			// 'mut' on a fixed array is meaningless: element mutability is
+			// governed by the binding (var vs not), not a type qualifier.
+			// 'owned', by contrast, is the whole-array obligation — the bit
+			// stays at the value level (bit `indirection`), exactly like
+			// `owned <struct>`. See DESIGN.md §Bit-level encoding.
+			if mutmask&(1<<indirection) != 0 {
+				panic(&interpreterError{"'mut' is only valid on slice types, not fixed-size arrays", firstWrapperPos})
 			}
 		}
 		return &Node{

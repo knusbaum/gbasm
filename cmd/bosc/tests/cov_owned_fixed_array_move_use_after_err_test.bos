@@ -1,0 +1,13 @@
+package main
+
+import "fmt"
+
+// Passing an owned fixed array to an owned parameter moves it; using it
+// afterward is rejected.
+fn sink(x owned i64[3]) { dispose(x) }
+
+fn main() {
+	a owned i64[3] := [1, 2, 3]
+	sink(a)
+	fmt.print("%d\n", a[0])
+}

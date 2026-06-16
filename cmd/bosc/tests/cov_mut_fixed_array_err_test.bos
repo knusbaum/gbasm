@@ -1,0 +1,11 @@
+package main
+
+import "fmt"
+
+// 'mut' on a fixed array is rejected: element mutability is binding-governed,
+// not a type qualifier. (Contrast 'owned T[N]', which is the whole-array
+// obligation and is accepted.)
+fn main() {
+	var a mut i64[3] := [1, 2, 3]
+	fmt.print("%d\n", a[0])
+}

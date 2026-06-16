@@ -569,10 +569,41 @@ fn close(fd owned i64) void {
 - `owned *T` → OwnedMask bit 0 set (the pointer itself is owned)
 - `owned *owned T` → OwnedMask bits 0+1 (both obligations exist independently)
 - `*mut T` → MutMask bit 1 set (write-through to T)
+- `owned T[]` → OwnedMask set at the backing level (the slice owns the buffer it points at)
+- `owned T[N]` → OwnedMask bit 0 set (the whole array value is one obligation)
 
 The same convention applies to MutMask. This means `*mut T` and `*owned T` are placed symmetrically — both qualifiers sit between the `*` and the type they modify.
 
 `mut` before a base type is rejected (`mut i64` is meaningless; `mut` only makes sense on a pointer or slice level). `owned` before any type is valid.
+
+#### `owned` on slices and fixed arrays
+
+`owned` on an aggregate denotes a **single** whole-aggregate obligation, never
+per-element obligations. There is no per-element ownership in the language:
+
+- **`owned T[]` (slice).** A slice is a fat pointer `{ptr → backing, len}`. The
+  `owned` bit attaches to the **backing level** — the same slot `*owned T` uses
+  for "the T at the other end is owned." So `owned T[]` means *the slice owns the
+  buffer it points at*: one obligation, discharged with a single `free` of the
+  backing. The elements are not individually owned.
+- **`owned T[N]` (fixed array).** A fixed array has no separate backing — the
+  array *is* its storage, inline, exactly like a struct's bytes. So `owned`
+  attaches to the value itself (bit 0), and `owned T[N]` means *the whole array
+  value is one obligation*, disposed as a unit. This is the array analogue of
+  `owned <struct>`, where the entire struct value is a single obligation
+  ([Owned struct fields](#owned-struct-fields)).
+
+`mut` and `owned` diverge on fixed arrays, and the divergence is principled:
+
+- **`mut T[N]` is rejected.** Fixed-array element mutability is governed by the
+  *binding* (`var` vs not — see [Mutability](#mutability-and-the-type-system)),
+  not by a type qualifier, so a `mut` on a fixed array would be redundant. `mut`
+  on a *slice* (`mut T[]`) is meaningful — it is the write-through-element form —
+  because a slice's elements live behind a pointer whose write permission is a
+  property of the reference.
+- **`owned T[N]` is accepted** (whole-array obligation, above). Unlike `mut`, the
+  obligation is a property of the value, not of a reference's write permission,
+  so it is as meaningful on a fixed array as on a struct.
 
 ### State machines
 

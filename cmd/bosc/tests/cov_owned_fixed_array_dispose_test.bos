@@ -1,0 +1,11 @@
+package main
+
+import "fmt"
+
+// owned T[N] is a whole-array obligation, like an owned struct: the array
+// constructs, an element is readable, and dispose discharges the obligation.
+fn main() {
+	a owned i64[3] := [10, 20, 30]
+	fmt.print("%d\n", a[1])
+	dispose(a)
+}

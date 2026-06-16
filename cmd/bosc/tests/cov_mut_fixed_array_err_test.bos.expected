@@ -1,0 +1,2 @@
+Compiling tests/cov_mut_fixed_array_err_test.bos
+Parse Error: 'mut' is only valid on slice types, not fixed-size arrays

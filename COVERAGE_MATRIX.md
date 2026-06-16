@@ -192,9 +192,9 @@ tests) · **·** N/A.
 | I6 aggregate shape (len) | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 | I7 numeric / cast | ✓ (reject) | ○ | ○ | · | ○ | ○ | ○ |
 | I8 mutability (per-level `&`) | ✓ | ✓ (`#7`) | ✓ (`#7`) | ○ | ○ | · | ○ |
-| I9 move consumes | ✓ | ✓ (`owned_field_move_*`) | ○ | ○ | ✓ | ✓ | · |
-| I10 discharge exactly once | ✓ | ✓ (`owned_field_*`) | ○ | ○ | ✓ | ✓ | · |
-| I11 no use-after-discharge | ✓ | **○ `#8` (value-borrow)** / ✓ (ptr-borrow) | ○ | ○ | ✓ | ✓ | · |
+| I9 move consumes | ✓ (incl. `owned T[N]`, `cov_owned_fixed_array_move_*`) | ✓ (`owned_field_move_*`) | · (no per-elem owned) | · | ✓ | ✓ | · |
+| I10 discharge exactly once | ✓ (incl. `owned T[N]`, `cov_owned_fixed_array_{dispose,leak}`) | ✓ (`owned_field_*`) | · (no per-elem owned) | · | ✓ | ✓ | · |
+| I11 no use-after-discharge | ✓ | **○ `#8` (value-borrow)** / ✓ (ptr-borrow) | **○ `#8`-class (array value-borrow)** | ○ | ✓ | ✓ | · |
 | I12 no escape | ✓ (`retalias`) | ✓ (`slice_return_*_struct`) | ✓ (`slice_return_array`) | ✓ (`*_array_of_arrays`) | ✓ | ✓ | · |
 | I13 conservative merge | ✓ (`loop_flow`, owned branch) | ○ | ○ | ○ | · | · | · |
 | I14 traps | ✓ (bounds/nil) | ○ | ✓ (bounds) | ○ | · | · | ○ |
@@ -205,13 +205,23 @@ tests) · **·** N/A.
 | values/static | ○ | ○ | · | · | ○ | ○ | ✓ (`values_*`) |
 | cross-package | · | ✓ (`pair`/`private_*`) | · | · | ✓ | ✓ | ○ |
 
-The **`○` cells are the gaps to fill** — chiefly the **ownership × {field, element,
-nested}** column the binding-level corpus never reached. Newly-enumerated
-ownership×position cells to probe (`#8` is the first):
-- **I11 × owned-element value-borrow** — `b i64 := owned_arr[i]; dispose(owned_arr); read b` (sibling of `#8`).
-- **I11 × owned-field/element ptr-borrow** — `&` form (cov_field_ptr_* covers field; element TBD).
-- **I9/I10 × owned element** — move/consume an owned array element; leak check.
-- **I12 × owned field/element** — `&owned_field` must not escape the frame.
+**`·` in the ownership × element column is a deliberate N/A, not a gap.** There is
+**no per-element ownership** in the language: `owned T[]` owns the slice's *backing
+buffer* (one obligation), and `owned T[N]` owns the *whole array value* (one
+obligation, the array analogue of `owned <struct>`) — neither denotes N separate
+element obligations (DESIGN.md §Bit-level encoding → "`owned` on slices and fixed
+arrays"). So "move/consume an owned element" (I9/I10 × element) cannot be
+expressed and is `·`. The owned-array-as-a-whole *is* a binding-position case and
+is now covered by `cov_owned_fixed_array_{dispose,leak,move_use_after}` +
+`cov_mut_fixed_array_err` (the `mut`-on-array rejection boundary).
+
+The remaining **`○` cells are the gaps to fill** — chiefly the **ownership ×
+{field, element-borrow, nested}** value-borrow column the binding-level corpus
+never reached:
+- **I11 × owned-field value-borrow** = `#8` — `b i64 := s.h; dispose(s); read b` (held red driver).
+- **I11 × owned-array element value-borrow** = `#8`-class — `b i64 := owned_arr[i]; dispose(owned_arr); read b` (same root; surfaced empirically).
+- **I11 × owned-field/element ptr-borrow** — `&` form (`cov_field_ptr_*` covers field; element TBD).
+- **I12 × owned field** — `&owned_field` must not escape the frame (blocked today by the `&field`-unused bug, see §7).
 - **nested owned** — owned field of an owned field; consume the outer, observe.
 
 ## 4. Equivalence classes (the pruning — from CURRENT codegen)
@@ -270,6 +280,8 @@ fixed ones have a passing regression test.
 | — | CL-PTR, inline deref-field >8 | internal type error | **fixed** `ed7480a` | `cov_deref_field_inline_large` (green) |
 | I8 | CL-ADDR, `&value-field`/`&elem` of mutable container | read-only (no `*mut` view) | **fixed** `22ac391` — per-level §I8 | `cov_amp_{field,elem}_mut` (green) |
 | I11 | owned-field **value** borrow (`b i64 := s.h`), then dispose struct | **silent** use-after-dispose — not tracked (binding-level `b := fd` IS) | **open #8** | `cov_owned_field_borrow_use_after_dispose_err` |
+| I11 | owned-**array** element value borrow (`b i64 := owned_arr[i]`), then dispose | same `#8` root, element position | **open #8-class** | (TBD; pairs with #8 fix) |
+| — | unused-binding check: a binding used **only** via `&x.field` is wrongly flagged "never used" (value read `x.f` is fine; params + locals both hit) | **silent over-rejection** of valid code; also blocks I12 `&owned_field` escape tests | **open #9** | (TBD) |
 
 Field-level borrow soundness otherwise confirmed (green guards): a field *pointer*
 borrow (`&s.f`) tracks via the struct origin, so dispose invalidates it and
@@ -309,3 +321,15 @@ deref (~3750); slicing element types >8 (~4033).
   aggregates compiled silently (#5 covered only `==`/`!=`) — fixed in `9ed6644`.
   `cov_*` now **39/39**, full bosc suite **596 PASS**. Lesson banked in §3: cover
   both sides; a positive-only corpus hides dropped enforcement.
+- (matrix expanded) — added I15-I17 + feature-area rows (`4d2100c`) and the §0
+  scope note naming the three sibling domains (`1a1ea61`); resolved every `?`
+  grid cell to ✓/○/·. Audit of the existing suite mapped tests to cells and
+  surfaced two findings while probing the ownership×{element,nested} column:
+  (a) **owned `T[N]` was parse-rejected** — a `mut`/`owned` conflation, not a
+  design decision; the whole-array obligation is the natural parallel to `owned
+  <struct>` and `owned T[]`. Split `owned` from `mut` in `parser.go` (now
+  accepted; rides existing owned-value tracking — leak/move/dispose all work),
+  documented in DESIGN.md, covered by `cov_owned_fixed_array_*` +
+  `cov_mut_fixed_array_err`. (b) **bug #9**: a binding used only via `&x.field`
+  is wrongly flagged unused (params + locals). Also confirmed the #8 root extends
+  to owned-array element value-borrow. #8/#9 remain open per the fix-last plan.
