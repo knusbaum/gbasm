@@ -2,14 +2,11 @@ package main
 
 import "fmt"
 
-// commit consumes its argument: `owned` in the parameter type moves it.
-fn commit(id owned i64) {
-	fmt.print("committed ticket %d\n", id)
-	dispose(id)
-}
-
 fn main() {
-	ticket owned i64 := 1001
-	commit(ticket) // ticket's obligation moves into commit
-	fmt.print("done\n")
+	// x carries an obligation
+	x owned i64 := 10
+	// we can use x
+	fmt.print("x is: %d\n", x)
+	// dispose discharges the obligation
+	dispose(x)
 }
