@@ -89,7 +89,7 @@ vs. embedded bundle) as part of it.
 ## Borrow checker: #10 field-buried borrow escape (+ #18)
 
 A borrow of local storage buried in an aggregate field can escape the frame
-(through a call, `new()`/heap, a heap-pointer write, or a global) and be used
+(through a call, a `new()` constructor, a pointer write, or a global) and be used
 after the local is consumed, undetected. Four faces; full design + empirical
 findings in `DESIGN_10_field_provenance.md`. Settled: coarse param-level
 summaries are sound for borrows (the caller flattens a named struct arg's field
@@ -99,14 +99,14 @@ origins); field-level is *precision*, not soundness.
 - call face — literal-arg flattening in `argAliasProvenance` (`6b0093f`). ✓
 - #18 — owned-aggregate return adopts its borrowed-param provenance (`9c2d170`). ✓
 - global face — `checkPointerEscapeToGlobal` (`7a5c844`). ✓
-- heap-write/heap-new **direct** case — pointee-field tracking: lifted the
+- pointee-store/pointee-construct **direct** case — pointee-field tracking: lifted the
   `readProvenancePath` pointer-root cutoff + record on store / `new` (`1b2361f`). ✓
 - **REMAINING — pointer aliasing:** a borrow stored through one pointer alias of
-  a heap pointee and read through another (`h2 := h; h2.p = &s.x; *h.p`) still
+  a pointee and read through another (`h2 := h; h2.p = &s.x; *h.p`) still
   slips (pre-existing; path-keyed facts can't see the alias). Sound fix =
   **pointee-IDENTITY keying** (paths resolving to the same pointee origin share
   the fact); composes on the recording sites + lifted cutoff already built. Held
-  `cov_owned_field_borrow_heap_pointer_alias_err`. **Own focused pass.**
+  `cov_owned_field_borrow_pointee_alias_err`. **Own focused pass.**
   Invalidation: KEEP facts, do nothing on opaque writes (dropping is unsound —
   see DESIGN_10).
 
@@ -116,5 +116,5 @@ param-level interface grammar with coarsen-then-⊆ satisfaction). Stops over-
 rejecting independent/owned fields of a partially-borrowing aggregate. Full rep
 design in `DESIGN_10_field_provenance.md`.
 
-Held drivers: `cov_owned_field_borrow_escapes_{call,heap,heap_ptr_write}_err`,
+Held drivers: `cov_owned_field_borrow_escapes_{call,pointee_construct,pointee_store}_err`,
 `cov_owned_aggregate_return_borrow_lost_err`.

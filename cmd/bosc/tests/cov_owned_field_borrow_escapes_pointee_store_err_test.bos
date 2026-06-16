@@ -2,7 +2,7 @@ package main
 
 import "fmt"
 
-// #10-class: a borrow of an owned field written through a heap pointer field
+// #10-class: a borrow of an owned field written into a pointee field through a pointer
 // is untracked, so dispose does not invalidate it.
 type box    struct { x owned i64 }
 type holder struct { p *i64 }

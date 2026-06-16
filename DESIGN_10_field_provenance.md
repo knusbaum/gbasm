@@ -7,8 +7,8 @@ faces, all the same shape (`&s.x` stored into a field that outlives `s`):
 | Face | Shape | Driver (held) |
 |---|---|---|
 | **call** | `h := id(holder{p: &s.x})` (returned by value) | `cov_owned_field_borrow_escapes_call_err` |
-| **heap-new** | `h := new(holder{p: &s.x})` | `cov_owned_field_borrow_escapes_heap_err` |
-| **heap-write** | `h.p = &s.x` (through a `*mut`) | `cov_owned_field_borrow_escapes_heap_ptr_write_err` |
+| **pointee-construct** | `h := new(holder{p: &s.x})` | `cov_owned_field_borrow_escapes_pointee_construct_err` |
+| **pointee-store** | `h.p = &s.x` (through a `*mut`) | `cov_owned_field_borrow_escapes_pointee_store_err` |
 | **global** | `g = &s.x` (g a global ptr) | `cov_owned_field_borrow_escapes_global_err` |
 
 ## Status & build plan (read this first)
@@ -19,8 +19,8 @@ findings* below). The work splits cleanly into **soundness** (do first) and
 
 **Soundness — all caller-side, NO `.bo`/grammar change:**
 1. **Phase 1** — pointee-field tracking (lift the `readProvenancePath`
-   pointer-root cutoff + conservative invalidation). Closes heap-write,
-   heap-new. *The real work; everything composes on it.*
+   pointer-root cutoff + conservative invalidation). Closes pointee-store,
+   pointee-construct. *The real work; everything composes on it.*
 2. **literal-arg flattening** — extend `argAliasProvenance` to struct-literal
    args (~10 lines). Closes the #10 **call** face.
 3. **#18** — owned-aggregate-return borrow recording (the owned-struct-result
@@ -34,11 +34,12 @@ soundness — it stops over-rejecting independent/owned fields of a partially-
 borrowing aggregate. Build after the soundness fixes land. Designed in full
 here so it's ready to pick up.
 
-**Not heap-modeling.** The safe `new(cursor{current: &x})` vs unsafe
+**Not allocation-lifetime modeling.** The safe `new(cursor{current: &x})` vs unsafe
 `new(holder{p: &s.x}); dispose(s)` differ only in whether the local is
 *consumed* while the escaped borrow is reachable. That distinction already
-exists: origin-invalidation on `dispose`/move. So we do **not** need heap
-lifetime analysis — we need the **field provenance of the escaped borrow** to be
+exists: origin-invalidation on `dispose`/move. So we do **not** need
+allocation-lifetime analysis — we need the **field provenance of the escaped
+borrow** to be
 recorded, and the existing consume-invalidation fires automatically (the cursor,
 never consumed, stays accepted). The missing capability is **pointee-/return-
 field provenance**, the natural extension of the value-struct field machinery
@@ -59,13 +60,13 @@ the minimal "record + lift the cutoff + keep facts" is both simpler and sounder
 than the dropped-fact scheme.
 
 **The real remaining hole is pointer ALIASING, not opaque calls.** Pointee-field
-facts are PATH-keyed (`h2.p`), so writing through one alias of a heap pointee
+facts are PATH-keyed (`h2.p`), so writing through one alias of a pointee
 and reading through another (`h2 *mut holder := h; h2.p = &s.x; *h.p`) misses
 it — a pre-existing false negative the cutoff-lift exposes but does not fix.
 Sound fix = **pointee-IDENTITY keying** (when two paths resolve to the same
 pointee origin, share the fact); it sits *on top of* the recording sites + the
 lifted cutoff (a foundation, not a rework). Its own focused pass; held driver
-`cov_owned_field_borrow_heap_pointer_alias_err`.
+`cov_owned_field_borrow_pointee_alias_err`.
 
 ---
 
@@ -107,7 +108,7 @@ path where the target is a global and the RHS is a local-origin borrow).
 No objrep, no engine change. *Risk: low; over-rejection only if someone
 legitimately parks `&local` in a global, which is already a dangle.*
 
-### Phase 1 — pointee-field tracking + heap-write face (the core)
+### Phase 1 — pointee-field tracking + pointee-store face (the core)
 **DONE (direct case)** — `9c2d170`-range: lifted the `readProvenancePath`
 pointer-root cutoff (a recorded path fact wins for any root), and record on a
 direct store `h.p = &local` (the `updateFieldPointerFactsForAssignment` pointer-
@@ -120,13 +121,13 @@ root scalar-write arm) + on `new(structLit)` (Phase 2, folded in).
 - **Invalidate:** **nothing special** — keep the fact, let the existing origin-
   invalidation fire on `dispose`. (See the corrected invalidation note above:
   dropping on opaque writes is unsound.)
-This closed heap-write + heap-new for the **direct** case (`cov_owned_field_
-borrow_escapes_heap{,_ptr_write}_err` green), full suite green, no over-rejection.
+This closed pointee-store + pointee-construct for the **direct** case (`cov_owned_field_
+borrow_escapes_pointee_{construct,store}_err` green), full suite green, no over-rejection.
 **REMAINING:** pointer-aliasing (write through one alias, read through another) —
-needs pointee-IDENTITY keying. Held driver `cov_owned_field_borrow_heap_pointer_
+needs pointee-IDENTITY keying. Held driver `cov_owned_field_borrow_pointee_
 alias_err`. Own focused pass.
 
-### Phase 2 — heap-new face (small, builds on Phase 1)
+### Phase 2 — pointee-construct face (small, builds on Phase 1)
 `h := new(T{f: &local})`: the struct literal is **right there** at the call
 site, so no callee summary is needed. When the initializer is `new(structLit)`,
 run `recordStructLiteralFieldFacts` against the **pointee path** `(*h)` instead
@@ -175,7 +176,7 @@ literal at the call site (Phase 2); `alloc` is fresh (none).
 
 ## What closes what
 
-- Phases 0–2 close **global, heap-write, heap-new** — *no `.bo`/grammar change*
+- Phases 0–2 close **global, pointee-store, pointee-construct** — *no `.bo`/grammar change*
   (the borrow is constructed at a locally-visible site in each).
 - Phase 3 closes **call** and **requires** the field-level `.bo` fact — the
   general case is a cross-shape field-to-field mapping (`bar{y: f.x}`) computed

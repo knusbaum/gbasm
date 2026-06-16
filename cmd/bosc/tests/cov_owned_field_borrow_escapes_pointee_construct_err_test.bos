@@ -2,7 +2,7 @@ package main
 
 import "fmt"
 
-// #10-class headline: a borrow of an owned field, copied into heap memory via
+// #10-class headline: a borrow of an owned field, placed into a pointee field via
 // new(), loses its alias to the source — dispose can't reach it.
 type box    struct { x owned i64 }
 type holder struct { p *i64 }
