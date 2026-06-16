@@ -3255,7 +3255,16 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// (rather than a separate type predicate) keeps this in lockstep
 			// with the move decision, so a consumed source can never be
 			// adopted regardless of its shape.
-			ownedValueDestNoTransfer := ast.Type.HasOwned() && c.ResolveUnderlying(ast.Type).Indirection == 0 && !didTransfer
+			// The "don't adopt a dead source origin" skip is for an owned
+			// REBIND from another owned BINDING (`t2 owned T := t1`): t1 was
+			// move-consumed, so its origin is dead and t2 must not re-alias it.
+			// A call result or literal is a FRESH value whose provenance is a
+			// LIVE borrowed param — the owned destination MUST adopt it, or an
+			// owned aggregate returned from a call loses its borrowed field's
+			// tracking (#18: `b owned bar := something(f)` where the return
+			// borrows f). So restrict the skip to a Symbol (binding) source.
+			_, srcIsBindingRebind := unwrapReturnExpr(ast.Init).(*Symbol)
+			ownedValueDestNoTransfer := ast.Type.HasOwned() && c.ResolveUnderlying(ast.Type).Indirection == 0 && !didTransfer && srcIsBindingRebind
 			pexpr := pointerExprForAST(c, ast.Init, ast.Name)
 			if !ownedValueDestNoTransfer && (pexpr.KnownOrigin || pexpr.KnownSlot) {
 				checkedAssignPointer(c, flow.Binding(ast.Name), pexpr, a)

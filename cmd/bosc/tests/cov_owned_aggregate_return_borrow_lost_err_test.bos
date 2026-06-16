@@ -1,0 +1,20 @@
+package main
+import "fmt"
+// #18: an OWNED aggregate returned from a call drops the alias tracking of its
+// BORROWED fields. b.y borrows xp (through f); something returns `owned bar`;
+// free(xp) then *b.y is a use-after-free that must be rejected — but is wrongly
+// accepted. The non-owned-return version (no `z owned` field) IS caught, and
+// the in-frame construction IS caught; only owned-aggregate-return-through-call
+// loses it.
+type foo struct { x *mut i64 }
+type bar struct { y *mut i64; z owned *mut i64 }
+fn something(f foo) owned bar { return bar{ y: f.x, z: alloc(i64) } }
+fn main() {
+	xp owned *mut i64 := alloc(i64)
+	f := foo{ x: xp }
+	b := something(f)
+	free(xp)
+	fmt.print("%d\n", *b.y)
+	free(b.z)
+	dispose(b)
+}
