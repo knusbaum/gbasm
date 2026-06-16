@@ -156,9 +156,32 @@ check is the gate for Phase 1.
 
 ## Phase 3 representation design (the `.bo`/grammar fact)
 
-### The fact
+### What the summary *is* (the principled model)
 
-Replace the slot-coarse `ReturnAliases [][]int` with a field-level fact:
+A call `x := f(args)` is a **tracker operation**, exactly like `x := &y` is —
+it installs provenance facts about `x` (and the args). Almost every facet of
+that operation is already recoverable from the **signature**: result
+nullability ← return `?` bit, result owned-ness ← return `owned` bit, args
+consumed ← param `owned` bits. The **one** facet the signature does *not* give
+is **aliasing/provenance** — which params/fields the return borrows. So the
+summary serializes *exactly that and nothing else*: the **param-relative
+aliasing projection of the callee's tracker state at the return site**.
+
+(Deliberately *not* in scope: effects on params — e.g. `f(p){ p.x = nil }`
+leaving the caller's `arg.x` stale. That's a full interprocedural effect
+summary, the DESIGN §773–774 gap — a separate, larger feature #10 does not
+need. We serialize the alias projection only.)
+
+An origin in the return-state encodes three kinds, and the vocabulary handles
+all three:
+- **param-rooted** → a `FieldAlias` entry (below).
+- **fresh** (allocated in the callee) → **absence** of an entry; the caller
+  treats the path as fresh/owned, no caller-storage alias. (Load-bearing
+  default.)
+- **callee-local** → never an entry; returning a borrow of callee-local storage
+  is the **escape reject** the engine already fires.
+
+### The fact
 
 ```go
 type FieldAlias struct {
@@ -166,15 +189,19 @@ type FieldAlias struct {
     Param      int    // contributing parameter index
     ParamPath  string // dot-path within that parameter ("" = whole param)
 }
-ReturnAliases [][]FieldAlias   // per return slot, a set of field aliases
+ReturnAliases [][]FieldAlias   // per return slot, a SET of field aliases
 ```
+
+This *is* the projection: `(ReturnPath) → {(Param, ParamPath)}`, keyed by return
+sub-path, valued by the param-rooted origins it carries (a set, so a branch-
+merge union `return.y` ← {param0.x, param1.z} is expressible).
 
 - `doathing(f *foo) bar { return bar{y: f.x} }` → slot 0 =
   `[{ReturnPath:"y", Param:0, ParamPath:"x"}]`.
-- **Backward-compatible:** today's `ReturnAliases[slot]=[p1,p2]` becomes
-  `[{"",p1,""},{"",p2,""}]`. Empty paths ≡ whole-slot-aliases-whole-param, so
-  passthrough (`return param`) and every existing fact are `{"",p,""}` — the
-  common case carries no path strings.
+- The whole-slot passthrough `return param` is `[{"", p, ""}]`. (Not a
+  compatibility goal — it just happens to be the empty-path point of the same
+  projection. The rep is designed for the projection, not to preserve the old
+  `[][]int`.)
 
 ### Path semantics — strings, implicit deref, no markers
 
