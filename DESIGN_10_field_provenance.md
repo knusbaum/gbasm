@@ -279,6 +279,30 @@ one genuinely new correctness obligation the field-level fact introduces.
   The `__callret` sentinel (`retalias.go:94`) is **deleted** once field paths
   carry the fact precisely.
 
+### Interface grammar: stays param-level (no expansion)
+
+The `from(...)` declared-contract **grammar is not expanded**. Interface method
+contracts remain **param-level** (a slot lists params, no field paths). The
+field-level fact applies to *inferred* function summaries (the `.bo`), not to
+hand-written interface declarations. Consequence:
+
+- **Satisfaction (`methodAliasesSatisfy`, retalias.go:354):** project each
+  inferred `FieldAlias` down to its `Param` (drop both paths) and run the
+  existing `slotDeclaresParam` ⊆ check against the param-level declared set. A
+  field-level method satisfies a param-level interface **iff the params it
+  borrows are declared** — the precise shape need not be expressible. The only
+  hard rejection is the existing one: borrowing a param the interface does not
+  declare.
+- **Interface dispatch caller-application:** use the **param-level (whole-
+  param)** contract. Coarsening is sound — it only *adds* assumed aliasing
+  (drop return-path ⇒ whole return aliases X; drop param-path ⇒ whole param
+  aliases X), so the caller over-invalidates at worst. Never unsound.
+- **Tradeoff (accepted):** direct calls keep full field-level precision (the
+  inferred `.bo` fact); **interface dispatch coarsens to param-level**, so a
+  program accepted via a direct call may be *over-rejected* through an
+  interface. Errs safe. Revisit only if a real pattern needs field-level
+  precision across an interface boundary.
+
 ### Migration note
 This is a `.bo` format bump. Since the whole runtime + all packages are rebuilt
 from source each `mmk`, no on-disk compatibility window is needed; bump and
