@@ -1,0 +1,20 @@
+package main
+import "fmt"
+// A values constant flows through a struct field, a function parameter, and a
+// function return, comparing correctly at each.
+type color values {
+	RED
+	GREEN
+	BLUE
+}
+type paint struct { c color }
+fn name(c color) i64 {
+	if (c == color.GREEN) { return 1 }
+	return 0
+}
+fn pick() color { return color.BLUE }
+fn main() {
+	p paint := paint{c: color.GREEN}
+	r color := pick()
+	fmt.print("%d %d\n", name(p.c), name(r))
+}

@@ -202,7 +202,7 @@ tests) · **·** N/A.
 | I16 iface dispatch | ✓ (`iface_from_*`) | **○ #16** | · | · | ✓ (`iface_unknown_param`) | ✓ (`cov_iface_dispatch_return`) | ✓ dispatch / **○ #17 static-init** (`cov_iface_dispatch_global`) |
 | I17 visibility | · | ✓ (`private_field_*`) | · | · | · | · | ✓ (cross-pkg) |
 | variadics | ✓ (`variadic_*`) | · | · | · | ✓ (param) | · | · |
-| values/static | ○ | ○ | · | · | ○ | ○ | ✓ (`values_*`) |
+| values/static | ✓ (`values_*`) | ✓ (`cov_values_field_param_return`) | · | · | ✓ (`cov_values_field_param_return`) | ✓ (`cov_values_field_param_return`) | ✓ (`values_*`) |
 | cross-package | · | ✓ (`pair`/`private_*`) | · | · | ✓ | ✓ | ○ |
 
 **`·` in the ownership × element column is a deliberate N/A, not a gap.** There is
