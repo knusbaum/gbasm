@@ -297,6 +297,17 @@ hand-written interface declarations. Consequence:
   param)** contract. Coarsening is sound — it only *adds* assumed aliasing
   (drop return-path ⇒ whole return aliases X; drop param-path ⇒ whole param
   aliases X), so the caller over-invalidates at worst. Never unsound.
+- **Coarsening drops paths, not param-membership** — the load-bearing
+  invariant. Canonical case:
+  ```
+  fn whatever(f *foo) bar { return bar{y: f.x} }   // {return.y ← param0.x}
+  ```
+  coarsens to `{slot0 borrows param0}`, NOT to "borrows nothing." So against an
+  interface `something(f *foo) bar` with **no `from`** (declared set `{}`), the
+  check `{0} ⊆ {}` **fails → rejected**. `whatever` satisfies `something` only
+  if it declares `... bar from(f)`. A borrowing method can never be laundered
+  into a non-borrowing interface, because a field-borrow of `f` always keeps
+  `f` in the coarsened set.
 - **Tradeoff (accepted):** direct calls keep full field-level precision (the
   inferred `.bo` fact); **interface dispatch coarsens to param-level**, so a
   program accepted via a direct call may be *over-rejected* through an
