@@ -1,0 +1,10 @@
+package main
+import "fmt"
+// len of a global array and of a nested array field.
+type box struct { arr i64[5] }
+var g i64[7] := [1, 2, 3, 4, 5, 6, 7]
+fn main() {
+	arr i64[5] := [1, 2, 3, 4, 5]
+	b box := box{arr: arr}
+	fmt.print("%d %d\n", len(g), len(b.arr))
+}

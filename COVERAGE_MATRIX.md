@@ -189,14 +189,14 @@ tests) · **·** N/A.
 | I3 storage fidelity | ✓ | ✓ | ✓ | ✓ (`#4` was here) | ✓ | ✓ | ✓ (`global_*`) |
 | I4 init / zero | ✓ | ✓ (partial-lit) | ✓ (`cov_zero_init_array_elem`) | ✓ (`cov_zero_init_nested_struct`) | · | · | ✓ (`global_*_init`) |
 | I5 aggregate `==`/ordering reject | ✓ | · | · | · | · | · | · |
-| I6 aggregate shape (len) | ✓ (`cov_len_array_slice_subslice`) | ✓ (`cov_array_field_typed_binding`) | ✓ (subslice) | ○ | ○ | ○ | ○ |
+| I6 aggregate shape (len) | ✓ (`cov_len_array_slice_subslice`) | ✓ (`cov_array_field_typed_binding`) | ✓ (subslice) | ✓ (`cov_len_array_global_nested`) | ✓ (`cov_len_array_param`) | ○ | ✓ (`cov_len_array_global_nested`) |
 | I7 numeric / cast | ✓ (`cov_cast_{widen,narrow}_local`) | ✓ (`cov_cast_field`) | ✓ (`cov_cast_elem`) | · | **○ #12** | **○ #12** | **○ #13** |
 | I8 mutability (per-level `&`) | ✓ | ✓ (`#7`) | ✓ (`#7`) | ✓ (`cov_amp_nested_mut`) | ○ (`&param.field` blocked by #9) | · | ✓ (`cov_amp_global_mut`) |
 | I9 move consumes | ✓ (incl. `owned T[N]`, `cov_owned_fixed_array_move_*`) | ✓ (`owned_field_move_*`) | · (no per-elem owned) | · | ✓ | ✓ | · |
 | I10 discharge exactly once | ✓ (incl. `owned T[N]`, `cov_owned_fixed_array_{dispose,leak}`) | ✓ (`owned_field_*`) | · (no per-elem owned) | · | ✓ | ✓ | · |
 | I11 no use-after-discharge | ✓ | ✓ ptr-borrow / **○ `#8` value-borrow** | ✓ ptr-borrow / **○ `#8`-class value-borrow** | ✓ ptr-borrow / **○ `#8`-class value-borrow** | ✓ | ✓ | · |
 | I12 no escape | ✓ (`retalias`) | ✓ (`slice_return_*_struct`) | ✓ (`slice_return_array`) | ✓ (`*_array_of_arrays`) | ✓ | ✓ | · |
-| I13 conservative merge | ✓ (`loop_flow`, owned branch) | ○ | ○ | ○ | · | · | · |
+| I13 conservative merge | ✓ (`loop_flow`, owned branch) | ✓ (`owned_field_move_*_inconsistent`) | ○ | ○ | · | · | · |
 | I14 traps | ✓ (bounds/nil) | ✓ (`cov_trap_oob_field`) | ✓ (bounds) | ○ | · | · | ✓ (`cov_trap_oob_global`) |
 | I15 nullability | ✓ (`nullable_*`) | ✓ (`cov_nullable_field_narrow`) | **○ #15** | ○ | ✓ (param narrow) | ✓ alias / **○ #14 nil** (`cov_nullable_return`) | ○ |
 | I16 iface dispatch | ✓ (`iface_from_*`) | **○ #16** | · | · | ✓ (`iface_unknown_param`) | ✓ (`cov_iface_dispatch_return`) | ✓ dispatch / **○ #17 static-init** (`cov_iface_dispatch_global`) |

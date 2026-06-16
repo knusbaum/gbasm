@@ -1,0 +1,8 @@
+package main
+import "fmt"
+// len of a fixed array passed as a parameter (compile-time constant N).
+fn sz(a i64[4]) i64 { return len(a) }
+fn main() {
+	a i64[4] := [1, 2, 3, 4]
+	fmt.print("%d\n", sz(a))
+}
