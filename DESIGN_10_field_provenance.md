@@ -44,10 +44,28 @@ never consumed, stays accepted). The missing capability is **pointee-/return-
 field provenance**, the natural extension of the value-struct field machinery
 (`fieldPointers`, `recordStructLiteralFieldFacts`, `CopyFieldPointers`).
 
-The residual cost is **conservatism, not unsoundness**: once a pointee-field fact
-exists it must be dropped on any opaque way the pointee could change (re-point,
-alias-and-write, pass-as-`*mut` to a function — DESIGN §773–774: no
-interprocedural write summaries). Dropping errs toward false positives.
+**Invalidation: KEEP the fact, do NOT drop it (corrected).** An earlier draft
+said "drop the pointee-field fact on any opaque write — errs toward false
+positives." That is **backwards and unsound**. Truth table for `h.p = &s.x`
+(fact `h.p→s`), then opaque `f(h)`, then `dispose(s)`, then `*h.p`:
+- **Keep the fact** → `dispose(s)` invalidates `s`, `*h.p` rejects. If `f`
+  re-pointed `h.p` to live storage this is a false *positive* (sound).
+- **Drop the fact** → `*h.p` is Unknown → accepted. If `f` left `h.p→s` this is
+  a **real dangle accepted = false NEGATIVE (unsound)**.
+So the implementation does **nothing** special on an opaque write: keep the
+recorded fact and let the existing origin-invalidation fire on `dispose`. The
+residual cost is the false-positive case above (conservative, sound). Verified:
+the minimal "record + lift the cutoff + keep facts" is both simpler and sounder
+than the dropped-fact scheme.
+
+**The real remaining hole is pointer ALIASING, not opaque calls.** Pointee-field
+facts are PATH-keyed (`h2.p`), so writing through one alias of a heap pointee
+and reading through another (`h2 *mut holder := h; h2.p = &s.x; *h.p`) misses
+it — a pre-existing false negative the cutoff-lift exposes but does not fix.
+Sound fix = **pointee-IDENTITY keying** (when two paths resolve to the same
+pointee origin, share the fact); it sits *on top of* the recording sites + the
+lifted cutoff (a foundation, not a rework). Its own focused pass; held driver
+`cov_owned_field_borrow_heap_pointer_alias_err`.
 
 ---
 
@@ -90,21 +108,23 @@ No objrep, no engine change. *Risk: low; over-rejection only if someone
 legitimately parks `&local` in a global, which is already a dangle.*
 
 ### Phase 1 — pointee-field tracking + heap-write face (the core)
-Lift the `readProvenancePath` pointer-root cutoff so `(*h).field` can carry a
-fact, and record it on a direct store `h.p = &local`:
-- **Store:** a field key that survives a pointer root — extend the
-  `fieldPointers` keying (today `"binding.field"`) to a pointer pointee, e.g.
-  record `h.p`'s origin on the store-through-pointer path (`compile.go` `*Deref`
-  / field-store codegen).
-- **Read:** `readProvenancePath` returns the recorded pointee-field fact instead
-  of `Unknown` for a pointer root.
-- **Invalidate (the load-bearing soundness work):** drop `h`'s pointee-field
-  facts on — `h` reassigned; `h.p` re-pointed; an alias `h2 := h` then a write
-  through `h2`; and **`h` (or `&h`) passed where it could be written
-  opaquely** (any `*mut`-taking call). Conservative `ForgetFieldPointersUnder(h)`.
-This closes heap-write with no objrep change (all in-frame through a local
-pointer). *Risk: highest — it moves a deliberately-conservative boundary;
-guard with the full in-frame regression set + the held drivers.*
+**DONE (direct case)** — `9c2d170`-range: lifted the `readProvenancePath`
+pointer-root cutoff (a recorded path fact wins for any root), and record on a
+direct store `h.p = &local` (the `updateFieldPointerFactsForAssignment` pointer-
+root scalar-write arm) + on `new(structLit)` (Phase 2, folded in).
+- **Store:** `SetPathPointer("h.p", origin)` for a scalar pointer/slice write
+  through a pointer root; `recordStructLiteralFieldFacts` at the binding path for
+  `new(structLit)`.
+- **Read:** `readProvenancePath` returns the recorded pointee-field fact for a
+  pointer root (else stays opaque).
+- **Invalidate:** **nothing special** — keep the fact, let the existing origin-
+  invalidation fire on `dispose`. (See the corrected invalidation note above:
+  dropping on opaque writes is unsound.)
+This closed heap-write + heap-new for the **direct** case (`cov_owned_field_
+borrow_escapes_heap{,_ptr_write}_err` green), full suite green, no over-rejection.
+**REMAINING:** pointer-aliasing (write through one alias, read through another) —
+needs pointee-IDENTITY keying. Held driver `cov_owned_field_borrow_heap_pointer_
+alias_err`. Own focused pass.
 
 ### Phase 2 — heap-new face (small, builds on Phase 1)
 `h := new(T{f: &local})`: the struct literal is **right there** at the call

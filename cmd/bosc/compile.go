@@ -1151,11 +1151,21 @@ func readProvenancePath(c *Context, a AST) flow.PointerExpr {
 		return c.PointerFlow().UnknownPointer()
 	}
 	rootT, ok := c.TypeForVar(path.Root)
-	if !ok || rootT.Indirection > 0 {
+	if !ok {
 		return c.PointerFlow().UnknownPointer()
 	}
+	// A recorded path fact wins for ANY root — including a POINTER root
+	// (`h.p` = `(*h).p`). A borrow stored through a pointer (`h.p = &s.x`) or
+	// constructed into heap (`h := new(holder{p: &s.x})`) is recorded at the
+	// pointee path, so reading it carries the borrow's origin and dispose-of-
+	// source invalidation fires. Pointer roots were previously cut off as
+	// opaque (#10 heap-write / heap-new); they stay opaque only when no fact
+	// was recorded for the pointee field.
 	if existing := c.PointerFlow().GetPathPointer(path.Key()); existing.KnownOrigin {
 		return existing
+	}
+	if rootT.Indirection > 0 {
+		return c.PointerFlow().UnknownPointer()
 	}
 	// Reading the VALUE of an owned member copies storage that belongs to the
 	// root aggregate's obligation. Like owned-scalar coercion (`t := fd_owned`
@@ -1268,7 +1278,20 @@ func updateFieldPointerFactsForAssignment(c *Context, target AST, targetIsSymbol
 	if !ok || path.Fields == "" || c.IsGlobalBinding(path.Root) {
 		return
 	}
-	if t, ok := c.TypeForVar(path.Root); !ok || t.Indirection > 0 {
+	rootT, rootOK := c.TypeForVar(path.Root)
+	if !rootOK {
+		return
+	}
+	// POINTER root (`h.p` = `(*h).p`): record only a scalar pointer/slice
+	// write — a borrow stored through a heap pointer (`h.p = &s.x`, #10
+	// heap-write) — at the pointee path, the same key readProvenancePath now
+	// reads. The aggregate-through-pointer cases stay opaque (their value
+	// lives behind the pointer; the field machinery is value-keyed).
+	if rootT.Indirection > 0 {
+		if dstt.Indirection > 0 || dstt.IsSlice() {
+			c.PointerFlow().ForgetFieldPointersUnder(path.Key())
+			c.PointerFlow().SetPathPointer(path.Key(), pointerExprForAST(c, val, ""))
+		}
 		return
 	}
 	// Record new facts based on the value's shape. Clearing strategy
@@ -2398,6 +2421,22 @@ func compileAllocBuiltin(of io.Writer, c *Context, a AST, ast *Funcall, dest spo
 	return dest
 }
 
+// newStructLiteralArg returns the struct literal X from `new(X)` (the heap
+// constructor applied to a struct literal), or nil. Used to record the heap
+// pointee's field provenance so a borrow constructed into heap is tracked.
+func newStructLiteralArg(ast AST) *StructLiteral {
+	fc, ok := ast.(*Funcall)
+	if !ok {
+		return nil
+	}
+	pkg, name := fc.PkgAndName()
+	if pkg != "" || name != "new" || len(fc.Args) != 1 {
+		return nil
+	}
+	sl, _ := fc.Args[0].(*StructLiteral)
+	return sl
+}
+
 func newBuiltinTypeForDest(c *Context, ast *Funcall, dst ASTType) (ASTType, bool) {
 	pkg, name := ast.PkgAndName()
 	if pkg != "" || name != "new" || len(ast.Args) != 1 || dst.Indirection == 0 {
@@ -3315,6 +3354,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// field facts so a later `return b` rejects a local arg via
 			// CheckStructFieldEscapeLocal exactly as the direct assignment does.
 			recordStructReturnCallFieldFacts(c, ast.Name, dstt, ast.Init)
+			// `h := new(holder{p: &s.x})`: record the heap pointee's field
+			// provenance at h's path so reading h.p (= (*h).p) carries the
+			// borrow's origin and dispose-of-source invalidation fires (#10
+			// heap-new). The path key "h.<field>" is the one readProvenancePath
+			// queries for a pointer-rooted read (the cutoff now defers to it).
+			if sl := newStructLiteralArg(ast.Init); sl != nil {
+				recordStructLiteralFieldFacts(c, VarFlowPath(ast.Name), sl)
+			}
 		} else if !ast.Type.ZeroInitializable(c) {
 			CompileErrorF(a, "Variable \"%s\" of type %s requires an initializer", ast.Name, ast.Type)
 		} else if ast.Type.Indirection > 0 && ast.Type.NilMask&1 != 0 {

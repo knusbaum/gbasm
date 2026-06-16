@@ -1,0 +1,18 @@
+package main
+
+import "fmt"
+
+// #10-class: a borrow of an owned field written through a heap pointer field
+// is untracked, so dispose does not invalidate it.
+type box    struct { x owned i64 }
+type holder struct { p *i64 }
+
+fn main() {
+	s owned box := box{x: 10}
+	seed i64 := 99
+	h owned *mut holder := new(holder{p: &seed})
+	h.p = &s.x
+	dispose(s)
+	fmt.print("%d %d\n", *h.p, seed)
+	free(h)
+}
