@@ -1,0 +1,2 @@
+Compiling tests/cov_owned_field_borrow_in_struct_use_after_dispose_err_test.bos
+Fatal: cannot dereference pointer to "s": the target was consumed

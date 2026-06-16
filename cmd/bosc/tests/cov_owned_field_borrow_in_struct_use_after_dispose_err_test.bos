@@ -1,0 +1,15 @@
+package main
+
+import "fmt"
+
+// Storing a borrow of an owned field into a stack struct literal keeps the
+// alias tracked: disposing the source invalidates the stored borrow.
+type box struct { x owned i64 }
+type holder struct { p *i64 }
+
+fn main() {
+	s owned box := box{x: 10}
+	h holder := holder{p: &s.x}
+	dispose(s)
+	fmt.print("%d\n", *h.p)
+}

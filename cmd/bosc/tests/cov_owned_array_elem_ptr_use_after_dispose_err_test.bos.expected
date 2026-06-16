@@ -1,0 +1,2 @@
+Compiling tests/cov_owned_array_elem_ptr_use_after_dispose_err_test.bos
+Fatal: cannot dereference pointer to "a": the target was consumed

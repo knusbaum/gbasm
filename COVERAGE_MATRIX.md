@@ -194,7 +194,7 @@ tests) · **·** N/A.
 | I8 mutability (per-level `&`) | ✓ | ✓ (`#7`) | ✓ (`#7`) | ○ | ○ | · | ○ |
 | I9 move consumes | ✓ (incl. `owned T[N]`, `cov_owned_fixed_array_move_*`) | ✓ (`owned_field_move_*`) | · (no per-elem owned) | · | ✓ | ✓ | · |
 | I10 discharge exactly once | ✓ (incl. `owned T[N]`, `cov_owned_fixed_array_{dispose,leak}`) | ✓ (`owned_field_*`) | · (no per-elem owned) | · | ✓ | ✓ | · |
-| I11 no use-after-discharge | ✓ | **○ `#8` (value-borrow)** / ✓ (ptr-borrow) | **○ `#8`-class (array value-borrow)** | ○ | ✓ | ✓ | · |
+| I11 no use-after-discharge | ✓ | ✓ ptr-borrow / **○ `#8` value-borrow** | ✓ ptr-borrow / **○ `#8`-class value-borrow** | ✓ ptr-borrow / **○ `#8`-class value-borrow** | ✓ | ✓ | · |
 | I12 no escape | ✓ (`retalias`) | ✓ (`slice_return_*_struct`) | ✓ (`slice_return_array`) | ✓ (`*_array_of_arrays`) | ✓ | ✓ | · |
 | I13 conservative merge | ✓ (`loop_flow`, owned branch) | ○ | ○ | ○ | · | · | · |
 | I14 traps | ✓ (bounds/nil) | ○ | ✓ (bounds) | ○ | · | · | ○ |
@@ -215,14 +215,28 @@ expressed and is `·`. The owned-array-as-a-whole *is* a binding-position case a
 is now covered by `cov_owned_fixed_array_{dispose,leak,move_use_after}` +
 `cov_mut_fixed_array_err` (the `mut`-on-array rejection boundary).
 
-The remaining **`○` cells are the gaps to fill** — chiefly the **ownership ×
-{field, element-borrow, nested}** value-borrow column the binding-level corpus
-never reached:
-- **I11 × owned-field value-borrow** = `#8` — `b i64 := s.h; dispose(s); read b` (held red driver).
-- **I11 × owned-array element value-borrow** = `#8`-class — `b i64 := owned_arr[i]; dispose(owned_arr); read b` (same root; surfaced empirically).
-- **I11 × owned-field/element ptr-borrow** — `&` form (`cov_field_ptr_*` covers field; element TBD).
-- **I12 × owned field** — `&owned_field` must not escape the frame (blocked today by the `&field`-unused bug, see §7).
-- **nested owned** — owned field of an owned field; consume the outer, observe.
+**The I11 column splits cleanly by borrow kind at every position** (the audit's
+key structural finding). A **pointer** borrow (`p := &s.x` / `&a[i]` / `&o.in.h`,
+or one stored into a stack struct literal) tracks via the aggregate's origin, so
+`dispose` invalidates it and re-init doesn't revive it — **covered green** at
+field / array-element / nested / stored-in-struct:
+- `cov_owned_field_ptr_use_after_dispose_err`, `cov_field_ptr_{use_after_dispose,no_revival}_err`
+- `cov_owned_array_elem_ptr_use_after_dispose_err`
+- `cov_nested_owned_ptr_use_after_dispose_err`
+- `cov_owned_field_borrow_in_struct_use_after_dispose_err`
+
+A **value** borrow (`b i64 := s.h`) of the same member is **not** tracked — the
+open `#8` class, identical root at every position (held red drivers, paired with
+the #8 fix):
+- `cov_owned_field_borrow_use_after_dispose_err` (#8, field)
+- `cov_owned_array_elem_value_use_after_dispose_err` (array element)
+- `cov_nested_owned_value_use_after_dispose_err` (nested)
+
+Nested owned construction works via the documented owned-binding pattern
+(`cov_nested_owned_dispose`, value oracle). Two cells remain **open questions for
+the user** (in §6, not closed): **#10** (heap-`new()` stored borrow escapes
+tracking) and the **owned-through-pointer-deref** strip. The **I12 × owned-field
+escape** test is blocked by the `&field`-unused bug (**#9**, §6).
 
 ## 4. Equivalence classes (the pruning — from CURRENT codegen)
 
@@ -282,6 +296,8 @@ fixed ones have a passing regression test.
 | I11 | owned-field **value** borrow (`b i64 := s.h`), then dispose struct | **silent** use-after-dispose — not tracked (binding-level `b := fd` IS) | **open #8** | `cov_owned_field_borrow_use_after_dispose_err` |
 | I11 | owned-**array** element value borrow (`b i64 := owned_arr[i]`), then dispose | same `#8` root, element position | **open #8-class** | (TBD; pairs with #8 fix) |
 | — | unused-binding check: a binding used **only** via `&x.field` is wrongly flagged "never used" (value read `x.f` is fine; params + locals both hit) | **silent over-rejection** of valid code; also blocks I12 `&owned_field` escape tests | **open #9** | (TBD) |
+| I11/I12 | borrow of owned field stored into a **heap** struct via `new(holder{p: &s.x})`, then dispose + read | **silent** use-after-dispose (false **negative**). The **stack** struct-literal form IS caught (`cov_owned_field_borrow_in_struct_*`) — the heap/stack asymmetry is the finding. Not §773 (that's false *positives*) | **open #10 — needs user decision** | (probe: `new()` store slips through) |
+| — | owned field reached through a **pointer deref** (`(*pi).p` / `pi.p`) strips `owned` → `free requires an owned pointer, got *mut T` | consistent with "borrowing strips ownership," but means heap structs with owned fields can't be destructed field-by-field through the pointer | **open — needs user decision** (bug vs documented limitation) | minimized probe |
 
 Field-level borrow soundness otherwise confirmed (green guards): a field *pointer*
 borrow (`&s.f`) tracks via the struct origin, so dispose invalidates it and

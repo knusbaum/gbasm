@@ -1,0 +1,16 @@
+package main
+
+import "fmt"
+
+// A pointer borrow of a nested owned field tracks via the outer origin;
+// disposing the outer aggregate invalidates it.
+type inner struct { h owned i64 }
+type outer struct { in owned inner }
+
+fn main() {
+	i owned inner := inner{h: 10}
+	o owned outer := outer{in: i}
+	p *i64 := &o.in.h
+	dispose(o)
+	fmt.print("%d\n", *p)
+}

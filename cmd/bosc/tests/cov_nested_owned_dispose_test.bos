@@ -1,0 +1,16 @@
+package main
+
+import "fmt"
+
+// An owned struct-typed field, initialized from an owned binding (the
+// documented owned-field construction pattern), reads back correctly and
+// disposes as a unit.
+type inner struct { h owned i64 }
+type outer struct { in owned inner }
+
+fn main() {
+	i owned inner := inner{h: 10}
+	o owned outer := outer{in: i}
+	fmt.print("%d\n", o.in.h)
+	dispose(o)
+}

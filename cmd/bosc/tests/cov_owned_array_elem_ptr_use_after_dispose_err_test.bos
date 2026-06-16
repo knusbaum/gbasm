@@ -1,0 +1,13 @@
+package main
+
+import "fmt"
+
+// A pointer borrow of an owned-array element tracks via the array's origin;
+// disposing the array invalidates the borrow. (Contrast the value-borrow
+// sibling, which is the open #8-class gap.)
+fn main() {
+	a owned i64[3] := [10, 20, 30]
+	p *i64 := &a[1]
+	dispose(a)
+	fmt.print("%d\n", *p)
+}
