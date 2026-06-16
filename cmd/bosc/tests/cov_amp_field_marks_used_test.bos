@@ -1,0 +1,10 @@
+package main
+import "fmt"
+// A binding used only via the address of one of its fields (&l.x) counts as
+// used — it must not trip the "declared but never used" lint. (#9)
+type box struct { x i64 }
+fn main() {
+	l box := box{x: 5}
+	p *i64 := &l.x
+	fmt.print("%d\n", *p)
+}

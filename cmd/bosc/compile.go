@@ -3819,8 +3819,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			case *Index, *Dot:
 				// `&x.f` / `&x[i]` of a `var` root yields a *mut view; keep
 				// the root var so converting it can't strip write-through.
+				// Taking the address of a field/element is also a use of the
+				// root binding — otherwise a binding used only via `&x.f` is
+				// wrongly flagged "never used" (bare `&x` marks used above).
 				if root, ok := rootSymbolName(ast.Lit); ok {
 					c.markMutRelied(root)
+					c.markUsed(root)
 				}
 				if path, ok := FlowPathForExpr(ast.Lit); ok {
 					c.MarkAddress(path.Root)
