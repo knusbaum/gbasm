@@ -1,0 +1,12 @@
+package main
+
+import "fmt"
+
+// #11: an array literal in struct-field position should coerce to the field's
+// element type. Currently rejected ("expected i64[4] but got <intlit>[4]").
+type box struct { arr i64[4] }
+
+fn main() {
+	b box := box{arr: [1, 2, 3, 4]}
+	fmt.print("%d\n", b.arr[2])
+}

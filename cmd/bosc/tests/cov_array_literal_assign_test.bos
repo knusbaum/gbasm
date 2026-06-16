@@ -1,0 +1,12 @@
+package main
+
+import "fmt"
+
+// #11: an array literal should coerce to the target element type on
+// assignment, as it already does at typed `:=` decl. Currently rejected
+// ("Cannot assign different types i64[3] = <intlit>[3]").
+fn main() {
+	var a i64[3] := [1, 2, 3]
+	a = [4, 5, 6]
+	fmt.print("%d\n", a[0])
+}

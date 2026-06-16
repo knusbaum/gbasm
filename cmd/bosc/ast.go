@@ -1982,6 +1982,17 @@ func coerceType(c *Context, dst, src ASTType) (effective ASTType, reason coerceR
 	if dst.Accepts(src) {
 		return src, coerceOK
 	}
+	// Array literal: elements coerce element-wise (e.g. <intlit>[N] -> i64[N]).
+	// The typed `:=` decl path validates each element against the destination
+	// element type directly; routing the whole-array case through here lets
+	// `=` assign and struct-field init accept the same literals instead of
+	// rejecting `<intlit>[N]` as a different type.
+	if dst.IsArray() && src.IsArray() && dst.ArraySize == src.ArraySize &&
+		dst.Element != nil && src.Element != nil {
+		if _, r := coerceType(c, *dst.Element, *src.Element); r == coerceOK {
+			return dst, coerceOK
+		}
+	}
 	return ASTType{}, coerceTypeMismatch
 }
 

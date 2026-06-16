@@ -4281,6 +4281,20 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			updateFieldPointerFactsForAssignment(c, ast.Target, targetIsSymbol, targetSym, dstt, ast.Val)
 			return nullspot
 		}
+		// Array-literal assignment to a fixed-array destination: lay the
+		// elements directly into the target storage, the same path VarDecl
+		// uses for `arr i64[N] := [...]`. The generic store path below has no
+		// ArrayLiteral case (compileTop would FALLTHROUGH-panic), and
+		// coerceType now accepts <intlit>[N] -> T[N], so this is the matching
+		// codegen for `=` assignment.
+		if al, ok := ast.Val.(*ArrayLiteral); ok && dstt.IsArray() {
+			compileArrayLiteralInto(of, c, a, spot{ref: lv.ref, t: dstt, nameIsAddress: true}, al)
+			invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
+			if path, ok := FlowPathForExpr(ast.Target); ok {
+				c.InvalidateFlowFacts(path)
+			}
+			return nullspot
+		}
 		if !srct.Same(dstt) {
 			if _, reason := coerceType(c, dstt, srct); reason != coerceOK {
 				reportCoerceFailure(a, dstt, srct, reason,
