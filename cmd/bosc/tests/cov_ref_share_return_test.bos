@@ -1,0 +1,11 @@
+package main
+import "fmt"
+// A function returning a *mut that aliases its argument lets the caller write
+// through it to the original storage.
+fn pick(a *mut i64) *mut i64 { return a }
+fn main() {
+	var x i64 := 3
+	q *mut i64 := pick(&x)
+	*q = 88
+	fmt.print("%d\n", x)
+}

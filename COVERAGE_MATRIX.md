@@ -185,7 +185,7 @@ tests) · **·** N/A.
 | Inv \ position | local binding | struct field | array/slice elem | nested (`a.b.c`, `a.f[i]`) | param (by-val) | return | global |
 |---|---|---|---|---|---|---|---|
 | I1 value-independence | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ○ (init only, no indep) |
-| I2 reference sharing | ✓ | ○ | ✓ (slice backing) | ○ | ✓ (`*mut` param) | ○ | ○ |
+| I2 reference sharing | ✓ | ✓ (`cov_ref_share_field`) | ✓ (slice backing) | ✓ (`cov_ref_share_nested`) | ✓ (`*mut` param) | ✓ (`cov_ref_share_return`) | ✓ (`cov_ref_share_global`) |
 | I3 storage fidelity | ✓ | ✓ | ✓ | ✓ (`#4` was here) | ✓ | ✓ | ✓ (`global_*`) |
 | I4 init / zero | ✓ | ✓ (partial-lit) | ✓ (`cov_zero_init_array_elem`) | ✓ (`cov_zero_init_nested_struct`) | · | · | ✓ (`global_*_init`) |
 | I5 aggregate `==`/ordering reject | ✓ | · | · | · | · | · | · |

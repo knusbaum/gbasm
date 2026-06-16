@@ -1,0 +1,11 @@
+package main
+import "fmt"
+// A *mut pointer reached through a nested struct field shares its target.
+type inner struct { p *mut i64 }
+type outer struct { in inner }
+fn main() {
+	var x i64 := 7
+	o outer := outer{in: inner{p: &x}}
+	*o.in.p = 33
+	fmt.print("%d\n", x)
+}

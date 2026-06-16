@@ -1,0 +1,11 @@
+package main
+import "fmt"
+// A *mut pointer stored in a struct field shares its target: writing through
+// the field is visible at the original storage.
+type ref struct { p *mut i64 }
+fn main() {
+	var x i64 := 5
+	r ref := ref{p: &x}
+	*r.p = 77
+	fmt.print("%d\n", x)
+}

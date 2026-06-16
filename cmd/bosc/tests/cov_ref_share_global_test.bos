@@ -1,0 +1,10 @@
+package main
+import "fmt"
+// A *mut alias of a global shares it: writing through the alias is visible at
+// the global.
+var g i64 := 10
+fn main() {
+	p *mut i64 := &g
+	*p = 55
+	fmt.print("%d %d\n", g, *p)
+}
