@@ -1,0 +1,15 @@
+package main
+
+import "fmt"
+
+// An uninitialized struct reads as zero through every field, including a
+// nested struct's fields.
+type inner struct { a i64; b i64 }
+type outer struct { x i64; in inner }
+
+fn main() {
+	var o outer
+	fmt.print("%d %d %d\n", o.x, o.in.a, o.in.b)
+	o = outer{x: 1, in: inner{a: 2, b: 3}}
+	fmt.print("%d\n", o.in.b)
+}

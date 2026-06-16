@@ -1,0 +1,13 @@
+package main
+
+import "fmt"
+
+// A fixed array stored as a struct field (initialized from a typed binding)
+// reads back faithfully and reports its length.
+type box struct { arr i64[4] }
+
+fn main() {
+	arr i64[4] := [1, 2, 3, 4]
+	b box := box{arr: arr}
+	fmt.print("%d %d\n", len(b.arr), b.arr[2])
+}

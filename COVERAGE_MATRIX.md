@@ -187,9 +187,9 @@ tests) · **·** N/A.
 | I1 value-independence | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ○ (init only, no indep) |
 | I2 reference sharing | ✓ | ○ | ✓ (slice backing) | ○ | ✓ (`*mut` param) | ○ | ○ |
 | I3 storage fidelity | ✓ | ✓ | ✓ | ✓ (`#4` was here) | ✓ | ✓ | ✓ (`global_*`) |
-| I4 init / zero | ✓ | ✓ (partial-lit) | ○ | ○ | · | · | ✓ (`global_*_init`) |
+| I4 init / zero | ✓ | ✓ (partial-lit) | ✓ (`cov_zero_init_array_elem`) | ✓ (`cov_zero_init_nested_struct`) | · | · | ✓ (`global_*_init`) |
 | I5 aggregate `==`/ordering reject | ✓ | · | · | · | · | · | · |
-| I6 aggregate shape (len) | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| I6 aggregate shape (len) | ✓ (`cov_len_array_slice_subslice`) | ✓ (`cov_array_field_typed_binding`) | ✓ (subslice) | ○ | ○ | ○ | ○ |
 | I7 numeric / cast | ✓ (reject) | ○ | ○ | · | ○ | ○ | ○ |
 | I8 mutability (per-level `&`) | ✓ | ✓ (`#7`) | ✓ (`#7`) | ○ | ○ | · | ○ |
 | I9 move consumes | ✓ (incl. `owned T[N]`, `cov_owned_fixed_array_move_*`) | ✓ (`owned_field_move_*`) | · (no per-elem owned) | · | ✓ | ✓ | · |
@@ -298,6 +298,7 @@ fixed ones have a passing regression test.
 | — | unused-binding check: a binding used **only** via `&x.field` is wrongly flagged "never used" (value read `x.f` is fine; params + locals both hit) | **silent over-rejection** of valid code; also blocks I12 `&owned_field` escape tests | **open #9** | (TBD) |
 | I11/I12 | a borrow **buried in an aggregate field** that leaves the frame, then dispose + read | **silent** use-after-dispose (false **negative**). Diagnosed precisely: tracked **in-frame** (direct construct + local struct copy, `cov_owned_field_borrow_in_struct_*`) but **dropped at every frame-leaving boundary** — normal call (P3), `new()`→heap (P5/#10 headline), heap-pointer write. *Not* `new()`-specific (a plain function drops it too); cause is that return-alias inference reconnects only **top-level pointer** returns (P1), with no interprocedural **field-buried** alias summary. **Big fix** — expanding the return-alias set's expressiveness touches compiler + assembler + object rep + grammar | **open #10 — deferred** | held: `cov_owned_field_borrow_escapes_{call,heap,heap_ptr_write}_err` |
 | — | owned field reached through a **pointer deref** (`(*pi).p` / `pi.p`) strips `owned` → `free requires an owned pointer, got *mut T` | consistent with "borrowing strips ownership," but means heap structs with owned fields can't be destructed field-by-field through the pointer | **open — needs user decision** (bug vs documented limitation) | minimized probe |
+| I3 | array **literal** coerces to the target element type at typed `:=` decl, but **not** at `=` assign or struct-field init — literal stays `<intlit>[N]` | **false rejection** of valid code (`a = [4,5,6]`, `box{arr: [1,2,3,4]}`); a missing context-typed-literal threading site, cf. CLAUDE.md "bare struct literals are context-typed" | **open #11 — deferred** | held: `cov_array_literal_{assign,struct_field}` (expect run output) |
 
 Field-level borrow soundness otherwise confirmed (green guards): a field *pointer*
 borrow (`&s.f`) tracks via the struct origin, so dispose invalidates it and
