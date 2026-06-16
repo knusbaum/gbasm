@@ -1370,6 +1370,43 @@ func checkSliceFieldStoreEscape(c *Context, ownerType ASTType, fieldName string,
 	checkSliceEscape(c, val, what)
 }
 
+// checkPointerEscapeToGlobal rejects storing an escape-restricted pointer (a
+// borrow of local or parameter storage, e.g. `&s.x`) into a GLOBAL, whose
+// lifetime is forever — the borrow's referent dies long before the global, so
+// the stored pointer dangles. The pointer analogue of the slice-to-global
+// escape (`checkSliceEscapeAssignment`); scoped to global targets only —
+// through-pointer / element stores have opaque-but-possibly-local pointees and
+// are handled precisely elsewhere, so rejecting them here would over-reject
+// in-frame patterns (cursors, self-referential structs).
+func checkPointerEscapeToGlobal(c *Context, a *Assignment, dst ASTType) {
+	if c.ResolveUnderlying(dst).Indirection == 0 {
+		return
+	}
+	switch target := a.Target.(type) {
+	case *Symbol:
+		if c.IsGlobalBinding(target.Name) {
+			checkPointerEscape(c, a.Val, fmt.Sprintf("via global %s", target.Name))
+		}
+	case *Dot:
+		if sym, ok := target.Val.(*Symbol); ok &&
+			(c.IsGlobalBinding(sym.Name) || c.IsImportedPackage(sym.Name)) {
+			checkPointerEscape(c, a.Val, fmt.Sprintf("via global %s.%s", sym.Name, target.Member))
+		}
+	}
+}
+
+// checkPointerEscape rejects a pointer value whose flow origin is escape-
+// restricted (local or borrowed-parameter storage) flowing into `what`.
+func checkPointerEscape(c *Context, a AST, what string) {
+	ptr := pointerExprForAST(c, a, "")
+	if !ptr.KnownOrigin {
+		return
+	}
+	if c.PointerFlow().IsEscapeRestricted(ptr.Origin) {
+		CompileErrorF(a, "Borrowed pointer escapes %s", what)
+	}
+}
+
 // checkSliceEscapeAssignment flags slice assignments whose destination has
 // an opaque or longer-than-source lifetime. Routed through the single
 // targetLifetimeOpaque predicate so every shape that the predicate
@@ -4305,6 +4342,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		srct := ast.Val.ASTType(c)
 		checkBorrowedPointerAssignment(c, ast, dstt)
 		checkSliceEscapeAssignment(c, ast, dstt)
+		checkPointerEscapeToGlobal(c, ast, dstt)
 		// Interface coercion at assignment: concrete pointer or small concrete value → fat pointer.
 		if shouldCoerceToInterface(c, dstt, srct) {
 			destBinding := ""

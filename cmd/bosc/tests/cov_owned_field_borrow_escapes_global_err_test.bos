@@ -1,0 +1,14 @@
+package main
+// #10 global face: a borrow of an owned field stored into a GLOBAL pointer
+// outlives the frame (the global never dies), so g now points at storage that
+// `dispose(s)` consumes. Must be rejected (parallels the slice-to-global escape
+// `slice_assign_local_array_to_global_var_err`, which IS caught). Currently
+// accepted (slips through).
+type box struct { x owned i64 }
+var dummy i64 := 0
+var g *i64 := &dummy
+fn main() {
+	s owned box := box{x: 10}
+	g = &s.x
+	dispose(s)
+}
