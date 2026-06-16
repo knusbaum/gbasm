@@ -1,0 +1,11 @@
+package main
+import "fmt"
+// #14: returning a bare nil from a function whose return type is a nullable
+// pointer fails with a position-less 'No such type "<nil>"'. Should compile
+// and run (maybe() returns nil, so the guarded branch is skipped).
+fn maybe() *?mut i64 { return nil }
+fn main() {
+	r *?mut i64 := maybe()
+	if (r != nil) { fmt.print("%d\n", *r) }
+	fmt.print("done\n")
+}

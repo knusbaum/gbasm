@@ -1,0 +1,12 @@
+package main
+import "fmt"
+// #15: a nil element in an array literal must receive pointer context from the
+// destination element type ("nil requires pointer context" was wrongly raised),
+// even at a typed := decl. Uses an explicit non-null assert (*a[0]?) since
+// narrowing of an indexed element is separate.
+fn main() {
+	var x i64 := 4
+	a *?i64[3] := [&x, nil, nil]
+	fmt.print("%d\n", *a[0]?)
+	fmt.print("done\n")
+}

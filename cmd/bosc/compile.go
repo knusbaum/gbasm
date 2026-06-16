@@ -201,7 +201,14 @@ func compileArrayLiteralInto(of io.Writer, c *Context, a AST, dest spot, lit *Ar
 			// back at its own width (often 64-bit for integer literals)
 			// so use the partial-of-alloc syntax `val.ref:bits` to
 			// select the low N bits matching the element type's width.
-			val := compileTop(of, c, e, nullspot)
+			// A `nil` element has no type of its own and needs a pointer-
+			// typed destination for context; hand it a temp of the element
+			// type (the array element coerced nil → *?T above).
+			elemDest := nullspot
+			if lit, ok := e.(*Literal); ok && lit.Val == nil {
+				elemDest = newSpot(of, c, c.Temp(), elemT)
+			}
+			val := compileTop(of, c, e, elemDest)
 			elemBits := elemSize * 8
 			fmt.Fprintf(of, "\tmov [%s+%d] %s:%d\n", dest.ref, off, val.ref, elemBits)
 			val.free(of)
@@ -4758,6 +4765,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		if valType.Same(intlitASTType()) {
 			valType = numASTType()
+		}
+		// A bare `return nil` has type <nil>; adopt the function's return type
+		// (a nullable pointer, validated by the coerceType check above) so the
+		// value is sized and lowered as that pointer rather than panicking in
+		// Size() on the placeholder <nil> type. Mirrors the intlit rewrite.
+		if valType.Name == "<nil>" {
+			valType = retType
 		}
 		raxName := raxForType(valType)
 		dest := newSpotWithReg(of, c, c.Temp(), valType, raxName)
