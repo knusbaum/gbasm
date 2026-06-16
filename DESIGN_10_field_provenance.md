@@ -154,6 +154,44 @@ check is the gate for Phase 1.
 
 ---
 
+## Empirical findings (constraint-solver runs against the live compiler)
+
+Probing the design against the actual checker settled the soundness/precision
+question and surfaced a real existing hole:
+
+1. **Coarse param-level summaries ARE sound for borrows — proven, not argued.**
+   `something(f foo) bar { return bar{y: f.x} }` with a **named** arg
+   (`f := foo{x:&x}; b := something(f); dispose(x); *b.y`) is **rejected** (the
+   borrow `b.y → f.x → x` survives the call). The caller flattens the named
+   arg's field origins (`argAliasProvenance` for a struct **symbol** arg) into
+   the result. So coarse "return ← param0" + caller flattening = sound; field-
+   level is **precision** (only avoids over-rejecting independent fields of a
+   partially-borrowing aggregate).
+
+2. **The #10 call-face hole is narrow: struct-LITERAL args.** `argAliasProvenance`
+   (retalias.go:132) flattens field origins only for a `*Symbol` arg, not a
+   `*StructLiteral`. So `id(holder{p:&s.x})` (literal) slips through while
+   `arg := holder{...}; id(arg)` (symbol) is caught. **Fix = a ~10-line
+   `*StructLiteral` case** unioning the literal's field-value origins — no
+   summary-granularity change, no `.bo` bump. The held
+   `cov_owned_field_borrow_escapes_call_err` flips on that alone.
+
+3. **NEW BUG #18 — owned aggregate return loses borrowed-field tracking through a
+   call.** `something(f foo) owned bar { return bar{y: f.x, z: alloc(i64)} }`:
+   `b := something(f); free(xp); *b.y` is **wrongly ACCEPTED** (concrete use-
+   after-free), whereas the non-owned-return version is rejected and the in-
+   frame construction is rejected. The caller's owned-struct-result path skips
+   the `__callret` borrow recording the non-owned path uses, so the borrowed
+   field's provenance never reaches `b`. The owned field is NOT trapped
+   (`free(b.z)` works), so the failure is **under-rejection (unsound)**, not the
+   over-rejection originally feared. Held: `cov_owned_aggregate_return_borrow_
+   lost_err`. Distinct from #10; lives in the existing engine.
+
+**Net effect on this plan:** field-level (Phase 3 objrep) is confirmed
+**precision, not soundness**. #10 soundness = Phase 1 (pointee-field) + the
+literal-arg flattening fix (#10 call face) + #18 (owned-return borrow recording)
+— all caller-side, no `.bo` format change.
+
 ## Phase 3 representation design (the `.bo`/grammar fact)
 
 ### What the summary *is* (the principled model)
