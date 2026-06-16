@@ -942,15 +942,29 @@ func (f *Function) fixMovsx32To64(ops []interface{}) (string, []interface{}, boo
 	if len(ops) != 2 {
 		return "MOVSX", ops, false
 	}
-	dest, ok := ops[0].(*Ralloc)
-	if !ok || dest.size != 64 {
+	// The retarget to MOVSXD only depends on the operand widths (r64 ← r/m32),
+	// so accept either a Ralloc temp or an already-fixed register on each side.
+	// The original Ralloc-only form missed `movsx rdi Temp` where the dest is a
+	// concrete argument/return register rather than a temp.
+	if dw, ok := operandBitWidth(ops[0]); !ok || dw != 64 {
 		return "MOVSX", ops, false
 	}
-	src, ok := ops[1].(*Ralloc)
-	if !ok || src.size != 32 {
+	if sw, ok := operandBitWidth(ops[1]); !ok || sw != 32 {
 		return "MOVSX", ops, false
 	}
 	return "MOVSXD", ops, true
+}
+
+// operandBitWidth returns the bit width of a register-shaped operand, whether
+// it is a Ralloc (pre/post-allocation temp) or a concrete Register.
+func operandBitWidth(op interface{}) (int, bool) {
+	switch v := op.(type) {
+	case *Ralloc:
+		return v.size, true
+	case Register:
+		return v.Width(), true
+	}
+	return 0, false
 }
 
 func (f *Function) fixLEAVar(ops []interface{}) (string, []interface{}) {

@@ -1,0 +1,8 @@
+package main
+import "fmt"
+// #12: widening an i32 parameter to i64 in return position fails to encode
+// (Fatal: MOVSX ... Failed to find an instruction for Move with Sign-Extension).
+fn widen(x i32) i64 { return i64(x) }
+fn main() {
+	fmt.print("%d\n", widen(i32(70000)))
+}

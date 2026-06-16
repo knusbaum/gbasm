@@ -5680,8 +5680,18 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 		}
 	default:
 		// Narrowing: use the partial-of-alloc syntax to take the low N bits
-		// of the source, where N is the destination size in bits.
-		fmt.Fprintf(of, "\tmov %s %s:%d\n", dest.ref, srcSpot.ref, dstSize*8)
+		// of the source, where N is the destination size in bits. The `:N`
+		// partial form only applies to register-resident operands; a global
+		// or other memory-backed source (`g:16`) has no encoding, so stage it
+		// into a register temp first (the route-through-register pattern).
+		narrowSrc := srcSpot
+		if srcSpot.nameIsAddress {
+			tmp := newSpot(of, c, c.Temp(), srcUnderlying)
+			fmt.Fprintf(of, "\tmov %s %s\n", tmp.ref, srcSpot.ref)
+			narrowSrc = tmp
+			defer tmp.free(of)
+		}
+		fmt.Fprintf(of, "\tmov %s %s:%d\n", dest.ref, narrowSrc.ref, dstSize*8)
 	}
 	srcSpot.free(of)
 	return dest

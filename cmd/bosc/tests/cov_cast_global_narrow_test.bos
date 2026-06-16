@@ -1,0 +1,9 @@
+package main
+import "fmt"
+// #13: narrowing a global i64 to i16 fails to encode
+// (Fatal: MOV [y(size=16), g:16] Failed to find an instruction for Move).
+var g i64 := 70000
+fn main() {
+	y i16 := i16(g)
+	fmt.print("%d\n", i64(y))
+}
