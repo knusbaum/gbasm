@@ -1,0 +1,9 @@
+package main
+import "fmt"
+type box struct { v i64 }
+// Casting a struct-field value.
+fn main() {
+	b box := box{v: 300}
+	f i32 := i32(b.v)
+	fmt.print("%d\n", i64(f))
+}

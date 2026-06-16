@@ -1,0 +1,8 @@
+package main
+import "fmt"
+// i64 -> i16 narrowing truncates to the low 16 bits (70000 & 0xFFFF = 4464).
+fn main() {
+	x i64 := 70000
+	y i16 := i16(x)
+	fmt.print("%d\n", i64(y))
+}

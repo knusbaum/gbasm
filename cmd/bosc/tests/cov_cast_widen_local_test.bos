@@ -1,0 +1,8 @@
+package main
+import "fmt"
+// i32 -> i64 widening of a local.
+fn main() {
+	x i32 := 5
+	y i64 := i64(x)
+	fmt.print("%d\n", y)
+}
