@@ -827,6 +827,21 @@ func (c *Context) ResolveUnderlying(t ASTType) ASTType {
 	return t
 }
 
+// isIntegerType reports whether t is a concrete integer type — i8/i16/i32/i64,
+// u8/u16/u32/u64, byte, or an alias whose underlying is one of those. bool,
+// pointers, slices, arrays, structs, and function pointers are not integers.
+// The <intlit> pending-literal type is handled separately by callers.
+func isIntegerType(c *Context, t ASTType) bool {
+	if t.Indirection > 0 || t.IsSliceOrArray() || t.FuncSig != nil || t.AnonFields != nil {
+		return false
+	}
+	switch c.ResolveUnderlying(t).Name {
+	case "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "byte":
+		return true
+	}
+	return false
+}
+
 // AugmentType propagates properties (Signed) from a type alias definition
 // while keeping the alias name intact for type-distinctness checks.
 func (c *Context) AugmentType(t ASTType) ASTType {
@@ -3003,6 +3018,26 @@ func aggregateKindName(c *Context, t ASTType) (string, bool) {
 	return "", false
 }
 
+// opSym returns the source spelling of a binary operator node type, for
+// diagnostics.
+func opSym(t nodetype) string {
+	switch t {
+	case n_add:
+		return "+"
+	case n_sub:
+		return "-"
+	case n_mul:
+		return "*"
+	case n_div:
+		return "/"
+	case n_bitand:
+		return "&"
+	case n_bitor:
+		return "|"
+	}
+	return "?"
+}
+
 func (o *Op2) ASTType(c *Context) ASTType {
 	// TODO: this will be expanded as more types are added.
 	// For now, it's only num that can have operations.
@@ -3036,6 +3071,19 @@ func (o *Op2) ASTType(c *Context) ASTType {
 	case n_add, n_sub, n_mul, n_div, n_bitand, n_bitor:
 		ft := o.First.ASTType(c)
 		st := o.Second.ASTType(c)
+		// Arithmetic and bitwise operators are defined on integers only.
+		// bool, pointers, slices, structs, and function pointers are
+		// rejected here rather than silently treated as small integers
+		// (e.g. `true + true` or `&p & 1`). The <intlit> pending type is
+		// integral and allowed; it adopts the other operand's type below.
+		for _, operand := range []ASTType{ft, st} {
+			if !operand.Same(intlitASTType()) && !isIntegerType(c, operand) {
+				panic(&interpreterError{
+					msg: fmt.Sprintf("operator %s requires integer operands, but got %s", opSym(o.Type), operand),
+					p:   o.Pos(),
+				})
+			}
+		}
 		// An integer literal adopts the other operand's type.
 		if ft.Same(intlitASTType()) {
 			return st

@@ -1,0 +1,26 @@
+package main
+
+import "fmt"
+
+// Properties of the `true` / `false` literals. Each line pairs a property with
+// its negative (the "must not do the opposite" case).
+fn main() {
+	// A literal equals the matching boolean expression, and is NOT equal to
+	// the opposite one.
+	fmt.print("%v %v\n", true == (1 == 1), false == (1 == 0)) // true true
+	fmt.print("%v %v\n", true == (1 == 0), false == (1 == 1)) // false false
+
+	// Relations between the two literals.
+	fmt.print("%v %v\n", true != false, true == false) // true false
+
+	// Negation flips each literal to the other.
+	fmt.print("%v %v\n", !true == false, !false == true) // true true
+	fmt.print("%v %v\n", !true, !false)                  // false true
+
+	// Boolean context: the true branch is taken for `true`/`!false`, and the
+	// else branch for `false`/`!true`.
+	if (true) { fmt.print("A\n") }
+	if (false) { fmt.print("B-bug\n") } else { fmt.print("B\n") }
+	if (!true) { fmt.print("C-bug\n") } else { fmt.print("C\n") }
+	if (!false) { fmt.print("D\n") }
+}

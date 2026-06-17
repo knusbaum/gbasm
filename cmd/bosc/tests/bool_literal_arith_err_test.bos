@@ -1,0 +1,8 @@
+package main
+
+// A bool literal is not an integer: arithmetic on it is rejected, even when
+// the destination would also be bool (so the result type can't mask it).
+fn main() {
+	b bool := true + true
+	_ := b
+}
