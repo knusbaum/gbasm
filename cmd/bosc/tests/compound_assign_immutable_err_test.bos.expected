@@ -1,0 +1,2 @@
+Compiling tests/compound_assign_immutable_err_test.bos
+Fatal: Cannot assign to immutable binding "x"

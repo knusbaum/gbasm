@@ -1,0 +1,38 @@
+package main
+
+import "fmt"
+
+type box struct { n i64 }
+
+// `lhs op= rhs` desugars to `lhs = lhs op rhs` for every binary operator, on
+// any assignable lvalue.
+fn main() {
+	var x i64 := 10
+	x += 5
+	x -= 3
+	x *= 2
+	x /= 5
+	x %= 3
+	fmt.print("%d\n", x) // 1
+	x <<= 4
+	x >>= 1
+	x |= 1
+	x &= 12
+	x ^= 15
+	fmt.print("%d\n", x) // 7
+
+	// Equivalence with the spelled-out form.
+	var a i64 := 7
+	var b i64 := 7
+	a += 3
+	b = b + 3
+	fmt.print("%v\n", a == b) // true
+
+	// Lvalue targets: an indexed element and a struct field.
+	var arr i64[3] := [1, 2, 3]
+	arr[1] *= 10
+	fmt.print("%d\n", arr[1]) // 20
+	var s box := {n: 4}
+	s.n <<= 3
+	fmt.print("%d\n", s.n) // 32
+}

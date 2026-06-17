@@ -1659,9 +1659,48 @@ func (p *Parser) parseExpression() (r *Node) {
 			v = &Node{t: n_eq, p: c.p, args: []*Node{v, v2}}
 			continue
 		}
+		if op, ok := compoundAssignOp(c.t); ok {
+			// `lhs op= rhs` desugars to `lhs = lhs op rhs`. The lhs parse node
+			// is reused in both positions; toAST builds an independent AST for
+			// each, so this is a structural copy (the lhs is re-evaluated, as
+			// the integration note in TODO.md anticipates).
+			p.advance()
+			v2 := p.parseExpression()
+			opNode := &Node{t: op, p: c.p, args: []*Node{v, v2}}
+			v = &Node{t: n_eq, p: c.p, args: []*Node{v, opNode}}
+			continue
+		}
 		break
 	}
 	return v
+}
+
+// compoundAssignOp maps a compound-assignment token (`+=`, `<<=`, …) to the
+// binary operator it applies, or (0, false) if t is not a compound assign.
+func compoundAssignOp(t toktype) (nodetype, bool) {
+	switch t {
+	case tok_pluseq:
+		return n_add, true
+	case tok_minuseq:
+		return n_sub, true
+	case tok_stareq:
+		return n_mul, true
+	case tok_slasheq:
+		return n_div, true
+	case tok_percenteq:
+		return n_mod, true
+	case tok_ampeq:
+		return n_bitand, true
+	case tok_pipeeq:
+		return n_bitor, true
+	case tok_careteq:
+		return n_xor, true
+	case tok_shleq:
+		return n_shl, true
+	case tok_shreq:
+		return n_shr, true
+	}
+	return n_none, false
 }
 
 func (p *Parser) parseImport() *Node {

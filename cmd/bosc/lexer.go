@@ -51,6 +51,16 @@ const (
 	tok_shl
 	tok_shr
 	tok_tilde
+	tok_pluseq    // +=
+	tok_minuseq   // -=
+	tok_stareq    // *=
+	tok_slasheq   // /=
+	tok_percenteq // %=
+	tok_ampeq     // &=
+	tok_pipeeq    // |=
+	tok_careteq   // ^=
+	tok_shleq     // <<=
+	tok_shreq     // >>=
 	tok_ellipsis
 
 	// Keywords
@@ -195,6 +205,26 @@ func (t toktype) String() string {
 		return "tok_shr"
 	case tok_tilde:
 		return "tok_tilde"
+	case tok_pluseq:
+		return "tok_pluseq"
+	case tok_minuseq:
+		return "tok_minuseq"
+	case tok_stareq:
+		return "tok_stareq"
+	case tok_slasheq:
+		return "tok_slasheq"
+	case tok_percenteq:
+		return "tok_percenteq"
+	case tok_ampeq:
+		return "tok_ampeq"
+	case tok_pipeeq:
+		return "tok_pipeeq"
+	case tok_careteq:
+		return "tok_careteq"
+	case tok_shleq:
+		return "tok_shleq"
+	case tok_shreq:
+		return "tok_shreq"
 	case tok_if:
 		return "tok_if"
 	case tok_else:
@@ -680,9 +710,10 @@ func (l *lexer) Next() (rt token, re error) {
 		return token{t: tok_rsquare, p: p}, nil
 	case '-':
 		l.nextRune()
-		// if strings.ContainsRune(numberset, l.headRune()) {
-		// 	return l.parseNumber(&r), nil
-		// }
+		if l.headRune() == '=' {
+			l.nextRune()
+			return token{t: tok_minuseq, p: p}, nil
+		}
 		return token{t: tok_minus, p: p}, nil
 	case ':':
 		l.nextRune()
@@ -714,12 +745,20 @@ func (l *lexer) Next() (rt token, re error) {
 		return token{t: tok_dot, p: p}, nil
 	case '+':
 		l.nextRune()
+		if l.headRune() == '=' {
+			l.nextRune()
+			return token{t: tok_pluseq, p: p}, nil
+		}
 		return token{t: tok_plus, p: p}, nil
 	case '*':
 		l.nextRune()
 		if l.headRune() == '?' {
 			l.nextRune()
 			return token{t: tok_maybe_ptr, p: p}, nil
+		}
+		if l.headRune() == '=' {
+			l.nextRune()
+			return token{t: tok_stareq, p: p}, nil
 		}
 		return token{t: tok_star, p: p}, nil
 	case '?':
@@ -731,12 +770,20 @@ func (l *lexer) Next() (rt token, re error) {
 			l.nextRune()
 			return token{t: tok_booland, p: p}, nil
 		}
+		if l.headRune() == '=' {
+			l.nextRune()
+			return token{t: tok_ampeq, p: p}, nil
+		}
 		return token{t: tok_amp, p: p}, nil
 	case '|':
 		l.nextRune()
 		if l.headRune() == '|' {
 			l.nextRune()
 			return token{t: tok_boolor, p: p}, nil
+		}
+		if l.headRune() == '=' {
+			l.nextRune()
+			return token{t: tok_pipeeq, p: p}, nil
 		}
 		return token{t: tok_pipe, p: p}, nil
 	case '/':
@@ -745,6 +792,10 @@ func (l *lexer) Next() (rt token, re error) {
 			// Comment
 			l.consumeLine()
 			return l.Next()
+		}
+		if l.headRune() == '=' {
+			l.nextRune()
+			return token{t: tok_slasheq, p: p}, nil
 		}
 		return token{t: tok_fslash, p: p}, nil
 	case '!':
@@ -769,6 +820,10 @@ func (l *lexer) Next() (rt token, re error) {
 		}
 		if l.headRune() == '<' {
 			l.nextRune()
+			if l.headRune() == '=' {
+				l.nextRune()
+				return token{t: tok_shleq, p: p}, nil
+			}
 			return token{t: tok_shl, p: p}, nil
 		}
 		return token{t: tok_lt, p: p}, nil
@@ -780,14 +835,26 @@ func (l *lexer) Next() (rt token, re error) {
 		}
 		if l.headRune() == '>' {
 			l.nextRune()
+			if l.headRune() == '=' {
+				l.nextRune()
+				return token{t: tok_shreq, p: p}, nil
+			}
 			return token{t: tok_shr, p: p}, nil
 		}
 		return token{t: tok_gt, p: p}, nil
 	case '%':
 		l.nextRune()
+		if l.headRune() == '=' {
+			l.nextRune()
+			return token{t: tok_percenteq, p: p}, nil
+		}
 		return token{t: tok_percent, p: p}, nil
 	case '^':
 		l.nextRune()
+		if l.headRune() == '=' {
+			l.nextRune()
+			return token{t: tok_careteq, p: p}, nil
+		}
 		return token{t: tok_caret, p: p}, nil
 	case '~':
 		l.nextRune()

@@ -129,6 +129,8 @@ Unary: `-` (negation), `~` (bitwise not), `!` (logical not), `*` (dereference), 
 
 Precedence, tightest to loosest (C-conventional): unary prefix > `.`/`[]` > `*` `/` `%` > `+` `-` > `<<` `>>` > comparisons (`< <= > >= == !=`) > `&` > `^` > `|` > `&&` `||` > assignment. Note that, as in C, the bitwise operators are *looser* than comparison, so `flag & MASK == 0` parses as `flag & (MASK == 0)` — write `(flag & MASK) == 0`. (Because bitwise operands must be integers, the former is a type error rather than a silent miscalculation.)
 
+Compound assignment: `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`. Each is sugar for `lhs = lhs op rhs` — `x += 1` is exactly `x = x + 1`, so the target must be a mutable (`var`) lvalue and the operand-type rules of the underlying operator apply. The lhs is re-evaluated (it appears on both sides of the desugaring).
+
 Struct field access uses `.` for both direct structs and pointer-to-struct (`p.x` auto-dereferences when needed).
 
 Postfix `?` asserts that a nullable pointer is non-null:
