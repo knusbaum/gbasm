@@ -121,13 +121,13 @@ Arithmetic: `+`, `-`, `*`, `/`, `%`. Multiplication, division, and modulo dispat
 
 Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`. Equality (`==`/`!=`) applies to scalars (value equality) and pointers (identity); ordering (`<`, `>`, `<=`, `>=`) applies to scalars only. Signed and unsigned comparisons select the appropriate `setl`/`setb`/etc. variant. **Aggregates — structs, arrays, and slices — are not comparable with `==`/`!=`**; the compiler rejects it and directs you to write an explicit equality function. A memberwise `==` would silently change meaning as a struct's fields evolve — adding a pointer field turns value-equality into pointer-identity — and the change is invisible at the use site, so equality of an aggregate must be an explicit author decision, not an operator default.
 
-Logical: `&&`, `||`.
+Logical: `&&` (and), `||` (or). **Short-circuit**: `a && b` evaluates `b` only when `a` is true; `a || b` evaluates `b` only when `a` is false. The result is a `bool`. `&&` binds tighter than `||`, so `a || b && c` is `a || (b && c)`.
 
 Bitwise: `&` (AND), `^` (XOR), `|` (OR), `<<`/`>>` (left/right shift), and unary `~` (NOT). Operate on integer types of any width. For `&`/`^`/`|` the operand widths must match (integer literals coerce to the other operand's type); for shifts the count may be any integer width. A right shift on a signed operand is arithmetic (`sar`, sign-preserving); on an unsigned operand it is logical (`shr`, zero-filling). `~x` is the bitwise complement, equal to `-x - 1`.
 
 Unary: `-` (negation), `~` (bitwise not), `!` (logical not), `*` (dereference), `&` (address-of).
 
-Precedence, tightest to loosest (C-conventional): unary prefix > `.`/`[]` > `*` `/` `%` > `+` `-` > `<<` `>>` > comparisons (`< <= > >= == !=`) > `&` > `^` > `|` > `&&` `||` > assignment. Note that, as in C, the bitwise operators are *looser* than comparison, so `flag & MASK == 0` parses as `flag & (MASK == 0)` — write `(flag & MASK) == 0`. (Because bitwise operands must be integers, the former is a type error rather than a silent miscalculation.)
+Precedence, tightest to loosest (C-conventional): unary prefix > `.`/`[]` > `*` `/` `%` > `+` `-` > `<<` `>>` > comparisons (`< <= > >= == !=`) > `&` > `^` > `|` > `&&` > `||` > assignment. Note that, as in C, the bitwise operators are *looser* than comparison, so `flag & MASK == 0` parses as `flag & (MASK == 0)` — write `(flag & MASK) == 0`. (Because bitwise operands must be integers, the former is a type error rather than a silent miscalculation.)
 
 Compound assignment: `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`. Each is sugar for `lhs = lhs op rhs` — `x += 1` is exactly `x = x + 1`, so the target must be a mutable (`var`) lvalue and the operand-type rules of the underlying operator apply. The lhs is re-evaluated (it appears on both sides of the desugaring).
 

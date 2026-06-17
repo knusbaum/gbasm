@@ -8,31 +8,6 @@ up later. Promote an item to a `PROPOSAL_*.md` when it's ready to design.
 
 ## Language
 
-### Expanded boolean operations
-Booleans are still thin: a `bool` is produced by a comparison
-(`<`, `==`, `!=`, …), logical not (`!`), or the `true` / `false` literals.
-There are still **no `&&` / `||` short-circuit operators**. Want to add
-`&&`/`||` (with short-circuit evaluation), and decide whether `&`/`|` stay
-integer-only or also act on `bool`.
-*Done:* `true` / `false` literals (reserved words, type `bool`; reject for
-non-`bool` destinations at both function and global scope).
-
-### Compound assignment (`+=` and friends)
-`x = x + 1` is the only form. Add `+=`, `-=`, `*=`, `/=`, etc.
-*Integration note:* whatever lands must mark its target as a reassignment
-for the never-reassigned and unused-binding checks — trivial if it
-desugars to `x = x <op> v`; otherwise one `markMutRelied` + `markUsed`
-call on the target.
-
-### Operator completeness
-Several expected operators don't exist as tokens yet:
-- `%` (modulo) — remainder must currently be written `a - q*b` (see the
-  `divmod` multi-return example/tour lesson).
-- `^` (bitwise xor), `<<` / `>>` (shifts), `~` (bitwise not) — only `&`
-  and `|` exist.
-
-Worth doing as one pass so the arithmetic/bitwise surface is complete.
-
 ### Floating-point types
 No floats yet (`f32` / `f64`). The lexer already accepts decimal-point
 syntax but **truncates** the fractional part. Needs: the types, literal

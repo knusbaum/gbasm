@@ -1325,23 +1325,34 @@ func (p *Parser) parseBindingDecl(isConst bool) *Node {
 	return &Node{t: n_var, p: pos, sval: name, ival: constVal, args: args}
 }
 
-func (p *Parser) parseBoolOp() *Node {
+// parseBoolOr is the loosest binary level: `||` (logical or), looser than
+// `&&` so that `a || b && c` parses as `a || (b && c)`, matching C.
+func (p *Parser) parseBoolOr() *Node {
+	v := p.parseBoolAnd()
+	for {
+		c := p.current()
+		if c.t != tok_boolor {
+			break
+		}
+		p.advance()
+		v2 := p.parseBoolAnd()
+		v = &Node{t: n_boolor, p: c.p, args: []*Node{v, v2}}
+	}
+	return v
+}
+
+// parseBoolAnd handles `&&` (logical and), binding tighter than `||` and
+// looser than the bitwise operators.
+func (p *Parser) parseBoolAnd() *Node {
 	v := p.parseBitOr()
 	for {
 		c := p.current()
-		switch c.t {
-		case tok_booland:
-			p.advance()
-			v2 := p.parseBitOr()
-			v = &Node{t: n_booland, p: c.p, args: []*Node{v, v2}}
-			continue
-		case tok_boolor:
-			p.advance()
-			v2 := p.parseBitOr()
-			v = &Node{t: n_boolor, p: c.p, args: []*Node{v, v2}}
-			continue
+		if c.t != tok_booland {
+			break
 		}
-		break
+		p.advance()
+		v2 := p.parseBitOr()
+		v = &Node{t: n_booland, p: c.p, args: []*Node{v, v2}}
 	}
 	return v
 }
@@ -1587,7 +1598,7 @@ func (p *Parser) parseStatement() *Node {
 		} else if p.current().t == tok_ident && p.startsBareDecl() {
 			targets = append(targets, p.parseBindingSpec(true))
 		} else {
-			targets = append(targets, p.parseBoolOp())
+			targets = append(targets, p.parseBoolOr())
 		}
 	}
 	if p.current().t == tok_decl {
@@ -1646,7 +1657,7 @@ func (p *Parser) parseExpression() (r *Node) {
 		panic(eofError(0))
 	}
 
-	v := p.parseBoolOp()
+	v := p.parseBoolOr()
 	for {
 		c := p.current()
 		switch c.t {

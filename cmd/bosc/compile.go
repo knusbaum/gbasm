@@ -6548,46 +6548,46 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		fmt.Fprintf(of, "\tsetne %s\n", dest.ref)
 		return dest
 	case n_booland:
-		first := compileTop(of, c, o.First, nullspot)
-		second := compileTop(of, c, o.Second, nullspot)
+		// Short-circuit AND: result defaults to false; jump to done the moment
+		// an operand is false (skipping the rest), else fall through to true.
+		// Uses `mov dest imm` on each terminal path with forward jumps — the
+		// same shape as the interface-comparison codegen above, which the bas
+		// register allocator handles correctly across the branch (a partial
+		// `setne dest` to a register-resident local does not).
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), boolASTType())
 		}
-		fbool := newSpot(of, c, c.Temp(), byteASTType())
-		sbool := newSpot(of, c, c.Temp(), byteASTType())
+		done := c.Label("andsc")
+		fmt.Fprintf(of, "\tmov %s 0\n", dest.ref)
+		first := compileTop(of, c, o.First, nullspot)
 		fmt.Fprintf(of, "\ttest %s %s\n", first.ref, first.ref)
-		fmt.Fprintf(of, "\tseta %s\n", fbool.ref)
-
-		fmt.Fprintf(of, "\ttest %s %s\n", second.ref, second.ref)
-		fmt.Fprintf(of, "\tseta %s\n", sbool.ref)
-
-		fmt.Fprintf(of, "\tand %s %s\n", fbool.ref, sbool.ref)
-		fmt.Fprintf(of, "\tseta %s\n", dest.ref)
-		fbool.free(of)
-		sbool.free(of)
+		fmt.Fprintf(of, "\tjz %s\n", done)
 		first.free(of)
+		second := compileTop(of, c, o.Second, nullspot)
+		fmt.Fprintf(of, "\ttest %s %s\n", second.ref, second.ref)
+		fmt.Fprintf(of, "\tjz %s\n", done)
 		second.free(of)
+		fmt.Fprintf(of, "\tmov %s 1\n", dest.ref)
+		fmt.Fprintf(of, "\tlabel %s\n", done)
 		return dest
 	case n_boolor:
-		first := compileTop(of, c, o.First, nullspot)
-		second := compileTop(of, c, o.Second, nullspot)
+		// Short-circuit OR: result defaults to true; jump to done the moment an
+		// operand is true (skipping the rest), else fall through to false.
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), boolASTType())
 		}
-		fbool := newSpot(of, c, c.Temp(), byteASTType())
-		sbool := newSpot(of, c, c.Temp(), byteASTType())
+		done := c.Label("orsc")
+		fmt.Fprintf(of, "\tmov %s 1\n", dest.ref)
+		first := compileTop(of, c, o.First, nullspot)
 		fmt.Fprintf(of, "\ttest %s %s\n", first.ref, first.ref)
-		fmt.Fprintf(of, "\tseta %s\n", fbool.ref)
-
-		fmt.Fprintf(of, "\ttest %s %s\n", second.ref, second.ref)
-		fmt.Fprintf(of, "\tseta %s\n", sbool.ref)
-
-		fmt.Fprintf(of, "\tor %s %s\n", fbool.ref, sbool.ref)
-		fmt.Fprintf(of, "\tseta %s\n", dest.ref)
-		fbool.free(of)
-		sbool.free(of)
+		fmt.Fprintf(of, "\tjnz %s\n", done)
 		first.free(of)
+		second := compileTop(of, c, o.Second, nullspot)
+		fmt.Fprintf(of, "\ttest %s %s\n", second.ref, second.ref)
+		fmt.Fprintf(of, "\tjnz %s\n", done)
 		second.free(of)
+		fmt.Fprintf(of, "\tmov %s 0\n", dest.ref)
+		fmt.Fprintf(of, "\tlabel %s\n", done)
 		return dest
 	}
 	panic("Could not do op\n")

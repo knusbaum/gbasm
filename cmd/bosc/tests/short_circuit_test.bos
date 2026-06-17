@@ -1,0 +1,23 @@
+package main
+
+import "fmt"
+
+// Each predicate prints its id when evaluated, so the output shows exactly
+// which operands ran.
+fn yes(n i64) bool { fmt.print("%d", n); return (1 == 1) }
+fn no(n i64) bool { fmt.print("%d", n); return (1 == 0) }
+
+fn main() {
+	// Truth tables.
+	fmt.print("%v%v%v%v\n", (1 == 1) && (1 == 1), (1 == 1) && (1 == 0), (1 == 0) && (1 == 1), (1 == 0) && (1 == 0))
+	fmt.print("%v%v%v%v\n", (1 == 1) || (1 == 1), (1 == 1) || (1 == 0), (1 == 0) || (1 == 1), (1 == 0) || (1 == 0))
+	// Short-circuit: && stops at the first false, || at the first true; the
+	// other side still runs when the first operand doesn't decide the result.
+	a bool := no(1) && yes(2)  // 1 (2 skipped)
+	b bool := yes(3) || no(4)  // 3 (4 skipped)
+	c bool := yes(5) && no(6)  // 5 6
+	d bool := no(7) || yes(8)  // 7 8
+	fmt.print("\n%v%v%v%v\n", a, b, c, d)
+	// Precedence: && binds tighter than ||.
+	fmt.print("%v %v\n", (1 == 0) || (1 == 1) && (1 == 0), (1 == 1) || (1 == 0) && (1 == 0))
+}
