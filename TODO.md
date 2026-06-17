@@ -29,6 +29,21 @@ true layout, like `gofmt`. Would also give the editor integrations
 
 ## Runtime / Codegen
 
+### bas: `setcc` into a register-resident local is miscompiled across a branch
+A `setne`/`sete`/`setl`/… that writes a `local`, when the local is written
+on more than one path into a join (a `label` reachable from a `jz`/`jnz`
+*and* the fall-through) and read after the label, yields the wrong value.
+Confirmed minimal repro (hand-written `.bs`, no register pressure needed):
+two `setne r` writes around a `jz done`/`label done` return 0 where 1 is
+correct; the identical structure with `mov r <imm>` writes instead of
+`setne` returns 1. Straight-line `setcc` (write then read, no branch
+between) is fine — the comparison operators emit that shape and are
+unaffected. The short-circuit `&&`/`||` codegen sidesteps this by writing
+its result with `mov <dest> <imm>` on each terminal path (the
+interface-comparison pattern) rather than `setcc`. Root cause is in bas's
+register allocator handling a `setcc` destination across control flow; a
+real fix would let future branchy codegen use `setcc` directly.
+
 ### Read-only `.rodata` hardening
 String constants currently land in the writable `.data` LOAD segment;
 their immutability is enforced only at the source level, not by hardware.
