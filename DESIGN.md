@@ -51,6 +51,8 @@ Integer literals can be written in four bases:
 
 Character literals (`'A'`, `'\n'`) produce a `byte`. See [Strings](#strings) for the escape-sequence table that both character literals and string literals accept.
 
+Boolean literals are `true` and `false` (reserved words), each of type `bool`. A `bool` can otherwise be produced by a comparison (`<`, `==`, `!=`, …) or logical not (`!`).
+
 **Reference and composite types:**
 
 | Type | Description |

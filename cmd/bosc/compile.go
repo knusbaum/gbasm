@@ -5107,6 +5107,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, "\tmov %s %d\n", dest.ref, v)
 		case byte:
 			fmt.Fprintf(of, "\tmov %s %d\n", dest.ref, v)
+		case bool:
+			// bool is a one-byte value; true is 1, false is 0. The dest is
+			// byte-sized (raxForType maps bool to al), so the immediate move
+			// mirrors the byte arm exactly.
+			n := 0
+			if v {
+				n = 1
+			}
+			fmt.Fprintf(of, "\tmov %s %d\n", dest.ref, n)
 		default:
 			panic("NOT IMPLEMENTED (TODO)")
 		}

@@ -280,11 +280,6 @@ type nret struct {
 }
 
 fn atoi(s byte[]) nret {
-	var true bool
-	var false bool
-	true = (0 == 0)
-	false = (1 == 0)
-	
 	var l i64
 	l = len(s)
 	var i i64

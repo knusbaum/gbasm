@@ -69,6 +69,8 @@ const (
 	tok_switch
 	tok_case
 	tok_default
+	tok_true
+	tok_false
 )
 
 var keywords map[string]toktype = map[string]toktype{
@@ -92,6 +94,8 @@ var keywords map[string]toktype = map[string]toktype{
 	"switch":    tok_switch,
 	"case":      tok_case,
 	"default":   tok_default,
+	"true":      tok_true,
+	"false":     tok_false,
 }
 
 const (
@@ -216,6 +220,10 @@ func (t toktype) String() string {
 		return "tok_case"
 	case tok_default:
 		return "tok_default"
+	case tok_true:
+		return "tok_true"
+	case tok_false:
+		return "tok_false"
 	}
 	return "UNKNOWN"
 }
@@ -253,6 +261,7 @@ type lexer struct {
 func isStatementEnder(t toktype) bool {
 	switch t {
 	case tok_ident, tok_number, tok_str, tok_byte,
+		tok_true, tok_false,
 		tok_rparen, tok_rsquare, tok_rcurly,
 		tok_break, tok_continue, tok_return:
 		return true

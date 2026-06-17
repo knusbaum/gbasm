@@ -1,0 +1,6 @@
+package main
+
+g i64 := false
+
+fn main() {
+}

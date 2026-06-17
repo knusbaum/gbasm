@@ -1,0 +1,8 @@
+b=true c=false
+b reassigned=false
+if-true taken
+else taken
+!true=false
+arg=true ret=false
+field=true
+global=true

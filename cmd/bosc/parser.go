@@ -10,6 +10,7 @@ type nodetype int
 const (
 	n_none nodetype = iota
 	n_number
+	n_bool
 	n_byte
 	n_str
 	n_symbol
@@ -74,6 +75,8 @@ func (t nodetype) String() string {
 		return "n_none"
 	case n_number:
 		return "n_number"
+	case n_bool:
+		return "n_bool"
 	case n_byte:
 		return "n_byte"
 	case n_str:
@@ -359,6 +362,12 @@ func (p *Parser) parseTok() *Node {
 	if c.t == tok_number {
 		p.advance()
 		return &Node{t: n_number, p: c.p, ival: c.nval}
+	} else if c.t == tok_true {
+		p.advance()
+		return &Node{t: n_bool, p: c.p, ival: 1}
+	} else if c.t == tok_false {
+		p.advance()
+		return &Node{t: n_bool, p: c.p, ival: 0}
 	} else if c.t == tok_str {
 		p.advance()
 		return &Node{t: n_str, p: c.p, sval: c.sval}

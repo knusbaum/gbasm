@@ -1,0 +1,2 @@
+Compiling tests/bool_global_to_int_err_test.bos
+Fatal: bool literal cannot initialize i64

@@ -3612,6 +3612,8 @@ func (l *Literal) ASTType(*Context) ASTType {
 		return intlitASTType()
 	case byte:
 		return byteASTType()
+	case bool:
+		return boolASTType()
 	case nil:
 		return ASTType{Name: "<nil>"}
 	}
@@ -3922,6 +3924,8 @@ func (n *Node) toASTTop(c *Context) AST {
 		}
 	case n_number:
 		return &Literal{Val: n.ival, p: n.p}
+	case n_bool:
+		return &Literal{Val: n.ival == 1, p: n.p}
 	case n_byte:
 		return &Literal{Val: byte(n.ival), p: n.p}
 	case n_stlit:

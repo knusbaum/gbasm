@@ -16,8 +16,8 @@ value fits. Two more built-ins complete the set:
 
 - `byte` — a one-byte unsigned integer. Character literals like `'A'` are
   just their byte value.
-- `bool` — a truth value. Boson has **no `true`/`false` literals**; a
-  `bool` is produced by a comparison (`<`, `==`, `!=`, and so on).
+- `bool` — a truth value, written `true` or `false`. A `bool` is also
+  produced by a comparison (`<`, `==`, `!=`, and so on).
 
 That is the whole set — there are no floating-point types yet.
 

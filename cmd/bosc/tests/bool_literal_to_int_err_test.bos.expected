@@ -1,0 +1,2 @@
+Compiling tests/bool_literal_to_int_err_test.bos
+Fatal: Cannot initialize i64 with value of type bool

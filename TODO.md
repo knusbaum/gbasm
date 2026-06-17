@@ -9,12 +9,13 @@ up later. Promote an item to a `PROPOSAL_*.md` when it's ready to design.
 ## Language
 
 ### Expanded boolean operations
-Booleans are thin today: a `bool` is produced only by a comparison
-(`<`, `==`, `!=`, …) or `!` (logical not). There are **no `&&` / `||`
-short-circuit operators** and **no `true` / `false` literals**. Want to
-flesh this out — at least `&&`/`||` (with short-circuit evaluation) and
-boolean literals. Decide whether `&`/`|` stay integer-only or also act on
-`bool`.
+Booleans are still thin: a `bool` is produced by a comparison
+(`<`, `==`, `!=`, …), logical not (`!`), or the `true` / `false` literals.
+There are still **no `&&` / `||` short-circuit operators**. Want to add
+`&&`/`||` (with short-circuit evaluation), and decide whether `&`/`|` stay
+integer-only or also act on `bool`.
+*Done:* `true` / `false` literals (reserved words, type `bool`; reject for
+non-`bool` destinations at both function and global scope).
 
 ### Compound assignment (`+=` and friends)
 `x = x + 1` is the only form. Add `+=`, `-=`, `*=`, `/=`, etc.

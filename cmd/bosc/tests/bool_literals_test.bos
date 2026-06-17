@@ -1,0 +1,34 @@
+package main
+
+import "fmt"
+
+flag bool := true
+
+fn echo(a bool) bool {
+	return a
+}
+
+type pt struct {
+	on bool
+}
+
+fn main() {
+	var b bool := true
+	c bool := false
+	fmt.print("b=%v c=%v\n", b, c)
+	b = false
+	fmt.print("b reassigned=%v\n", b)
+	if (true) {
+		fmt.print("if-true taken\n")
+	}
+	if (false) {
+		fmt.print("if-false taken (BUG)\n")
+	} else {
+		fmt.print("else taken\n")
+	}
+	fmt.print("!true=%v\n", !true)
+	fmt.print("arg=%v ret=%v\n", echo(true), echo(false))
+	p := pt{ on: true }
+	fmt.print("field=%v\n", p.on)
+	fmt.print("global=%v\n", flag)
+}

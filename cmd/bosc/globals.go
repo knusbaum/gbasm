@@ -179,6 +179,14 @@ func encodeLiteralBytes(c *Context, dstt ASTType, l *Literal) ([]byte, []relocSp
 			return nil, nil, fmt.Errorf("byte literal cannot initialize %s (size %d)", dstt, size)
 		}
 		return []byte{v}, nil, nil
+	case bool:
+		if dstt.Name != "bool" || dstt.Indirection > 0 || dstt.IsSliceOrArray() {
+			return nil, nil, fmt.Errorf("bool literal cannot initialize %s", dstt)
+		}
+		if v {
+			return []byte{1}, nil, nil
+		}
+		return []byte{0}, nil, nil
 	case string:
 		// byte[N] destination: copy the literal bytes inline and
 		// zero-pad to the array size. No relocation needed because
