@@ -1,0 +1,26 @@
+package main
+
+import "fmt"
+
+type Pt struct { x i64, y i64 }
+
+// Global declarations with a bare struct-literal initializer: named and
+// anonymous struct types.
+gn Pt := {x: 1, y: 2}
+ga struct{ x i64, y i64 } := {x: 3, y: 4}
+
+fn main() {
+	// Function-scope bare declaration, bare literal: named type.
+	n Pt := {x: 10, y: 20}
+	fmt.print("n %d %d\n", n.x, n.y)
+	// Function-scope bare declaration, bare literal: anonymous struct type.
+	a struct{ x i64, y i64 } := {x: 11, y: 22}
+	fmt.print("a %d %d\n", a.x, a.y)
+	// var form with a bare-literal reassignment of an anonymous struct.
+	var m struct{ x i64, y i64 } := {x: 0, y: 0}
+	m = {x: 33, y: 44}
+	fmt.print("m %d %d\n", m.x, m.y)
+	// Globals read back.
+	fmt.print("gn %d %d\n", gn.x, gn.y)
+	fmt.print("ga %d %d\n", ga.x, ga.y)
+}

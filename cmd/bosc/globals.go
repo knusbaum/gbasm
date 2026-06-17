@@ -49,6 +49,13 @@ func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
 
 	dstt := ast.Type
 
+	// A bare struct literal initializer (`gp T := { ... }`) carries no type
+	// of its own; thread the declared destination type into it so the static
+	// encoder can match and lay it out.
+	if sl, ok := ast.Init.(*StructLiteral); ok {
+		fillAnonymousLiteralIfNeeded(sl, dstt)
+	}
+
 	// Type-fit is decided by encodeStaticInit, which knows when a
 	// literal can be coerced into a wider/narrower destination
 	// (intlit into any integer, string literal into byte[N], etc.)
@@ -397,9 +404,17 @@ func encodeStructLiteralBytes(c *Context, dstt ASTType, lit *StructLiteral) ([]b
 	if dstt.Name != lit.Type.Name {
 		return nil, nil, fmt.Errorf("struct literal type %s does not match destination type %s", lit.Type, dstt)
 	}
-	decl, ok := c.StructDeclForName(dstt.Name)
-	if !ok {
-		return nil, nil, fmt.Errorf("no such struct type %s", dstt.Name)
+	// Field list comes from the named struct's declaration, or directly from
+	// the destination type's AnonFields for an anonymous struct type.
+	var fields []Binding
+	if dstt.AnonFields != nil {
+		fields = dstt.AnonFields
+	} else {
+		decl, ok := c.StructDeclForName(dstt.Name)
+		if !ok {
+			return nil, nil, fmt.Errorf("no such struct type %s", dstt.Name)
+		}
+		fields = decl.Fields
 	}
 
 	// Index literal fields by name so we can pull them in declaration order
@@ -414,11 +429,11 @@ func encodeStructLiteralBytes(c *Context, dstt ASTType, lit *StructLiteral) ([]b
 
 	var out []byte
 	var relocs []relocSpec
-	for _, fld := range decl.Fields {
+	for _, fld := range fields {
 		val, ok := provided[fld.Name]
 		if !ok {
 			if !fld.Type.ZeroInitializable(c) {
-				return nil, nil, fmt.Errorf("struct literal is missing field %q of %s", fld.Name, dstt.Name)
+				return nil, nil, fmt.Errorf("struct literal is missing field %q of %s", fld.Name, dstt)
 			}
 			out = append(out, make([]byte, fld.Type.Size(c))...)
 			continue
@@ -442,7 +457,7 @@ func encodeStructLiteralBytes(c *Context, dstt ASTType, lit *StructLiteral) ([]b
 		delete(provided, fld.Name)
 	}
 	for name := range provided {
-		return nil, nil, fmt.Errorf("struct literal references unknown field %q of %s", name, dstt.Name)
+		return nil, nil, fmt.Errorf("struct literal references unknown field %q of %s", name, dstt)
 	}
 	return out, relocs, nil
 }

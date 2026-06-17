@@ -3240,6 +3240,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			ast.Type = inferred
 		}
+		// A bare struct literal initializer (`a T := { ... }`) carries no type
+		// of its own; thread the declared (or inferred) destination type into
+		// it before any ASTType query below, since an untyped literal's ASTType
+		// errors with "anonymous struct literal type not resolved".
+		if sl, ok := ast.Init.(*StructLiteral); ok {
+			fillAnonymousLiteralIfNeeded(sl, ast.Type)
+		}
 		// Reject single-binding a multi-value return: must use destructuring.
 		if ast.Init != nil {
 			initT := ast.Init.ASTType(c)
@@ -3269,9 +3276,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		s := newSpot(of, c, ast.Name, ast.Type)
 		if ast.Init != nil {
-			if sl, ok := ast.Init.(*StructLiteral); ok {
-				fillAnonymousLiteralIfNeeded(sl, ast.Type)
-			}
+			// (The bare struct literal's type was threaded above, before the
+			// multi-return ASTType query.)
 			initIsBorrowed := borrowedPointerExpr(c, ast.Init)
 			if sl, ok := ast.Init.(*StructLiteral); ok && sameIgnoringOwned(ast.Type, sl.Type) {
 				compileStructLiteralInto(of, c, a, sl, s, ast.Type)

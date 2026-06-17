@@ -1443,11 +1443,13 @@ func (p *Parser) startsBareDecl() bool {
 	case tok_decl: // x :=
 		p.pushback(name)
 		return true
-	case tok_ident, tok_owned, tok_mut, tok_fn, tok_star, tok_maybe_ptr: // x TYPE :=
+	case tok_ident, tok_owned, tok_mut, tok_fn, tok_star, tok_maybe_ptr, tok_struct: // x TYPE :=
 		// tok_star is unambiguous now: a leading `IDENT *` can no longer be a
 		// bare multiply statement (rejected by the effectful-statement rule),
 		// so it must be a pointer-typed declaration. tok_maybe_ptr (`*?`) is
-		// the nullable-pointer type-start and is likewise unambiguous.
+		// the nullable-pointer type-start and is likewise unambiguous. tok_struct
+		// (`x struct{ ... } :=`, an anonymous-struct-typed binding) is also
+		// unambiguous: `struct` is a keyword, never the start of a statement.
 		p.pushback(name)
 		return true
 	case tok_question:
