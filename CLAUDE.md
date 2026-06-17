@@ -399,6 +399,23 @@ statement. `} else` on the same line works; `}` newline `else`
 **does not parse** (the `;` separates them). DESIGN.md §Statements
 has the full list of statement-ending tokens.
 
+#### bas does not model EFLAGS
+
+The `bas` register allocator tracks registers and memory, but **not the
+condition flags**. It can freely insert flag-clobbering instructions
+(spill reloads, zero-extensions, etc.) between a `cmp`/`test` and a
+dependent `setcc`/`jcc`. So when emitting `.bs`, keep a flag producer
+and its consumer adjacent — don't expect flags to survive an intervening
+operand materialization. This bit the short-circuit `&&`/`||` codegen
+(setcc into a spilled local across a branch): the allocator reloaded the
+local with `xor reg,reg; mov` and the `xor` wiped the flags the `setne`
+needed. Two defenses are in place: the reload now zero-extends with a
+flag-safe `movzx` (`function.go` `Ralloc.Register`), and the
+`&&`/`||` codegen writes its result with `mov <dest> <imm>` on each
+terminal path (the interface-comparison pattern) rather than `setcc`.
+Modeling EFLAGS properly is a deliberate non-goal (large effort, and the
+adjacency rule + flag-safe materialization is a cheap workaround).
+
 ---
 
 ## Things to know about the working tree

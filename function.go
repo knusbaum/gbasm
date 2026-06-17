@@ -215,10 +215,20 @@ func (r *Ralloc) Register() Register {
 			fmt.Printf("\t[Ralloc.Register()]: Loading local %s into %s\n", r.sym, reg)
 		}
 		//fmt.Printf("[RALLOC.Register] %s not in register. Allocated register %s\n", r.sym, reg)
-		if reg.Width() < 64 {
-			r.rallocs.f.Instr("XOR", reg.fullReg(), reg.fullReg())
+		// Load the spilled value, zero-extending a sub-register value into the
+		// full register WITHOUT disturbing the condition flags. The previous
+		// idiom was `XOR full,full; MOV reg,[mem]`, but `XOR` sets EFLAGS —
+		// when this reload was scheduled between a cmp/test and a dependent
+		// setcc (e.g. materializing a spilled local as a setcc destination
+		// across a branch), the setcc read the XOR's flags and produced the
+		// wrong result. MOVZX is flag-safe for 8/16-bit loads; a 32-bit MOV
+		// already zero-extends the upper half; 64-bit is full width.
+		switch r.RegSize() {
+		case 8, 16:
+			r.rallocs.f.Instr("MOVZX", reg.fullReg(), Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
+		default:
+			r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
 		}
-		r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
 		//r.inmem = false
 	} //else {
 	//fmt.Printf("[RALLOC.Register] %s was not in memory. Active register marked as %v\n", r.sym, reg)

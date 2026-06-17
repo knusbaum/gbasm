@@ -1,0 +1,50 @@
+package main
+
+// Regression: a `setcc` writing a spilled local across a branch used to be
+// miscompiled. To materialize the spilled local as the setcc destination, the
+// register allocator emitted a zero-extending `xor reg,reg; mov reg,[mem]`
+// reload — and the `xor` clobbered the condition flags between the `test` and
+// the `setne`, so the setne read the wrong flags and stored 0. The reload now
+// uses a flag-safe `movzx`. (See function.go Ralloc.Register.)
+
+function main
+	type fn() void
+	prologue
+	local r 8
+	local a 8
+	local b 8
+
+	// Fall-through path: a != 0, so the jz is not taken and the SECOND
+	// `setne r` runs after the spill/reload — this is the path that was
+	// miscompiled. r must be 1.
+	mov a 1
+	mov b 1
+	test a a
+	setne r
+	jz done1
+	test b b
+	setne r
+	label done1
+	movzx rdi r
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+
+	// Short-circuit path: a == 0, so the jz is taken and r keeps the first
+	// `setne r` result (0).
+	mov a 0
+	mov b 1
+	test a a
+	setne r
+	jz done2
+	test b b
+	setne r
+	label done2
+	movzx rdi r
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+
+	mov rax 0
+	epilogue
+	ret
