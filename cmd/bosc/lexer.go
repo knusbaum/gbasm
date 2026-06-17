@@ -46,6 +46,11 @@ const (
 	tok_booland
 	tok_boolor
 	tok_pipe
+	tok_percent
+	tok_caret
+	tok_shl
+	tok_shr
+	tok_tilde
 	tok_ellipsis
 
 	// Keywords
@@ -180,6 +185,16 @@ func (t toktype) String() string {
 		return "tok_boolor"
 	case tok_pipe:
 		return "tok_pipe"
+	case tok_percent:
+		return "tok_percent"
+	case tok_caret:
+		return "tok_caret"
+	case tok_shl:
+		return "tok_shl"
+	case tok_shr:
+		return "tok_shr"
+	case tok_tilde:
+		return "tok_tilde"
 	case tok_if:
 		return "tok_if"
 	case tok_else:
@@ -752,6 +767,10 @@ func (l *lexer) Next() (rt token, re error) {
 			l.nextRune()
 			return token{t: tok_le, p: p}, nil
 		}
+		if l.headRune() == '<' {
+			l.nextRune()
+			return token{t: tok_shl, p: p}, nil
+		}
 		return token{t: tok_lt, p: p}, nil
 	case '>':
 		l.nextRune()
@@ -759,7 +778,20 @@ func (l *lexer) Next() (rt token, re error) {
 			l.nextRune()
 			return token{t: tok_ge, p: p}, nil
 		}
+		if l.headRune() == '>' {
+			l.nextRune()
+			return token{t: tok_shr, p: p}, nil
+		}
 		return token{t: tok_gt, p: p}, nil
+	case '%':
+		l.nextRune()
+		return token{t: tok_percent, p: p}, nil
+	case '^':
+		l.nextRune()
+		return token{t: tok_caret, p: p}, nil
+	case '~':
+		l.nextRune()
+		return token{t: tok_tilde, p: p}, nil
 	}
 	if strings.ContainsRune(numberset, r) {
 		return l.parseNumber(p), nil

@@ -1,0 +1,8 @@
+package main
+
+// Bitwise not requires an integer operand.
+fn main() {
+	b bool := true
+	x i64 := ~b
+	_ := x
+}

@@ -42,6 +42,11 @@ const (
 	n_boolor
 	n_bitand
 	n_bitor
+	n_mod    // % (modulo)
+	n_xor    // ^ (bitwise xor)
+	n_shl    // << (left shift)
+	n_shr    // >> (right shift)
+	n_bitnot // ~ (bitwise not, desugared to (0-x)-1)
 	n_if
 	n_for
 	n_block
@@ -139,6 +144,16 @@ func (t nodetype) String() string {
 		return "n_bitand"
 	case n_bitor:
 		return "n_bitor"
+	case n_mod:
+		return "n_mod"
+	case n_xor:
+		return "n_xor"
+	case n_shl:
+		return "n_shl"
+	case n_shr:
+		return "n_shr"
+	case n_bitnot:
+		return "n_bitnot"
 	case n_if:
 		return "n_if"
 	case n_for:
@@ -1181,6 +1196,10 @@ func (p *Parser) parseUnary() *Node {
 		p.advance()
 		operand := p.parseUnary()
 		return &Node{t: n_not, p: c.p, args: []*Node{operand}}
+	} else if c.t == tok_tilde {
+		p.advance()
+		operand := p.parseUnary()
+		return &Node{t: n_bitnot, p: c.p, args: []*Node{operand}}
 	} else if c.t == tok_amp {
 		p.advance()
 		// `&` parses two shapes today:
@@ -1219,6 +1238,11 @@ func (p *Parser) parseSubexpr() *Node {
 			p.advance()
 			v2 := p.parseParens()
 			v = &Node{t: n_div, p: c.p, args: []*Node{v, v2}}
+			continue
+		case tok_percent:
+			p.advance()
+			v2 := p.parseParens()
+			v = &Node{t: n_mod, p: c.p, args: []*Node{v, v2}}
 			continue
 		}
 		break
@@ -1323,15 +1347,30 @@ func (p *Parser) parseBoolOp() *Node {
 }
 
 func (p *Parser) parseBitOr() *Node {
-	v := p.parseBitAnd()
+	v := p.parseBitXor()
 	for {
 		c := p.current()
 		if c.t != tok_pipe {
 			break
 		}
 		p.advance()
-		v2 := p.parseBitAnd()
+		v2 := p.parseBitXor()
 		v = &Node{t: n_bitor, p: c.p, args: []*Node{v, v2}}
+	}
+	return v
+}
+
+// parseBitXor sits between `|` (looser) and `&` (tighter), matching C.
+func (p *Parser) parseBitXor() *Node {
+	v := p.parseBitAnd()
+	for {
+		c := p.current()
+		if c.t != tok_caret {
+			break
+		}
+		p.advance()
+		v2 := p.parseBitAnd()
+		v = &Node{t: n_xor, p: c.p, args: []*Node{v, v2}}
 	}
 	return v
 }
@@ -1351,39 +1390,62 @@ func (p *Parser) parseBitAnd() *Node {
 }
 
 func (p *Parser) parseCompare() *Node {
-	v := p.parseAddSub()
+	v := p.parseShift()
 	for {
 		c := p.current()
 		switch c.t {
 		case tok_deq:
 			p.advance()
-			v2 := p.parseAddSub()
+			v2 := p.parseShift()
 			v = &Node{t: n_deq, p: c.p, args: []*Node{v, v2}}
 			continue
 		case tok_neq:
 			p.advance()
-			v2 := p.parseAddSub()
+			v2 := p.parseShift()
 			v = &Node{t: n_neq, p: c.p, args: []*Node{v, v2}}
 			continue
 		case tok_lt:
 			p.advance()
-			v2 := p.parseAddSub()
+			v2 := p.parseShift()
 			v = &Node{t: n_lt, p: c.p, args: []*Node{v, v2}}
 			continue
 		case tok_gt:
 			p.advance()
-			v2 := p.parseAddSub()
+			v2 := p.parseShift()
 			v = &Node{t: n_gt, p: c.p, args: []*Node{v, v2}}
 			continue
 		case tok_le:
 			p.advance()
-			v2 := p.parseAddSub()
+			v2 := p.parseShift()
 			v = &Node{t: n_le, p: c.p, args: []*Node{v, v2}}
 			continue
 		case tok_ge:
 			p.advance()
-			v2 := p.parseAddSub()
+			v2 := p.parseShift()
 			v = &Node{t: n_ge, p: c.p, args: []*Node{v, v2}}
+			continue
+		}
+		break
+	}
+	return v
+}
+
+// parseShift sits between comparison (looser) and additive (tighter),
+// matching C: `a + b << c` parses as `(a + b) << c`.
+func (p *Parser) parseShift() *Node {
+	v := p.parseAddSub()
+	for {
+		c := p.current()
+		switch c.t {
+		case tok_shl:
+			p.advance()
+			v2 := p.parseAddSub()
+			v = &Node{t: n_shl, p: c.p, args: []*Node{v, v2}}
+			continue
+		case tok_shr:
+			p.advance()
+			v2 := p.parseAddSub()
+			v = &Node{t: n_shr, p: c.p, args: []*Node{v, v2}}
 			continue
 		}
 		break

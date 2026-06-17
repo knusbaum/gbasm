@@ -117,15 +117,17 @@ A second `type Name <kind> { ... }` form, `type Name values { ... }`, declares a
 
 ### Expressions
 
-Arithmetic: `+`, `-`, `*`, `/`. Multiplication and division dispatch to signed (`imul`/`idiv`) or unsigned (`mul`/`div`) instructions based on the operand types.
+Arithmetic: `+`, `-`, `*`, `/`, `%`. Multiplication, division, and modulo dispatch to signed (`imul`/`idiv`) or unsigned (`mul`/`div`) instructions based on the operand types; `%` is the division remainder (from `rdx`), truncated toward zero so its sign follows the dividend. All arithmetic and bitwise operators require **integer** operands — `bool` is not an integer, so `true + true` or `flag & 1` is rejected.
 
 Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`. Equality (`==`/`!=`) applies to scalars (value equality) and pointers (identity); ordering (`<`, `>`, `<=`, `>=`) applies to scalars only. Signed and unsigned comparisons select the appropriate `setl`/`setb`/etc. variant. **Aggregates — structs, arrays, and slices — are not comparable with `==`/`!=`**; the compiler rejects it and directs you to write an explicit equality function. A memberwise `==` would silently change meaning as a struct's fields evolve — adding a pointer field turns value-equality into pointer-identity — and the change is invisible at the use site, so equality of an aggregate must be an explicit author decision, not an operator default.
 
 Logical: `&&`, `||`.
 
-Bitwise: `&` (AND), `|` (OR). Operate on integer types of any width. Operand widths must match; integer literals coerce to the other operand's type. `&` binds tighter than `|`, both bind tighter than comparison.
+Bitwise: `&` (AND), `^` (XOR), `|` (OR), `<<`/`>>` (left/right shift), and unary `~` (NOT). Operate on integer types of any width. For `&`/`^`/`|` the operand widths must match (integer literals coerce to the other operand's type); for shifts the count may be any integer width. A right shift on a signed operand is arithmetic (`sar`, sign-preserving); on an unsigned operand it is logical (`shr`, zero-filling). `~x` is the bitwise complement, equal to `-x - 1`.
 
-Unary: `-` (negation), `*` (dereference), `&` (address-of). Precedence: unary prefix > `.`/`[]` > `*`,`/` > `+`,`-` > `&`,`|` > comparisons > assignment.
+Unary: `-` (negation), `~` (bitwise not), `!` (logical not), `*` (dereference), `&` (address-of).
+
+Precedence, tightest to loosest (C-conventional): unary prefix > `.`/`[]` > `*` `/` `%` > `+` `-` > `<<` `>>` > comparisons (`< <= > >= == !=`) > `&` > `^` > `|` > `&&` `||` > assignment. Note that, as in C, the bitwise operators are *looser* than comparison, so `flag & MASK == 0` parses as `flag & (MASK == 0)` — write `(flag & MASK) == 0`. (Because bitwise operands must be integers, the former is a type error rather than a silent miscalculation.)
 
 Struct field access uses `.` for both direct structs and pointer-to-struct (`p.x` auto-dereferences when needed).
 

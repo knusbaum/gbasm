@@ -1,0 +1,25 @@
+package main
+
+import "fmt"
+
+// Value and precedence properties of %, ^, <<, >>, and ~.
+fn main() {
+	a i64 := 17
+	b i64 := 5
+	// modulo: remainder; sign follows the dividend; the division identity holds
+	fmt.print("%d %d %d\n", a % b, (0 - a) % b, (a / b) * b + a % b) // 2 -2 17
+	// xor: self-inverse, identity, a^a == 0
+	fmt.print("%d %d %d\n", a ^ b, a ^ b ^ b, a ^ a) // 20 17 0
+	fmt.print("%d\n", a ^ 0)                          // 17
+	// shifts: << n multiplies by 2^n; >> 1 halves; signed >> is arithmetic
+	fmt.print("%d %d\n", 1 << 10, a << 1)             // 1024 34
+	fmt.print("%d %d\n", a >> 1, (0 - 16) >> 2)       // 8 -4
+	u u64 := 18446744073709551615 // u64 max
+	fmt.print("%d\n", u >> 63)                        // 1 (logical, not arithmetic)
+	// bitwise not: ~x == -x-1; ~x ^ x is all ones (-1)
+	fmt.print("%d %d\n", ~a, ~a ^ a)                  // -18 -1
+	// precedence: % with * / ; + tighter than << ; << tighter than == ;
+	// & tighter than ^ tighter than |
+	fmt.print("%v %v\n", 2 + 3 % 2 == 3, 1 + 1 << 2 == 8)        // true true
+	fmt.print("%d %d\n", 0xF0 | 0x0F ^ 0xFF, 0xFF & 0x0F ^ 0xF0) // 240 255
+}

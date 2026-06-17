@@ -1,0 +1,8 @@
+package main
+
+// Shift operators require integer operands.
+fn main() {
+	b bool := true
+	x i64 := 1 << b
+	_ := x
+}

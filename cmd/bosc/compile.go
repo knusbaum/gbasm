@@ -4766,6 +4766,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return nullspot
 	case *Op2:
 		return doOp2(of, c, ast, dest)
+	case *BitNot:
+		// ~x == (0 - x) - 1 (two's complement); lower through subtraction.
+		inner := &Op2{Type: n_sub, First: &Literal{Val: uint64(0)}, Second: ast.Val}
+		desugar := &Op2{Type: n_sub, First: inner, Second: &Literal{Val: uint64(1)}}
+		return compileTop(of, c, desugar, dest)
 	case *Not:
 		v := compileTop(of, c, ast.Val, nullspot)
 		if dest.empty() {
@@ -5146,6 +5151,8 @@ func containsFuncall(a AST) bool {
 		return containsFuncall(ast.First) || containsFuncall(ast.Second)
 	case *Not:
 		return containsFuncall(ast.Val)
+	case *BitNot:
+		return containsFuncall(ast.Val)
 	case *Literal:
 		return false
 	case *Symbol:
@@ -5511,6 +5518,13 @@ func EvalConst(c *Context, a AST) (*big.Int, bool) {
 			return new(big.Int).SetUint64(v), true
 		}
 		return nil, false
+	case *BitNot:
+		v, ok := EvalConst(c, ast.Val)
+		if !ok {
+			return nil, false
+		}
+		// big.Int.Not computes -x-1, exactly the two's-complement complement.
+		return new(big.Int).Not(v), true
 	case *Op2:
 		fv, fok := EvalConst(c, ast.First)
 		sv, sok := EvalConst(c, ast.Second)
@@ -5534,6 +5548,23 @@ func EvalConst(c *Context, a AST) (*big.Int, bool) {
 			result.And(fv, sv)
 		case n_bitor:
 			result.Or(fv, sv)
+		case n_mod:
+			if sv.Sign() == 0 {
+				return nil, false
+			}
+			result.Rem(fv, sv)
+		case n_xor:
+			result.Xor(fv, sv)
+		case n_shl:
+			if sv.Sign() < 0 || !sv.IsUint64() {
+				return nil, false
+			}
+			result.Lsh(fv, uint(sv.Uint64()))
+		case n_shr:
+			if sv.Sign() < 0 || !sv.IsUint64() {
+				return nil, false
+			}
+			result.Rsh(fv, uint(sv.Uint64()))
 		default:
 			return nil, false
 		}
@@ -6257,6 +6288,122 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 			return dest
 		}
 		return tmp
+	case n_mod:
+		// Remainder: same idiv/div as n_div, but the result is taken from rdx
+		// (the remainder) rather than rax (the quotient).
+		ot := o.ASTType(c)
+		sz := ot.Size(c)
+		if sz == 1 {
+			CompileErrorF(o.First, "8-bit modulo not supported")
+		}
+		raxName, rdxName := mulDivRegs(sz * 8)
+		signed := ot.Signed
+		tmp := newSpotWithReg(of, c, c.Temp(), ot, raxName)
+		first := compileTop(of, c, o.First, tmp)
+		if !first.same(&tmp) {
+			move(of, c, tmp, first)
+			first.free(of)
+		}
+		second := compileTop(of, c, o.Second, nullspot)
+		fmt.Fprintf(of, "\tinreg %s %s\n", tmp.ref, raxName)
+		rdx := regSpot(of, rdxName)
+		if signed {
+			switch sz {
+			case 8:
+				fmt.Fprintf(of, "\tcqo\n")
+			case 4:
+				fmt.Fprintf(of, "\tcdq\n")
+			case 2:
+				fmt.Fprintf(of, "\tcwd\n")
+			}
+			fmt.Fprintf(of, "\tidiv %s\n", second.ref)
+		} else {
+			fmt.Fprintf(of, "\txor %s %s\n", rdxName, rdxName)
+			fmt.Fprintf(of, "\tdiv %s\n", second.ref)
+		}
+		second.free(of)
+		// Copy the remainder out of rdx into a result temp before releasing
+		// the rax/rdx pins.
+		result := newSpot(of, c, c.Temp(), ot)
+		fmt.Fprintf(of, "\tmov %s %s\n", result.ref, rdxName)
+		rdx.free(of)
+		tmp.free(of)
+		if !dest.empty() && !result.same(&dest) {
+			move(of, c, dest, result)
+			result.free(of)
+			return dest
+		}
+		return result
+	case n_xor:
+		fst := newSpot(of, c, c.Temp(), o.ASTType(c))
+		first := compileTop(of, c, o.First, fst)
+		var second spot
+		if o.Second.ASTType(c).Same(o.ASTType(c)) {
+			second = compileTop(of, c, o.Second, nullspot)
+		} else {
+			snd := newSpot(of, c, c.Temp(), o.ASTType(c))
+			second = compileTop(of, c, o.Second, snd)
+		}
+		fmt.Fprintf(of, "\txor %s %s\n", first.ref, second.ref)
+		if dest.empty() {
+			dest = first
+		} else {
+			move(of, c, dest, first)
+			first.free(of)
+		}
+		second.free(of)
+		return dest
+	case n_shl, n_shr:
+		// Shift by a variable count: x86 takes the count in cl. Load the value
+		// into a result temp and the count into rcx, then shift by cl. shl for
+		// left; sar (arithmetic) for signed >>, shr (logical) for unsigned >>.
+		ot := o.ASTType(c)
+		result := newSpot(of, c, c.Temp(), ot)
+		first := compileTop(of, c, o.First, result)
+		if !first.same(&result) {
+			move(of, c, result, first)
+			first.free(of)
+		}
+		// Size a rcx-pinned temp to the count's type (intlit counts as i64).
+		cntType := o.Second.ASTType(c)
+		if cntType.Same(intlitASTType()) {
+			cntType = numASTType()
+		}
+		var rcxName string
+		switch cntType.Size(c) {
+		case 1:
+			rcxName = "cl"
+		case 2:
+			rcxName = "cx"
+		case 4:
+			rcxName = "ecx"
+		default:
+			rcxName = "rcx"
+		}
+		cnt := newSpotWithReg(of, c, c.Temp(), cntType, rcxName)
+		second := compileTop(of, c, o.Second, cnt)
+		if !second.same(&cnt) {
+			move(of, c, cnt, second)
+			second.free(of)
+		}
+		fmt.Fprintf(of, "\tinreg %s %s\n", cnt.ref, rcxName)
+		// The shift-by-CL forms take CL as an implicit operand, so the count
+		// register is not written in the instruction — just the destination.
+		switch {
+		case o.Type == n_shl:
+			fmt.Fprintf(of, "\tshl %s\n", result.ref)
+		case ot.Signed:
+			fmt.Fprintf(of, "\tsar %s\n", result.ref)
+		default:
+			fmt.Fprintf(of, "\tshr %s\n", result.ref)
+		}
+		cnt.free(of)
+		if !dest.empty() && !result.same(&dest) {
+			move(of, c, dest, result)
+			result.free(of)
+			return dest
+		}
+		return result
 	case n_lt:
 		if compareUsesInterface(c, o) {
 			CompileErrorF(o.First, "Cannot order interface values")

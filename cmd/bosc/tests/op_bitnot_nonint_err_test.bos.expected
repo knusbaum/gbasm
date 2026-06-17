@@ -1,0 +1,2 @@
+Compiling tests/op_bitnot_nonint_err_test.bos
+Fatal: operator ~ requires an integer operand, but got bool

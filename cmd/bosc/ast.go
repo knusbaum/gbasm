@@ -3034,6 +3034,14 @@ func opSym(t nodetype) string {
 		return "&"
 	case n_bitor:
 		return "|"
+	case n_mod:
+		return "%"
+	case n_xor:
+		return "^"
+	case n_shl:
+		return "<<"
+	case n_shr:
+		return ">>"
 	}
 	return "?"
 }
@@ -3068,7 +3076,27 @@ func (o *Op2) ASTType(c *Context) ASTType {
 			rejectAggregate(">=", "comparison function")
 		}
 		return boolASTType()
-	case n_add, n_sub, n_mul, n_div, n_bitand, n_bitor:
+	case n_shl, n_shr:
+		// Shifts: the result takes the left operand's type; the shift count
+		// may be any integer width (it is not combined with the value), so
+		// no same-representation requirement between the two operands.
+		ft := o.First.ASTType(c)
+		st := o.Second.ASTType(c)
+		for _, operand := range []ASTType{ft, st} {
+			if !operand.Same(intlitASTType()) && !isIntegerType(c, operand) {
+				panic(&interpreterError{
+					msg: fmt.Sprintf("operator %s requires integer operands, but got %s", opSym(o.Type), operand),
+					p:   o.Pos(),
+				})
+			}
+		}
+		if ft.Same(intlitASTType()) {
+			// `1 << n` with an untyped left operand defaults to i64, the
+			// natural width for a shift result.
+			return numASTType()
+		}
+		return ft
+	case n_add, n_sub, n_mul, n_div, n_bitand, n_bitor, n_mod, n_xor:
 		ft := o.First.ASTType(c)
 		st := o.Second.ASTType(c)
 		// Arithmetic and bitwise operators are defined on integers only.
@@ -3137,6 +3165,14 @@ func (o *Op2) Note() string {
 		op = "&"
 	case n_bitor:
 		op = "|"
+	case n_mod:
+		op = "%"
+	case n_xor:
+		op = "^"
+	case n_shl:
+		op = "<<"
+	case n_shr:
+		op = ">>"
 	}
 	return fmt.Sprintf("Op (%s) %s (%s)", o.First.Note(), op, o.Second.Note())
 }
@@ -3172,6 +3208,34 @@ func (n *Not) Note() string {
 
 func (n *Not) Pos() position {
 	return n.p
+}
+
+// BitNot is the bitwise complement `~x`. It requires an integer operand and
+// preserves its type. Codegen desugars it to (0 - x) - 1 (the two's-complement
+// identity, correct for any width and signedness); the dedicated node exists so
+// the type check and diagnostics name `~` and point at it.
+type BitNot struct {
+	Val AST
+	p   position
+}
+
+func (b *BitNot) ASTType(c *Context) ASTType {
+	t := b.Val.ASTType(c)
+	if t.Same(intlitASTType()) {
+		return t
+	}
+	if !isIntegerType(c, t) {
+		panic(&interpreterError{msg: fmt.Sprintf("operator ~ requires an integer operand, but got %s", t), p: b.p})
+	}
+	return t
+}
+
+func (b *BitNot) Note() string {
+	return fmt.Sprintf("~(%s)", b.Val.Note())
+}
+
+func (b *BitNot) Pos() position {
+	return b.p
 }
 
 type Return struct {
@@ -4070,7 +4134,7 @@ func (n *Node) toASTTop(c *Context) AST {
 			Body: body,
 			p:    n.p,
 		})
-	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_add, n_sub, n_mul, n_div, n_booland, n_boolor, n_bitand, n_bitor:
+	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_add, n_sub, n_mul, n_div, n_booland, n_boolor, n_bitand, n_bitor, n_mod, n_xor, n_shl, n_shr:
 		return &Op2{
 			Type:   n.t,
 			First:  n.args[0].toASTTop(NewContext()),
@@ -4082,6 +4146,8 @@ func (n *Node) toASTTop(c *Context) AST {
 			First:  &Literal{Val: uint64(0)},
 			Second: n.args[0].toASTTop(NewContext()),
 		}
+	case n_bitnot:
+		return &BitNot{Val: n.args[0].toASTTop(NewContext()), p: n.p}
 	case n_not:
 		return &Not{Val: n.args[0].toASTTop(NewContext()), p: n.p}
 	case n_return:

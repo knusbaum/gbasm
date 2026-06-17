@@ -1,0 +1,2 @@
+Compiling tests/op_shift_nonint_err_test.bos
+Fatal: operator << requires integer operands, but got bool
