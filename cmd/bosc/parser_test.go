@@ -515,6 +515,90 @@ func TestParser(t *testing.T) {
 				}},
 			}},
 		},
+		{
+			// % shares the multiplicative level with * / and is left-assoc:
+			// a % b * c == (a % b) * c.
+			in: "a % b * c",
+			out: &Node{t: n_mul, args: []*Node{
+				&Node{t: n_mod, args: []*Node{
+					&Node{t: n_symbol, sval: "a"},
+					&Node{t: n_symbol, sval: "b"},
+				}},
+				&Node{t: n_symbol, sval: "c"},
+			}},
+		},
+		{
+			// + binds tighter than <<: 1 + 2 << 3 == (1 + 2) << 3.
+			in: "1 + 2 << 3",
+			out: &Node{t: n_shl, args: []*Node{
+				&Node{t: n_add, args: []*Node{
+					&Node{t: n_number, ival: 1},
+					&Node{t: n_number, ival: 2},
+				}},
+				&Node{t: n_number, ival: 3},
+			}},
+		},
+		{
+			// Bitwise precedence & tighter than ^ tighter than |:
+			// 1 | 2 ^ 3 & 4 == 1 | (2 ^ (3 & 4)).
+			in: "1 | 2 ^ 3 & 4",
+			out: &Node{t: n_bitor, args: []*Node{
+				&Node{t: n_number, ival: 1},
+				&Node{t: n_xor, args: []*Node{
+					&Node{t: n_number, ival: 2},
+					&Node{t: n_bitand, args: []*Node{
+						&Node{t: n_number, ival: 3},
+						&Node{t: n_number, ival: 4},
+					}},
+				}},
+			}},
+		},
+		{
+			// && binds tighter than ||: a && b || c && d ==
+			// (a && b) || (c && d).
+			in: "a && b || c && d",
+			out: &Node{t: n_boolor, args: []*Node{
+				&Node{t: n_booland, args: []*Node{
+					&Node{t: n_symbol, sval: "a"},
+					&Node{t: n_symbol, sval: "b"},
+				}},
+				&Node{t: n_booland, args: []*Node{
+					&Node{t: n_symbol, sval: "c"},
+					&Node{t: n_symbol, sval: "d"},
+				}},
+			}},
+		},
+		{
+			// Comparison binds tighter than & (C-style): a == b & c parses as
+			// (a == b) & c. (This is the footgun that makes `flag & MASK == 0`
+			// a type error in Boson — recorded deliberately.)
+			in: "a == b & c",
+			out: &Node{t: n_bitand, args: []*Node{
+				&Node{t: n_deq, args: []*Node{
+					&Node{t: n_symbol, sval: "a"},
+					&Node{t: n_symbol, sval: "b"},
+				}},
+				&Node{t: n_symbol, sval: "c"},
+			}},
+		},
+		{
+			// Unary bitwise not.
+			in: "~a",
+			out: &Node{t: n_bitnot, args: []*Node{
+				&Node{t: n_symbol, sval: "a"},
+			}},
+		},
+		{
+			// Compound assignment desugars to `lhs = lhs op rhs`.
+			in: "x += 1",
+			out: &Node{t: n_eq, args: []*Node{
+				&Node{t: n_symbol, sval: "x"},
+				&Node{t: n_add, args: []*Node{
+					&Node{t: n_symbol, sval: "x"},
+					&Node{t: n_number, ival: 1},
+				}},
+			}},
+		},
 	} {
 		t.Run("", func(t *testing.T) {
 			p := NewParser("", strings.NewReader(tt.in))

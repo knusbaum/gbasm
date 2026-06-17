@@ -177,6 +177,77 @@ func TestLexer(t *testing.T) {
 				token{t: tok_ellipsis},
 			},
 		},
+		{
+			// New binary operators: %, ^, and the shifts (which must not be
+			// mistaken for comparison tokens).
+			in: "a % b ^ c << d >> e",
+			out: []token{
+				token{t: tok_ident, sval: "a"}, token{t: tok_percent},
+				token{t: tok_ident, sval: "b"}, token{t: tok_caret},
+				token{t: tok_ident, sval: "c"}, token{t: tok_shl},
+				token{t: tok_ident, sval: "d"}, token{t: tok_shr},
+				token{t: tok_ident, sval: "e"},
+			},
+		},
+		{
+			// Comparison vs shift disambiguation: <, <=, <<, >, >=, >>.
+			in: "a < b <= c << d > e >= f >> g",
+			out: []token{
+				token{t: tok_ident, sval: "a"}, token{t: tok_lt},
+				token{t: tok_ident, sval: "b"}, token{t: tok_le},
+				token{t: tok_ident, sval: "c"}, token{t: tok_shl},
+				token{t: tok_ident, sval: "d"}, token{t: tok_gt},
+				token{t: tok_ident, sval: "e"}, token{t: tok_ge},
+				token{t: tok_ident, sval: "f"}, token{t: tok_shr},
+				token{t: tok_ident, sval: "g"},
+			},
+		},
+		{
+			// Unary bitwise not.
+			in: "~a",
+			out: []token{token{t: tok_tilde}, token{t: tok_ident, sval: "a"}},
+		},
+		{
+			// All ten compound-assignment tokens.
+			in: "a += b -= c *= d /= e %= f &= g |= h ^= i <<= j >>= k",
+			out: []token{
+				token{t: tok_ident, sval: "a"}, token{t: tok_pluseq},
+				token{t: tok_ident, sval: "b"}, token{t: tok_minuseq},
+				token{t: tok_ident, sval: "c"}, token{t: tok_stareq},
+				token{t: tok_ident, sval: "d"}, token{t: tok_slasheq},
+				token{t: tok_ident, sval: "e"}, token{t: tok_percenteq},
+				token{t: tok_ident, sval: "f"}, token{t: tok_ampeq},
+				token{t: tok_ident, sval: "g"}, token{t: tok_pipeeq},
+				token{t: tok_ident, sval: "h"}, token{t: tok_careteq},
+				token{t: tok_ident, sval: "i"}, token{t: tok_shleq},
+				token{t: tok_ident, sval: "j"}, token{t: tok_shreq},
+				token{t: tok_ident, sval: "k"},
+			},
+		},
+		{
+			// && vs & vs &=, and || vs | vs |= — each prefix must win the
+			// longest match without swallowing the next token.
+			in: "a && b & c &= d || e | f |= g",
+			out: []token{
+				token{t: tok_ident, sval: "a"}, token{t: tok_booland},
+				token{t: tok_ident, sval: "b"}, token{t: tok_amp},
+				token{t: tok_ident, sval: "c"}, token{t: tok_ampeq},
+				token{t: tok_ident, sval: "d"}, token{t: tok_boolor},
+				token{t: tok_ident, sval: "e"}, token{t: tok_pipe},
+				token{t: tok_ident, sval: "f"}, token{t: tok_pipeeq},
+				token{t: tok_ident, sval: "g"},
+			},
+		},
+		{
+			// *? (nullable-pointer type start) vs * vs *= and <<= vs <<.
+			in: "*? * *= a <<= b << c",
+			out: []token{
+				token{t: tok_maybe_ptr}, token{t: tok_star}, token{t: tok_stareq},
+				token{t: tok_ident, sval: "a"}, token{t: tok_shleq},
+				token{t: tok_ident, sval: "b"}, token{t: tok_shl},
+				token{t: tok_ident, sval: "c"},
+			},
+		},
 	} {
 		t.Run("", func(t *testing.T) {
 			p := NewLexer("", strings.NewReader(tt.in))
