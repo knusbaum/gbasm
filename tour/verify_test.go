@@ -26,8 +26,13 @@ func TestLessonsLoad(t *testing.T) {
 			if l.Title == "" {
 				t.Errorf("%s/%s: empty title", l.Section, l.Slug)
 			}
-			if l.Source == "" {
+			// Runnable lessons must carry a program; prose-only lessons
+			// (intros/overviews with no main.bos) intentionally have none.
+			if l.HasSource && l.Source == "" {
 				t.Errorf("%s/%s: empty source", l.Section, l.Slug)
+			}
+			if !l.HasSource && l.Source != "" {
+				t.Errorf("%s/%s: prose-only lesson has source", l.Section, l.Slug)
 			}
 		}
 	}
@@ -64,8 +69,10 @@ func TestLessonsRun(t *testing.T) {
 
 	for _, sec := range cat.Sections {
 		for _, l := range sec.Lessons {
-			l := l
 			t.Run(l.Section+"/"+l.Slug, func(t *testing.T) {
+				if !l.HasSource {
+					t.Skip("prose-only lesson: nothing to run")
+				}
 				resp := pipe.Run(context.Background(), bpipeline.Request{Source: l.Source})
 				res := l.Verify(resp)
 				if !res.Passed {
