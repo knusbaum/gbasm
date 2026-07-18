@@ -849,19 +849,14 @@ func (p *Parser) parsePostfix(v *Node) *Node {
 			// consults at compile.go's struct lookup sites; ToAST may
 			// rewrite sval after resolving if a future selector kind
 			// needs a different identity.
-			var typeName string
-			var typePos position
-			switch {
-			case v.t == n_symbol:
-				typeName = v.sval
-				typePos = v.p
-			case v.t == n_dot && len(v.args) == 2 &&
-				v.args[0].t == n_symbol && v.args[1].t == n_symbol:
-				typeName = v.args[0].sval + "." + v.args[1].sval
-				typePos = v.p
-			default:
+			// The leading identifier is a bare name (`Name`), a qualified type
+			// (`pkg.Type`), or a values-case selector of either
+			// (`Type.CASE`, `pkg.Type.CASE`) — any dot chain of symbols.
+			typeName, ok := dottedSymbolName(v)
+			if !ok {
 				return v
 			}
+			typePos := v.p
 			typeIdent := v
 			p.advance()
 			fields := p.parseStructLiteral()
@@ -1967,6 +1962,23 @@ func (p *Parser) parseTypeDecl() *Node {
 // n_stfield nodes — the same shape parseTypeName produces for `struct { ... }`.
 // Reused for values payload variants (`FILE_INFO{ fd i64, path byte[] }`), where
 // a variant is literally a struct.
+// dottedSymbolName flattens a dot chain of bare symbols (`a`, `a.b`, `a.b.c`)
+// to its dotted string. Used to recognize the leading type/selector of a
+// struct or values-construction literal. Returns ok=false for any other shape.
+func dottedSymbolName(v *Node) (string, bool) {
+	switch v.t {
+	case n_symbol:
+		return v.sval, true
+	case n_dot:
+		if len(v.args) == 2 && v.args[1].t == n_symbol {
+			if left, ok := dottedSymbolName(v.args[0]); ok {
+				return left + "." + v.args[1].sval, true
+			}
+		}
+	}
+	return "", false
+}
+
 func (p *Parser) parseAnonStructFields() *Node {
 	structpos := p.current().p
 	p.expect(tok_lcurly)

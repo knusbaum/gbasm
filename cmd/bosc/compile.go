@@ -3142,6 +3142,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		fmt.Fprintf(of, "\ttag %s\n", ast.TagType.String())
 		for _, vc := range ast.Cases {
 			fmt.Fprintf(of, "\tcase %s %d\n", vc.Name, vc.Tag)
+			// Payload variant fields: one `pfield <case> <name> <type>` line
+			// each (the type string may contain spaces, so it is the rest of
+			// the line). The importer reconstructs the variant's struct shape.
+			for _, f := range vc.Payload {
+				fmt.Fprintf(of, "\tpfield %s %s %s\n", vc.Name, f.Name, f.Type.String())
+			}
 		}
 		for _, pt := range ast.Projections {
 			fmt.Fprintf(of, "\tprojection %s\n", pt.String())

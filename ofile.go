@@ -213,10 +213,13 @@ type ValuesShape struct {
 	MethodNames []string
 }
 
-// ValuesCaseShape is one entry in a values type's case list.
+// ValuesCaseShape is one entry in a values type's case list. Payload is the
+// variant's struct fields when it is a payload variant (`FILE_INFO{ ... }`);
+// nil for a bare or projection case.
 type ValuesCaseShape struct {
-	Name string
-	Tag  int64
+	Name    string
+	Tag     int64
+	Payload []FieldShape
 }
 
 // ProjectionShape is one entry in a values type's projection

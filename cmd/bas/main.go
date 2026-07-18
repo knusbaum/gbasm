@@ -777,6 +777,31 @@ func main() {
 						cases = append(cases, gbasm.ValuesCaseShape{Name: parts[0], Tag: tag})
 						continue
 					}
+					if strings.HasPrefix(body, "pfield ") {
+						// `pfield <case> <name> <type...>` — a payload variant's
+						// struct field. The type is the rest of the line (may
+						// contain spaces). Appends to the matching case, which
+						// was emitted just before its pfields.
+						fields := strings.Fields(strings.TrimPrefix(body, "pfield "))
+						if len(fields) < 3 {
+							fmt.Printf("Fatal: values %s: pfield line %q expected `pfield <case> <name> <type>`\n", vname, body)
+							os.Exit(1)
+						}
+						caseName, fieldName, fieldType := fields[0], fields[1], strings.Join(fields[2:], " ")
+						found := false
+						for i := range cases {
+							if cases[i].Name == caseName {
+								cases[i].Payload = append(cases[i].Payload, gbasm.FieldShape{Name: fieldName, Type: fieldType})
+								found = true
+								break
+							}
+						}
+						if !found {
+							fmt.Printf("Fatal: values %s: pfield references unknown case %q\n", vname, caseName)
+							os.Exit(1)
+						}
+						continue
+					}
 					if strings.HasPrefix(body, "projection ") {
 						pt := strings.TrimSpace(strings.TrimPrefix(body, "projection"))
 						if pt == "" {

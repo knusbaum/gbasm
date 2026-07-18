@@ -1399,7 +1399,17 @@ func (c *Context) Import(importKey, path string) error {
 		}
 		decl := &ValuesDecl{Name: qname, TagType: tagType}
 		for _, vc := range vs.Cases {
-			decl.Cases = append(decl.Cases, ValuesCase{Name: vc.Name, Tag: vc.Tag})
+			nc := ValuesCase{Name: vc.Name, Tag: vc.Tag}
+			for _, pf := range vc.Payload {
+				ft, err := parseTypeString(pf.Type)
+				if err != nil {
+					return fmt.Errorf("import %q: values %s case %s field %s: %v",
+						importKey, vs.Name, vc.Name, pf.Name, err)
+				}
+				qualifyImportedTypeFull(&ft, o.Pkgname, o.Structs, o.TypeAliases, o.Interfaces, o.Values)
+				nc.Payload = append(nc.Payload, Binding{Name: pf.Name, Type: ft})
+			}
+			decl.Cases = append(decl.Cases, nc)
 		}
 		for _, pj := range vs.Projections {
 			pt, err := parseTypeString(pj.TargetType)

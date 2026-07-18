@@ -35,3 +35,11 @@ pub fn open_for(kind i64) error_val {
 	}
 	return io_error.BUSY
 }
+
+// evt is an exported payload-variant values type (an ADT), so the
+// cross-package import of per-variant struct payloads is exercised.
+pub type evt values {
+	OPENED{ fd i64, path byte[] }
+	CLOSED{ code i64 }
+	IDLE
+}

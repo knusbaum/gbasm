@@ -976,6 +976,17 @@ func writeValues(w io.Writer, vs map[string]*ValuesShape) error {
 			if err := binary.Write(w, binary.LittleEndian, vc.Tag); err != nil {
 				return err
 			}
+			if err := writeSize(w, len(vc.Payload)); err != nil {
+				return err
+			}
+			for _, f := range vc.Payload {
+				if err := writeString(w, f.Name); err != nil {
+					return err
+				}
+				if err := writeString(w, f.Type); err != nil {
+					return err
+				}
+			}
 		}
 		if err := writeSize(w, len(v.Projections)); err != nil {
 			return err
@@ -1030,7 +1041,23 @@ func readValues(r io.Reader) (map[string]*ValuesShape, error) {
 			if err := binary.Read(r, binary.LittleEndian, &tag); err != nil {
 				return nil, err
 			}
-			cases[j] = ValuesCaseShape{Name: cname, Tag: tag}
+			nPayload, err := readSize(r)
+			if err != nil {
+				return nil, err
+			}
+			var payload []FieldShape
+			for k := 0; k < nPayload; k++ {
+				fname, err := readString(r)
+				if err != nil {
+					return nil, err
+				}
+				ftype, err := readString(r)
+				if err != nil {
+					return nil, err
+				}
+				payload = append(payload, FieldShape{Name: fname, Type: ftype})
+			}
+			cases[j] = ValuesCaseShape{Name: cname, Tag: tag, Payload: payload}
 		}
 		nProj, err := readSize(r)
 		if err != nil {
