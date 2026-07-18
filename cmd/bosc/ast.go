@@ -2873,6 +2873,14 @@ func (s *StructLiteral) ASTType(c *Context) ASTType {
 			p:   s.p,
 		})
 	}
+	// A `Type.CASE{ ... }` literal is payload-variant construction; its value
+	// type is the values type. Resolved here (not at ToAST) because the ToAST
+	// context can't see the values decl.
+	if c != nil {
+		if vd, _, ok := valuesCaseFromName(c, s.Type.Name); ok {
+			return ASTType{Name: vd.Name}
+		}
+	}
 	_, ok := c.StructDeclForName(s.Type.Name)
 	if !ok {
 		panic(&interpreterError{
@@ -2881,6 +2889,27 @@ func (s *StructLiteral) ASTType(c *Context) ASTType {
 		})
 	}
 	return s.Type
+}
+
+// valuesCaseFromName resolves a dotted name like "file_info.FILE_INFO" to its
+// values declaration and case. Returns ok=false when the name does not name a
+// case of a values type in scope.
+func valuesCaseFromName(c *Context, name string) (*ValuesDecl, *ValuesCase, bool) {
+	dot := strings.LastIndex(name, ".")
+	if dot < 0 {
+		return nil, nil, false
+	}
+	typeName, caseName := name[:dot], name[dot+1:]
+	vd, ok := c.ValuesDeclForName(typeName)
+	if !ok {
+		return nil, nil, false
+	}
+	for i := range vd.Cases {
+		if vd.Cases[i].Name == caseName {
+			return vd, &vd.Cases[i], true
+		}
+	}
+	return nil, nil, false
 }
 
 func (s *StructLiteral) Note() string {
@@ -3619,6 +3648,41 @@ func (s *TypeSwitch) ASTType(*Context) ASTType { return voidASTType() }
 func (s *TypeSwitch) Note() string             { return "switch (... .(type)) {...}" }
 func (s *TypeSwitch) Pos() position            { return s.p }
 
+// ValuesConstruct builds a payload-variant value:
+// `file_info.FILE_INFO{ fd: 3, path: "config" }`. A variant is a struct; codegen
+// writes the case tag followed by the payload struct at offset TagType.Size.
+type ValuesConstruct struct {
+	ValuesType ASTType // the values type (e.g. file_info)
+	Decl       *ValuesDecl
+	Case       *ValuesCase
+	Fields     []StructField
+	p          position
+}
+
+func (v *ValuesConstruct) ASTType(*Context) ASTType { return v.ValuesType }
+func (v *ValuesConstruct) Note() string             { return "values construct" }
+func (v *ValuesConstruct) Pos() position            { return v.p }
+
+// VariantSwitch dispatches on an ADT's tag, narrowing the scrutinee to the
+// matched variant inside each case body (PROPOSAL_adts_and_switch.md §5).
+type VariantSwitch struct {
+	Scrutinee AST
+	Cases     []*VariantCase
+	Default   AST // nil if no default/`_` case
+	p         position
+}
+
+func (s *VariantSwitch) ASTType(*Context) ASTType { return voidASTType() }
+func (s *VariantSwitch) Note() string             { return "switch (variant) {...}" }
+func (s *VariantSwitch) Pos() position            { return s.p }
+
+// VariantCase is one `case VARIANT { body }` arm of a VariantSwitch.
+type VariantCase struct {
+	Name string
+	Body AST
+	p    position
+}
+
 // PreboundSpot wraps an already-compiled value handle so it can be threaded
 // back through the generic argument-setup path. Used by variadic
 // call-site desugaring, which builds the args slice before setupArgs runs.
@@ -4089,6 +4153,10 @@ func (n *Node) toASTTop(c *Context) AST {
 			if r.Kind == ResolvedType {
 				s.Type = r.Type
 			} else {
+				// Includes a values-case name (`file_info.FILE_INFO`): the
+				// empty resolution context here can't see the values type, so
+				// keep the dotted name and route to payload construction at
+				// compile time (StructLiteral.ASTType / compileTop).
 				s.Type = ASTType{Name: n.sval}
 			}
 		} else {
@@ -4104,6 +4172,23 @@ func (n *Node) toASTTop(c *Context) AST {
 			})
 		}
 		return &s
+	case n_variantswitch:
+		vs := &VariantSwitch{Scrutinee: n.args[0].toASTTop(NewContext()), p: n.p}
+		for _, cn := range n.args[1:] {
+			if cn.t != n_variantcase {
+				ParseErrorF(cn, "Expected a case in variant switch, got %v", cn.t)
+			}
+			body := cn.args[0].toASTTop(NewContext())
+			if cn.ival == 1 {
+				if vs.Default != nil {
+					ParseErrorF(cn, "Duplicate default case in switch")
+				}
+				vs.Default = body
+			} else {
+				vs.Cases = append(vs.Cases, &VariantCase{Name: cn.sval, Body: body, p: cn.p})
+			}
+		}
+		return vs
 	case n_address:
 		// Two forms from the parser: address-of-name (sval set, no args)
 		// and address-of-literal (args[0] set, sval empty). The latter

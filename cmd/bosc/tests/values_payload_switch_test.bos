@@ -1,0 +1,24 @@
+package main
+
+import "string"
+
+// Phase 2: construct payload variants and dispatch on them with a variant
+// switch (no field access yet — that's the next step).
+type file_info values {
+	FILE_INFO{ fd i64, path byte[] }
+	CLOSED
+}
+
+fn describe(e file_info) {
+	switch e {
+		case FILE_INFO { string.puts("fileinfo\n") }
+		case CLOSED    { string.puts("closed\n") }
+	}
+}
+
+fn main() {
+	a file_info := file_info.FILE_INFO{ fd: 3, path: "cfg" }
+	describe(a)
+	b file_info := file_info.CLOSED
+	describe(b)
+}

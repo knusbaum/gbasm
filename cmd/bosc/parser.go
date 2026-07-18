@@ -67,6 +67,8 @@ const (
 	n_multibind             // multi-value destructuring bind: var a T1, const b T2 = expr
 	n_valuesdecl            // type TypeName values [(projections)] { cases } [{ methods }]
 	n_valuescase            // single case in a values decl: NAME[: e1, e2, ...]
+	n_variantswitch         // switch e { case VARIANT { body } ... [default { body }] }
+	n_variantcase           // one case in a variant switch: VARIANT { body } / default { body }
 	n_variadic_forward      // trailing `slice...` forwarding at a call site
 	n_typeassert            // x.(T) — runtime type assertion
 	n_typeswitch            // switch (v x.(type)) { case T {...} ... }
@@ -194,6 +196,10 @@ func (t nodetype) String() string {
 		return "n_valuesdecl"
 	case n_valuescase:
 		return "n_valuescase"
+	case n_variantswitch:
+		return "n_variantswitch"
+	case n_variantcase:
+		return "n_variantcase"
 	case n_from:
 		return "n_from"
 	}
@@ -208,6 +214,10 @@ type Parser struct {
 	// inTypeSwitchHead suppresses `.(type)` being parsed as a type
 	// assertion while parsing the switched value in a type-switch head.
 	inTypeSwitchHead bool
+	// noStructLit suppresses `Name{...}` being folded into a struct literal
+	// while parsing a variant-switch scrutinee (`switch e { ... }`), where the
+	// trailing `{` opens the switch body, not a literal.
+	noStructLit bool
 }
 
 type Node struct {
@@ -824,6 +834,11 @@ func (p *Parser) parsePostfix(v *Node) *Node {
 				return v
 			}
 		case tok_lcurly:
+			// While parsing a variant-switch scrutinee the trailing `{` opens
+			// the switch body, not a struct literal — leave it for the caller.
+			if p.noStructLit {
+				return v
+			}
 			// Struct-literal form: either bare 'Name{...}' or qualified
 			// 'pkg.Name{...}'. The leading type identifier (v) is kept
 			// verbatim on the n_stlit node as typeIdent so that ToAST
@@ -943,6 +958,60 @@ func (p *Parser) parseFor() *Node {
 	body := p.parseExpression()
 	args = append(args, body)
 	return &Node{t: n_for, p: forpos, args: args}
+}
+
+// parseSwitch dispatches between the two switch modes: the `any` type-switch
+// (`switch (v x.(type)) { ... }`, a parenthesized head) and the variant switch
+// over an ADT (`switch e { case VARIANT { ... } }`, a bare scrutinee).
+func (p *Parser) parseSwitch() *Node {
+	sw := p.current() // tok_switch
+	p.advance()
+	isTypeSwitch := p.current().t == tok_lparen
+	p.pushback(sw)
+	if isTypeSwitch {
+		return p.parseTypeSwitch()
+	}
+	return p.parseVariantSwitch()
+}
+
+// parseVariantSwitch parses `switch <scrutinee> { case VARIANT { body } ...
+// [default { body }] }`. The scrutinee is any expression yielding an ADT;
+// struct-literal folding is suppressed while it is parsed so the trailing `{`
+// opens the switch body.
+func (p *Parser) parseVariantSwitch() *Node {
+	swpos := p.current().p
+	p.expect(tok_switch)
+	p.noStructLit = true
+	scrut := p.parseExpression()
+	p.noStructLit = false
+	p.expect(tok_lcurly)
+	args := []*Node{scrut}
+	for p.current().t != tok_rcurly {
+		if p.current().t == tok_semicolon {
+			p.advance()
+			continue
+		}
+		if p.current().t == tok_case {
+			casepos := p.current().p
+			p.advance()
+			nameTok := p.current()
+			if nameTok.t != tok_ident {
+				panic(&interpreterError{fmt.Sprintf("Expected a variant name after `case`, but found %s", nameTok.t), nameTok.p})
+			}
+			p.advance()
+			body := p.parseExpression()
+			args = append(args, &Node{t: n_variantcase, p: casepos, ival: 0, sval: nameTok.sval, args: []*Node{body}})
+		} else if p.current().t == tok_default {
+			casepos := p.current().p
+			p.advance()
+			body := p.parseExpression()
+			args = append(args, &Node{t: n_variantcase, p: casepos, ival: 1, args: []*Node{body}})
+		} else {
+			panic(&interpreterError{fmt.Sprintf("Expected `case` or `default` in switch, but found %s", p.current().t), p.current().p})
+		}
+	}
+	p.expect(tok_rcurly)
+	return &Node{t: n_variantswitch, p: swpos, args: args}
 }
 
 // parseTypeSwitch parses `switch (v x.(type)) { case T {...} ... default {...} }`.
@@ -1127,7 +1196,7 @@ func (p *Parser) parseParens() *Node {
 	} else if c.t == tok_for {
 		return p.parseFor()
 	} else if c.t == tok_switch {
-		return p.parseTypeSwitch()
+		return p.parseSwitch()
 	} else if c.t == tok_break {
 		p.advance()
 		return &Node{t: n_break, p: c.p}
@@ -1553,7 +1622,7 @@ func (p *Parser) startsBareDecl() bool {
 func isStatementForm(n *Node) bool {
 	switch n.t {
 	case n_eq, n_funcall, n_var, n_multibind,
-		n_if, n_for, n_typeswitch, n_block, n_break, n_continue, n_return, n_none,
+		n_if, n_for, n_typeswitch, n_variantswitch, n_block, n_break, n_continue, n_return, n_none,
 		n_dispose: // dispose is a keyword-intrinsic, not an n_funcall
 		return true
 	case n_dot:

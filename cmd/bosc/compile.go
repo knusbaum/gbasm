@@ -3036,6 +3036,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	case *TypeSwitch:
 		compileTypeSwitch(of, c, ast)
 		return nullspot
+	case *VariantSwitch:
+		compileVariantSwitch(of, c, ast)
+		return nullspot
+	case *ValuesConstruct:
+		return compileValuesConstruct(of, c, ast, dest)
 	case *OwnedPromotion:
 		// Compile the inner expression without a typed dest (the inner type differs
 		// from the promoted type). Relabel the result with the promoted type.
@@ -3877,17 +3882,19 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			r := ResolveSelector(c, ast)
 			if r.Kind == ResolvedValuesCase {
-				// A payload-bearing values type is memory-backed and not yet
-				// wired for construction / field access / the variant `switch`
-				// (PROPOSAL_adts_and_switch.md, later phases). The scalar
-				// tag-emission below is only valid for a plain tag/projection
-				// type, so guard any reference to a case of a payload-bearing
-				// type until those phases land.
+				// A payload-bearing values type is memory-backed. A bare case
+				// reference constructs a variant that carries no payload (e.g.
+				// CLOSED); a payload variant referenced without its fields is
+				// invalid — use `Type.NAME{ ... }` construction.
 				if r.Values != nil && r.Values.IsPayloadBearing() {
-					CompileErrorF(ast, "payload-variant values types are not yet supported")
+					if len(r.Case.Payload) > 0 {
+						CompileErrorF(ast, "payload variant %s requires field values; write %s{ ... }", r.Case.Name, r.Case.Name)
+					}
+					vc := &ValuesConstruct{ValuesType: r.Type, Decl: r.Values, Case: r.Case, p: ast.Pos()}
+					return compileValuesConstruct(of, c, vc, dest)
 				}
-				// Emit the case's private tag as a value of the values
-				// type. The tag is an i64 in v1.
+				// Plain tag/projection type: emit the case's private tag as an
+				// i64-sized value directly.
 				if dest.empty() {
 					dest = newSpot(of, c, c.Temp(), r.Type)
 				}
@@ -5128,6 +5135,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		s.t = ast.ASTType(c)
 		return s
 	case *StructLiteral:
+		// A `Type.CASE{ ... }` literal is payload-variant construction, routed
+		// here because the values type isn't resolvable at ToAST time.
+		if vd, vc, ok := valuesCaseFromName(c, ast.Type.Name); ok {
+			vcon := &ValuesConstruct{ValuesType: ASTType{Name: vd.Name}, Decl: vd, Case: vc, Fields: ast.Fields, p: ast.p}
+			return compileValuesConstruct(of, c, vcon, dest)
+		}
 		ctxType := ast.Type
 		if !dest.empty() && sameIgnoringOwned(dest.t, ast.Type) {
 			ctxType = dest.t
@@ -7382,6 +7395,104 @@ func compileInterfaceAssert(of io.Writer, c *Context, ast *TypeAssert, dest spot
 // compileTypeSwitch lowers `switch (v x.(type)) { case T {...} ... }`. Each
 // case is tested top-down; the first match binds `v` to the case's type
 // (narrowed inside the case body) and runs the body. `default` runs if no
+// compileValuesConstruct builds a payload-variant value in `dest`: the case
+// tag at offset 0, then the payload struct at offset TagType.Size (reusing the
+// struct-literal writer against a synthesized anonymous struct shape).
+func compileValuesConstruct(of io.Writer, c *Context, ast *ValuesConstruct, dest spot) spot {
+	if dest.empty() {
+		dest = newSpot(of, c, c.Temp(), ast.ValuesType)
+	} else {
+		dest.t = ast.ValuesType
+	}
+	tagSize := ast.Decl.TagType.Size(c)
+	// Write the tag through a register (a direct `mov [mem] imm` can encode a
+	// narrow store; route through a 64-bit register to force the full width).
+	tagReg := newSpot(of, c, c.Temp(), ASTType{Name: "i64", Signed: true})
+	fmt.Fprintf(of, "\tmov %s %d\n", tagReg.ref, ast.Case.Tag)
+	fmt.Fprintf(of, "\tmov [%s] %s\n", dest.ref, tagReg.ref)
+	tagReg.free(of)
+	// Write the payload struct at [dest + tagSize] via a synthesized anonymous
+	// struct literal — reuses compileStructLiteralInto (field coercion, memcpy,
+	// owned-move tracking) with the base offset by the tag.
+	if len(ast.Case.Payload) > 0 {
+		payloadType := ASTType{AnonFields: ast.Case.Payload}
+		payloadAddr := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+		fmt.Fprintf(of, "\tlea %s [%s+%d]\n", payloadAddr.ref, dest.ref, tagSize)
+		payloadDest := spot{ref: payloadAddr.ref, t: payloadType, nameIsAddress: true}
+		lit := &StructLiteral{Type: payloadType, Fields: ast.Fields, p: ast.p}
+		compileStructLiteralInto(of, c, ast, lit, payloadDest, payloadType)
+		payloadAddr.free(of)
+	}
+	return dest
+}
+
+// compileVariantSwitch lowers `switch e { case VARIANT { ... } ... }`: read the
+// scrutinee's tag and branch to the matching case. Exhaustive over the closed
+// variant set (or a `default`). Phase 2: dispatch + exhaustiveness; per-case
+// narrowing / field access are wired in a following step.
+func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch) {
+	scrutType := ast.Scrutinee.ASTType(c)
+	vd, ok := c.ValuesDeclForName(scrutType.Name)
+	if !ok {
+		CompileErrorF(ast.Scrutinee, "switch scrutinee has type %s, which is not a values type", scrutType)
+	}
+	byName := make(map[string]*ValuesCase, len(vd.Cases))
+	for i := range vd.Cases {
+		byName[vd.Cases[i].Name] = &vd.Cases[i]
+	}
+	seen := make(map[string]bool, len(ast.Cases))
+	for _, cs := range ast.Cases {
+		if _, ok := byName[cs.Name]; !ok {
+			CompileErrorF(cs.Body, "%s is not a variant of values type %s", cs.Name, scrutType.Name)
+		}
+		if seen[cs.Name] {
+			CompileErrorF(cs.Body, "duplicate case %s in switch", cs.Name)
+		}
+		seen[cs.Name] = true
+	}
+	if ast.Default == nil {
+		var missing []string
+		for i := range vd.Cases {
+			if !seen[vd.Cases[i].Name] {
+				missing = append(missing, vd.Cases[i].Name)
+			}
+		}
+		if len(missing) > 0 {
+			CompileErrorF(ast, "non-exhaustive switch on %s: missing case(s) %s; cover them or add a `default`",
+				scrutType.Name, strings.Join(missing, ", "))
+		}
+	}
+
+	scrut := compileTop(of, c, ast.Scrutinee, nullspot)
+	tag := newSpot(of, c, c.Temp(), ASTType{Name: "i64", Signed: true})
+	want := newSpot(of, c, c.Temp(), ASTType{Name: "i64", Signed: true})
+	// A payload-bearing values value is memory-backed: the tag is the first
+	// word at its address. A plain tag value lives directly in the spot.
+	if typeIsMemoryBacked(c, scrutType) {
+		fmt.Fprintf(of, "\tmov %s [%s]\n", tag.ref, scrut.ref)
+	} else {
+		fmt.Fprintf(of, "\tmov %s %s\n", tag.ref, scrut.ref)
+	}
+	end := c.Label("vswend")
+	for _, cs := range ast.Cases {
+		vc := byName[cs.Name]
+		next := c.Label("vswnext")
+		fmt.Fprintf(of, "\tmov %s %d\n", want.ref, vc.Tag)
+		fmt.Fprintf(of, "\tcmp %s %s\n", tag.ref, want.ref)
+		fmt.Fprintf(of, "\tjne %s\n", next)
+		compileTop(of, c.SubContext(), cs.Body, nullspot)
+		fmt.Fprintf(of, "\tjmp %s\n", end)
+		fmt.Fprintf(of, "\tlabel %s\n", next)
+	}
+	if ast.Default != nil {
+		compileTop(of, c.SubContext(), ast.Default, nullspot)
+	}
+	fmt.Fprintf(of, "\tlabel %s\n", end)
+	tag.free(of)
+	want.free(of)
+	scrut.free(of)
+}
+
 // case matched. No fallthrough.
 func compileTypeSwitch(of io.Writer, c *Context, ast *TypeSwitch) {
 	srcT := ast.Val.ASTType(c)

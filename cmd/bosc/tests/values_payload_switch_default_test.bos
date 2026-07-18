@@ -1,0 +1,17 @@
+package main
+
+import "string"
+
+type file_info values {
+	FILE_INFO{ fd i64, path byte[] }
+	SOCKET{ fd i64, addr byte[] }
+	CLOSED
+}
+
+fn main() {
+	e file_info := file_info.SOCKET{ fd: 5, addr: "localhost" }
+	switch e {
+		case FILE_INFO { string.puts("fileinfo\n") }
+		default        { string.puts("other\n") }
+	}
+}
