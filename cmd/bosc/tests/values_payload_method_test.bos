@@ -1,0 +1,25 @@
+package main
+
+import "string"
+
+type cats values {
+	RED{ lives i64 }
+	BLUE{ claws bool }
+} {
+	describe(self *cats) i64 {
+		switch s := *self {
+			case RED  { return s.lives }
+			case BLUE { return 0 }
+		}
+		return -1
+	}
+}
+
+fn main() {
+	var c cats := cats.RED{ lives: 9 }
+	string.puti(c.describe())
+	string.puts("\n")
+	var b cats := cats.BLUE{ claws: true }
+	string.puti(b.describe())
+	string.puts("\n")
+}

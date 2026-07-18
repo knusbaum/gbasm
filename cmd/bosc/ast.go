@@ -4671,12 +4671,6 @@ func (n *Node) toASTTop(c *Context) AST {
 			}
 			decl.Cases = append(decl.Cases, vc)
 		}
-		// Methods on a payload-bearing type would compile field access
-		// against a memory-backed receiver that later phases wire up; guard
-		// until then (PROPOSAL_adts_and_switch.md).
-		if decl.IsPayloadBearing() && len(methodNodes) > 0 {
-			ParseErrorF(n, "methods on payload-variant values types are not yet supported")
-		}
 		// Register the values type before processing methods so that
 		// methods can reference the receiver type by name.
 		c.DefineValuesType(n.p, n.sval, decl)
