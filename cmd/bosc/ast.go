@@ -2057,6 +2057,12 @@ func coerceType(c *Context, dst, src ASTType) (effective ASTType, reason coerceR
 		if dst.Indirection > 0 && dst.NilMask&1 != 0 {
 			return dst, coerceOK
 		}
+		// A nullable interface (`?I`, Indirection 0) also accepts nil: it is
+		// the interface's null value (a zeroed fat pointer). Non-nullable
+		// interfaces do not.
+		if dst.NilMask&1 != 0 && c != nil && c.IsInterfaceType(dst) {
+			return dst, coerceOK
+		}
 		return ASTType{}, coerceTypeMismatch
 	}
 	if dst.Accepts(src) {

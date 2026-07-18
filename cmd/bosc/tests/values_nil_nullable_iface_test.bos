@@ -1,0 +1,14 @@
+package main
+
+import "string"
+
+fn f() ?error {
+	return nil
+}
+
+fn main() {
+	x ?error := nil
+	if (x != nil) { string.puts("has\n") } else { string.puts("none\n") }
+	e := f()
+	if (e != nil) { string.puts("err\n") } else { string.puts("ok\n") }
+}

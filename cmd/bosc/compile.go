@@ -292,6 +292,13 @@ func shouldCoerceToInterface(c *Context, dstt, srct ASTType) bool {
 	if !c.IsInterfaceType(dstt) {
 		return false
 	}
+	// `nil` is not a concrete value to wrap in a fat pointer — it is the null
+	// interface value itself. A nullable interface destination gets a zeroed
+	// fat pointer via the nil-literal path; a non-nullable one is rejected
+	// there. Either way, do not route nil through the implements check.
+	if srct.Name == "<nil>" {
+		return false
+	}
 	if c.IsInterfaceType(srct) {
 		// interface → interface: a same-type assignment is a plain 16-byte copy
 		// (handled elsewhere). Distinct interface types route through the
@@ -5228,6 +5235,21 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if ast.Val == nil {
 			if dest.empty() {
 				CompileErrorF(a, "nil requires pointer context")
+			}
+			if c.IsInterfaceType(dest.t) {
+				// Nullable interface: nil is the null value — a zeroed 16-byte
+				// fat pointer {data:0, vtable:0}, the same representation a
+				// failed `x.(T)` assertion yields (vtable 0). A non-nullable
+				// interface cannot hold nil.
+				if dest.t.NilMask&1 == 0 {
+					CompileErrorF(a, "nil cannot initialize non-nullable interface %s; declare it ?%s", dest.t, dest.t)
+				}
+				z := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
+				fmt.Fprintf(of, "\tmov %s 0\n", z.ref)
+				fmt.Fprintf(of, "\tmov [%s] %s\n", dest.ref, z.ref)
+				fmt.Fprintf(of, "\tmov [%s+8] %s\n", dest.ref, z.ref)
+				z.free(of)
+				return dest
 			}
 			if dest.t.Indirection == 0 && dest.t.FuncSig == nil {
 				CompileErrorF(a, "nil cannot initialize non-pointer type %s", dest.t)
