@@ -1716,11 +1716,69 @@ values io_error {
 
 This carries the case list (with private tags), the projection signature, and the bare method names. The importing package reconstructs the `ValuesDecl` from this directive and from the already-imported function table, so `errors.io_error.NOT_FOUND`, `byte[](err)`, and `err.message()` all work cross-package without re-running the producer's `ToAST`. The projection-table symbols themselves are referenced by their qualified form (`errors.__projection_io_error__0`); the consumer emits a reference and the linker resolves it to the producer's data section.
 
+### Payload variants (ADTs) and the variant `switch`
+
+A `values` case may carry a **struct payload** — per-case runtime data — turning
+the type into a tagged union (an ADT). A variant is literally a struct, declared
+with brace syntax, and the tag selects which struct:
+
+```
+type file_info values {
+    FILE_INFO{ fd i64, path byte[] }
+    SOCKET{ fd i64, addr byte[] }
+    CLOSED
+}
+```
+
+A payload-bearing value is laid out flat as `{ tag : i64 }` followed by the
+largest variant's payload, and is memory-backed like any struct. A recursive
+payload must go through a pointer (`NODE{ left *tree }`); a by-value cycle has no
+finite size and is rejected. Payload variants and the constant-projection form
+(`values (i64, byte[]) {...}`) are mutually exclusive on one type.
+
+Construction uses struct-literal syntax on the case selector; a bare variant is
+just its selector:
+
+```
+e file_info := file_info.FILE_INFO{ fd: 3, path: "config.bos" }
+c file_info := file_info.CLOSED
+```
+
+The **variant `switch`** is a second mode of `switch` (alongside the `any`
+type-switch): it dispatches on the tag and **narrows** the scrutinee to the
+matched variant inside each `case`, after which the variant's fields are in
+scope. It is **exhaustive** — every variant must be covered or a `default`
+present:
+
+```
+switch e {
+    case FILE_INFO { puti(e.fd); puts(e.path) }   // e narrowed to FILE_INFO
+    case CLOSED    { puts("closed") }
+}
+```
+
+Field access is ordinary struct field access on the narrowed value: `e.fd` reads,
+`e.fd = x` writes (through a mutable scrutinee), `&e.fd` takes a pointer. It is
+only valid where the scrutinee is narrowed to a single variant (not in a
+`default`). Accessing a field name shared by several variants resolves to the
+narrowed variant's field (offset and type).
+
+**Ownership** reuses the existing machinery. An `owned` values value consumes its
+owned payload args at construction, and its owned payload fields can be moved out
+in a case (`f owned FD := e.fd`, reusing value-typed owned-field move) and the
+whole value discharged with `dispose(e)`. Owned consumption is all-or-nothing
+across the cases (as with `if`/`else`). The **tag cannot change while narrowed**:
+reassigning the whole scrutinee, or taking its address, inside its own case is
+rejected, and a scrutinee that already has a live alias is not narrowed — so
+`e.field` can never read the wrong payload.
+
 ### What is not in v1
 
-- No payload variants. A future `NOT_FOUND(path byte[])` shape (tagged union) would need a wider representation and is left to a separate feature.
+- Payload variants do not yet cross package boundaries, are not usable as a
+  `switch` *expression* (only a statement), and have no head-bound scrutinee
+  (`switch x := expr`) — all planned follow-ons (`PROPOSAL_adts_and_switch.md`).
 - No exposed raw tag value. The compiler may encode tags as a different representation in the future without changing surface semantics; users observing the tag must declare an integer projection.
-- No exhaustive `switch`/`match` syntax.
+- No or-patterns, guards, or field access in a `default` case.
 - No shorthand for hoisting selected case names into local scope.
 - No generated `.data()` or printing helpers — users project explicitly.
 
