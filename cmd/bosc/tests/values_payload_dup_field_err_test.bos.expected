@@ -1,0 +1,2 @@
+Compiling tests/values_payload_dup_field_err_test.bos
+Failed to parse: Duplicate field x in payload of variant A

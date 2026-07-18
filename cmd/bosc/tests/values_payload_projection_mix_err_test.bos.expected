@@ -1,0 +1,2 @@
+Compiling tests/values_payload_projection_mix_err_test.bos
+Failed to parse: Value A carries a struct payload, which is not allowed in a projection-bearing values type t

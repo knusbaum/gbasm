@@ -3877,6 +3877,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			r := ResolveSelector(c, ast)
 			if r.Kind == ResolvedValuesCase {
+				// A payload-bearing values type is memory-backed and not yet
+				// wired for construction / field access / the variant `switch`
+				// (PROPOSAL_adts_and_switch.md, later phases). The scalar
+				// tag-emission below is only valid for a plain tag/projection
+				// type, so guard any reference to a case of a payload-bearing
+				// type until those phases land.
+				if r.Values != nil && r.Values.IsPayloadBearing() {
+					CompileErrorF(ast, "payload-variant values types are not yet supported")
+				}
 				// Emit the case's private tag as a value of the values
 				// type. The tag is an i64 in v1.
 				if dest.empty() {

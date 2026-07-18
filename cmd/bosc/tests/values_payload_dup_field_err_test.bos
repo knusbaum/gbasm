@@ -1,0 +1,8 @@
+package main
+
+type t values {
+	A{ x i64, x i64 }
+	B
+}
+
+fn main() {}

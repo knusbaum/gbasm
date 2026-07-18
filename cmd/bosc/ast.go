@@ -218,11 +218,11 @@ func typeIsMemoryBacked(c *Context, t ASTType) bool {
 		if _, ok := c.InterfaceForName(t.Name); ok {
 			return true
 		}
-		// Values types are register-resident in v1 (private i64 tag).
-		// Make the choice explicit here so future representations
-		// (e.g. payload variants) can change it in one place.
-		if _, ok := c.ValuesDeclForName(t.Name); ok {
-			return false
+		// A plain tag/projection values type is register-resident (private
+		// i64 tag). A payload-bearing type is a tagged union of structs and
+		// is memory-backed like any aggregate.
+		if vd, ok := c.ValuesDeclForName(t.Name); ok {
+			return vd.IsPayloadBearing()
 		}
 	}
 	if _, isStruct := c.StructDeclForName(t.Name); isStruct {
@@ -1599,10 +1599,11 @@ func (t *ASTType) Size(c *Context) int {
 		if _, ok := c.InterfaceForName(t.Name); ok {
 			return 16
 		}
-		// Values type: storage is the private tag type. v1 is always
-		// i64, so the size lookup defers to the declared tag type.
+		// Values type: a plain tag/projection type is just the private tag
+		// (i64 in v1). A payload-bearing type is a tagged union of structs:
+		// the tag followed by enough bytes for the largest variant payload.
 		if vd, ok := c.ValuesDeclForName(t.Name); ok {
-			return vd.TagType.Size(c)
+			return vd.TagType.Size(c) + vd.PayloadMaxSize(c)
 		}
 	}
 	// Anonymous struct: sum of field sizes.
@@ -3495,7 +3496,13 @@ type ValuesCase struct {
 	Name string
 	Tag  int64
 	Expr []AST
-	p    position
+	// Payload is the variant's struct shape when it carries per-case runtime
+	// data (`FILE_INFO{ fd i64, path byte[] }`). Nil/empty for a bare variant
+	// (`CLOSED`) or a projection-bearing case. A payload variant is literally a
+	// struct; field resolution synthesizes `&StructDecl{Fields: Payload}` and
+	// the tag selects which struct (see PROPOSAL_adts_and_switch.md).
+	Payload []Binding
+	p       position
 }
 
 // ValuesDecl is the AST node for `type Name values [(projections)] { cases } [{ methods }]`.
@@ -3516,6 +3523,34 @@ type ValuesDecl struct {
 func (*ValuesDecl) ASTType(*Context) ASTType { return voidASTType() }
 func (d *ValuesDecl) Note() string           { return fmt.Sprintf("type %s values { ... }", d.Name) }
 func (d *ValuesDecl) Pos() position          { return d.p }
+
+// IsPayloadBearing reports whether any case carries a struct payload (making
+// the type a tagged union of structs rather than a plain tag/projection type).
+func (d *ValuesDecl) IsPayloadBearing() bool {
+	for i := range d.Cases {
+		if len(d.Cases[i].Payload) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// PayloadMaxSize returns the byte size of the largest variant payload (0 if
+// none). The runtime layout of a payload-bearing values value is
+// { tag : TagType} followed by this many payload bytes.
+func (d *ValuesDecl) PayloadMaxSize(c *Context) int {
+	max := 0
+	for i := range d.Cases {
+		if len(d.Cases[i].Payload) == 0 {
+			continue
+		}
+		sz := (&StructDecl{Fields: d.Cases[i].Payload}).Size(c)
+		if sz > max {
+			max = sz
+		}
+	}
+	return max
+}
 
 // vtableSpec records one vtable entry to be emitted.
 type vtableSpec struct {
@@ -4338,25 +4373,50 @@ func (n *Node) toASTTop(c *Context) AST {
 				ParseErrorF(cn, "Duplicate value name %s in values type %s", cn.sval, n.sval)
 			}
 			seenCase[cn.sval] = true
-			if nProj > 0 && len(cn.args) != nProj {
-				ParseErrorF(cn,
-					"Value %s has %d projection initializer(s) but %s declares %d projection(s)",
-					cn.sval, len(cn.args), n.sval, nProj)
-			}
-			if nProj == 0 && len(cn.args) > 0 {
-				ParseErrorF(cn,
-					"Value %s has projection initializer(s) but %s declares no projections",
-					cn.sval, n.sval)
-			}
 			vc := ValuesCase{
 				Name: cn.sval,
 				Tag:  int64(i),
 				p:    cn.p,
 			}
-			for _, e := range cn.args {
-				vc.Expr = append(vc.Expr, e.toASTTop(NewContext()))
+			if cn.ival == 1 {
+				// Payload variant: cn.args[0] is an anonymous-struct type node.
+				// A variant is literally a struct; the tag selects which.
+				if nProj > 0 {
+					ParseErrorF(cn,
+						"Value %s carries a struct payload, which is not allowed in a projection-bearing values type %s",
+						cn.sval, n.sval)
+				}
+				payloadType := mkTypename(cn.args[0])
+				seenField := make(map[string]bool, len(payloadType.AnonFields))
+				for _, f := range payloadType.AnonFields {
+					if seenField[f.Name] {
+						ParseErrorF(cn, "Duplicate field %s in payload of variant %s", f.Name, cn.sval)
+					}
+					seenField[f.Name] = true
+				}
+				vc.Payload = payloadType.AnonFields
+			} else {
+				if nProj > 0 && len(cn.args) != nProj {
+					ParseErrorF(cn,
+						"Value %s has %d projection initializer(s) but %s declares %d projection(s)",
+						cn.sval, len(cn.args), n.sval, nProj)
+				}
+				if nProj == 0 && len(cn.args) > 0 {
+					ParseErrorF(cn,
+						"Value %s has projection initializer(s) but %s declares no projections",
+						cn.sval, n.sval)
+				}
+				for _, e := range cn.args {
+					vc.Expr = append(vc.Expr, e.toASTTop(NewContext()))
+				}
 			}
 			decl.Cases = append(decl.Cases, vc)
+		}
+		// Methods on a payload-bearing type would compile field access
+		// against a memory-backed receiver that later phases wire up; guard
+		// until then (PROPOSAL_adts_and_switch.md).
+		if decl.IsPayloadBearing() && len(methodNodes) > 0 {
+			ParseErrorF(n, "methods on payload-variant values types are not yet supported")
 		}
 		// Register the values type before processing methods so that
 		// methods can reference the receiver type by name.

@@ -1893,6 +1893,35 @@ func (p *Parser) parseTypeDecl() *Node {
 	return &Node{t: n_typedecl, p: pos, sval: name.sval, args: []*Node{base}}
 }
 
+// parseAnonStructFields parses `{ name Type, ... }` (the current token must be
+// the opening `{`) into an anonymous-struct type node — sval="<struct>", args =
+// n_stfield nodes — the same shape parseTypeName produces for `struct { ... }`.
+// Reused for values payload variants (`FILE_INFO{ fd i64, path byte[] }`), where
+// a variant is literally a struct.
+func (p *Parser) parseAnonStructFields() *Node {
+	structpos := p.current().p
+	p.expect(tok_lcurly)
+	var fieldNodes []*Node
+	for p.current().t != tok_rcurly {
+		if p.current().t == tok_semicolon || p.current().t == tok_comma {
+			p.advance()
+			continue
+		}
+		fieldpos := p.current().p
+		fname := p.parseTok()
+		if fname.t != n_symbol {
+			panic(&interpreterError{fmt.Sprintf("Expected field name, but found: %v", fname), fname.p})
+		}
+		if p.current().t == tok_colon {
+			p.advance()
+		}
+		ftypeNode := p.parseTypeName()
+		fieldNodes = append(fieldNodes, &Node{t: n_stfield, p: fieldpos, sval: fname.sval, args: []*Node{ftypeNode}})
+	}
+	p.expect(tok_rcurly)
+	return &Node{t: n_typename, p: structpos, sval: "<struct>", args: fieldNodes}
+}
+
 // parseValuesDecl parses the body of `type Name values ...`:
 //
 //	type Name values { CASE_A; CASE_B }
@@ -1944,6 +1973,12 @@ func (p *Parser) parseValuesDecl(pos position, name *Node) *Node {
 				p.advance()
 				caseNode.args = append(caseNode.args, p.parseExpression())
 			}
+		} else if p.current().t == tok_lcurly {
+			// Payload variant: `NAME{ field Type, ... }` — an anonymous struct
+			// shape. ival=1 marks the case as payload-bearing; args[0] is the
+			// "<struct>" type node (distinct from projection initializer exprs).
+			caseNode.ival = 1
+			caseNode.args = append(caseNode.args, p.parseAnonStructFields())
 		} else if hasProjections {
 			panic(&interpreterError{
 				fmt.Sprintf("Case %s missing projection initializers; type %s declares %d projection(s)",
