@@ -22,7 +22,8 @@ checks that confirm the learner exercised the intended concept.
 `DESIGN.md` is the authoritative language reference, but it is dense and aimed
 at implementers. New users need a guided route through Boson's unusual parts:
 ownership obligations, nullable pointer flow, write-through mutability, type
-aliases with methods, interfaces, and values types.
+aliases with methods, interfaces, values types, and sum types with `switch`
+dispatch.
 
 A tour gives the project a stable teaching surface while keeping the reference
 document focused on semantics.
@@ -149,7 +150,8 @@ helper package is not in the tour bundle).
 
 16. Owned values and obligations.
 17. `dispose`.
-18. Owned fields.
+18. Owned fields — including moving an owned field out of an aggregate and
+    re-initializing it (the partial-decompose / value-field-move feature).
 19. Borrowed pointers.
 20. Common compile-time ownership errors.
 
@@ -165,18 +167,26 @@ helper package is not in the tour bundle).
     pointers it returns.
 27. Cross-package imports at a conceptual level.
 
-### Values Types
+### Sum Types and Dispatch
 
-28. Declaring `values` types.
-29. Cases and projection casts.
-30. Values comparisons.
-31. Values in interfaces or structs.
+28. The `any` type and the type-switch (`switch (v x.(type))`) — a dynamic-type
+    escape hatch, and dispatching on a value's runtime type.
+29. Declaring `values` types (tag-only closed symbolic sets).
+30. Cases and projection casts.
+31. Values comparisons.
+32. Values in interfaces or structs.
+33. Payload variants — a variant *is* a struct, and the tag selects which
+    (ADTs): declaration (`FILE_INFO{ … }`), construction, and field access.
+34. `switch` over a `values` type — the *second mode* of `switch`: exhaustive
+    variant dispatch, per-case narrowing, field mutation, and payload ownership
+    (moving an owned payload out, the destructor pattern). See
+    [`PROPOSAL_adts_and_switch.md`](PROPOSAL_adts_and_switch.md).
 
 ### Runtime Packages
 
-32. `fmt` formatted output (`print`/`printf` and the format verbs).
-33. `io.FD` and typed file operations.
-34. `_heap` through the allocator interface, if exposed in user-facing form.
+35. `fmt` formatted output (`print`/`printf` and the format verbs).
+36. `io.FD` and typed file operations.
+37. `_heap` through the allocator interface, if exposed in user-facing form.
 
 ## UI
 
@@ -277,7 +287,8 @@ implemented:
    itself vanilla JS, not npm/esbuild/CodeMirror. No frontend build step
    is introduced. A richer editor (e.g. CodeMirror) would be a separate,
    opt-in decision affecting both services.
-6. Expand lessons through interfaces, values types, and runtime packages.
+6. Expand lessons through interfaces, values types, sum types (`switch`), and
+   runtime packages.
 7. Add richer checks once plain stdout/diagnostic lessons are stable.
 
 ## Open questions
