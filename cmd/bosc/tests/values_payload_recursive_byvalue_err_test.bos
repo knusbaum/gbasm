@@ -1,0 +1,8 @@
+package main
+
+type tree values {
+	LEAF{ v i64 }
+	NODE{ left tree, right tree }
+}
+
+fn main() {}

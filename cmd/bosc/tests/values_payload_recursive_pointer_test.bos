@@ -1,0 +1,16 @@
+package main
+
+import "string"
+
+type tree values {
+	LEAF{ v i64 }
+	NODE{ left *tree, right *tree }
+}
+
+fn main() {
+	t tree := tree.LEAF{ v: 42 }
+	switch t {
+		case LEAF { string.puti(t.v); string.puts("\n") }
+		case NODE { string.puts("node\n") }
+	}
+}

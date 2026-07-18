@@ -1,0 +1,2 @@
+Compiling tests/values_payload_recursive_byvalue_err_test.bos
+Failed to parse: recursive value type "tree" must go through a pointer: it contains itself by value, which has no finite size

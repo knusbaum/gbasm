@@ -3617,6 +3617,52 @@ func (*ValuesDecl) ASTType(*Context) ASTType { return voidASTType() }
 func (d *ValuesDecl) Note() string           { return fmt.Sprintf("type %s values { ... }", d.Name) }
 func (d *ValuesDecl) Pos() position          { return d.p }
 
+// checkTypeFinite rejects a value type that (transitively, through value-typed
+// fields — structs, anonymous structs, other values payloads, arrays — but not
+// pointers or slices) contains itself by value, which would have no finite size
+// and overflow Size(). Recursive types must go through a pointer. `seen` is the
+// set of named value types on the current path.
+func checkTypeFinite(c *Context, t ASTType, seen []string, p position) {
+	if t.Indirection > 0 || t.FuncSig != nil || t.IsSlice() {
+		return // pointers, function pointers, and slice headers are finite
+	}
+	if t.IsArray() && t.Element != nil {
+		checkTypeFinite(c, *t.Element, seen, p)
+		return
+	}
+	name := t.Name
+	if name != "" {
+		for _, n := range seen {
+			if n == name {
+				panic(&interpreterError{fmt.Sprintf("recursive value type %q must go through a pointer: it contains itself by value, which has no finite size", name), p})
+			}
+		}
+	}
+	seen2 := seen
+	if name != "" {
+		seen2 = append(append([]string{}, seen...), name)
+	}
+	if vd, ok := c.ValuesDeclForName(name); ok {
+		for i := range vd.Cases {
+			for _, f := range vd.Cases[i].Payload {
+				checkTypeFinite(c, f.Type, seen2, p)
+			}
+		}
+		return
+	}
+	if t.AnonFields != nil {
+		for _, f := range t.AnonFields {
+			checkTypeFinite(c, f.Type, seen2, p)
+		}
+		return
+	}
+	if sd, ok := c.StructDeclForName(name); ok {
+		for _, f := range sd.Fields {
+			checkTypeFinite(c, f.Type, seen2, p)
+		}
+	}
+}
+
 // IsPayloadBearing reports whether any case carries a struct payload (making
 // the type a tagged union of structs rather than a plain tag/projection type).
 func (d *ValuesDecl) IsPayloadBearing() bool {
@@ -4570,6 +4616,11 @@ func (n *Node) toASTTop(c *Context) AST {
 		// Register the values type before processing methods so that
 		// methods can reference the receiver type by name.
 		c.DefineValuesType(n.p, n.sval, decl)
+		// Reject an infinitely-sized (recursive-by-value) payload type; a
+		// recursive ADT must go through a pointer (`NODE{ left *tree }`).
+		if decl.IsPayloadBearing() {
+			checkTypeFinite(c, ASTType{Name: n.sval}, nil, n.p)
+		}
 		// Methods: same lowering as type-with-methods. Methods register
 		// under `Name.method` in funcs and on the type's method table.
 		var methods []*FuncDecl
