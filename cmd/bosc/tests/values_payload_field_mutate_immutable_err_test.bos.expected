@@ -1,0 +1,2 @@
+Compiling tests/values_payload_field_mutate_immutable_err_test.bos
+Fatal: Cannot assign to immutable binding "e"

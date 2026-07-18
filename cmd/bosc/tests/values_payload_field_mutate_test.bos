@@ -1,0 +1,21 @@
+package main
+
+import "string"
+
+// Phase 3: mutate a payload field in a narrowed case (mutable scrutinee).
+type file_info values {
+	FILE_INFO{ fd i64, path byte[] }
+	CLOSED
+}
+
+fn main() {
+	var e file_info := file_info.FILE_INFO{ fd: 3, path: "x" }
+	switch e {
+		case FILE_INFO {
+			e.fd = 99
+			string.puti(e.fd)
+			string.puts("\n")
+		}
+		case CLOSED { string.puts("closed\n") }
+	}
+}

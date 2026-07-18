@@ -2718,6 +2718,19 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 			fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, ref)
 			return dest
 		}
+		// Narrowed values field lvalue (`e.fd = x`, `&e.fd`): address the
+		// payload field at tagSize + payload offset within the values value.
+		if mtype, voff, ok := narrowedValuesField(c, ast); ok {
+			base := compileLval(of, c, ast.Val, nullspot)
+			ptrType := mtype
+			ptrType.Indirection++
+			if dest.empty() {
+				dest = newSpot(of, c, c.Temp(), ptrType)
+			}
+			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", dest.ref, base.ref, voff)
+			base.free(of)
+			return dest
+		}
 		l := compileLval(of, c, ast.Val, nullspot)
 		orig := l
 		l = materializePointerValue(of, c, l)

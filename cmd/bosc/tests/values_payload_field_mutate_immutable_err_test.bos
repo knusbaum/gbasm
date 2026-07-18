@@ -1,0 +1,16 @@
+package main
+
+import "string"
+
+type foo values {
+	A{ x i64 }
+	B
+}
+
+fn main() {
+	e foo := foo.A{ x: 1 }
+	switch e {
+		case A { e.x = 9; string.puti(e.x) }
+		case B { string.puts("b") }
+	}
+}

@@ -1,0 +1,24 @@
+package main
+
+import "string"
+
+type foo values {
+	A{ x i64 }
+	B
+}
+
+fn bump(p *mut i64) {
+	*p = *p + 100
+}
+
+fn main() {
+	var e foo := foo.A{ x: 5 }
+	switch e {
+		case A {
+			bump(&e.x)
+			string.puti(e.x)
+			string.puts("\n")
+		}
+		case B { string.puts("b\n") }
+	}
+}
