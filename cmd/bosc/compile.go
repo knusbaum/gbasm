@@ -6122,13 +6122,15 @@ func compareUsesInterface(c *Context, o *Op2) bool {
 		c.IsInterfaceType(o.Second.ASTType(c).StripOwned())
 }
 
-func compileAsInterfaceValue(of io.Writer, c *Context, errNode AST, ifaceType ASTType, val AST) spot {
+func compileAsInterfaceValue(of io.Writer, c *Context, errNode AST, ifaceType ASTType, val AST, allowNull bool) spot {
 	ifaceType = ifaceType.StripOwned()
 	valType := val.ASTType(c)
-	// Asserting/widening/comparing *from* a nullable interface dereferences its
-	// vtable (vtable[0] = typedesc); a null source would crash. Require it
-	// narrowed first, exactly like dispatch.
-	if vt := valType.StripOwned(); c.IsInterfaceType(vt) && vt.NilMask&1 != 0 {
+	// Asserting/widening *from* a nullable interface dereferences its vtable
+	// (vtable[0] = typedesc); a null source would crash. Require it narrowed
+	// first, exactly like dispatch. Equality comparison passes allowNull: it
+	// guards the deref against a nil vtable itself, so it can compare an
+	// un-narrowed nullable operand safely.
+	if vt := valType.StripOwned(); !allowNull && c.IsInterfaceType(vt) && vt.NilMask&1 != 0 {
 		CompileErrorF(errNode, "%s is a nullable interface and may be null; narrow it with `if (... != nil)` first", vt)
 	}
 	if c.IsInterfaceType(valType.StripOwned()) {
@@ -6190,8 +6192,8 @@ func compileInterfaceEquality(of io.Writer, c *Context, o *Op2, dest spot) spot 
 		panic("compileInterfaceEquality called without an interface operand")
 	}
 
-	first := compileAsInterfaceValue(of, c, o.First, ifaceType, o.First)
-	second := compileAsInterfaceValue(of, c, o.Second, ifaceType, o.Second)
+	first := compileAsInterfaceValue(of, c, o.First, ifaceType, o.First, true)
+	second := compileAsInterfaceValue(of, c, o.Second, ifaceType, o.Second, true)
 	defer first.free(of)
 	defer second.free(of)
 
@@ -6211,30 +6213,63 @@ func compileInterfaceEquality(of io.Writer, c *Context, o *Op2, dest spot) spot 
 	defer secondVtable.free(of)
 	defer secondTypedesc.free(of)
 
+	// Load the two fat pointers (data + vtable). Do NOT dereference either
+	// vtable to its typedesc yet: a nil operand has vtable == 0, and `[0+0]`
+	// would fault. The typedesc deref happens only after the nil guard below.
 	fmt.Fprintf(of, "\tmov %s [%s+0]\n", firstData.ref, first.ref)
 	fmt.Fprintf(of, "\tmov %s [%s+8]\n", firstVtable.ref, first.ref)
-	fmt.Fprintf(of, "\tmov %s [%s+0]\n", firstTypedesc.ref, firstVtable.ref)
 	fmt.Fprintf(of, "\tmov %s [%s+0]\n", secondData.ref, second.ref)
 	fmt.Fprintf(of, "\tmov %s [%s+8]\n", secondVtable.ref, second.ref)
-	fmt.Fprintf(of, "\tmov %s [%s+0]\n", secondTypedesc.ref, secondVtable.ref)
 
-	done := c.Label("ifacecmp")
+	// Two interface values are equal iff their concrete typedesc and data bits
+	// match. onEqual/onNotEqual fold the == / != variants into one emitter.
+	onEqual, onNotEqual := "1", "0"
 	if o.Type == n_neq {
-		fmt.Fprintf(of, "\tmov %s 1\n", dest.ref)
+		onEqual, onNotEqual = "0", "1"
+	}
+	done := c.Label("ifacecmp")
+
+	// If either operand is statically nullable it may be nil at runtime, so we
+	// cannot blindly deref its vtable. Emit an explicit nil test that short-
+	// circuits before the deref: a nil interface equals only another nil
+	// interface (`err == io_err.X` is false when err is nil; `err != io_err.X`
+	// is true). A narrowed operand clears NilMask (ast.go TypeForVar), so this
+	// guard vanishes once the value is proven non-null.
+	if ft.NilMask&1 != 0 || st.NilMask&1 != 0 {
+		firstLive := c.Label("ifacecmp_live")
+		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, onNotEqual)
+		fmt.Fprintf(of, "\tcmp %s 0\n", firstVtable.ref)
+		fmt.Fprintf(of, "\tjne %s\n", firstLive)
+		// first is nil: equal iff second is also nil.
+		fmt.Fprintf(of, "\tcmp %s 0\n", secondVtable.ref)
+		fmt.Fprintf(of, "\tjne %s\n", done) // second live -> not equal
+		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, onEqual)
+		fmt.Fprintf(of, "\tjmp %s\n", done)
+		fmt.Fprintf(of, "\tlabel %s\n", firstLive)
+		// first is live: a nil second cannot equal it.
+		fmt.Fprintf(of, "\tcmp %s 0\n", secondVtable.ref)
+		fmt.Fprintf(of, "\tje %s\n", done) // second nil -> not equal
+		// both live: safe to dereference the vtables to their typedescs.
+		fmt.Fprintf(of, "\tmov %s [%s+0]\n", firstTypedesc.ref, firstVtable.ref)
+		fmt.Fprintf(of, "\tmov %s [%s+0]\n", secondTypedesc.ref, secondVtable.ref)
 		fmt.Fprintf(of, "\tcmp %s %s\n", firstTypedesc.ref, secondTypedesc.ref)
 		fmt.Fprintf(of, "\tjne %s\n", done)
 		fmt.Fprintf(of, "\tcmp %s %s\n", firstData.ref, secondData.ref)
 		fmt.Fprintf(of, "\tjne %s\n", done)
-		fmt.Fprintf(of, "\tmov %s 0\n", dest.ref)
+		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, onEqual)
 		fmt.Fprintf(of, "\tlabel %s\n", done)
 		return dest
 	}
-	fmt.Fprintf(of, "\tmov %s 0\n", dest.ref)
+
+	// Neither operand can be nil: dereference the typedescs directly.
+	fmt.Fprintf(of, "\tmov %s [%s+0]\n", firstTypedesc.ref, firstVtable.ref)
+	fmt.Fprintf(of, "\tmov %s [%s+0]\n", secondTypedesc.ref, secondVtable.ref)
+	fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, onNotEqual)
 	fmt.Fprintf(of, "\tcmp %s %s\n", firstTypedesc.ref, secondTypedesc.ref)
 	fmt.Fprintf(of, "\tjne %s\n", done)
 	fmt.Fprintf(of, "\tcmp %s %s\n", firstData.ref, secondData.ref)
 	fmt.Fprintf(of, "\tjne %s\n", done)
-	fmt.Fprintf(of, "\tmov %s 1\n", dest.ref)
+	fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, onEqual)
 	fmt.Fprintf(of, "\tlabel %s\n", done)
 	return dest
 }
@@ -7222,7 +7257,7 @@ func compileTypeAssert(of io.Writer, c *Context, ast *TypeAssert, dest spot) spo
 	tdSym := typedescSymbolForBase(c, baseName)
 
 	// Compile the interface value to a 16-byte fat pointer (address in src.ref).
-	src := compileAsInterfaceValue(of, c, ast.Val, srcT, ast.Val)
+	src := compileAsInterfaceValue(of, c, ast.Val, srcT, ast.Val, false)
 	defer src.free(of)
 
 	resultType := ast.ASTType(c)
@@ -7436,7 +7471,7 @@ func emitInterfaceWiden(of io.Writer, c *Context, errNode AST, dstt, srct ASTTyp
 			srct.Name, dstt.Name, dstt.Name, srct.Name, dstt.Name)
 	}
 	descSym := ifaceDescSymbol(c, dstt.Name)
-	src := compileAsInterfaceValue(of, c, valAST, srct, valAST)
+	src := compileAsInterfaceValue(of, c, valAST, srct, valAST, false)
 	defer src.free(of)
 
 	vtTmp, okTmp := emitAssertToCall(of, c, src.ref, descSym)
@@ -7466,7 +7501,7 @@ func emitInterfaceWiden(of io.Writer, c *Context, errNode AST, dstt, srct ASTTyp
 func compileInterfaceAssert(of io.Writer, c *Context, ast *TypeAssert, dest spot, srcT ASTType) spot {
 	descSym := ifaceDescSymbol(c, ast.T.Name)
 
-	src := compileAsInterfaceValue(of, c, ast.Val, srcT, ast.Val)
+	src := compileAsInterfaceValue(of, c, ast.Val, srcT, ast.Val, false)
 	defer src.free(of)
 
 	resultType := ast.ASTType(c) // ?T — a single nullable interface
@@ -7691,7 +7726,7 @@ func compileTypeSwitch(of io.Writer, c *Context, ast *TypeSwitch) {
 	if !c.IsInterfaceType(srcT) {
 		CompileErrorF(ast, "type switch requires an interface value, got %s", srcT)
 	}
-	src := compileAsInterfaceValue(of, c, ast.Val, srcT, ast.Val)
+	src := compileAsInterfaceValue(of, c, ast.Val, srcT, ast.Val, false)
 	defer src.free(of)
 
 	vtab := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})

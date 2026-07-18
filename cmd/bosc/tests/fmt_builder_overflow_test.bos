@@ -13,14 +13,11 @@ fn main() i64 {
 	b.str("ab")           // fits: pos=2
 	b.str("cdef")         // would need 4, only 2 left -> latches ENOSPC
 	b.str("zz")           // no-op (already latched)
-	var msg byte[] := "UNEXPECTED: "
-	e := b.error()
-	if (e != nil) {
-		if (e == io.io_err.ENOSPC) {
-			msg = "overflowed: "
-		}
+	if (b.error() == io.io_err.ENOSPC) {
+		string.puts("overflowed: ")
+	} else {
+		string.puts("UNEXPECTED: ")
 	}
-	string.puts(msg)
 	string.puts(b.bytes())
 	string.puts(" pos=")
 	string.puti(len(b.bytes()))

@@ -1,0 +1,58 @@
+package main
+
+import "io"
+import "string"
+
+// Comparing an un-narrowed nullable interface against a concrete case:
+// `x == C` is true only when x is non-nil and equals C; `x != C` is its
+// negation, so it is TRUE when x is nil. The compiler emits the nil guard
+// automatically when the operand is not already narrowed.
+
+fn err_or_nil(fail bool) ?error {
+	if (fail) {
+		return io.io_err.ENOSPC
+	}
+	return nil
+}
+
+fn pb(b bool) {
+	if (b) {
+		string.puts("T")
+	} else {
+		string.puts("F")
+	}
+}
+
+fn main() {
+	live := err_or_nil(true)   // ?error holding ENOSPC
+	none := err_or_nil(false)  // ?error holding nil
+
+	// nil value vs concrete: == false, != true (the surprising-but-correct one)
+	pb(none == io.io_err.ENOSPC)  // F
+	pb(none != io.io_err.ENOSPC)  // T
+	string.putc(10)
+
+	// live value, matching concrete: == true, != false
+	pb(live == io.io_err.ENOSPC)  // T
+	pb(live != io.io_err.ENOSPC)  // F
+	string.putc(10)
+
+	// live value, non-matching concrete: == false, != true
+	pb(live == io.io_err.EBADF)   // F
+	pb(live != io.io_err.EBADF)   // T
+	string.putc(10)
+
+	// both operands nullable: nil==nil, nil==live, live==live
+	none2 := err_or_nil(false)
+	live2 := err_or_nil(true)
+	pb(none == none2)             // T
+	pb(none == live)              // F
+	pb(live == live2)             // T
+	string.putc(10)
+
+	// narrowed operand takes the fast path (no guard) and still compares
+	if (live != nil) {
+		pb(live == io.io_err.ENOSPC)  // T
+	}
+	string.putc(10)
+}
