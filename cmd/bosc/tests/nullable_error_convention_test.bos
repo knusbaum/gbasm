@@ -1,0 +1,15 @@
+package main
+
+import "fmt"
+
+// The stdlib error convention: error-returning functions return ?error, nil on
+// success, callers check `if (err != nil)`.
+fn main() {
+	c, err := fmt.print("count=%d\n", 7)
+	_ := c
+	if (err != nil) {
+		fmt.print("write failed\n")
+	} else {
+		fmt.print("ok\n")
+	}
+}

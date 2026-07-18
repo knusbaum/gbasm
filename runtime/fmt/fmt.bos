@@ -218,13 +218,13 @@ fn write_hex(out mut byte[], n u64, width i64) {
 // ---------------------------------------------------------------------------
 
 // str writes s to w verbatim. Returns (written, err) mirroring io.writer.write.
-pub fn str(w io.writer, s byte[]) i64, error {
+pub fn str(w io.writer, s byte[]) i64, ?error {
 	n, err := w.write(s)
 	return n, err
 }
 
 // int formats n as signed decimal into a stack buffer and writes it once.
-pub fn int(w io.writer, n i64) i64, error {
+pub fn int(w io.writer, n i64) i64, ?error {
 	var buf byte[24]
 	s byte[] := itoa(buf[:], n)
 	k, err := w.write(s)
@@ -232,7 +232,7 @@ pub fn int(w io.writer, n i64) i64, error {
 }
 
 // uint formats n as unsigned decimal and writes it once.
-pub fn uint(w io.writer, n u64) i64, error {
+pub fn uint(w io.writer, n u64) i64, ?error {
 	var buf byte[24]
 	s byte[] := utoa(buf[:], n)
 	k, err := w.write(s)
@@ -240,7 +240,7 @@ pub fn uint(w io.writer, n u64) i64, error {
 }
 
 // hex formats n as "0x"-prefixed lowercase hex and writes it once.
-pub fn hex(w io.writer, n u64) i64, error {
+pub fn hex(w io.writer, n u64) i64, ?error {
 	var buf byte[24]
 	b mut byte[] := buf[:]
 	b[0] = 48      // '0'
@@ -251,7 +251,7 @@ pub fn hex(w io.writer, n u64) i64, error {
 }
 
 // char writes the single byte c.
-pub fn char(w io.writer, c byte) i64, error {
+pub fn char(w io.writer, c byte) i64, ?error {
 	var buf byte[1]
 	buf[0] = c
 	k, err := w.write(buf[:])
@@ -259,7 +259,7 @@ pub fn char(w io.writer, c byte) i64, error {
 }
 
 // bool writes "true" or "false".
-pub fn bool(w io.writer, b bool) i64, error {
+pub fn bool(w io.writer, b bool) i64, ?error {
 	if (b) {
 		k, err := w.write("true")
 		return k, err
@@ -269,7 +269,7 @@ pub fn bool(w io.writer, b bool) i64, error {
 }
 
 // nl writes a single newline.
-pub fn nl(w io.writer) i64, error {
+pub fn nl(w io.writer) i64, ?error {
 	k, err := w.write("\n")
 	return k, err
 }
@@ -284,7 +284,7 @@ pub fn nl(w io.writer) i64, error {
 //
 //     var backing byte[256]
 //     var b fmt.Builder = fmt.Builder{
-//         buf: backing[:], pos: 0, err_: io.io_err.OK }
+//         buf: backing[:], pos: 0, err_: nil }
 //
 // Append methods are statement-shaped (they return nothing) and follow a
 // latched-error pattern: the first append that would overflow the buffer
@@ -298,12 +298,12 @@ pub fn nl(w io.writer) i64, error {
 pub type Builder struct {
 	buf  mut byte[]
 	pos  i64
-	err_ error
+	err_ ?error
 } {
 	// str appends s, truncating nothing — if it would not fit, the latched
 	// error is set and nothing is written.
 	str(b *mut Builder, s byte[]) {
-		if (b.err_ != io.io_err.OK) { return }
+		if (b.err_ != nil) { return }
 		room i64 := len(b.buf) - b.pos
 		if (len(s) > room) {
 			b.err_ = io.io_err.ENOSPC
@@ -317,7 +317,7 @@ pub type Builder struct {
 	}
 
 	int(b *mut Builder, n i64) {
-		if (b.err_ != io.io_err.OK) { return }
+		if (b.err_ != nil) { return }
 		need i64 := n_digits(n)
 		room i64 := len(b.buf) - b.pos
 		if (need > room) {
@@ -329,7 +329,7 @@ pub type Builder struct {
 	}
 
 	uint(b *mut Builder, n u64) {
-		if (b.err_ != io.io_err.OK) { return }
+		if (b.err_ != nil) { return }
 		need i64 := n_udigits(n)
 		room i64 := len(b.buf) - b.pos
 		if (need > room) {
@@ -341,7 +341,7 @@ pub type Builder struct {
 	}
 
 	hex(b *mut Builder, n u64) {
-		if (b.err_ != io.io_err.OK) { return }
+		if (b.err_ != nil) { return }
 		need i64 := 2 + n_hex_digits(n)
 		room i64 := len(b.buf) - b.pos
 		if (need > room) {
@@ -355,7 +355,7 @@ pub type Builder struct {
 	}
 
 	char(b *mut Builder, c byte) {
-		if (b.err_ != io.io_err.OK) { return }
+		if (b.err_ != nil) { return }
 		if (b.pos >= len(b.buf)) {
 			b.err_ = io.io_err.ENOSPC
 			return
@@ -386,15 +386,15 @@ pub type Builder struct {
 		return len(b.buf) - b.pos
 	}
 
-	// error returns the latched error (io.io_err.OK while clean).
-	error(b *Builder) error {
+	// error returns the latched error (nil while clean).
+	error(b *Builder) ?error {
 		return b.err_
 	}
 
 	// reset rewinds the cursor and clears the latched error; buf is untouched.
 	reset(b *mut Builder) {
 		b.pos = 0
-		b.err_ = io.io_err.OK
+		b.err_ = nil
 	}
 }
 
@@ -409,7 +409,7 @@ pub type BuilderWriter struct {
 	// write appends bs to the underlying Builder. Reading self.b yields the
 	// *mut Builder and the *mut str method is callable through it; the
 	// adapter struct itself is not mutated.
-	write(self *BuilderWriter, bs byte[]) i64, error {
+	write(self *BuilderWriter, bs byte[]) i64, ?error {
 		before i64 := self.b.pos
 		self.b.str(bs)
 		after i64 := self.b.pos
@@ -440,9 +440,9 @@ pub interface stringer {
 
 // Formatter is implemented by types whose rendering must be constructed at
 // call time. format writes self into w and returns the first write error (or
-// io.io_err.OK).
+// nil).
 pub interface Formatter {
-	format(self *self, w io.writer) error
+	format(self *self, w io.writer) ?error
 }
 
 // ---------------------------------------------------------------------------
@@ -457,7 +457,7 @@ type counting_writer struct {
 	inner io.writer
 	n     i64
 } {
-	write(self *mut counting_writer, bs byte[]) i64, error {
+	write(self *mut counting_writer, bs byte[]) i64, ?error {
 		// Bind the interface-typed field to a local before dispatch — the
 		// compiler does not (yet) dispatch an interface method directly on a
 		// field-access expression receiver.
@@ -469,7 +469,7 @@ type counting_writer struct {
 }
 
 // print formats to stdout. See printf for directive semantics.
-pub fn print(format byte[], args ...any) i64, error {
+pub fn print(format byte[], args ...any) i64, ?error {
 	// &io.STDOUT coerces the global FD to the *self-shaped io.writer.
 	return printf(&io.STDOUT, format, args...)
 }
@@ -492,9 +492,9 @@ pub fn print(format byte[], args ...any) i64, error {
 // arg). A write failure stops immediately; mismatch and missing-arg write an
 // inline marker, latch the error, and continue. Surplus args are appended
 // %v-style and latch a surplus error.
-pub fn printf(w io.writer, format byte[], args ...any) i64, error {
+pub fn printf(w io.writer, format byte[], args ...any) i64, ?error {
 	var total i64 := 0
-	var latched error := io.io_err.OK
+	var latched ?error := nil
 	var argi i64 := 0
 	nargs i64 := len(args)
 	flen i64 := len(format)
@@ -503,7 +503,7 @@ pub fn printf(w io.writer, format byte[], args ...any) i64, error {
 		if (format[i] != 37) {            // not '%'
 			k, werr := wbyte(w, format[i])
 			total = total + k
-			if (werr != io.io_err.OK) { return total, werr }
+			if (werr != nil) { return total, werr }
 			continue
 		}
 		// format[i] == '%'. Look at the verb.
@@ -512,19 +512,19 @@ pub fn printf(w io.writer, format byte[], args ...any) i64, error {
 			// Trailing '%' with no verb: emit it literally.
 			k, werr := wbyte(w, 37)
 			total = total + k
-			if (werr != io.io_err.OK) { return total, werr }
+			if (werr != nil) { return total, werr }
 			break
 		}
 		verb byte := format[i]
 		if (verb == 37) {                 // '%%'
 			k, werr := wbyte(w, 37)
 			total = total + k
-			if (werr != io.io_err.OK) { return total, werr }
+			if (werr != nil) { return total, werr }
 			continue
 		}
 		// All other verbs consume one arg.
 		if (argi >= nargs) {
-			k, stop bool, werr error := wmissing(w, verb)
+			k, stop bool, werr ?error := wmissing(w, verb)
 			total = total + k
 			latched = io.io_err.EINVAL
 			if (stop) { return total, werr }
@@ -533,10 +533,10 @@ pub fn printf(w io.writer, format byte[], args ...any) i64, error {
 		}
 		a any := args[argi]
 		argi = argi + 1
-		k, stop bool, werr error := render_one(w, verb, a)
+		k, stop bool, werr ?error := render_one(w, verb, a)
 		total = total + k
 		if (stop) { return total, werr }
-		if (werr != io.io_err.OK) {
+		if (werr != nil) {
 			latched = werr
 		}
 	}
@@ -545,9 +545,9 @@ pub fn printf(w io.writer, format byte[], args ...any) i64, error {
 		for (; argi < nargs; argi = argi + 1) {
 			ks, serr := wbyte(w, 32)        // ' '
 			total = total + ks
-			if (serr != io.io_err.OK) { return total, serr }
+			if (serr != nil) { return total, serr }
 			a any := args[argi]
-			k, stop bool, werr error := render_v(w, a)
+			k, stop bool, werr ?error := render_v(w, a)
 			total = total + k
 			if (stop) { return total, werr }
 		}
@@ -557,7 +557,7 @@ pub fn printf(w io.writer, format byte[], args ...any) i64, error {
 }
 
 // wbyte writes a single byte and returns (written, err).
-fn wbyte(w io.writer, c byte) i64, error {
+fn wbyte(w io.writer, c byte) i64, ?error {
 	var buf byte[1]
 	buf[0] = c
 	k, err := w.write(buf[:])
@@ -566,34 +566,34 @@ fn wbyte(w io.writer, c byte) i64, error {
 
 // wmissing emits a "%!<verb>(MISSING)" marker for an out-of-args directive.
 // Returns (written, stop, err): stop is true on a write failure.
-fn wmissing(w io.writer, verb byte) i64, bool, error {
+fn wmissing(w io.writer, verb byte) i64, bool, ?error {
 	var total i64 := 0
 	k1, e1 := w.write("%!")
 	total = total + k1
-	if (e1 != io.io_err.OK) { return total, true, e1 }
+	if (e1 != nil) { return total, true, e1 }
 	k2, e2 := wbyte(w, verb)
 	total = total + k2
-	if (e2 != io.io_err.OK) { return total, true, e2 }
+	if (e2 != nil) { return total, true, e2 }
 	k3, e3 := w.write("(MISSING)")
 	total = total + k3
-	if (e3 != io.io_err.OK) { return total, true, e3 }
-	return total, false, io.io_err.OK
+	if (e3 != nil) { return total, true, e3 }
+	return total, false, nil
 }
 
 // wmismatch emits a "%!<verb>(...)" marker for a directive whose arg failed
 // its type assertion. Returns (written, stop, err).
-fn wmismatch(w io.writer, verb byte) i64, bool, error {
+fn wmismatch(w io.writer, verb byte) i64, bool, ?error {
 	var total i64 := 0
 	k1, e1 := w.write("%!")
 	total = total + k1
-	if (e1 != io.io_err.OK) { return total, true, e1 }
+	if (e1 != nil) { return total, true, e1 }
 	k2, e2 := wbyte(w, verb)
 	total = total + k2
-	if (e2 != io.io_err.OK) { return total, true, e2 }
+	if (e2 != nil) { return total, true, e2 }
 	k3, e3 := w.write("(BADTYPE)")
 	total = total + k3
-	if (e3 != io.io_err.OK) { return total, true, e3 }
-	return total, false, io.io_err.OK
+	if (e3 != nil) { return total, true, e3 }
+	return total, false, nil
 }
 
 // try_signed extracts a signed integer of any width from `a`, sign-extended
@@ -636,7 +636,7 @@ fn try_unsigned(a any) u64, bool {
 // decides correctness. So `%d` prints any integer in decimal — a signed
 // type signed, an unsigned type unsigned — and there is no separate verb
 // just to announce the argument's type.
-fn render_one(w io.writer, verb byte, a any) i64, bool, error {
+fn render_one(w io.writer, verb byte, a any) i64, bool, ?error {
 	if (verb == 100) {                    // 'd' — decimal, any integer type
 		s i64, oks bool := try_signed(a)
 		if (oks) {
@@ -701,8 +701,8 @@ fn render_one(w io.writer, verb byte, a any) i64, bool, error {
 }
 
 // mismatch_result is the shared tail for a directive whose assertion failed.
-fn mismatch_result(w io.writer, verb byte) i64, bool, error {
-	k, stop bool, err error := wmismatch(w, verb)
+fn mismatch_result(w io.writer, verb byte) i64, bool, ?error {
+	k, stop bool, err ?error := wmismatch(w, verb)
 	if (stop) {
 		return k, true, err
 	}
@@ -713,15 +713,15 @@ fn mismatch_result(w io.writer, verb byte) i64, bool, error {
 
 // ferr_stop maps a writer error to the printf "stop" flag: any non-OK write
 // result aborts further processing.
-fn ferr_stop(err error) bool {
-	if (err != io.io_err.OK) {
+fn ferr_stop(err ?error) bool {
+	if (err != nil) {
 		return true
 	}
 	return false
 }
 
 // render_v handles %v: try stringer, then Formatter, else a placeholder.
-fn render_v(w io.writer, a any) i64, bool, error {
+fn render_v(w io.writer, a any) i64, bool, ?error {
 	s ?stringer := a.(stringer)
 	if (s != nil) {
 		k, err := str(w, s.string())
@@ -731,11 +731,11 @@ fn render_v(w io.writer, a any) i64, bool, error {
 	if (f != nil) {
 		// Wrap w so the Formatter's writes are counted into printf's total.
 		var cw counting_writer := counting_writer{inner: w, n: 0}
-		err error := f.format(&cw)
-		if (err != io.io_err.OK) {
+		err ?error := f.format(&cw)
+		if (err != nil) {
 			return cw.n, true, err
 		}
-		return cw.n, false, io.io_err.OK
+		return cw.n, false, nil
 	}
 	// Base types render naturally, by the value's own type: integers in
 	// decimal (signed or unsigned), bool as true/false, byte[] as its text.
@@ -767,7 +767,7 @@ fn render_v(w io.writer, a any) i64, bool, error {
 	// Unrenderable: emit "%!v(...)". A readable per-value type name is not
 	// expressible from Boson today (the typedesc name field is not surfaced
 	// to source), so the placeholder uses a fixed marker.
-	k, stop bool, err error := wfallback(w)
+	k, stop bool, err ?error := wfallback(w)
 	if (stop) {
 		return k, true, err
 	}
@@ -776,10 +776,10 @@ fn render_v(w io.writer, a any) i64, bool, error {
 
 // wfallback emits the "%!v(?)" placeholder for a %v arg implementing neither
 // stringer nor Formatter.
-fn wfallback(w io.writer) i64, bool, error {
+fn wfallback(w io.writer) i64, bool, ?error {
 	k, err := w.write("%!v(?)")
-	if (err != io.io_err.OK) {
+	if (err != nil) {
 		return k, true, err
 	}
-	return k, false, io.io_err.OK
+	return k, false, nil
 }

@@ -11,7 +11,7 @@ import "io"
 // "FORMATTER" instead.
 type tag struct { label i64 } {
 	string(_ *tag) byte[] { return "STRINGER" }
-	format(_ *tag, w io.writer) error {
+	format(_ *tag, w io.writer) ?error {
 		_, err := w.write("FORMATTER")
 		return err
 	}

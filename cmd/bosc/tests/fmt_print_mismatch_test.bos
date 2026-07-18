@@ -7,7 +7,7 @@ import "string"
 // writes an inline marker, continues, and latches a non-OK error.
 fn main() i64 {
 	_, err := fmt.print("val=%d done\n", (1 == 0))
-	if (err != io.io_err.OK) {
+	if (err != nil) {
 		string.puts("error latched\n")
 	} else {
 		string.puts("NO ERROR (unexpected)\n")

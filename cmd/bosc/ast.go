@@ -2100,6 +2100,13 @@ func (t ASTType) String() string {
 			sb.WriteString("owned ")
 		}
 	}
+	// A nullable non-pointer (a nullable interface, `?error`) carries its
+	// nullability as a leading `?` on the base — the pointer loop above only
+	// renders `?` at pointer levels, so without this it would round-trip as a
+	// non-nullable interface and break cross-package satisfaction.
+	if t.Indirection == 0 && t.NilMask&1 != 0 {
+		sb.WriteRune('?')
+	}
 	if t.IsSliceOrArray() {
 		s := t.Element.String()
 		var inner string

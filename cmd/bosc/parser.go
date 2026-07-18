@@ -414,7 +414,7 @@ func (p *Parser) parseTok() *Node {
 // "no return type, infer void."
 func isTypeStart(t toktype) bool {
 	switch t {
-	case tok_ident, tok_fn, tok_star, tok_maybe_ptr, tok_owned, tok_mut, tok_struct:
+	case tok_ident, tok_fn, tok_star, tok_maybe_ptr, tok_question, tok_owned, tok_mut, tok_struct:
 		return true
 	}
 	return false

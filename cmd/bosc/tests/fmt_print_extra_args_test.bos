@@ -18,7 +18,7 @@ fn main() i64 {
 	var w word := word{tag: 1}
 	_, err := fmt.print("first=%d", 1, 2, &w)
 	string.putc(10)
-	if (err != io.io_err.OK) {
+	if (err != nil) {
 		string.puts("surplus latched\n")
 	} else {
 		string.puts("NO ERROR (unexpected)\n")

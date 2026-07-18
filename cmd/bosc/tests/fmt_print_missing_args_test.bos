@@ -7,7 +7,7 @@ import "string"
 // marker, processing continues, and an error is latched.
 fn main() i64 {
 	_, err := fmt.print("a=%d b=%d c=%d\n", 1)
-	if (err != io.io_err.OK) {
+	if (err != nil) {
 		string.puts("missing latched\n")
 	} else {
 		string.puts("NO ERROR (unexpected)\n")

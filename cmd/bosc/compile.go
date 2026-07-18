@@ -2407,6 +2407,11 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 				compileStructLiteralInto(of, c, a, sl, fieldDest, fieldType)
 			} else if al, ok := f.Val.(*ArrayLiteral); ok {
 				compileArrayLiteralInto(of, c, a, fieldDest, al)
+			} else if lit, ok := f.Val.(*Literal); ok && lit.Val == nil {
+				// nil into a memory-backed field (a nullable interface): write
+				// the null value directly into the field slot so it gets the
+				// field's type (a zeroed fat pointer), not an empty dest.
+				compileTop(of, c, f.Val, fieldDest)
 			} else {
 				v := compileTop(of, c, f.Val, nullspot)
 				spot_memcpy(of, c, fieldDest, v, fieldType.Size(c))

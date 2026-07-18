@@ -10,13 +10,13 @@ type Sink struct {
 	buf mut byte[]
 	pos i64
 } {
-	write(s *mut Sink, data byte[]) i64, error {
+	write(s *mut Sink, data byte[]) i64, ?error {
 		var i i64 := 0
 		for (; i < len(data); i = i + 1) {
 			s.buf[s.pos] = data[i]
 			s.pos = s.pos + 1
 		}
-		return len(data), io.io_err.OK
+		return len(data), nil
 	}
 	peek(s *Sink) byte[] {
 		return s.buf[0:s.pos]

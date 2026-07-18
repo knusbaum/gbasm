@@ -11,13 +11,13 @@ import "string"
 
 fn main() {
 	f, openerr := io.open("/dev/null", io.O_RDONLY, 0)
-	if (openerr != io.io_err.OK) {
+	if (openerr != nil) {
 		string.puts("open failed\n")
 		dispose(f)
 		return
 	}
 	err := io.copy(&io.STDOUT, &f)
-	if (err == io.io_err.OK) {
+	if (err == nil) {
 		string.puts("copy from /dev/null returned OK as expected\n")
 	} else {
 		string.puts("unexpected non-OK\n")

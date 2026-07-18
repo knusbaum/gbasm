@@ -6,7 +6,7 @@ import "string"
 // Layer 5: a %v-via-Formatter arg whose format writes K bytes — printf's
 // returned total must include those K bytes (the counting-writer wrap).
 type k7 struct { tag i64 } {
-	format(_ *k7, w io.writer) error {
+	format(_ *k7, w io.writer) ?error {
 		// Writes exactly 7 bytes: "SEVEN!!"
 		_, err := w.write("SEVEN!!")
 		return err
@@ -17,7 +17,7 @@ fn main() i64 {
 	var v k7 := k7{tag: 0}
 	// Format string contributes "[" + "]" + "\n" = 3 bytes; Formatter adds 7.
 	n, err := fmt.print("[%v]\n", &v)
-	if (err != io.io_err.OK) { string.puts("ERR\n"); return 1 }
+	if (err != nil) { string.puts("ERR\n"); return 1 }
 	string.puts("total=")
 	string.puti(n)
 	string.putc(10)
