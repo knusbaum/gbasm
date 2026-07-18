@@ -3313,6 +3313,18 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// (The bare struct literal's type was threaded above, before the
 			// multi-return ASTType query.)
 			initIsBorrowed := borrowedPointerExpr(c, ast.Init)
+			// Payload-variant construction into a (possibly owned) values
+			// binding: route to compileValuesConstruct with the declared dest
+			// type so an owned value consumes its owned payload args. Mirrors
+			// the struct-literal branch below (both bypass the owned-promotion
+			// gate — the destination type carries the ownership).
+			if sl, ok := ast.Init.(*StructLiteral); ok {
+				if vd, vc, isValues := valuesCaseFromName(c, sl.Type.Name); isValues && sameIgnoringOwned(ast.Type, ASTType{Name: vd.Name}) {
+					vcon := &ValuesConstruct{ValuesType: ASTType{Name: vd.Name}, Decl: vd, Case: vc, Fields: sl.Fields, p: sl.p}
+					compileValuesConstruct(of, c, vcon, s)
+					return nullspot
+				}
+			}
 			if sl, ok := ast.Init.(*StructLiteral); ok && sameIgnoringOwned(ast.Type, sl.Type) {
 				compileStructLiteralInto(of, c, a, sl, s, ast.Type)
 				recordStructLiteralFieldFacts(c, VarFlowPath(ast.Name), sl)
@@ -7435,10 +7447,16 @@ func compileInterfaceAssert(of io.Writer, c *Context, ast *TypeAssert, dest spot
 // tag at offset 0, then the payload struct at offset TagType.Size (reusing the
 // struct-literal writer against a synthesized anonymous struct shape).
 func compileValuesConstruct(of io.Writer, c *Context, ast *ValuesConstruct, dest spot) spot {
+	valuesType := ast.ValuesType
 	if dest.empty() {
-		dest = newSpot(of, c, c.Temp(), ast.ValuesType)
+		dest = newSpot(of, c, c.Temp(), valuesType)
 	} else {
-		dest.t = ast.ValuesType
+		// Inherit the destination's owned-ness (`owned conn`) so owned payload
+		// fields are consumed rather than copied.
+		if sameIgnoringOwned(dest.t, valuesType) {
+			valuesType = dest.t
+		}
+		dest.t = valuesType
 	}
 	tagSize := ast.Decl.TagType.Size(c)
 	// Write the tag through a register (a direct `mov [mem] imm` can encode a
@@ -7452,6 +7470,12 @@ func compileValuesConstruct(of io.Writer, c *Context, ast *ValuesConstruct, dest
 	// owned-move tracking) with the base offset by the tag.
 	if len(ast.Case.Payload) > 0 {
 		payloadType := ASTType{AnonFields: ast.Case.Payload}
+		// When the values value is owned, the payload struct owns its fields
+		// too, so compileStructLiteralInto moves (consumes) owned field args
+		// instead of copying them.
+		if parentOwnsFields(valuesType) {
+			payloadType.OwnedMask = 1
+		}
 		payloadAddr := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
 		fmt.Fprintf(of, "\tlea %s [%s+%d]\n", payloadAddr.ref, dest.ref, tagSize)
 		payloadDest := spot{ref: payloadAddr.ref, t: payloadType, nameIsAddress: true}

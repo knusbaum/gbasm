@@ -1,0 +1,17 @@
+package main
+
+import "string"
+
+type conn values {
+	OPEN{ fd owned i64 }
+	CLOSED
+}
+
+fn main() {
+	x owned i64 := 7
+	e owned conn := conn.OPEN{ fd: x }
+	switch e {
+		case OPEN { string.puts("open\n") }
+		case CLOSED { string.puts("closed\n") }
+	}
+}

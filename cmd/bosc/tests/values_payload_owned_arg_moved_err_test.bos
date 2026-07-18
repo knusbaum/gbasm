@@ -1,0 +1,15 @@
+package main
+
+type conn values {
+	OPEN{ fd owned i64 }
+	CLOSED
+}
+
+fn sink(v owned i64) { dispose(v) }
+
+fn main() {
+	x owned i64 := 7
+	e owned conn := conn.OPEN{ fd: x }
+	sink(x)
+	dispose(e)
+}

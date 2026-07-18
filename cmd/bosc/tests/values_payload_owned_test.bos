@@ -1,0 +1,25 @@
+package main
+
+import "string"
+
+// Phase 3c: owned payloads. Construct an owned values value (consuming the
+// owned arg), destructure it in the switch (move the owned field out and
+// dispose it), then dispose the husk.
+type conn values {
+	OPEN{ fd owned i64 }
+	CLOSED
+}
+
+fn main() {
+	x owned i64 := 7
+	e owned conn := conn.OPEN{ fd: x }
+	switch e {
+		case OPEN {
+			f owned i64 := e.fd
+			string.puts("open\n")
+			dispose(f)
+		}
+		case CLOSED { string.puts("closed\n") }
+	}
+	dispose(e)
+}
