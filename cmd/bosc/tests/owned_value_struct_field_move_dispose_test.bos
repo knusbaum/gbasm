@@ -1,0 +1,24 @@
+package main
+
+import "fmt"
+
+// A struct-valued owned field moved out, consumed, then the aggregate finished
+// with dispose(). Formerly the kept-red owned_plain_field_partial_move_err.
+type child struct {
+	val i64
+}
+
+type box struct {
+	c owned child
+}
+
+fn consume(k owned child) {
+	fmt.print("consumed val=%d\n", k.val)
+	dispose(k)
+}
+
+fn main() {
+	b owned box := box{c: owned(child{val: 42})}
+	consume(b.c)   // move the struct-value field out
+	dispose(b)     // finish the partially-consumed aggregate
+}

@@ -1,0 +1,2 @@
+Compiling tests/owned_value_field_continue_inconsistent_err_test.bos
+Fatal: Owned field "f.x" has inconsistent state across loop backedges

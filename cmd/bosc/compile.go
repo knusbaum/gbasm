@@ -734,14 +734,19 @@ func checkOwnedSourceAvailable(c *Context, val AST) {
 		baseType := v.Val.ASTType(c)
 		fieldType := v.ASTType(c)
 		if parentOwnsFields(baseType) && fieldType.HasOwned() {
-			if fieldType.Indirection == 0 || fieldType.OwnedMask&1 == 0 {
-				// Value-typed owned fields have no pointer identity to hand
-				// off and no placeholder to leave behind, so they can only
-				// be consumed by disposing the whole aggregate.
+			if fieldType.OwnedMask&1 == 0 {
+				// The field's *outermost* level is not owned (e.g. a
+				// `*owned i64` field: the pointee is owned, the pointer is
+				// not). Moving the pointer out would be a borrow of an owned
+				// slot, which the slot-replacement invariant forbids; such a
+				// field can only be consumed by disposing the whole aggregate.
+				// A field whose outer level *is* owned — an owned pointer
+				// (`owned *i64`), an owned scalar (`owned i64`/`owned FD`), or
+				// an owned struct value (`owned child`) — may be moved out.
 				CompileErrorF(val, "Cannot move owned field %s out of an owned aggregate", v.Member)
 			}
-			// Moving a non-null owned field out leaves its slot zeroed with
-			// no nil check on the field's type. A live alias of the
+			// Moving a non-null owned field out leaves its slot with stale
+			// bits and no nil check on the field's type. A live alias of the
 			// aggregate could read that slot and crash, so refuse to
 			// partially-consume an aliased aggregate. (Nullable fields are
 			// exempt: the alias would read nil and must narrow.)
@@ -750,13 +755,13 @@ func checkOwnedSourceAvailable(c *Context, val AST) {
 					CompileErrorF(val, "Cannot move owned field %s out of \"%s\" while it is aliased; the alias could read the moved-out field", v.Member, base.Name)
 				}
 			}
-			// A non-null owned *pointer* field MAY be moved out. Doing so
-			// zeroes the slot (see the *Dot case in markMovedIfOwnedSource)
-			// and marks the field consumed, leaving the aggregate in an
-			// inconsistent state that the escape gate
-			// (checkAggregateMayEscape) prevents from crossing a scope
-			// boundary. Nullable fields already worked this way with nil as
-			// the placeholder.
+			// A non-null owned field (pointer, scalar, or struct value) MAY be
+			// moved out. Doing so marks the field consumed (and scrubs a
+			// register-sized slot, see the *Dot case in
+			// markMovedIfOwnedSource), leaving the aggregate in an inconsistent
+			// state that the escape gate (checkAggregateMayEscape) prevents
+			// from crossing a scope boundary. Nullable fields already worked
+			// this way with nil as the placeholder.
 			if path, ok := FlowPathForExpr(val); ok && c.OwnedFieldConsumed(path) {
 				CompileErrorF(val, "Cannot move \"%s\": it was already moved", path.Key())
 			}
@@ -782,7 +787,11 @@ func inconsistentOwnedField(c *Context, path FlowPath, t ASTType) (string, bool)
 	}
 	for _, field := range def.Fields {
 		fieldType := fieldTypeForBase(pointee, field.Type)
-		if !fieldType.HasOwned() || fieldType.Indirection == 0 || fieldType.NilMask&1 != 0 {
+		// A moved-out non-nullable owned field makes the aggregate
+		// inconsistent, whether the field is a pointer or a value (scalar or
+		// struct). Nullable fields are exempt: nil is a representable
+		// placeholder that keeps the aggregate passable.
+		if !fieldType.HasOwned() || fieldType.NilMask&1 != 0 {
 			continue
 		}
 		if c.OwnedFieldConsumed(path.Append(field.Name)) {
@@ -2300,9 +2309,16 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 		fieldType := v.ASTType(c)
 		if parentOwnsFields(baseType) && fieldType.HasOwned() {
 			checkOwnedSourceAvailable(c, val)
-			lv := compileLval(of, c, val, nullspot)
-			fmt.Fprintf(of, "\tmov [%s] 0\n", lv.ref)
-			lv.free(of)
+			// Scrub the slot on move-out as defense-in-depth. Only register-
+			// sized fields get the scalar zero; a memory-backed struct value
+			// field would need a wider store, and the scrub is not load-bearing
+			// (safety is the consumed-fact tracking plus the alias and escape
+			// gates), so it is simply skipped there.
+			if !typeIsMemoryBacked(c, fieldType) {
+				lv := compileLval(of, c, val, nullspot)
+				fmt.Fprintf(of, "\tmov [%s] 0\n", lv.ref)
+				lv.free(of)
+			}
 			if path, ok := FlowPathForExpr(val); ok {
 				c.SetOwnedFieldConsumed(path, true)
 			}
@@ -3372,8 +3388,32 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// owned aggregate returned from a call loses its borrowed field's
 			// tracking (#18: `b owned bar := something(f)` where the return
 			// borrows f). So restrict the skip to a Symbol (binding) source.
-			_, srcIsBindingRebind := unwrapReturnExpr(ast.Init).(*Symbol)
-			ownedValueDestNoTransfer := ast.Type.HasOwned() && c.ResolveUnderlying(ast.Type).Indirection == 0 && !didTransfer && srcIsBindingRebind
+			srcExpr := unwrapReturnExpr(ast.Init)
+			_, srcIsBindingRebind := srcExpr.(*Symbol)
+			ownedValueDest := ast.Type.HasOwned() && c.ResolveUnderlying(ast.Type).Indirection == 0 && !didTransfer
+			// A move of an owned VALUE field out of an owned aggregate
+			// (`y owned i64 := a.x`) is the same category as a scalar binding
+			// rebind: the source storage was consumed (the field is now
+			// moved-out/inconsistent) and the new owner is independent. It must
+			// keep its fresh self-origin, NOT adopt the source aggregate's
+			// origin — reading the owned value field yields an owner-alias
+			// (readAliasesOwnedStorage) that would both mis-link the new owner
+			// and trip the alias-while-inconsistent gate on the very move that
+			// creates it. Pointer fields don't reach here (Indirection > 0).
+			// Gated on ownedValueDest and a non-fatal variable lookup so a
+			// non-value-move Dot (e.g. a values selector `color.RED`, whose
+			// base is a type name, not a binding) is never type-queried here.
+			srcIsOwnedFieldMove := false
+			if ownedValueDest {
+				if dot, ok := srcExpr.(*Dot); ok {
+					if baseSym, ok := dot.Val.(*Symbol); ok {
+						if bt, isVar := c.TypeForVar(baseSym.Name); isVar && parentOwnsFields(bt) && dot.ASTType(c).HasOwned() {
+							srcIsOwnedFieldMove = true
+						}
+					}
+				}
+			}
+			ownedValueDestNoTransfer := ownedValueDest && (srcIsBindingRebind || srcIsOwnedFieldMove)
 			pexpr := pointerExprForAST(c, ast.Init, ast.Name)
 			if !ownedValueDestNoTransfer && (pexpr.KnownOrigin || pexpr.KnownSlot) {
 				checkedAssignPointer(c, flow.Binding(ast.Name), pexpr, a)

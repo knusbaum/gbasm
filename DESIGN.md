@@ -814,7 +814,7 @@ fn inspect(b box) {
 
 `owned(expr)` remains an explicit assertion escape hatch: it promotes the expression to an owned type without proving that every owned field came from an owned source. This is useful for construction patterns that the compiler does not yet track precisely.
 
-A **non-null owned pointer field** may now be moved out of an owned aggregate, so an aggregate holding owned resources can be destructed field by field (see [`PROPOSAL_owned_field_move.md`](PROPOSAL_owned_field_move.md)). Moving a field out copies the pointer to the destination, zeroes the field's slot, and records the field's obligation as consumed — just like moving a local `owned` pointer. The rules:
+A **non-null owned field** — whether a pointer (`owned *T`), a scalar (`owned i64`, `owned FD`), or a struct value (`owned T`) — may be moved out of an owned aggregate, so an aggregate holding owned resources can be destructed field by field (see [`PROPOSAL_owned_field_move.md`](PROPOSAL_owned_field_move.md)). Moving a field out copies its value to the destination and records the field's obligation as consumed — just like moving a local `owned` binding. As defense-in-depth a register-sized slot is scrubbed to zero on move-out; a memory-backed struct-value field's bits are left in place (a wider store the scrub does not attempt), since correctness rests on the consumed-field tracking and the alias/escape gates, not on the scrub. The rules:
 
 - Moving the field out leaves the aggregate **inconsistent** (the field has no nil placeholder; the slot is zeroed and the non-null type carries no nil check). While inconsistent, the aggregate may not **escape its scope** — it can't be passed to a function, returned, moved to another binding, or aliased (`&f` / `var x := f`) — because the local consistency fact can't cross those boundaries. Only the shape-blind intrinsics `dispose` and `free` may consume it. Reading a moved-out field is a use-after-move error.
 - **Re-initialization** restores consistency: assigning to a moved-out field (`f.a = new(...)`) is legal and marks it live again; once no non-null owned field is consumed, the aggregate may escape normally. Assigning to a *live* owned field is still rejected (it would leak its current value):
@@ -824,7 +824,7 @@ var b owned box := make_box()       // box{ x owned i64 }
 b.x = 1                            // COMPILE ERROR: assign to live owned field; consume it first
 ```
 
-(Value-typed owned fields — `owned i64`, `owned T` — still cannot be moved out: they have no pointer identity to hand off, and are consumed only by disposing the whole aggregate.)
+(Value-typed owned fields — `owned i64`, `owned FD`, and struct-value `owned T` — are moved out and re-initialized exactly like pointer fields above; the move is a value copy and the same inconsistent-until-reinitialized tracking applies. The one shape that still cannot be moved out is a field whose *outermost* level is not owned — `*owned T`, where the pointer is a borrow of owned storage — which is consumed only by disposing the whole aggregate.)
 
 Owned nullable pointer fields may also be moved out of an owned aggregate, and — unlike non-null fields — this leaves the aggregate **consistent** (`nil` is a representable, safe state), so it stays freely passable. Moving such a field copies the pointer to the destination, writes `nil` back into the original field, and records that the field's ownership obligation has been consumed:
 

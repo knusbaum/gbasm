@@ -1,0 +1,27 @@
+package main
+
+import "fmt"
+
+// A struct-valued (memory-backed) owned field may be moved out and the
+// aggregate re-initialized. Reads back a member of the re-initialized field
+// to prove the memcpy store landed (the scalar slot-scrub is skipped here).
+type child struct {
+	val i64
+}
+
+type box struct {
+	c owned child
+}
+
+fn consume(k owned child) {
+	dispose(k)
+}
+
+fn main() {
+	var b owned box := box{c: owned(child{val: 10})}
+	consume(b.c)                 // move the struct-value field out
+	y owned child := owned(child{val: 20})
+	b.c = y                      // re-initialize — whole again
+	fmt.print("val=%d\n", b.c.val)
+	dispose(b)
+}

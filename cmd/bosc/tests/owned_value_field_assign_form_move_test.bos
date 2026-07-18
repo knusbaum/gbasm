@@ -1,0 +1,23 @@
+package main
+
+import "fmt"
+
+// Copy-vs-alias independence for the ASSIGNMENT-form field move
+// (`y = a.x` into an existing owned binding) — a distinct code path from the
+// VarDecl form (`y owned i64 := a.x`). Reads both the moved binding and the
+// re-initialized source after the reinit to prove independence.
+type foo struct {
+	x owned i64
+}
+
+fn main() {
+	var a owned foo := foo{x: 10}
+	var y owned i64 := 1
+	dispose(y)
+	y = a.x                       // assignment-form move into existing binding
+	z owned i64 := 100
+	a.x = z                       // re-init source field
+	fmt.print("y=%d x=%d\n", y, a.x)   // independent → y=10 x=100
+	dispose(y)
+	dispose(a)
+}

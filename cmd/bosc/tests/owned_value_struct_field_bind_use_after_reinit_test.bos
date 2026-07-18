@@ -1,0 +1,26 @@
+package main
+
+import "fmt"
+
+// Discriminates copy-vs-alias for a struct-VALUE owned field move. Bind the
+// moved field to a local, re-initialize the source field with a distinct
+// value, then read BOTH. If the move aliased the source slot instead of
+// copying (the memcpy path, since the scalar slot-scrub is skipped for
+// memory-backed fields), y.val would read 99 after the reinit.
+type child struct {
+	val i64
+}
+
+type box struct {
+	c owned child
+}
+
+fn main() {
+	var b owned box := box{c: owned(child{val: 10})}
+	y owned child := b.c                        // move the struct field out
+	w owned child := owned(child{val: 99})
+	b.c = w                                     // re-init the source field
+	fmt.print("y=%d c=%d\n", y.val, b.c.val)    // independent copy → y=10 c=99
+	dispose(y)
+	dispose(b)
+}

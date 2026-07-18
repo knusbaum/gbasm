@@ -1,0 +1,17 @@
+package main
+
+// A value-typed owned field, once moved out, may not be read/moved again
+// until the aggregate is re-initialized.
+type foo struct {
+	x owned i64
+}
+
+fn consume(v owned i64) {
+	dispose(v)
+}
+
+fn main() {
+	a owned foo := foo{x: 10}
+	consume(a.x)
+	consume(a.x)
+}

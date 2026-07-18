@@ -1,0 +1,23 @@
+package main
+
+// A value owned field may not be moved out of an aggregate while a live alias
+// of that aggregate exists — the alias could read the moved-out slot.
+type foo struct {
+	x owned i64
+}
+
+fn consume(v owned i64) {
+	dispose(v)
+}
+
+fn peek(f *foo) i64 {
+	return f.x
+}
+
+fn main() {
+	var a owned foo := foo{x: 10}
+	alias *foo := &a
+	consume(a.x)
+	_ := peek(alias)
+	dispose(a)
+}

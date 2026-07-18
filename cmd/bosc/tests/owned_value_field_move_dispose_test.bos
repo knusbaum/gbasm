@@ -1,0 +1,20 @@
+package main
+
+import "fmt"
+
+// A value-typed owned field moved out, consumed by the callee, then the
+// partially-consumed aggregate finished off with dispose().
+type foo struct {
+	x owned i64
+}
+
+fn consume(v owned i64) {
+	fmt.print("v=%d\n", v)
+	dispose(v)
+}
+
+fn main() {
+	a owned foo := foo{x: 7}
+	consume(a.x)   // move the value field out
+	dispose(a)     // finish: a.x consumed, dispose satisfies the rest
+}

@@ -1,0 +1,22 @@
+package main
+
+// Complement of the value/pointer field-move feature: a field whose *outermost*
+// level is NOT owned — a `*owned foo` (the pointee is owned, the pointer is a
+// borrow of that owned storage) — may NOT be moved out. Moving the pointer
+// would hand off a borrow of an owned slot, which the slot-replacement
+// invariant forbids; such a field is consumed only by disposing the whole
+// aggregate. Pins the surviving `OwnedMask&1 == 0` rejection branch.
+type foo i64
+
+type box struct {
+	p *owned foo
+}
+
+fn main() {
+	var x owned foo := 0
+	var b owned box := box{p: &x}
+	q *owned foo := b.p
+	_ := q
+	dispose(x)
+	dispose(b)
+}

@@ -487,10 +487,16 @@ Add to `cmd/bosc/tests/` (runnable `_test.bos` for the passes, paired
 - **Stacked ownership** (`owned *owned T`) partial consumption — DESIGN
   §890. Unchanged.
 - **Witnessed borrows** — DESIGN §892. Unchanged.
-- **Value-typed owned fields** (`owned i64`, `owned T`) move-out — no
+- **Value-typed owned fields** (`owned i64`, `owned T`) move-out — ~~no
   pointer identity to hand off; still consumed only by disposing the whole
-  aggregate. (Such fields rarely need real cleanup; an `owned i64` is the
-  degenerate case.)
+  aggregate.~~ **Superseded: value-typed owned fields (scalar and struct
+  value) are now moved out and re-initialized exactly like pointer fields.**
+  The "no placeholder" rationale did not hold up — the non-null *pointer*
+  path already leaves an out-of-type-range zero and relies on the
+  consumed-fact tracking + alias/escape gates, not on a valid placeholder,
+  so the same tracking carries value fields (`io.FD` = `i64` is the
+  motivating real resource). Only a field whose outermost level is not owned
+  (`*owned T`) still cannot be moved out. See DESIGN.md §Owned struct fields.
 - **Interprocedural effect summaries** that would let a non-`dispose`/`free`
   function be exempt — explicitly out of scope; the closed `{dispose,free}`
   exception set depends on their absence.

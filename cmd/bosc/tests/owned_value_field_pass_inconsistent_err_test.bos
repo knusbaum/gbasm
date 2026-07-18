@@ -1,0 +1,21 @@
+package main
+
+// A partially-consumed aggregate (a value owned field moved out, not yet
+// re-initialized) may not escape the frame: only dispose/free may consume it.
+type foo struct {
+	x owned i64
+}
+
+fn consume(v owned i64) {
+	dispose(v)
+}
+
+fn sink(b owned foo) {
+	dispose(b)
+}
+
+fn main() {
+	a owned foo := foo{x: 10}
+	consume(a.x)
+	sink(a)
+}

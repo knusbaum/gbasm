@@ -1,0 +1,22 @@
+package main
+
+import "fmt"
+
+// Bind a moved-out value field to its own owned binding, re-initialize the
+// field, then USE the binding afterward. The binding must not be falsely
+// rejected as stale even though reading an owned value field aliases the
+// owner's storage (readAliasesOwnedStorage).
+type foo struct {
+	x owned i64
+}
+
+fn main() {
+	var a owned foo := foo{x: 10}
+	y owned i64 := a.x   // move field out into its own owned binding
+	z owned i64 := 100
+	a.x = z              // re-init the field with a distinct value
+	fmt.print("y=%d\n", y)
+	fmt.print("x=%d\n", a.x)
+	dispose(y)
+	dispose(a)
+}

@@ -1,0 +1,2 @@
+Compiling tests/owned_value_field_use_after_move_err_test.bos
+Fatal: Cannot move "a.x": it was already moved

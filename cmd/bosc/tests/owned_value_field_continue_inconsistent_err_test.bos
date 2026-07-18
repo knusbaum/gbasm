@@ -1,0 +1,26 @@
+package main
+
+// Value-field analog of owned_field_move_continue_inconsistent: a value owned
+// field consumed on a `continue` path but live on the fall-through reaches the
+// loop back-edge in two states; the next iteration could re-move the already-
+// consumed field. Must be rejected (value fields now participate in the
+// inconsistent-aggregate merge, just like pointer fields).
+type foo struct {
+	x owned i64
+}
+
+fn consume(v owned i64) {
+	dispose(v)
+}
+
+fn main(args byte[][]) {
+	var f owned foo := foo{x: 10}
+	var i i64 := 0
+	for (i = 0; i < 3; i = i + 1) {
+		if (len(args) > 1) {
+			consume(f.x)
+			continue
+		}
+	}
+	dispose(f)
+}

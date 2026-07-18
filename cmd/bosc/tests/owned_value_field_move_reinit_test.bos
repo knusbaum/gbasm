@@ -1,0 +1,23 @@
+package main
+
+import "fmt"
+
+// A value-typed owned field (`owned i64`) may be moved out of an owned
+// aggregate, and the aggregate re-initialized to make it whole again.
+// Reads back the re-initialized field to prove the store actually landed.
+type foo struct {
+	x owned i64
+}
+
+fn consume(v owned i64) {
+	dispose(v)
+}
+
+fn main() {
+	var a owned foo := foo{x: 10}
+	consume(a.x)        // move the value field out
+	y owned i64 := 100
+	a.x = y             // re-initialize — aggregate whole again
+	fmt.print("x=%d\n", a.x)
+	dispose(a)
+}

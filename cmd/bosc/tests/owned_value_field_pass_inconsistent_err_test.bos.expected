@@ -1,0 +1,2 @@
+Compiling tests/owned_value_field_pass_inconsistent_err_test.bos
+Fatal: Cannot pass "a" while owned field "a.x" is moved out; only dispose/free are allowed on a partially-consumed aggregate — consume or re-initialize "a.x" first
