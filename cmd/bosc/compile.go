@@ -7566,22 +7566,81 @@ func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch) {
 		scrutKey = ""
 	}
 	end := c.Label("vswend")
+	// Each case is a branch: snapshot the flow state before, restore it for
+	// every case, and require all fall-through cases to agree on owned
+	// obligations at the merge (H11 all-or-nothing) — the same discipline
+	// IfStmt uses. Narrowing is set on c around each body (not part of the
+	// snapshot) so field access resolves; compiling the body on c (its Block
+	// opens its own local scope) keeps owned consumption of the scrutinee
+	// visible to the snapshot.
+	snapBefore := c.FlowSnapshot()
+	var afterSnaps []FlowSnapshot
+	compileCaseBody := func(body AST, vc *ValuesCase) {
+		c.RestoreFlowSnapshot(snapBefore)
+		if scrutKey != "" && vc != nil {
+			c.SetVariantNarrow(scrutKey, vc)
+		}
+		compileTop(of, c, body, nullspot)
+		if scrutKey != "" {
+			delete(c.variantNarrow, scrutKey)
+		}
+		if fallsThrough(body) {
+			afterSnaps = append(afterSnaps, c.FlowSnapshot())
+		}
+	}
 	for _, cs := range ast.Cases {
 		vc := byName[cs.Name]
 		next := c.Label("vswnext")
 		fmt.Fprintf(of, "\tmov %s %d\n", want.ref, vc.Tag)
 		fmt.Fprintf(of, "\tcmp %s %s\n", tag.ref, want.ref)
 		fmt.Fprintf(of, "\tjne %s\n", next)
-		sub := c.SubContext()
-		if scrutKey != "" {
-			sub.SetVariantNarrow(scrutKey, vc)
-		}
-		compileTop(of, sub, cs.Body, nullspot)
+		compileCaseBody(cs.Body, vc)
 		fmt.Fprintf(of, "\tjmp %s\n", end)
 		fmt.Fprintf(of, "\tlabel %s\n", next)
 	}
 	if ast.Default != nil {
-		compileTop(of, c.SubContext(), ast.Default, nullspot)
+		compileCaseBody(ast.Default, nil)
+	}
+	// Merge the fall-through branches. Whole-owned-binding obligations must
+	// agree across all cases (H11 all-or-nothing). Owned *field* consumption
+	// may legitimately differ (move a payload out in one case, dispose the
+	// whole value after) — a field can't be accessed after the switch (the
+	// value is no longer narrowed), so we merge fields by UNION toward
+	// consumed: sound for the escape gate (a value with a maybe-moved field
+	// can't be passed on), and it does not block the destructor pattern the
+	// way the exact if/else field merge would.
+	if len(afterSnaps) > 0 {
+		ref := afterSnaps[0]
+		for _, s := range afterSnaps[1:] {
+			for name := range snapBefore.Owned {
+				if !c.SameObligationLiveAcross(ref, s, name) {
+					CompileErrorF(ast, "Owned binding %q is consumed on some switch cases but not others", name)
+				}
+			}
+		}
+		mergedFields := make(map[FlowPath]bool)
+		merged := FlowSnapshot{
+			Owned:    ref.Owned,
+			Null:     ref.Null,
+			Borrowed: ref.Borrowed,
+			Pointer:  ref.Pointer,
+		}
+		for _, s := range afterSnaps {
+			for k, v := range s.OwnedFields {
+				if v {
+					mergedFields[k] = true
+				}
+			}
+		}
+		for _, s := range afterSnaps[1:] {
+			merged.Null = MergeNullFacts(merged.Null, s.Null)
+			merged.Borrowed = MergeBorrowedBindings(merged.Borrowed, s.Borrowed)
+			merged.Pointer = flow.Merge(merged.Pointer, s.Pointer)
+		}
+		merged.OwnedFields = mergedFields
+		c.RestoreFlowSnapshot(merged)
+	} else {
+		c.RestoreFlowSnapshot(snapBefore)
 	}
 	fmt.Fprintf(of, "\tlabel %s\n", end)
 	tag.free(of)

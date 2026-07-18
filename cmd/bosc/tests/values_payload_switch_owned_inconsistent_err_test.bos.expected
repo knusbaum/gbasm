@@ -1,0 +1,2 @@
+Compiling tests/values_payload_switch_owned_inconsistent_err_test.bos
+Fatal: Owned binding "e" is consumed on some switch cases but not others
