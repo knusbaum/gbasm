@@ -1,0 +1,18 @@
+package main
+
+import "string"
+
+type foo values {
+	A{ x i64 }
+	B{ y i64 }
+}
+
+fn clobber(p *mut foo) { *p = foo.B{ y: 77 } }
+
+fn main() {
+	var e foo := foo.A{ x: 1 }
+	switch e {
+		case A { clobber(&e); string.puti(e.x) }
+		case B { string.puts("b\n") }
+	}
+}

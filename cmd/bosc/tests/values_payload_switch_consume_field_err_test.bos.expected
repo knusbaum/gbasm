@@ -1,0 +1,2 @@
+Compiling tests/values_payload_switch_consume_field_err_test.bos
+Fatal: Use of "e" after it was moved

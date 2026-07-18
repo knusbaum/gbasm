@@ -1,0 +1,2 @@
+Compiling tests/values_payload_switch_reassign_err_test.bos
+Fatal: cannot reassign "e" inside its own switch case (it is narrowed to a variant here); reassigning the matched value is not yet supported

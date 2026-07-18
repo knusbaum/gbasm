@@ -1,0 +1,2 @@
+Compiling tests/values_payload_switch_addr_scrutinee_err_test.bos
+Fatal: cannot take the address of "e" inside its own switch case (a write through it could change the matched variant)

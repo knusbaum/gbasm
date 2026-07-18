@@ -4083,6 +4083,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// stable storage for them at runtime).
 		name, hasName := ast.NamedTarget()
 		if hasName {
+			// Taking the address of the whole narrowed scrutinee inside its
+			// switch case would let a write through the pointer change its tag
+			// while the case still narrows it to a variant (H5). Reject it. A
+			// field address (`&e.fd`) is a Dot target, not a named target, so
+			// it is unaffected — a write through it changes the field, not the
+			// tag.
+			if _, narrowed := c.VariantNarrow(VarFlowPath(name).Key()); narrowed {
+				CompileErrorF(ast, "cannot take the address of %q inside its own switch case (a write through it could change the matched variant)", name)
+			}
 			// Taking the address of an inconsistent aggregate would create an
 			// alias that could read its moved-out non-null field.
 			checkAggregateNotAliasedWhileInconsistent(c, name, ast)
@@ -4370,6 +4379,17 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			s := compileTop(of, c, ast.Val, nullspot)
 			s.free(of)
 			return nullspot
+		}
+		// Reassigning the whole scrutinee inside its own switch case would
+		// change its tag while the case still narrows it to a variant, so a
+		// later `e.field` would read the wrong payload. Sound re-narrowing on
+		// reassignment (H2/H4) is a follow-on; for now reject it. (Field
+		// assignment `e.fd = x` keeps the tag and is unaffected — its target is
+		// a Dot, not a bare Symbol.)
+		if sym, ok := ast.Target.(*Symbol); ok {
+			if _, narrowed := c.VariantNarrow(VarFlowPath(sym.Name).Key()); narrowed {
+				CompileErrorF(a, "cannot reassign %q inside its own switch case (it is narrowed to a variant here); reassigning the matched value is not yet supported", sym.Name)
+			}
 		}
 		// Copying a whole inconsistent aggregate (`alias = f` / `alias = &f`)
 		// forms a second handle that could read the moved-out field. Field
@@ -7534,10 +7554,16 @@ func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch) {
 		fmt.Fprintf(of, "\tmov %s %s\n", tag.ref, scrut.ref)
 	}
 	// Narrowing keys on the scrutinee's flow-path so `e.fd` in a case body
-	// resolves against that variant's payload.
+	// resolves against that variant's payload. If the scrutinee already has a
+	// live alias, a write through that alias could change its tag mid-case, so
+	// do not narrow (field access then reports "match it first") — the sound,
+	// conservative choice until precise mutable-escape invalidation lands.
 	scrutKey := ""
 	if fp, ok := FlowPathForExpr(ast.Scrutinee); ok {
 		scrutKey = fp.Key()
+	}
+	if sym, ok := ast.Scrutinee.(*Symbol); ok && c.HasLiveAlias(sym.Name) {
+		scrutKey = ""
 	}
 	end := c.Label("vswend")
 	for _, cs := range ast.Cases {

@@ -1,0 +1,19 @@
+package main
+
+type conn values {
+	OPEN{ fd owned i64 }
+	CLOSED
+}
+
+fn main() {
+	x owned i64 := 5
+	var e owned conn := conn.OPEN{ fd: x }
+	switch e {
+		case OPEN {
+			dispose(e)
+			f owned i64 := e.fd
+			dispose(f)
+		}
+		case CLOSED { }
+	}
+}
