@@ -1,0 +1,2 @@
+Compiling tests/values_payload_field_unnarrowed_err_test.bos
+Fatal: cannot access field "fd" of values type file_info here; match it in a switch case first (a variant's fields are only in scope inside its `case`)

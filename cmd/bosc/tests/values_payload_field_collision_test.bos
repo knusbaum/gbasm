@@ -1,0 +1,22 @@
+package main
+
+import "string"
+
+// H8: the same field name means a different field (offset and type) per
+// variant; narrowing disambiguates.
+type msg values {
+	INT{ tag i64, val i64 }
+	TEXT{ val byte[] }
+}
+
+fn show(m msg) {
+	switch m {
+		case INT  { string.puti(m.val); string.puts("\n") }
+		case TEXT { string.puts(m.val); string.puts("\n") }
+	}
+}
+
+fn main() {
+	show(msg.INT{ tag: 1, val: 99 })
+	show(msg.TEXT{ val: "hi" })
+}

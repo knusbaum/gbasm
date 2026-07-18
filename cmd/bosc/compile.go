@@ -3919,6 +3919,26 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				}
 			}
 		}
+		// Field access on a narrowed values value (`e.fd` inside a matched
+		// switch case): read the payload field at tagSize + payload offset.
+		if mtype, voff, ok := narrowedValuesField(c, ast); ok {
+			base := compileTop(of, c, ast.Val, nullspot)
+			if dest.empty() {
+				dest = newSpot(of, c, c.Temp(), mtype)
+			}
+			if typeIsMemoryBacked(c, mtype) {
+				addrType := mtype
+				addrType.Indirection++
+				addr := newSpot(of, c, c.Temp(), addrType)
+				fmt.Fprintf(of, "\tlea %s [%s+%d]\n", addr.ref, base.ref, voff)
+				spot_memcpy(of, c, dest, addr, mtype.Size(c))
+				addr.free(of)
+			} else {
+				fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, base.ref, voff)
+			}
+			base.free(of)
+			return dest
+		}
 		l := compileTop(of, c, ast.Val, nullspot)
 		orig := l
 		l = materializePointerValue(of, c, l)
@@ -3927,6 +3947,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		def, ok := structDeclForType(c, l.t)
 		if !ok {
+			if _, isValues := c.ValuesDeclForName(l.t.Name); isValues {
+				CompileErrorF(a, "cannot access field %q of values type %s here; match it in a switch case first (a variant's fields are only in scope inside its `case`)", ast.Member, l.t.Name)
+			}
 			CompileErrorF(a, "No such structure \"%v\"", l.t)
 		}
 		offset, declaredType := def.ByteOffset(c, ast.Member)
@@ -7473,6 +7496,12 @@ func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch) {
 	} else {
 		fmt.Fprintf(of, "\tmov %s %s\n", tag.ref, scrut.ref)
 	}
+	// Narrowing keys on the scrutinee's flow-path so `e.fd` in a case body
+	// resolves against that variant's payload.
+	scrutKey := ""
+	if fp, ok := FlowPathForExpr(ast.Scrutinee); ok {
+		scrutKey = fp.Key()
+	}
 	end := c.Label("vswend")
 	for _, cs := range ast.Cases {
 		vc := byName[cs.Name]
@@ -7480,7 +7509,11 @@ func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch) {
 		fmt.Fprintf(of, "\tmov %s %d\n", want.ref, vc.Tag)
 		fmt.Fprintf(of, "\tcmp %s %s\n", tag.ref, want.ref)
 		fmt.Fprintf(of, "\tjne %s\n", next)
-		compileTop(of, c.SubContext(), cs.Body, nullspot)
+		sub := c.SubContext()
+		if scrutKey != "" {
+			sub.SetVariantNarrow(scrutKey, vc)
+		}
+		compileTop(of, sub, cs.Body, nullspot)
 		fmt.Fprintf(of, "\tjmp %s\n", end)
 		fmt.Fprintf(of, "\tlabel %s\n", next)
 	}

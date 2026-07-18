@@ -101,6 +101,10 @@ type Context struct {
 	interfaceDecls map[string]*InterfaceDecl
 	// maps values type names to their declarations.
 	valuesDecls map[string]*ValuesDecl
+	// variantNarrow records, per scrutinee flow-path key, the values variant a
+	// value is narrowed to inside a switch case body. Consulted by field
+	// access (`e.fd`). Set on a per-case SubContext; reads walk parents.
+	variantNarrow map[string]*ValuesCase
 	// maps type alias names to their attached methods.
 	typeMethods map[string][]*FuncDecl
 
@@ -513,6 +517,56 @@ func (c *Context) ValuesDeclForName(name string) (*ValuesDecl, bool) {
 		return d, true
 	}
 	return c.parent.ValuesDeclForName(name)
+}
+
+// SetVariantNarrow records that the value at flow-path `key` is narrowed to
+// variant `vc` in this context (a switch case body).
+func (c *Context) SetVariantNarrow(key string, vc *ValuesCase) {
+	if c.variantNarrow == nil {
+		c.variantNarrow = make(map[string]*ValuesCase)
+	}
+	c.variantNarrow[key] = vc
+}
+
+// VariantNarrow returns the variant the value at flow-path `key` is narrowed
+// to, walking the context chain to the root.
+func (c *Context) VariantNarrow(key string) (*ValuesCase, bool) {
+	if c == nil {
+		return nil, false
+	}
+	if vc, ok := c.variantNarrow[key]; ok {
+		return vc, true
+	}
+	return c.parent.VariantNarrow(key)
+}
+
+// narrowedValuesField resolves `d` = `e.fd` when e is a values value narrowed
+// to a variant in context c. It returns the field's type and its byte offset
+// within the values value (tag size + payload offset). ok=false when e is not
+// a narrowed values value or fd is not a field of the narrowed variant.
+func narrowedValuesField(c *Context, d *Dot) (ASTType, int, bool) {
+	// Check the narrowing fact first — before typing d.Val — so a values-case
+	// selector (`io_error.PERMISSION_DENIED`, whose base is a type name, not a
+	// variable) is never type-queried here.
+	path, ok := FlowPathForExpr(d.Val)
+	if !ok {
+		return ASTType{}, 0, false
+	}
+	vc, ok := c.VariantNarrow(path.Key())
+	if !ok {
+		return ASTType{}, 0, false
+	}
+	baseType := d.Val.ASTType(c)
+	vd, ok := c.ValuesDeclForName(baseType.Name)
+	if !ok {
+		return ASTType{}, 0, false
+	}
+	payload := &StructDecl{Fields: vc.Payload}
+	off, ft := payload.ByteOffset(c, d.Member)
+	if ft.Name == "" && ft.Element == nil && ft.FuncSig == nil && ft.AnonFields == nil {
+		return ASTType{}, 0, false
+	}
+	return fieldTypeForBase(baseType, ft), vd.TagType.Size(c) + off, true
 }
 
 // InterfaceForName looks up an interface declaration by name, searching the root context.
@@ -2637,6 +2691,13 @@ type Dot struct {
 }
 
 func (d *Dot) ASTType(c *Context) ASTType {
+	// Field access on a values value narrowed to a variant (`e.fd` inside a
+	// matched switch case) resolves against the variant's payload struct.
+	if c != nil {
+		if ft, _, ok := narrowedValuesField(c, d); ok {
+			return ft
+		}
+	}
 	r := ResolveSelector(c, d)
 	switch r.Kind {
 	case ResolvedRuntimeValue, ResolvedStructField, ResolvedValuesCase:
@@ -2651,6 +2712,9 @@ func (d *Dot) ASTType(c *Context) ASTType {
 		t := d.Val.ASTType(c)
 		if decl, ok := structDeclForType(c, t); ok {
 			CompileErrorF(d, "No such struct member \"%s\" in struct \"%s\"", d.Member, decl.TName)
+		}
+		if _, isValues := c.ValuesDeclForName(t.Name); isValues {
+			CompileErrorF(d, "cannot access field %q of values type %s here; match it in a switch case first (a variant's fields are only in scope inside its `case`)", d.Member, t.Name)
 		}
 		CompileErrorF(d, "No such struct \"%s\"", t)
 	}

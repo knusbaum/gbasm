@@ -1,0 +1,27 @@
+package main
+
+import "string"
+
+// Phase 2b: read payload fields inside a narrowed switch case.
+type file_info values {
+	FILE_INFO{ fd i64, path byte[] }
+	CLOSED
+}
+
+fn report(e file_info) {
+	switch e {
+		case FILE_INFO {
+			string.puts("fd=")
+			string.puti(e.fd)
+			string.puts(" path=")
+			string.puts(e.path)
+			string.puts("\n")
+		}
+		case CLOSED { string.puts("closed\n") }
+	}
+}
+
+fn main() {
+	report(file_info.FILE_INFO{ fd: 42, path: "cfg.bos" })
+	report(file_info.CLOSED)
+}

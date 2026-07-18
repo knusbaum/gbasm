@@ -1,0 +1,13 @@
+package main
+
+import "string"
+
+type file_info values {
+	FILE_INFO{ fd i64, path byte[] }
+	CLOSED
+}
+
+fn main() {
+	e file_info := file_info.FILE_INFO{ fd: 3, path: "x" }
+	string.puti(e.fd)
+}
