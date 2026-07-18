@@ -3050,8 +3050,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		compileTypeSwitch(of, c, ast)
 		return nullspot
 	case *VariantSwitch:
-		compileVariantSwitch(of, c, ast)
-		return nullspot
+		return compileVariantSwitch(of, c, ast, dest)
 	case *ValuesConstruct:
 		return compileValuesConstruct(of, c, ast, dest)
 	case *OwnedPromotion:
@@ -7516,7 +7515,11 @@ func compileValuesConstruct(of io.Writer, c *Context, ast *ValuesConstruct, dest
 // scrutinee's tag and branch to the matching case. Exhaustive over the closed
 // variant set (or a `default`). Phase 2: dispatch + exhaustiveness; per-case
 // narrowing / field access are wired in a following step.
-func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch) {
+func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch, dest spot) spot {
+	// Expression form (`y := switch e { case A e.x ... }`): a non-empty dest
+	// means each case body's value is written into it; compiling every body
+	// into the one typed dest enforces that they agree. A statement switch
+	// passes nullspot down (block bodies ignore it).
 	scrutType := ast.Scrutinee.ASTType(c)
 	vd, ok := c.ValuesDeclForName(scrutType.Name)
 	if !ok {
@@ -7586,7 +7589,7 @@ func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch) {
 		if scrutKey != "" && vc != nil {
 			c.SetVariantNarrow(scrutKey, vc)
 		}
-		compileTop(of, c, body, nullspot)
+		compileTop(of, c, body, dest)
 		if scrutKey != "" {
 			delete(c.variantNarrow, scrutKey)
 		}
@@ -7652,6 +7655,7 @@ func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch) {
 	tag.free(of)
 	want.free(of)
 	scrut.free(of)
+	return dest
 }
 
 // case matched. No fallthrough.

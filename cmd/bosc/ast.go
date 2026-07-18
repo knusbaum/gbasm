@@ -3792,9 +3792,53 @@ type VariantSwitch struct {
 	p         position
 }
 
-func (s *VariantSwitch) ASTType(*Context) ASTType { return voidASTType() }
-func (s *VariantSwitch) Note() string             { return "switch (variant) {...}" }
-func (s *VariantSwitch) Pos() position            { return s.p }
+// ASTType is void for a statement switch (case bodies are blocks) and the
+// common case-body type for an expression switch (`y := switch e { case A e.x
+// ... }`). Because a case body may reference the narrowed variant's fields, the
+// first case's variant narrowing is set (and restored) around the type query;
+// codegen verifies all cases agree.
+func (s *VariantSwitch) ASTType(c *Context) ASTType {
+	var body AST
+	switch {
+	case len(s.Cases) > 0:
+		body = s.Cases[0].Body
+	case s.Default != nil:
+		return s.Default.ASTType(c)
+	default:
+		return voidASTType()
+	}
+	if c == nil {
+		return body.ASTType(c)
+	}
+	scrutType := s.Scrutinee.ASTType(c)
+	vd, ok := c.ValuesDeclForName(scrutType.Name)
+	if !ok {
+		return body.ASTType(c)
+	}
+	var vc *ValuesCase
+	for i := range vd.Cases {
+		if vd.Cases[i].Name == s.Cases[0].Name {
+			vc = &vd.Cases[i]
+			break
+		}
+	}
+	fp, ok := FlowPathForExpr(s.Scrutinee)
+	if vc == nil || !ok {
+		return body.ASTType(c)
+	}
+	key := fp.Key()
+	prev, had := c.variantNarrow[key]
+	c.SetVariantNarrow(key, vc)
+	t := body.ASTType(c)
+	if had {
+		c.variantNarrow[key] = prev
+	} else {
+		delete(c.variantNarrow, key)
+	}
+	return t
+}
+func (s *VariantSwitch) Note() string  { return "switch (variant) {...}" }
+func (s *VariantSwitch) Pos() position { return s.p }
 
 // VariantCase is one `case VARIANT { body }` arm of a VariantSwitch.
 type VariantCase struct {

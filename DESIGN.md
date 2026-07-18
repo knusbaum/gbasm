@@ -1774,9 +1774,12 @@ rejected, and a scrutinee that already has a live alias is not narrowed — so
 
 ### What is not in v1
 
-- Payload variants do not yet cross package boundaries, are not usable as a
-  `switch` *expression* (only a statement), and have no head-bound scrutinee
-  (`switch x := expr`) — all planned follow-ons (`PROPOSAL_adts_and_switch.md`).
+- The variant `switch` works as both a statement and an **expression**
+  (`y := switch e { case A e.x  case B 0 }`, where each case body is an
+  expression and all yield the same type). Payload variants cross package
+  boundaries, and a head-bound scrutinee (`switch x := expr`,
+  `switch var x := …`) is supported. Remaining follow-ons: or-patterns and
+  guards.
 - No exposed raw tag value. The compiler may encode tags as a different representation in the future without changing surface semantics; users observing the tag must declare an integer projection.
 - No or-patterns, guards, or field access in a `default` case.
 - No shorthand for hoisting selected case names into local scope.

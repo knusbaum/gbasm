@@ -1,0 +1,17 @@
+package main
+
+import "string"
+
+type evt values {
+	OPENED{ fd i64 }
+	CLOSED
+}
+
+fn main() {
+	e evt := evt.OPENED{ fd: 5 }
+	n i64 := switch e {
+		case OPENED  e.fd
+		case CLOSED  "nope"
+	}
+	string.puti(n)
+}

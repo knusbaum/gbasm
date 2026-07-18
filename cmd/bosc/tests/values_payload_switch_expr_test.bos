@@ -1,0 +1,26 @@
+package main
+
+import "string"
+
+type evt values {
+	OPENED{ fd i64, path byte[] }
+	CLOSED
+}
+
+fn main() {
+	e evt := evt.OPENED{ fd: 7, path: "x" }
+	n i64 := switch e {
+		case OPENED  e.fd
+		case CLOSED  0
+	}
+	string.puti(n)
+	string.puts("\n")
+
+	e2 evt := evt.CLOSED
+	msg byte[] := switch e2 {
+		case OPENED  "open"
+		case CLOSED  "shut"
+	}
+	string.puts(msg)
+	string.puts("\n")
+}
