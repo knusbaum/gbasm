@@ -4293,7 +4293,8 @@ func (n *Node) toASTTop(c *Context) AST {
 		}
 		return &s
 	case n_variantswitch:
-		vs := &VariantSwitch{Scrutinee: n.args[0].toASTTop(NewContext()), p: n.p}
+		scrut := n.args[0].toASTTop(NewContext())
+		vs := &VariantSwitch{Scrutinee: scrut, p: n.p}
 		for _, cn := range n.args[1:] {
 			if cn.t != n_variantcase {
 				ParseErrorF(cn, "Expected a case in variant switch, got %v", cn.t)
@@ -4307,6 +4308,15 @@ func (n *Node) toASTTop(c *Context) AST {
 			} else {
 				vs.Cases = append(vs.Cases, &VariantCase{Name: cn.sval, Body: body, p: cn.p})
 			}
+		}
+		if n.sval != "" {
+			// Head-bind: desugar `switch x := expr { ... }` to
+			// `{ x := expr; switch x { ... } }` — reuses VarDecl type
+			// inference and Block scoping (which enforces that an owned x is
+			// discharged before the switch's scope exits).
+			vs.Scrutinee = &Symbol{Name: n.sval, p: n.p}
+			decl := &VarDecl{Name: n.sval, Type: ASTType{Name: "<infer>"}, IsConst: n.ival&1 == 0, Init: scrut, p: n.p}
+			return &Block{Body: []AST{decl, vs}, p: n.p}
 		}
 		return vs
 	case n_address:

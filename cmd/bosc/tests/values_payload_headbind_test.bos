@@ -1,0 +1,19 @@
+package main
+
+import "string"
+
+type evt values {
+	OPENED{ fd i64, path byte[] }
+	CLOSED
+}
+
+fn make_evt() evt {
+	return evt.OPENED{ fd: 9, path: "sock" }
+}
+
+fn main() {
+	switch x := make_evt() {
+		case OPENED { string.puts("fd="); string.puti(x.fd); string.puts(" "); string.puts(x.path); string.puts("\n") }
+		case CLOSED { string.puts("closed\n") }
+	}
+}

@@ -976,6 +976,39 @@ func (p *Parser) parseSwitch() *Node {
 func (p *Parser) parseVariantSwitch() *Node {
 	swpos := p.current().p
 	p.expect(tok_switch)
+	// Optional head-bind: `switch [var] x := expr { ... }` binds x (scoped to
+	// the switch) to the scrutinee value, so a temporary can be matched and
+	// its fields reached through x. sval carries the bound name; ival bit 0 =
+	// var (mutable).
+	headBind := ""
+	var headVar uint64
+	if p.current().t == tok_var {
+		save := p.current()
+		p.advance()
+		if p.current().t == tok_ident {
+			nameTok := p.current()
+			p.advance()
+			if p.current().t == tok_decl {
+				headBind = nameTok.sval
+				headVar = 1
+				p.advance()
+			} else {
+				p.pushback(nameTok)
+				p.pushback(save)
+			}
+		} else {
+			p.pushback(save)
+		}
+	} else if p.current().t == tok_ident {
+		nameTok := p.current()
+		p.advance()
+		if p.current().t == tok_decl {
+			headBind = nameTok.sval
+			p.advance()
+		} else {
+			p.pushback(nameTok)
+		}
+	}
 	p.noStructLit = true
 	scrut := p.parseExpression()
 	p.noStructLit = false
@@ -1006,7 +1039,7 @@ func (p *Parser) parseVariantSwitch() *Node {
 		}
 	}
 	p.expect(tok_rcurly)
-	return &Node{t: n_variantswitch, p: swpos, args: args}
+	return &Node{t: n_variantswitch, p: swpos, sval: headBind, ival: headVar, args: args}
 }
 
 // parseTypeSwitch parses `switch (v x.(type)) { case T {...} ... default {...} }`.
