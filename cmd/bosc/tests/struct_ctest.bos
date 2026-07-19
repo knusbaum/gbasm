@@ -1,0 +1,18 @@
+package main
+
+import "string"
+
+type Point struct {
+	x i64
+	y i64
+}
+
+fn sumpt(p Point) i64 {
+	return p.x + p.y
+}
+
+fn main() {
+	p := Point{x: 3, y: 4}
+	string.puti(sumpt(p))
+	string.putc(10)
+}

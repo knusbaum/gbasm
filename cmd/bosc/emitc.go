@@ -49,9 +49,20 @@ type cEmitter struct {
 // reported via fatalCtx, matching the .bs path.
 func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 	u := &cUnit{c: c}
-	// Forward declarations first — Boson permits calling a function before its
-	// definition, but C needs a prior declaration — then the definitions.
-	var protos, defs bytes.Buffer
+	var fwd, bodies, protos, defs bytes.Buffer
+	// Struct forward typedefs first (so fields and signatures can reference any
+	// struct, including recursive and mutual references), then the bodies.
+	for _, a := range asts {
+		sd, ok := a.(*StructDecl)
+		if !ok {
+			continue
+		}
+		if err := emitCStruct(&fwd, &bodies, u, sd); err != nil {
+			fatalCtx("Fatal: %v", err)
+		}
+	}
+	// Function forward declarations — Boson permits calling a function before
+	// its definition, but C needs a prior declaration — then the definitions.
 	for _, a := range asts {
 		if err := emitCProto(&protos, u, a); err != nil {
 			fatalCtx("Fatal: %v", err)
@@ -70,11 +81,45 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 		fmt.Fprintf(of, "#include <stdio.h>\n")
 	}
 	fmt.Fprintf(of, "\n")
+	if fwd.Len() > 0 {
+		io.Copy(of, &fwd)
+		fmt.Fprintf(of, "\n")
+	}
+	io.Copy(of, &bodies)
 	if protos.Len() > 0 {
 		io.Copy(of, &protos)
 		fmt.Fprintf(of, "\n")
 	}
 	io.Copy(of, &defs)
+}
+
+// emitCStruct writes a struct body definition. Its forward typedef is emitted
+// separately (in emitCFile) so struct fields and function signatures can name
+// any struct regardless of declaration order.
+func emitCStruct(fwd, bodies io.Writer, u *cUnit, sd *StructDecl) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if ie, ok := r.(*interpreterError); ok {
+				err = ie
+				return
+			}
+			panic(r)
+		}
+	}()
+	// Boson gives structs and functions separate namespaces; C's typedef puts a
+	// struct in the same namespace as functions, so a struct that shares a name
+	// with a function can't be represented this way yet.
+	if _, ok := u.c.FuncDeclForName(sd.TName); ok {
+		cUnsupported(sd.p, fmt.Sprintf("struct name %q also names a function", sd.TName))
+	}
+	fmt.Fprintf(fwd, "typedef struct %s %s;\n", cStructName(sd.TName), cStructName(sd.TName))
+	em := &cEmitter{u: u, locals: map[string]ASTType{}}
+	fmt.Fprintf(bodies, "struct %s {\n", cStructName(sd.TName))
+	for _, f := range sd.Fields {
+		fmt.Fprintf(bodies, "\t%s;\n", em.cDecl(f.Type, cIdent(f.Name)))
+	}
+	fmt.Fprintf(bodies, "};\n\n")
+	return nil
 }
 
 // emitCProto writes a forward declaration for a function so it can be called
@@ -169,6 +214,8 @@ func emitCDecl(w io.Writer, u *cUnit, a AST) (err error) {
 	switch n := a.(type) {
 	case *FuncDecl:
 		emitCFunc(w, u, n)
+	case *StructDecl:
+		// Emitted in emitCFile's struct pass (forward typedef + body).
 	default:
 		cUnsupported(posOf(a), fmt.Sprintf("top-level declaration %T", a))
 	}
@@ -210,7 +257,7 @@ func (em *cEmitter) cFuncHead(f *FuncDecl, isEntry bool) (linkage, head string) 
 	params := make([]string, 0, len(f.Args))
 	for _, arg := range f.Args {
 		em.locals[arg.Name] = arg.Type
-		params = append(params, em.ctype(arg.Type)+" "+cIdent(arg.Name))
+		params = append(params, em.cDecl(arg.Type, cIdent(arg.Name)))
 	}
 	sig := "void"
 	if len(params) > 0 {
@@ -241,9 +288,9 @@ func (em *cEmitter) stmt(w io.Writer, a AST, ind int) {
 		t := em.declType(n.Type, n.Init)
 		em.locals[n.Name] = t
 		if n.Init != nil {
-			fmt.Fprintf(w, "%s%s %s = %s;\n", tab, em.ctype(t), cIdent(n.Name), em.expr(n.Init))
+			fmt.Fprintf(w, "%s%s = %s;\n", tab, em.cDecl(t, cIdent(n.Name)), em.expr(n.Init))
 		} else {
-			fmt.Fprintf(w, "%s%s %s;\n", tab, em.ctype(t), cIdent(n.Name))
+			fmt.Fprintf(w, "%s%s;\n", tab, em.cDecl(t, cIdent(n.Name)))
 		}
 	case *Assignment:
 		fmt.Fprintf(w, "%s%s = %s;\n", tab, em.expr(n.Target), em.expr(n.Val))
@@ -323,9 +370,9 @@ func (em *cEmitter) forClause(a AST) string {
 		t := em.declType(n.Type, n.Init)
 		em.locals[n.Name] = t
 		if n.Init != nil {
-			return em.ctype(t) + " " + cIdent(n.Name) + " = " + em.expr(n.Init)
+			return em.cDecl(t, cIdent(n.Name)) + " = " + em.expr(n.Init)
 		}
-		return em.ctype(t) + " " + cIdent(n.Name)
+		return em.cDecl(t, cIdent(n.Name))
 	case *Assignment:
 		return em.expr(n.Target) + " = " + em.expr(n.Val)
 	case *Funcall:
@@ -374,6 +421,32 @@ func (em *cEmitter) inferType(a AST) ASTType {
 		return boolASTType()
 	case *BitNot:
 		return em.inferType(n.Val)
+	case *Dot:
+		bt := em.u.c.ResolveUnderlying(em.inferType(n.Val))
+		if decl, ok := structDeclForType(em.u.c, bt); ok {
+			for _, f := range decl.Fields {
+				if f.Name == n.Member {
+					return f.Type
+				}
+			}
+		}
+	case *Deref:
+		t := em.inferType(n.Val)
+		if t.Indirection > 0 {
+			t.Indirection--
+		}
+		return t
+	case *Address:
+		if n.Var != "" {
+			if t, ok := em.locals[n.Var]; ok {
+				t.Indirection++
+				return t
+			}
+		}
+	case *NonNullAssert:
+		return em.inferType(n.Val)
+	case *StructLiteral:
+		return n.Type
 	case *Funcall:
 		// The callee's return type does not depend on argument types, so this
 		// resolves through the Context even when arguments are locals.
@@ -397,10 +470,61 @@ func (em *cEmitter) expr(a AST) string {
 		return "!" + em.unaryOperand(n.Val)
 	case *BitNot:
 		return "~" + em.unaryOperand(n.Val)
+	case *Dot:
+		return em.dot(n)
+	case *StructLiteral:
+		return em.structLit(n)
+	case *Address:
+		if n.Var != "" {
+			return "&" + cIdent(n.Var)
+		}
+		cUnsupported(posOf(a), "address-of a literal at runtime")
+		return ""
+	case *Deref:
+		return "*" + em.unaryOperand(n.Val)
+	case *NonNullAssert:
+		// The checker proved non-null; a null deref crashes in C much as the
+		// Boson nil trap would exit. Pass the value through.
+		return em.expr(n.Val)
 	default:
 		cUnsupported(posOf(a), fmt.Sprintf("expression %T", a))
 		return ""
 	}
+}
+
+// dot emits field access, auto-dereferencing a pointer base with `->` exactly
+// as Boson's `.` does.
+func (em *cEmitter) dot(d *Dot) string {
+	sep := "."
+	if em.u.c.ResolveUnderlying(em.inferType(d.Val)).Indirection > 0 {
+		sep = "->"
+	}
+	return em.postfixBase(d.Val) + sep + cIdent(d.Member)
+}
+
+// postfixBase renders the base of a `.`/`->`/`[]` postfix, parenthesizing a
+// base that would otherwise mis-associate.
+func (em *cEmitter) postfixBase(a AST) string {
+	s := em.expr(a)
+	switch a.(type) {
+	case *Symbol, *Dot, *Funcall, *NonNullAssert:
+		return s
+	}
+	return "(" + s + ")"
+}
+
+// structLit emits a struct literal as a C compound literal with designated
+// initializers — readable and order-independent.
+func (em *cEmitter) structLit(s *StructLiteral) string {
+	name := em.ctype(s.Type)
+	if len(s.Fields) == 0 {
+		return "(" + name + "){0}"
+	}
+	parts := make([]string, 0, len(s.Fields))
+	for _, f := range s.Fields {
+		parts = append(parts, "."+cIdent(f.Name)+" = "+em.expr(f.Val))
+	}
+	return "(" + name + "){ " + strings.Join(parts, ", ") + " }"
 }
 
 // unaryOperand renders the operand of a unary operator, parenthesizing a
@@ -419,11 +543,37 @@ func (em *cEmitter) call(f *Funcall) string {
 		// (what a C author writes); general cross-package calls come later.
 		return em.runtimeCall(f, pkg, f.FName())
 	}
-	args := make([]string, 0, len(f.Args))
-	for _, arg := range f.Args {
-		args = append(args, em.expr(arg))
+	name := f.FName()
+	// A type name applied to one argument is a cast, not a call.
+	if len(f.Args) == 1 && em.isTypeName(name) {
+		return "(" + em.ctypeName(name) + ")(" + em.expr(f.Args[0]) + ")"
 	}
-	return cIdent(f.FName()) + "(" + strings.Join(args, ", ") + ")"
+	// Only a genuine user function becomes a C call. Builtins (new, free, len,
+	// …) and anything unrecognized are not yet supported — and must never be
+	// emitted as a bogus C call.
+	if _, ok := em.u.c.FuncDeclForName(name); ok {
+		args := make([]string, 0, len(f.Args))
+		for _, arg := range f.Args {
+			args = append(args, em.expr(arg))
+		}
+		return cIdent(name) + "(" + strings.Join(args, ", ") + ")"
+	}
+	cUnsupported(f.p, fmt.Sprintf("call to %q (builtin, cast, or unresolved)", name))
+	return ""
+}
+
+// isTypeName reports whether name denotes a type (so `name(x)` is a cast).
+func (em *cEmitter) isTypeName(name string) bool {
+	switch name {
+	case "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "byte", "bool":
+		return true
+	}
+	_, ok := em.u.c.StructDeclForName(name)
+	return ok
+}
+
+func (em *cEmitter) ctypeName(name string) string {
+	return em.ctype(ASTType{Name: name})
 }
 
 // runtimeCall maps a recognized runtime output primitive to its idiomatic libc
@@ -512,7 +662,17 @@ func (em *cEmitter) literal(l *Literal) string {
 // integer scalars, bool, and void.
 func (em *cEmitter) ctype(t ASTType) string {
 	rt := em.u.c.ResolveUnderlying(t)
-	if isScalarLeaf(rt) {
+	// Pointer: *T -> "<T> *" (mut/const is best-effort and deferred).
+	if rt.Indirection > 0 {
+		elem := rt
+		elem.Indirection--
+		inner := em.ctype(elem)
+		if strings.HasSuffix(inner, "*") {
+			return inner + "*"
+		}
+		return inner + " *"
+	}
+	if rt.Element == nil && rt.AnonFields == nil {
 		switch rt.Name {
 		case "void", "":
 			return "void"
@@ -536,9 +696,24 @@ func (em *cEmitter) ctype(t ASTType) string {
 		case "u64":
 			return "uint64_t"
 		}
+		if _, ok := structDeclForType(em.u.c, rt); ok {
+			return cStructName(rt.Name)
+		}
 	}
 	cUnsupported(t.p, fmt.Sprintf("type %q", t.String()))
 	return ""
+}
+
+func cStructName(name string) string { return cIdent(name) }
+
+// cDecl renders a declaration "<type> <name>", attaching a pointer's `*` to the
+// name (`int64_t *x`) as a human would.
+func (em *cEmitter) cDecl(t ASTType, name string) string {
+	ct := em.ctype(t)
+	if strings.HasSuffix(ct, "*") {
+		return ct + name
+	}
+	return ct + " " + name
 }
 
 func isScalarLeaf(t ASTType) bool {
