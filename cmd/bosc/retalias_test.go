@@ -49,11 +49,11 @@ func parseAndCompileForTest(t *testing.T, body string) *Context {
 // data-field origin) and not a rejection.
 func TestInterfaceDispatchBorrowPropagation(t *testing.T) {
 	ctx := parseAndCompileForTest(t, `
-interface viewer { bytes(self *self) byte[] from(self) }
-type W struct { buf byte[] } {
-	bytes(w *W) byte[] { return w.buf }
+interface viewer { bytes(self *self) []byte from(self) }
+type W struct { buf []byte } {
+	bytes(w *W) []byte { return w.buf }
 }
-fn get(w *W) byte[] {
+fn get(w *W) []byte {
 	v viewer := w
 	return v.bytes()
 }
@@ -89,7 +89,7 @@ func TestReturnAliasInference(t *testing.T) {
 	}{
 		{
 			name: "subslice of param",
-			body: `fn first_word(s byte[]) byte[] { return s[0:1] }`,
+			body: `fn first_word(s []byte) []byte { return s[0:1] }`,
 			fn:   "first_word",
 			want: [][]int{{0}},
 		},
@@ -118,7 +118,7 @@ fn b_fn(x *mut i64) *mut i64 {
 			// conservative {0,1} the old cycle shortcut produced.
 			name: "recursive 2-param infers only the returned param",
 			body: `
-fn weird(s byte[], t byte[], n i64) byte[] {
+fn weird(s []byte, t []byte, n i64) []byte {
 	if (n > 0) {
 		return weird(s, t, n - 1)
 	}
@@ -134,14 +134,14 @@ fn weird(s byte[], t byte[], n i64) byte[] {
 			// case).
 			name: "3-member cycle converges",
 			body: `
-fn c3a(x byte[], n i64) byte[] {
+fn c3a(x []byte, n i64) []byte {
 	if (n > 0) {
 		return c3b(x, n - 1)
 	}
 	return x[0:1]
 }
-fn c3b(x byte[], n i64) byte[] { return c3c(x, n) }
-fn c3c(x byte[], n i64) byte[] { return c3a(x, n) }`,
+fn c3b(x []byte, n i64) []byte { return c3c(x, n) }
+fn c3c(x []byte, n i64) []byte { return c3a(x, n) }`,
 			fn:   "c3a",
 			want: [][]int{{0}},
 		},
@@ -150,14 +150,14 @@ fn c3c(x byte[], n i64) byte[] { return c3a(x, n) }`,
 			// compute precisely against the memoized root, no iteration.
 			name: "cycle member after convergence",
 			body: `
-fn c4a(x byte[], n i64) byte[] {
+fn c4a(x []byte, n i64) []byte {
 	if (n > 0) {
 		return c4b(x, n - 1)
 	}
 	return x[0:1]
 }
-fn c4b(x byte[], n i64) byte[] { return c4a(x, n) }
-fn c4user(s byte[]) byte[] { return c4b(s, 2) }`,
+fn c4b(x []byte, n i64) []byte { return c4a(x, n) }
+fn c4user(s []byte) []byte { return c4b(s, 2) }`,
 			fn:   "c4user",
 			want: [][]int{{0}},
 		},
@@ -167,13 +167,13 @@ fn c4user(s byte[]) byte[] { return c4b(s, 2) }`,
 			name: "multi-param forwarding records full union",
 			body: `
 fn yes2() bool { return (1 == 1) }
-fn pick2(a byte[], b byte[], u bool) byte[] {
+fn pick2(a []byte, b []byte, u bool) []byte {
 	if (u) {
 		return a
 	}
 	return b
 }
-fn fwd2(x byte[], y byte[], f bool) byte[] { return pick2(x, y, f) }`,
+fn fwd2(x []byte, y []byte, f bool) []byte { return pick2(x, y, f) }`,
 			fn:   "fwd2",
 			want: [][]int{{0, 1}},
 		},
@@ -182,11 +182,11 @@ fn fwd2(x byte[], y byte[], f bool) byte[] { return pick2(x, y, f) }`,
 			// binding carries the callee's per-slot provenance.
 			name: "multiret destructured slot records param",
 			body: `
-fn mk2(s byte[]) byte[], i64 {
+fn mk2(s []byte) []byte, i64 {
 	return s[0:4], 7
 }
-fn take2(s byte[]) byte[] {
-	v byte[], _ := mk2(s)
+fn take2(s []byte) []byte {
+	v []byte, _ := mk2(s)
 	return v
 }`,
 			fn:   "take2",
@@ -197,9 +197,9 @@ fn take2(s byte[]) byte[] {
 			// borrows p; the chained field view records transitively.
 			name: "struct deref return borrows pointer",
 			body: `
-type DB struct { buf byte[] }
+type DB struct { buf []byte }
 fn get2(p *DB) DB { return *p }
-fn use2(p *DB) byte[] {
+fn use2(p *DB) []byte {
 	b DB := get2(p)
 	return b.buf
 }`,
@@ -223,7 +223,7 @@ fn as_g2(b *GB) G2 { return b }`,
 		},
 		{
 			name: "slice passthrough",
-			body: `fn id(s byte[]) byte[] { return s }`,
+			body: `fn id(s []byte) []byte { return s }`,
 			fn:   "id",
 			want: [][]int{{0}},
 		},
@@ -233,7 +233,7 @@ fn as_g2(b *GB) G2 { return b }`,
 			// OWN origin (mirroring the VarDecl-init path), else `return t`
 			// under-records and a local can escape uncaught through a call.
 			name: "reassigned subslice records param",
-			body: `fn f(a byte[]) byte[] { var t byte[]; t = a[0:1]; return t }`,
+			body: `fn f(a []byte) []byte { var t []byte; t = a[0:1]; return t }`,
 			fn:   "f",
 			want: [][]int{{0}},
 		},
@@ -258,7 +258,7 @@ fn id(p *T) *T { return p }`,
 		},
 		{
 			name: "pick two params",
-			body: `fn pick(a byte[], b byte[], use_a bool) byte[] {
+			body: `fn pick(a []byte, b []byte, use_a bool) []byte {
 	if (use_a) { return a }
 	return b
 }`,
@@ -274,8 +274,8 @@ fn id(p *T) *T { return p }`,
 			// {0,1} is recorded — not just one, which would under-report the
 			// alias to a caller and be unsound.
 			name: "branch merge of two borrowed params records union",
-			body: `fn merge2(a byte[], b byte[], cond bool) byte[] {
-	var t byte[] := a
+			body: `fn merge2(a []byte, b []byte, cond bool) []byte {
+	var t []byte := a
 	if (cond) { t = b }
 	return t
 }`,
@@ -284,8 +284,8 @@ fn id(p *T) *T { return p }`,
 		},
 		{
 			name: "struct constructor borrows param",
-			body: `type B struct { buf mut byte[]; pos i64 }
-fn new_builder(buf mut byte[]) B { return B{buf: buf, pos: 0} }`,
+			body: `type B struct { buf []mut byte; pos i64 }
+fn new_builder(buf []mut byte) B { return B{buf: buf, pos: 0} }`,
 			fn:   "new_builder",
 			want: [][]int{{0}},
 		},
@@ -299,9 +299,9 @@ fn new_builder(buf mut byte[]) B { return B{buf: buf, pos: 0} }`,
 			// call escape uncaught (the _err integration test covers that
 			// rejection).
 			name: "struct returned from call records call-arg param",
-			body: `type B struct { buf byte[] }
-fn mk(s byte[]) B { return B{buf: s} }
-fn outer(p byte[]) B { return mk(p) }`,
+			body: `type B struct { buf []byte }
+fn mk(s []byte) B { return B{buf: s} }
+fn outer(p []byte) B { return mk(p) }`,
 			fn:   "outer",
 			want: [][]int{{0}},
 		},
@@ -315,9 +315,9 @@ fn outer(p byte[]) B { return mk(p) }`,
 			// this recorded nothing (the struct-copy field propagation only
 			// handled a *Symbol RHS), and a local in that slot escaped uncaught.
 			name: "struct from call bound to var records param",
-			body: `type B struct { buf byte[] }
-fn mk(s byte[]) B { return B{buf: s} }
-fn outer(p byte[]) B { b B := mk(p); return b }`,
+			body: `type B struct { buf []byte }
+fn mk(s []byte) B { return B{buf: s} }
+fn outer(p []byte) B { b B := mk(p); return b }`,
 			fn:   "outer",
 			want: [][]int{{0}},
 		},
@@ -328,9 +328,9 @@ fn outer(p byte[]) B { b B := mk(p); return b }`,
 			// assignment-bound form records the borrow identically to the
 			// var-init form.
 			name: "struct from call assigned records param",
-			body: `type B struct { buf byte[] }
-fn mk(s byte[]) B { return B{buf: s} }
-fn outer(p byte[]) B { var b B; b = mk(p); return b }`,
+			body: `type B struct { buf []byte }
+fn mk(s []byte) B { return B{buf: s} }
+fn outer(p []byte) B { var b B; b = mk(p); return b }`,
 			fn:   "outer",
 			want: [][]int{{0}},
 		},
@@ -343,8 +343,8 @@ fn outer(p byte[]) B { var b B; b = mk(p); return b }`,
 			// [[1]] depending on branch order), under-recording the borrow — a
 			// use-after-free when a local sits in the dropped slot.
 			name: "branch-merge struct field records param union",
-			body: `type B struct { buf byte[] }
-fn choose(s byte[], t byte[], use_s bool) B {
+			body: `type B struct { buf []byte }
+fn choose(s []byte, t []byte, use_s bool) B {
 	var b B
 	if (use_s) { b.buf = s } else { b.buf = t }
 	return b
@@ -354,28 +354,28 @@ fn choose(s byte[], t byte[], use_s bool) B {
 		},
 		{
 			name: "two hop transitive",
-			body: `fn B(s byte[]) byte[] { return s[0:3] }
-fn A(s byte[]) byte[] { return B(s) }`,
+			body: `fn B(s []byte) []byte { return s[0:3] }
+fn A(s []byte) []byte { return B(s) }`,
 			fn:   "A",
 			want: [][]int{{0}},
 		},
 		{
 			name: "intermediate binding threads borrow",
-			body: `fn tail(s byte[]) byte[] { return s[1:len(s)] }
-fn ok(s byte[]) byte[] { t byte[] := tail(s); return t }`,
+			body: `fn tail(s []byte) []byte { return s[1:len(s)] }
+fn ok(s []byte) []byte { t []byte := tail(s); return t }`,
 			fn:   "ok",
 			want: [][]int{{0}},
 		},
 		{
 			name: "count return aliases nothing",
-			body: `fn count(_ mut byte[], src byte[]) i64 { return len(src) }`,
+			body: `fn count(_ []mut byte, src []byte) i64 { return len(src) }`,
 			fn:   "count",
 			want: [][]int{nil},
 		},
 		{
 			name: "method returns receiver field",
-			body: `type S struct { buf byte[] } {
-	field(s *S) byte[] { return s.buf }
+			body: `type S struct { buf []byte } {
+	field(s *S) []byte { return s.buf }
 }`,
 			fn:   "S.field",
 			want: [][]int{{0}},
@@ -388,9 +388,9 @@ fn ok(s byte[]) byte[] { t byte[] := tail(s); return t }`,
 			// dropped here, ReturnAliases would silently degrade [[0]]→[[]]
 			// (under-recording) — these assert the fact is preserved.
 			name: "empty literal overwrite preserves borrowed-param field",
-			body: `type Inner struct { buf byte[] }
+			body: `type Inner struct { buf []byte }
 type Outer struct { inner Inner }
-fn ok(s byte[]) Outer {
+fn ok(s []byte) Outer {
 	var o Outer
 	o.inner.buf = s
 	o.inner = Inner{}
@@ -401,10 +401,10 @@ fn ok(s byte[]) Outer {
 		},
 		{
 			name: "safe sibling write preserves borrowed-param field",
-			body: `type Inner struct { buf byte[]; other byte[] }
+			body: `type Inner struct { buf []byte; other []byte }
 type Outer struct { inner Inner }
-var g byte[8]
-fn ok(s byte[]) Outer {
+var g [8]byte
+fn ok(s []byte) Outer {
 	var o Outer
 	o.inner.buf = s
 	o.inner.other = g[:]
@@ -415,9 +415,9 @@ fn ok(s byte[]) Outer {
 		},
 		{
 			name: "branch-merge borrowed-param field recorded",
-			body: `type B struct { buf byte[] }
-var g byte[8]
-fn ok(use_borrow bool, s byte[]) B {
+			body: `type B struct { buf []byte }
+var g [8]byte
+fn ok(use_borrow bool, s []byte) B {
 	var b B
 	if (use_borrow) {
 		b.buf = s
@@ -431,8 +431,8 @@ fn ok(use_borrow bool, s byte[]) B {
 		},
 		{
 			name: "loop-break borrowed-param field recorded",
-			body: `type B struct { buf byte[] }
-fn ok(s byte[]) B {
+			body: `type B struct { buf []byte }
+fn ok(s []byte) B {
 	var b B
 	for (;;) {
 		b.buf = s
@@ -449,7 +449,7 @@ fn ok(s byte[]) B {
 			// pass branch and records nothing — the owned return constructs
 			// new ownership, it does not alias the caller. (Open Q3.)
 			name: "owned slice param return not aliased",
-			body: `fn take(s owned mut byte[]) owned mut byte[] { return s }`,
+			body: `fn take(s []owned mut byte) []owned mut byte { return s }`,
 			fn:   "take",
 			want: [][]int{nil},
 		},
@@ -478,10 +478,10 @@ fn ok(s byte[]) B {
 // cannot assert the multi-line body, so it is pinned here).
 func TestInterfaceBorrowContractDiagnostic(t *testing.T) {
 	src := `package main
-type Holder struct { buf byte[] } {
-	bytes(h *Holder) byte[] { return h.buf }
+type Holder struct { buf []byte } {
+	bytes(h *Holder) []byte { return h.buf }
 }
-interface Byter { bytes(s *self) byte[] }
+interface Byter { bytes(s *self) []byte }
 fn coerce(h *Holder) Byter { return h }
 fn main() i64 { return 0 }`
 	_, err := compileBosonSourceForTest(src)
@@ -493,7 +493,7 @@ fn main() i64 { return 0 }`
 		"Type Holder does not implement interface Byter",
 		"method bytes returns a borrow of its receiver",
 		"declares no such borrow",
-		"bytes(h *Holder) byte[]",
+		"bytes(h *Holder) []byte",
 		"defined at",
 		"from(...)",
 	} {

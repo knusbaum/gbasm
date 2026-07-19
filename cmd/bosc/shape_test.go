@@ -73,15 +73,15 @@ func TestShapeWordArrayDistinct(t *testing.T) {
 	}
 	w16, err := shapeWordFor(mk(16))
 	if err != nil {
-		t.Fatalf("byte[16]: unexpected error %v", err)
+		t.Fatalf("[16]byte: unexpected error %v", err)
 	}
 	w32, err := shapeWordFor(mk(32))
 	if err != nil {
-		t.Fatalf("byte[32]: unexpected error %v", err)
+		t.Fatalf("[32]byte: unexpected error %v", err)
 	}
 	w4096, err := shapeWordFor(mk(4096))
 	if err != nil {
-		t.Fatalf("byte[4096]: unexpected error %v", err)
+		t.Fatalf("[4096]byte: unexpected error %v", err)
 	}
 	if w16 == w32 || w16 == w4096 || w32 == w4096 {
 		t.Errorf("array shape words collided: 16=%d 32=%d 4096=%d", w16, w32, w4096)

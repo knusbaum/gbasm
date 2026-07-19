@@ -239,10 +239,11 @@ func TestLexer(t *testing.T) {
 			},
 		},
 		{
-			// *? (nullable-pointer type start) vs * vs *= and <<= vs <<.
+			// `*?` lexes as two tokens (star, question) — prefix type syntax needs
+			// `?*T` and `*?T` to differ. Also * vs *= and <<= vs <<.
 			in: "*? * *= a <<= b << c",
 			out: []token{
-				token{t: tok_maybe_ptr}, token{t: tok_star}, token{t: tok_stareq},
+				token{t: tok_star}, token{t: tok_question}, token{t: tok_star}, token{t: tok_stareq},
 				token{t: tok_ident, sval: "a"}, token{t: tok_shleq},
 				token{t: tok_ident, sval: "b"}, token{t: tok_shl},
 				token{t: tok_ident, sval: "c"},

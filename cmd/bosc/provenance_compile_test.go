@@ -104,21 +104,21 @@ func TestSliceProvenanceCompileMatrix(t *testing.T) {
 			// inferred return-parameter aliasing (the obligation moves to
 			// the caller). See retalias.go / PROPOSAL_return_alias_inference.
 			name: "borrowed parameter return allowed (return-alias inference)",
-			body: `fn ok(s byte[]) byte[] {
+			body: `fn ok(s []byte) []byte {
 	return s
 }`,
 		},
 		{
 			name: "global array return allowed",
-			body: `var g byte[8]
-fn ok() byte[] {
+			body: `var g [8]byte
+fn ok() []byte {
 	return g[:]
 }`,
 		},
 		{
 			name: "local array return rejected",
-			body: `fn bad() byte[] {
-	local byte[8]
+			body: `fn bad() []byte {
+	local [8]byte
 	return local[:]
 }`,
 			wantErr: "Borrowed slice escapes through return",
@@ -126,16 +126,16 @@ fn ok() byte[] {
 		{
 			// Now legal: alias of a borrowed param returned — recordable.
 			name: "alias of borrowed param return allowed (return-alias inference)",
-			body: `fn ok(s byte[]) byte[] {
-	alias byte[] := s
+			body: `fn ok(s []byte) []byte {
+	alias []byte := s
 	return alias
 }`,
 		},
 		{
 			// Now legal: assignment-alias of a borrowed param returned.
 			name: "assignment alias of borrowed param return allowed (return-alias inference)",
-			body: `fn ok(s byte[]) byte[] {
-	var alias byte[]
+			body: `fn ok(s []byte) []byte {
+	var alias []byte
 	alias = s
 	return alias
 }`,
@@ -143,15 +143,15 @@ fn ok() byte[] {
 		{
 			// Now legal: sub-slice of a borrowed param returned.
 			name: "subslice of borrowed param return allowed (return-alias inference)",
-			body: `fn ok(s byte[]) byte[] {
+			body: `fn ok(s []byte) []byte {
 	return s[1:]
 }`,
 		},
 		{
 			// Now legal: struct whose field borrows a param, returned.
 			name: "struct field borrowing param return allowed (return-alias inference)",
-			body: `type B struct { buf byte[] }
-fn ok(s byte[]) B {
+			body: `type B struct { buf []byte }
+fn ok(s []byte) B {
 	var b B
 	b.buf = s
 	return b
@@ -161,25 +161,25 @@ fn ok(s byte[]) B {
 			// Now legal: struct literal field borrows a param (the
 			// new_builder constructor shape).
 			name: "struct literal field borrowing param return allowed (return-alias inference)",
-			body: `type B struct { buf byte[] }
-fn ok(s byte[]) B {
+			body: `type B struct { buf []byte }
+fn ok(s []byte) B {
 	return B{buf: s}
 }`,
 		},
 		{
 			// Now legal: nested struct literal field borrows a param.
 			name: "nested struct literal field borrowing param return allowed (return-alias inference)",
-			body: `type B struct { buf byte[] }
+			body: `type B struct { buf []byte }
 type Outer struct { inner B }
-fn ok(s byte[]) Outer {
+fn ok(s []byte) Outer {
 	return Outer{inner: B{buf: s}}
 }`,
 		},
 		{
 			name: "nested field array slice return rejected",
-			body: `type Inner struct { buf byte[8] }
+			body: `type Inner struct { buf [8]byte }
 type Outer struct { inner Inner }
-fn bad() byte[] {
+fn bad() []byte {
 	o Outer
 	return o.inner.buf[:]
 }`,
@@ -187,8 +187,8 @@ fn bad() byte[] {
 		},
 		{
 			name: "array of arrays element slice return rejected",
-			body: `fn bad() byte[] {
-	a byte[8][1]
+			body: `fn bad() []byte {
+	a [1][8]byte
 	return a[0][:]
 }`,
 			wantErr: "Borrowed slice escapes through return",
@@ -196,8 +196,8 @@ fn bad() byte[] {
 		{
 			// Now legal: re-slice of a stored borrowed-param field.
 			name: "reslice stored borrowed-param struct field return allowed (return-alias inference)",
-			body: `type B struct { buf byte[] }
-fn ok(s byte[]) byte[] {
+			body: `type B struct { buf []byte }
+fn ok(s []byte) []byte {
 	var b B
 	b.buf = s
 	return b.buf[:]
@@ -206,8 +206,8 @@ fn ok(s byte[]) byte[] {
 		{
 			// Now legal: re-slice of a stored borrowed-param array element.
 			name: "reslice stored borrowed-param array element return allowed (return-alias inference)",
-			body: `fn ok(s byte[]) byte[] {
-	var arr byte[][1]
+			body: `fn ok(s []byte) []byte {
+	var arr [1][]byte
 	arr[0] = s
 	return arr[0][:]
 }`,
@@ -215,9 +215,9 @@ fn ok(s byte[]) byte[] {
 		{
 			// Now legal: struct copy carrying a borrowed-param descendant.
 			name: "struct copy with borrowed-param descendant return allowed (return-alias inference)",
-			body: `type Inner struct { buf byte[] }
+			body: `type Inner struct { buf []byte }
 type Outer struct { inner Inner }
-fn ok(s byte[]) Outer {
+fn ok(s []byte) Outer {
 	var o Outer
 	o.inner.buf = s
 	o2 Outer := o
@@ -226,66 +226,66 @@ fn ok(s byte[]) Outer {
 		},
 		{
 			name: "global slice assignment rejected",
-			body: `var g mut byte[]
-fn bad(s byte[]) {
+			body: `var g []mut byte
+fn bad(s []byte) {
 	g = s
 }`,
 			wantErr: "Borrowed slice escapes via global g",
 		},
 		{
 			name: "global field assignment rejected",
-			body: `type B struct { buf mut byte[] }
+			body: `type B struct { buf []mut byte }
 var g B
-fn bad(s byte[]) {
+fn bad(s []byte) {
 	g.buf = s
 }`,
 			wantErr: "Borrowed slice escapes via field B.buf",
 		},
 		{
 			name: "borrowed pointer field assignment rejected",
-			body: `type B struct { buf byte[] }
-fn bad(out *mut B, s byte[]) {
+			body: `type B struct { buf []byte }
+fn bad(out *mut B, s []byte) {
 	out.buf = s
 }`,
 			wantErr: "Borrowed slice escapes via field B.buf",
 		},
 		{
 			name: "borrowed pointer struct literal assignment rejected",
-			body: `type B struct { buf byte[] }
-fn bad(out *mut B, s byte[]) {
+			body: `type B struct { buf []byte }
+fn bad(out *mut B, s []byte) {
 	*out = B{buf: s}
 }`,
 			wantErr: "Borrowed slice escapes via field B.buf",
 		},
 		{
 			name: "global array of slices assignment rejected",
-			body: `var g byte[][1]
-fn bad(s byte[]) {
+			body: `var g [1][]byte
+fn bad(s []byte) {
 	g[0] = s
 }`,
 			wantErr: "Borrowed slice escapes via slice element",
 		},
 		{
 			name: "global source through pointer field allowed",
-			body: `type B struct { buf byte[] }
-var src byte[8]
+			body: `type B struct { buf []byte }
+var src [8]byte
 fn fill(out *mut B) {
 	out.buf = src[:]
 }`,
 		},
 		{
 			name: "local struct store without escape allowed",
-			body: `type B struct { buf byte[] }
-fn ok(s byte[]) {
+			body: `type B struct { buf []byte }
+fn ok(s []byte) {
 	var b B
 	b.buf = s
 }`,
 		},
 		{
 			name: "clean symbol struct field overwrite clears descendant",
-			body: `type Inner struct { buf byte[] }
+			body: `type Inner struct { buf []byte }
 type Outer struct { inner Inner }
-fn ok(s byte[]) Outer {
+fn ok(s []byte) Outer {
 	var o Outer
 	o.inner.buf = s
 	clean Inner
@@ -295,24 +295,24 @@ fn ok(s byte[]) Outer {
 		},
 		{
 			name: "clean symbol array field overwrite clears bucket",
-			body: `type Inner struct { bufs byte[][1] }
-fn ok(s byte[]) Inner {
+			body: `type Inner struct { bufs [1][]byte }
+fn ok(s []byte) Inner {
 	var i Inner
 	i.bufs[0] = s
-	clean byte[][1]
+	clean [1][]byte
 	i.bufs = clean
 	return i
 }`,
 		},
 		{
 			name: "function call struct field overwrite clears descendant",
-			body: `type Inner struct { buf byte[] }
+			body: `type Inner struct { buf []byte }
 type Outer struct { inner Inner }
 fn clean() Inner {
 	i Inner
 	return i
 }
-fn ok(s byte[]) Outer {
+fn ok(s []byte) Outer {
 	var o Outer
 	o.inner.buf = s
 	o.inner = clean()
@@ -321,12 +321,12 @@ fn ok(s byte[]) Outer {
 		},
 		{
 			name: "function call array field overwrite clears bucket",
-			body: `type Inner struct { bufs byte[][1] }
-fn clean() byte[][1] {
-	a byte[][1]
+			body: `type Inner struct { bufs [1][]byte }
+fn clean() [1][]byte {
+	a [1][]byte
 	return a
 }
-fn ok(s byte[]) Inner {
+fn ok(s []byte) Inner {
 	var i Inner
 	i.bufs[0] = s
 	i.bufs = clean()
@@ -340,9 +340,9 @@ fn ok(s byte[]) Inner {
 			// non-clearing behavior still matters — it keeps the alias
 			// recorded rather than silently dropped.
 			name: "empty struct literal overwrite preserves borrowed-param field, return allowed",
-			body: `type Inner struct { buf byte[] }
+			body: `type Inner struct { buf []byte }
 type Outer struct { inner Inner }
-fn ok(s byte[]) Outer {
+fn ok(s []byte) Outer {
 	var o Outer
 	o.inner.buf = s
 	o.inner = Inner{}
@@ -353,9 +353,9 @@ fn ok(s byte[]) Outer {
 			// Now legal: the borrowed-param bucket survives a sibling
 			// global write and is returned — recordable, not rejected.
 			name: "indexed bucket with later global write borrowed-param return allowed (return-alias inference)",
-			body: `var g byte[8]
-fn ok(s byte[]) byte[] {
-	var arr byte[][2]
+			body: `var g [8]byte
+fn ok(s []byte) []byte {
+	var arr [2][]byte
 	arr[0] = s
 	arr[1] = g[:]
 	return arr[0][:]
@@ -365,9 +365,9 @@ fn ok(s byte[]) byte[] {
 			// Now legal: nested borrowed-param bucket survives a sibling
 			// global write and is returned.
 			name: "nested indexed bucket with later global write borrowed-param return allowed (return-alias inference)",
-			body: `type B struct { items byte[][2] }
-var g byte[8]
-fn ok(s byte[]) B {
+			body: `type B struct { items [2][]byte }
+var g [8]byte
+fn ok(s []byte) B {
 	var b B
 	b.items[0] = s
 	b.items[1] = g[:]
@@ -376,12 +376,12 @@ fn ok(s byte[]) B {
 		},
 		{
 			name: "whole array overwrite clears indexed bucket",
-			body: `fn clean() byte[][2] {
-	a byte[][2]
+			body: `fn clean() [2][]byte {
+	a [2][]byte
 	return a
 }
-fn ok(s byte[]) byte[] {
-	var arr byte[][2]
+fn ok(s []byte) []byte {
+	var arr [2][]byte
 	arr[0] = s
 	arr = clean()
 	return arr[0][:]
@@ -389,12 +389,12 @@ fn ok(s byte[]) byte[] {
 		},
 		{
 			name: "nested whole array overwrite clears indexed bucket",
-			body: `type B struct { items byte[][2] }
-fn clean() byte[][2] {
-	a byte[][2]
+			body: `type B struct { items [2][]byte }
+fn clean() [2][]byte {
+	a [2][]byte
 	return a
 }
-fn ok(s byte[]) B {
+fn ok(s []byte) B {
 	var b B
 	b.items[0] = s
 	b.items = clean()
@@ -430,22 +430,22 @@ func TestSliceProvenanceSourceMatrix(t *testing.T) {
 	}{
 		{
 			name: "string literal source may be returned",
-			body: `fn ok() byte[] {
+			body: `fn ok() []byte {
 	return "static"
 }`,
 		},
 		{
 			name: "global slice alias may be returned",
-			body: `var g byte[8]
-fn ok() byte[] {
-	s byte[] := g[:]
+			body: `var g [8]byte
+fn ok() []byte {
+	s []byte := g[:]
 	return s
 }`,
 		},
 		{
 			name: "local struct field array source rejected",
-			body: `type B struct { buf byte[8] }
-fn bad() byte[] {
+			body: `type B struct { buf [8]byte }
+fn bad() []byte {
 	b B
 	return b.buf[:]
 }`,
@@ -453,19 +453,19 @@ fn bad() byte[] {
 		},
 		{
 			name: "local array field alias rejected",
-			body: `type B struct { bufs byte[8][1] }
-fn bad() byte[] {
+			body: `type B struct { bufs [1][8]byte }
+fn bad() []byte {
 	var b B
-	s byte[] := b.bufs[0][:]
+	s []byte := b.bufs[0][:]
 	return s
 }`,
 			wantErr: "Borrowed slice escapes through return",
 		},
 		{
 			name: "local array source through struct field rejected",
-			body: `type B struct { buf byte[] }
+			body: `type B struct { buf []byte }
 fn bad() B {
-	var local byte[8]
+	var local [8]byte
 	var b B
 	b.buf = local[:]
 	return b
@@ -474,7 +474,7 @@ fn bad() B {
 		},
 		{
 			name: "static string through struct field may be returned",
-			body: `type B struct { buf byte[] }
+			body: `type B struct { buf []byte }
 fn ok() B {
 	var b B
 	b.buf = "static"
@@ -515,7 +515,7 @@ func TestSliceProvenanceImportedSinkMatrix(t *testing.T) {
 		{
 			name: "borrowed parameter to imported global rejected",
 			body: `import "visibility"
-fn bad(s byte[]) {
+fn bad(s []byte) {
 	visibility.pub_slice = s
 }`,
 			wantErr: "Borrowed slice escapes via global visibility.pub_slice",
@@ -524,7 +524,7 @@ fn bad(s byte[]) {
 			name: "local array to imported global rejected",
 			body: `import "visibility"
 fn bad() {
-	var local byte[8]
+	var local [8]byte
 	visibility.pub_slice = local[:]
 }`,
 			wantErr: "Borrowed slice escapes via global visibility.pub_slice",
@@ -532,7 +532,7 @@ fn bad() {
 		{
 			name: "global source to imported global allowed",
 			body: `import "visibility"
-var g byte[8]
+var g [8]byte
 fn ok() {
 	visibility.pub_slice = g[:]
 }`,
@@ -540,7 +540,7 @@ fn ok() {
 		{
 			name: "borrowed parameter to imported global array element rejected",
 			body: `import "visibility"
-fn bad(s byte[]) {
+fn bad(s []byte) {
 	visibility.pub_slices[0] = s
 }`,
 			wantErr: "Borrowed slice escapes via slice element",
@@ -574,10 +574,10 @@ func TestSliceProvenanceOverwriteMatrix(t *testing.T) {
 	}{
 		{
 			name: "listed safe struct literal field clears prior borrowed field",
-			body: `type Inner struct { buf byte[] }
+			body: `type Inner struct { buf []byte }
 type Outer struct { inner Inner }
-var g byte[8]
-fn ok(s byte[]) Outer {
+var g [8]byte
+fn ok(s []byte) Outer {
 	var o Outer
 	o.inner.buf = s
 	o.inner = Inner{buf: g[:]}
@@ -591,9 +591,9 @@ fn ok(s byte[]) Outer {
 			// inference rather than rejected. The preservation fact still
 			// matters — it is what makes the alias *recorded* (not dropped).
 			name: "omitted struct literal field preserves prior borrowed-param field, return allowed",
-			body: `type Inner struct { buf byte[]; n i64 }
+			body: `type Inner struct { buf []byte; n i64 }
 type Outer struct { inner Inner }
-fn ok(s byte[]) Outer {
+fn ok(s []byte) Outer {
 	var o Outer
 	o.inner.buf = s
 	o.inner = Inner{n: 1}
@@ -602,10 +602,10 @@ fn ok(s byte[]) Outer {
 		},
 		{
 			name: "scalar leaf overwrite clears descendant",
-			body: `type Inner struct { buf byte[] }
+			body: `type Inner struct { buf []byte }
 type Outer struct { inner Inner }
-var g byte[8]
-fn ok(s byte[]) Outer {
+var g [8]byte
+fn ok(s []byte) Outer {
 	var o Outer
 	o.inner.buf = s
 	o.inner.buf = g[:]
@@ -617,10 +617,10 @@ fn ok(s byte[]) Outer {
 			// so the returned struct still borrows the param. Now legal:
 			// recordable, not rejected.
 			name: "safe sibling write preserves borrowed-param field, return allowed",
-			body: `type Inner struct { buf byte[]; other byte[] }
+			body: `type Inner struct { buf []byte; other []byte }
 type Outer struct { inner Inner }
-var g byte[8]
-fn ok(s byte[]) Outer {
+var g [8]byte
+fn ok(s []byte) Outer {
 	var o Outer
 	o.inner.buf = s
 	o.inner.other = g[:]
@@ -629,9 +629,9 @@ fn ok(s byte[]) Outer {
 		},
 		{
 			name: "whole aggregate overwrite from local literal with listed safe field clears bucket",
-			body: `type B struct { items byte[][2] }
-var g byte[8]
-fn ok(s byte[]) B {
+			body: `type B struct { items [2][]byte }
+var g [8]byte
+fn ok(s []byte) B {
 	var b B
 	b.items[0] = s
 	b = B{items: [g[:], g[:]]}
@@ -670,9 +670,9 @@ func TestSliceProvenanceControlFlowMatrix(t *testing.T) {
 			// returned struct may borrow the param. Now legal: recordable
 			// via return-alias inference, not rejected.
 			name: "borrowed-param field on one branch, return allowed",
-			body: `type B struct { buf byte[] }
-var g byte[8]
-fn ok(use_borrow bool, s byte[]) B {
+			body: `type B struct { buf []byte }
+var g [8]byte
+fn ok(use_borrow bool, s []byte) B {
 	var b B
 	if (use_borrow) {
 		b.buf = s
@@ -685,9 +685,9 @@ fn ok(use_borrow bool, s byte[]) B {
 		{
 			// One branch borrows the param into the bucket. Now legal.
 			name: "borrowed-param bucket on one branch, return allowed",
-			body: `type B struct { items byte[][2] }
-var g byte[8]
-fn ok(use_borrow bool, s byte[]) B {
+			body: `type B struct { items [2][]byte }
+var g [8]byte
+fn ok(use_borrow bool, s []byte) B {
 	var b B
 	if (use_borrow) {
 		b.items[0] = s
@@ -699,9 +699,9 @@ fn ok(use_borrow bool, s byte[]) B {
 		},
 		{
 			name: "both branches overwrite with safe source allowed",
-			body: `type B struct { buf byte[] }
-var g byte[8]
-fn ok(use_first bool, s byte[]) B {
+			body: `type B struct { buf []byte }
+var g [8]byte
+fn ok(use_first bool, s []byte) B {
 	var b B
 	b.buf = s
 	if (use_first) {
@@ -716,8 +716,8 @@ fn ok(use_first bool, s byte[]) B {
 			// The field borrows the param inside the loop; the returned
 			// struct may borrow it. Now legal: recordable, not rejected.
 			name: "loop break after borrowed-param field, return allowed",
-			body: `type B struct { buf byte[] }
-fn ok(s byte[]) B {
+			body: `type B struct { buf []byte }
+fn ok(s []byte) B {
 	var b B
 	for (;;) {
 		b.buf = s
@@ -728,9 +728,9 @@ fn ok(s byte[]) B {
 		},
 		{
 			name: "loop break after safe overwrite allowed",
-			body: `type B struct { buf byte[] }
-var g byte[8]
-fn ok(s byte[]) B {
+			body: `type B struct { buf []byte }
+var g [8]byte
+fn ok(s []byte) B {
 	var b B
 	b.buf = s
 	for (;;) {

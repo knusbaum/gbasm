@@ -417,223 +417,118 @@ func (p *Parser) parseTok() *Node {
 // "no return type, infer void."
 func isTypeStart(t toktype) bool {
 	switch t {
-	case tok_ident, tok_fn, tok_star, tok_maybe_ptr, tok_question, tok_owned, tok_mut, tok_struct:
+	case tok_ident, tok_fn, tok_star, tok_lsquare, tok_question, tok_owned, tok_mut, tok_struct:
 		return true
 	}
 	return false
 }
 
+// parseTypeName parses a PREFIX type expression (DESIGN_prefix_type_syntax.md):
+// the modifiers `*`, `[]`, `[N]`, `owned`, `mut`, `?` all read left-to-right and
+// bind to the type on their right. It returns a <prebuilt> n_typename wrapping
+// the fully-assembled ASTType, so mkTypename hands the ASTType straight back.
+//
+// This one function serves both source and `.bo`-import type strings; there is
+// no separate postfix path. The exact bit encoding each constructor produces is
+// specified in §3.3 and enforced by ptrWrap / sliceWrap / arrayWrap below.
 func (p *Parser) parseTypeName() *Node {
-	var indirection uint64
-	var mutmask uint64
-	var ownedmask uint64
-	var nilmask uint64
+	pos := p.current().p
+	at := p.parseTypeExpr(false)
+	return &Node{t: n_typename, p: pos, sval: "<prebuilt>", prebuilt: &at}
+}
 
-	// Bit numbering convention (bit 0 = outermost, bit N = after N dereferences):
-	//   owned/mut before '*' at level N  → applies to the pointer itself  → bit N
-	//   owned/mut after  '*' (before next '*' or base type) → applies to what the '*' points to → bit N+1
-	//   owned/mut before a base type (no '*') → bit N (the value itself)
-	//   mut before a slice base type (T[]) → bit N+1 (elements, like *mut T for pointers)
-	//
-	// 'mut' before a '*' is illegal — 'mut' on a pointer means write-through,
-	// which is expressed as '*mut T'. Binding mutability is expressed with var/const.
-	//
-	// Examples:
-	//   owned i64       → OwnedMask bit 0  (the i64 itself is owned)
-	//   owned *T        → OwnedMask bit 0  (the pointer is owned)
-	//   *mut T          → MutMask   bit 1  (write-through to T, symmetric with *owned T)
-	//   *owned T        → OwnedMask bit 1  (T is owned, accessed through the pointer)
-	//   owned *owned T  → OwnedMask bits 0+1 (two independent obligations)
-	//   mut byte[]      → MutMask   bit 1  (elements writable, analogous to *mut byte)
+// parseTypeExpr folds one prefix type into an ASTType. refOperand is true when
+// this level is the operand of a reference constructor (`*` pointee or `[]`
+// element) — the only positions where a leading `mut` is legal. A leading `mut`
+// at a binding level is spelled `var`, not written into the type; a `mut` after
+// `[N]` (an array element) is meaningless because an array fuses into its
+// parent's storage. `owned` and `?` are legal at any level (interface-ness of a
+// `?T` base is validated later, in ToAST).
+func (p *Parser) parseTypeExpr(refOperand bool) ASTType {
+	// Leading qualifiers for THIS level. They bind right and land at bit 0 of
+	// whatever this level turns out to be.
+	var qOwned, qMut, qNil bool
 	for {
-		// Read qualifiers at the current level (before the next '*' or base type).
-		for p.current().t == tok_owned || p.current().t == tok_mut {
-			if p.current().t == tok_owned {
-				ownedmask |= 1 << indirection
-				p.advance()
-			} else {
-				// 'mut' before a '*' is illegal.
-				if p.current().t == tok_mut {
-					mutPos := p.current().p
-					p.advance()
-					if p.current().t == tok_star {
-						panic(&interpreterError{"'mut' before '*' is not valid; use '*mut T' for write-through", mutPos})
-					}
-					// 'mut' before base type (non-pointer): recorded at current level.
-					// For slices (T[]) this will be bumped to +1 below.
-					mutmask |= 1 << indirection
-				}
-			}
-		}
-		if p.current().t != tok_star && p.current().t != tok_maybe_ptr {
-			break
-		}
-		nullable := p.current().t == tok_maybe_ptr
-		p.advance() // consume '*' or '*?'
-		indirection++
-		if nullable {
-			nilmask |= 1 << (indirection - 1)
-		}
-		// Qualifiers after the '*' apply to what it points to (bit = indirection, i.e. N+1).
-		// Both 'mut' and 'owned' are symmetric here.
-		for p.current().t == tok_owned || p.current().t == tok_mut {
-			if p.current().t == tok_owned {
-				ownedmask |= 1 << indirection
-			} else {
-				mutmask |= 1 << indirection
-			}
+		switch p.current().t {
+		case tok_owned:
+			qOwned = true
 			p.advance()
-		}
-	}
-
-	// Nullable base type (`?T`): the value itself may be null, recorded at the
-	// current level (bit `indirection`, = 0 for a bare `?T`). Currently only
-	// meaningful for interface types — a nullable interface whose vtable may be
-	// 0 — mirroring `*?T` for pointers; ToAST rejects `?` on non-interfaces.
-	if p.current().t == tok_question {
-		p.advance()
-		nilmask |= 1 << indirection
-	}
-
-	c := p.current()
-
-	// Anonymous struct type: `struct { field Type, ... }`.
-	// Packed into an n_typename with sval="<struct>" and args = n_stfield nodes,
-	// recognized by mkTypename to assemble an ASTType with AnonFields.
-	// Also handles `multiretu{...}` — the serialized form of a multi-value return
-	// type (ASTType.String() emits this when MultiReturn=true) — producing a
-	// "<multiretu>" sentinel instead so mkTypename sets MultiReturn=true on reload.
-	if c.t == tok_struct || (c.t == tok_ident && c.sval == "multiretu") {
-		isMultiRetu := c.t == tok_ident && c.sval == "multiretu"
-		structpos := c.p
-		p.advance()
-		p.expect(tok_lcurly)
-		var fieldNodes []*Node
-		for p.current().t != tok_rcurly {
-			if p.current().t == tok_semicolon || p.current().t == tok_comma {
-				p.advance()
-				continue
+		case tok_mut:
+			mp := p.current().p
+			if !refOperand {
+				panic(&interpreterError{"a binding's mutability is written `var`, not a leading `mut`; `mut` only qualifies a pointer or slice operand (`*mut T`, `[]mut T`)", mp})
 			}
-			fieldpos := p.current().p
-			fname := p.parseTok()
-			if fname.t != n_symbol {
-				panic(&interpreterError{fmt.Sprintf("Expected field name, but found: %v", fname), fname.p})
-			}
-			// Accept an optional ':' between name and type (emitted by
-			// ASTType.String() in the .bo type annotation round-trip).
-			if p.current().t == tok_colon {
-				p.advance()
-			}
-			ftypeNode := p.parseTypeName()
-			fieldNodes = append(fieldNodes, &Node{t: n_stfield, p: fieldpos, sval: fname.sval, args: []*Node{ftypeNode}})
-		}
-		p.expect(tok_rcurly)
-		sval := "<struct>"
-		if isMultiRetu {
-			sval = "<multiretu>"
-		}
-		return &Node{
-			t:         n_typename,
-			p:         structpos,
-			sval:      sval,
-			mutmask:   mutmask,
-			ownedmask: ownedmask,
-			nilmask:   nilmask,
-			ival:      indirection,
-			args:      fieldNodes,
-		}
-	}
-
-	// Function-pointer type: `fn(t1, t2, ...) [ret]`. The leading `fn`
-	// disambiguates it from a regular identifier-typed form. Parses
-	// the parameter type list and an optional return type, packs them
-	// into a synthetic n_typename whose args carry the signature for
-	// mkTypename to assemble.
-	if c.t == tok_fn {
-		fnpos := c.p
-		p.advance()
-		p.expect(tok_lparen)
-		var argTypes []*Node
-		for p.current().t != tok_rparen {
-			if p.current().t == tok_semicolon {
-				p.advance()
-				continue
-			}
-			at := p.parseTypeName()
-			argTypes = append(argTypes, at)
-			if p.current().t != tok_comma && p.current().t != tok_semicolon {
-				break
-			}
+			qMut = true
 			p.advance()
+		case tok_question:
+			qNil = true
+			p.advance()
+		default:
+			goto qualsDone
 		}
-		p.expect(tok_rparen)
-		// Optional return type; absent means void.
-		var retType *Node
-		if isTypeStart(p.current().t) {
-			retType = p.parseTypeName()
+	}
+qualsDone:
+
+	var t ASTType
+	switch p.current().t {
+	case tok_star:
+		p.advance()
+		t = ptrWrap(p.parseTypeExpr(true)) // pointee is a reference operand
+	case tok_lsquare:
+		p.advance()
+		if p.current().t == tok_rsquare {
+			p.advance()
+			t = sliceWrap(p.parseTypeExpr(true)) // slice element is a reference operand
 		} else {
-			retType = &Node{t: n_typename, p: fnpos, sval: "void"}
+			if p.current().t != tok_number {
+				panic(&interpreterError{fmt.Sprintf("Expected an array size or ']', but found: %s", p.current().t), p.current().p})
+			}
+			n := p.current().nval
+			p.advance()
+			p.expect(tok_rsquare)
+			t = arrayWrap(p.parseTypeExpr(false), int(n)) // array element is NOT a ref operand
 		}
-		// Pack into an n_typename with sval="fn" as a sentinel
-		// recognized by mkTypename. ival carries argument count;
-		// args holds the arg types followed by the return type at
-		// the end (the apply-wrappers loop in mkTypename skips this
-		// shape because sval == "fn").
-		args := append([]*Node{}, argTypes...)
-		args = append(args, retType)
-		return &Node{
-			t:    n_typename,
-			p:    fnpos,
-			sval: "fn",
-			ival: uint64(len(argTypes)),
-			args: args,
-		}
-	}
-
-	// Parenthesized type group: `(T)`. The only reason to write one is to
-	// make the leading `*` prefixes bind to the whole group rather than to
-	// the base type — e.g. `*(byte[])` is a pointer to a byte slice, as
-	// opposed to `*byte[]` which is a slice of byte-pointers. The inner type
-	// is parsed recursively; the accumulated outer indirection / mut / owned
-	// / nullable masks are then layered on top of the inner ASTType. This is
-	// the inverse of ASTType.String(), which already emits `*(byte[])` for
-	// pointer-to-slice. Without it, such types are constructible (`&s` where
-	// `s byte[]`) but not nameable, which blocks `%s`-style assertions and
-	// the `*(byte[])` parameter form.
-	if c.t == tok_lparen {
-		parenPos := c.p
+	case tok_lparen:
+		// Grouping. Prefix rarely needs it, but `*(...)` etc. stays legal so
+		// serialized forms and hand-written types can parenthesize freely.
 		p.advance()
-		innerNode := p.parseTypeName()
+		t = p.parseTypeExpr(refOperand)
 		p.expect(tok_rparen)
-		inner := mkTypename(innerNode)
-		// Layer the outer pointer levels (collected above) on top of the
-		// inner type. Each `*` shifts the inner's existing mut/owned/nil
-		// bits up one position, then sets the new outer level's bits from
-		// the masks parseTypeName accumulated for that level.
-		built := inner
-		for i := 0; i < int(indirection); i++ {
-			built.MutMask <<= 1
-			built.OwnedMask <<= 1
-			built.NilMask <<= 1
-			built.Indirection++
-		}
-		// Apply the outer-level qualifier bits the prefix loop recorded.
-		// indirection masks occupy bits [0..indirection]; merge them in.
-		built.MutMask |= mutmask
-		built.OwnedMask |= ownedmask
-		built.NilMask |= nilmask
-		return &Node{t: n_typename, p: parenPos, sval: "<prebuilt>", prebuilt: &built}
+	default:
+		t = p.parseTypeBaseAt()
 	}
 
+	// Apply this level's leading qualifiers at bit 0 of the level just built.
+	if qOwned {
+		t.OwnedMask |= 1
+	}
+	if qMut {
+		t.MutMask |= 1
+	}
+	if qNil {
+		t.NilMask |= 1
+	}
+	return t
+}
+
+// parseTypeBaseAt parses a base type at the current token: an anonymous struct /
+// multiretu / fn type (folded via the existing node path) or an identifier type
+// name (optionally package-qualified). Callers strip any `*`/`[]`/`[N]` and
+// leading qualifiers first.
+func (p *Parser) parseTypeBaseAt() ASTType {
+	c := p.current()
+	if c.t == tok_struct || (c.t == tok_ident && c.sval == "multiretu") {
+		return mkTypename(p.parseAnonStructTypeNode())
+	}
+	if c.t == tok_fn {
+		return mkTypename(p.parseFnTypeNode())
+	}
 	if c.t != tok_ident {
 		panic(&interpreterError{fmt.Sprintf("Expected a type name, but found: %s\n", c.t), c.p})
 	}
 	typename := c.sval
 	p.advance()
-
-	// Optional package-qualified form: `pkg.Type` becomes a single
-	// type name "pkg.Type" — the consumer-side StructDeclForName
-	// registry stores imported structs under that qualified key.
+	// Optional package-qualified form: `pkg.Type` becomes a single type name.
 	if p.current().t == tok_dot {
 		p.advance()
 		if p.current().t != tok_ident {
@@ -642,74 +537,127 @@ func (p *Parser) parseTypeName() *Node {
 		typename = typename + "." + p.current().sval
 		p.advance()
 	}
+	at := ASTType{Name: typename, p: c.p}
+	switch typename {
+	case "i8", "i16", "i32", "i64":
+		at.Signed = true
+	}
+	return at
+}
 
-	// Collect a chain of [...] / [N] wrappers. The first wrapper (innermost) is
-	// the one that hugs the base type; successive ones wrap. The compiler
-	// applies them in args-order to build a nested Element chain.
-	var wrappers []*Node
-	firstWrapperPos := c.p
-	for p.current().t == tok_lsquare {
+// ptrWrap builds "pointer to e" (§3.3): every existing qualifier bit shifts up
+// one level and Indirection increments. Any ArraySize/Element structure of e is
+// preserved untouched — a pointer to a slice/array keeps that shape and gains an
+// indirection on top.
+func ptrWrap(e ASTType) ASTType {
+	e.MutMask <<= 1
+	e.OwnedMask <<= 1
+	e.NilMask <<= 1
+	e.Indirection++
+	return e
+}
+
+// sliceWrap builds "slice of e" (§3.3): e's own qualifier bits move UP one level
+// onto the slice (bit N+1) — this is the "bump" that puts `[]mut T` element
+// mutability at the slice's bit 1 — and the element keeps its structure with
+// those bits cleared.
+func sliceWrap(e ASTType) ASTType {
+	slice := ASTType{
+		MutMask:   e.MutMask << 1,
+		OwnedMask: e.OwnedMask << 1,
+		NilMask:   e.NilMask << 1,
+	}
+	e.MutMask, e.OwnedMask, e.NilMask = 0, 0, 0
+	slice.Element = &e
+	return slice
+}
+
+// arrayWrap builds "[n]e" (§3.3): like sliceWrap but the element's qualifier
+// bits move onto the array level with NO shift. An array fuses into its parent's
+// storage, so element and array share a single qualifier level — `[N]owned T`
+// and `owned [N]T` collapse to the same encoding.
+func arrayWrap(e ASTType, n int) ASTType {
+	arr := ASTType{
+		ArraySize: n,
+		MutMask:   e.MutMask,
+		OwnedMask: e.OwnedMask,
+		NilMask:   e.NilMask,
+	}
+	e.MutMask, e.OwnedMask, e.NilMask = 0, 0, 0
+	arr.Element = &e
+	return arr
+}
+
+// parseAnonStructTypeNode parses `struct { field Type, ... }` (or the
+// serialized `multiretu{...}` form) into a synthetic n_typename that mkTypename
+// assembles into an ASTType with AnonFields (MultiReturn set for multiretu).
+// The current token must be `struct` or the `multiretu` identifier.
+func (p *Parser) parseAnonStructTypeNode() *Node {
+	c := p.current()
+	isMultiRetu := c.t == tok_ident && c.sval == "multiretu"
+	structpos := c.p
+	p.advance()
+	p.expect(tok_lcurly)
+	var fieldNodes []*Node
+	for p.current().t != tok_rcurly {
+		if p.current().t == tok_semicolon || p.current().t == tok_comma {
+			p.advance()
+			continue
+		}
+		fieldpos := p.current().p
+		fname := p.parseTok()
+		if fname.t != n_symbol {
+			panic(&interpreterError{fmt.Sprintf("Expected field name, but found: %v", fname), fname.p})
+		}
+		// Accept an optional ':' between name and type (emitted by
+		// ASTType.String() in the .bo type annotation round-trip).
+		if p.current().t == tok_colon {
+			p.advance()
+		}
+		ftypeNode := p.parseTypeName()
+		fieldNodes = append(fieldNodes, &Node{t: n_stfield, p: fieldpos, sval: fname.sval, args: []*Node{ftypeNode}})
+	}
+	p.expect(tok_rcurly)
+	sval := "<struct>"
+	if isMultiRetu {
+		sval = "<multiretu>"
+	}
+	return &Node{t: n_typename, p: structpos, sval: sval, args: fieldNodes}
+}
+
+// parseFnTypeNode parses a function-pointer type `fn(t1, t2, ...) [ret]` into a
+// synthetic n_typename (sval="fn") that mkTypename assembles into a FuncSig.
+// The current token must be `fn`.
+func (p *Parser) parseFnTypeNode() *Node {
+	fnpos := p.current().p
+	p.advance()
+	p.expect(tok_lparen)
+	var argTypes []*Node
+	for p.current().t != tok_rparen {
+		if p.current().t == tok_semicolon {
+			p.advance()
+			continue
+		}
+		at := p.parseTypeName()
+		argTypes = append(argTypes, at)
+		if p.current().t != tok_comma && p.current().t != tok_semicolon {
+			break
+		}
 		p.advance()
-		if p.current().t == tok_number {
-			arrsize := p.current().nval
-			p.advance()
-			p.expect(tok_rsquare)
-			wrappers = append(wrappers, &Node{t: n_index, p: c.p, ival: arrsize})
-		} else if p.current().t == tok_rsquare {
-			p.advance()
-			wrappers = append(wrappers, &Node{t: n_slice, p: c.p})
-		} else {
-			panic(&interpreterError{fmt.Sprintf("Expected a number or ']', but found: %s\n", p.current().t), c.p})
-		}
 	}
-
-	if len(wrappers) > 0 {
-		// Outermost wrapper determines slice-vs-array semantics for the
-		// mut/owned check on the level just above the base type.
-		outer := wrappers[len(wrappers)-1]
-		if outer.t == n_slice {
-			// mut/owned before a slice base type apply to the element level (bit+1),
-			// analogous to *mut T where mut is after the '*'.
-			if mutmask&(1<<indirection) != 0 {
-				mutmask &^= 1 << indirection
-				mutmask |= 1 << (indirection + 1)
-			}
-			if ownedmask&(1<<indirection) != 0 {
-				ownedmask &^= 1 << indirection
-				ownedmask |= 1 << (indirection + 1)
-			}
-		} else { // outermost is a fixed array
-			// A VALUE-level 'mut' on a fixed array (`mut byte[N]`, bit 0) is
-			// meaningless: element mutability is governed by the binding (var
-			// vs not), not a type qualifier. But a POINTER-level 'mut' is the
-			// pointer element's own write-through qualifier and is valid —
-			// `*mut byte[N]` is an array of `*mut byte` (because `[]` binds
-			// tighter than `*`), analogous to `*mut byte[]`. 'owned' stays at
-			// the value level (the whole-array obligation), like
-			// `owned <struct>`. See DESIGN.md §Bit-level encoding.
-			if indirection == 0 && mutmask&1 != 0 {
-				panic(&interpreterError{"'mut' on a fixed-size array value is meaningless; array element mutability comes from the binding (use `var`). For a write-through pointer element, `*mut T[N]` is an array of `*mut T`; for a pointer to a mutable array, write `*mut (T[N])`", firstWrapperPos})
-			}
-		}
-		return &Node{
-			t:         n_typename,
-			p:         c.p,
-			sval:      typename,
-			ival:      indirection,
-			mutmask:   mutmask,
-			ownedmask: ownedmask,
-			nilmask:   nilmask,
-			args:      wrappers,
-		}
+	p.expect(tok_rparen)
+	// Optional return type; absent means void.
+	var retType *Node
+	if isTypeStart(p.current().t) {
+		retType = p.parseTypeName()
+	} else {
+		retType = &Node{t: n_typename, p: fnpos, sval: "void"}
 	}
-
-	// 'mut' on a plain non-pointer, non-slice type is meaningless.
-	// Only fires when indirection==0 (no pointer stars): any mut bits must have
-	// come from a leading qualifier directly before the base type.
-	if indirection == 0 && mutmask != 0 {
-		panic(&interpreterError{fmt.Sprintf("'mut' on non-reference type '%s' has no effect; 'mut' is only valid on pointer or slice types", typename), c.p})
-	}
-	return &Node{t: n_typename, p: c.p, sval: typename, ival: indirection, mutmask: mutmask, ownedmask: ownedmask, nilmask: nilmask}
+	// args holds the arg types followed by the return type at the end; ival
+	// carries the argument count so mkTypename can split them.
+	args := append([]*Node{}, argTypes...)
+	args = append(args, retType)
+	return &Node{t: n_typename, p: fnpos, sval: "fn", ival: uint64(len(argTypes)), args: args}
 }
 
 func (p *Parser) parseValue() *Node {
@@ -1134,12 +1082,14 @@ func (p *Parser) parseParams() []*Node {
 			panic(&interpreterError{fmt.Sprintf("Expected type name, but found: %v\n", v), v.p})
 		}
 		if variadic != 0 {
-			// Desugar `...T` to a `T[]` slice parameter: append a slice
-			// wrapper to the element typename's wrapper chain.
-			if v2.sval == "fn" || v2.sval == "<struct>" || v2.sval == "<multiretu>" {
+			// Desugar `...T` to a `[]T` slice parameter so downstream code
+			// sees the parameter as a slice of the element type.
+			elem := *v2.prebuilt
+			if elem.FuncSig != nil || elem.AnonFields != nil {
 				panic(&interpreterError{"variadic element type must be a simple type", v2.p})
 			}
-			v2.args = append(v2.args, &Node{t: n_slice, p: v2.p})
+			sliced := sliceWrap(elem)
+			v2 = &Node{t: n_typename, p: v2.p, sval: "<prebuilt>", prebuilt: &sliced}
 		}
 		ret = append(ret, &Node{t: n_arg, p: v.p, sval: v.sval, ival: isVar | variadic, args: []*Node{v2}})
 		if p.current().t != tok_comma {
@@ -1630,26 +1580,59 @@ func (p *Parser) startsBareDecl() bool {
 	case tok_decl: // x :=
 		p.pushback(name)
 		return true
-	case tok_ident, tok_owned, tok_mut, tok_fn, tok_star, tok_maybe_ptr, tok_struct: // x TYPE :=
+	case tok_ident, tok_owned, tok_mut, tok_fn, tok_star, tok_struct: // x TYPE :=
 		// tok_star is unambiguous now: a leading `IDENT *` can no longer be a
 		// bare multiply statement (rejected by the effectful-statement rule),
-		// so it must be a pointer-typed declaration. tok_maybe_ptr (`*?`) is
-		// the nullable-pointer type-start and is likewise unambiguous. tok_struct
-		// (`x struct{ ... } :=`, an anonymous-struct-typed binding) is also
-		// unambiguous: `struct` is a keyword, never the start of a statement.
+		// so it must be a pointer-typed declaration. tok_struct (`x struct{ ...
+		// } :=`, an anonymous-struct-typed binding) is also unambiguous:
+		// `struct` is a keyword, never the start of a statement.
 		p.pushback(name)
 		return true
+	case tok_lsquare:
+		// Ambiguous: `x [N]T :=` / `x []T :=` (prefix array/slice-typed decl)
+		// vs `x[i] = ...` / `x[lo:hi]` (index/slice of an existing value). It's
+		// a declaration only for `[]<type>` (empty brackets — never a valid
+		// index) or `[<number>]<type-start>` (a fixed-size array type). Anything
+		// else after the `[` — an expression index, or a number followed by an
+		// assign/terminator — means `x` is being indexed, not declared. Peek the
+		// bracket group, then restore every consumed token.
+		p.advance() // consume '['
+		var peeked []token
+		peeked = append(peeked, after)
+		read := func() token {
+			t := p.current()
+			p.advance()
+			peeked = append(peeked, t)
+			return t
+		}
+		isDecl := false
+		switch t1 := read(); t1.t {
+		case tok_rsquare: // `[]T` slice type
+			isDecl = true
+		case tok_number:
+			if read().t == tok_rsquare { // `[N]` then a type
+				isDecl = isTypeStart(read().t)
+			}
+		}
+		// Restore: yield name, then the whole peeked bracket group, unchanged.
+		restore := append([]token{name}, peeked...)
+		for i := len(restore) - 1; i >= 0; i-- {
+			p.pushback(restore[i])
+		}
+		return isDecl
 	case tok_question:
 		// Ambiguous: `x ?T :=` (nullable-value-typed decl) vs `x?` / `x?.f`
 		// (postfix non-null assert). It's a declaration only when a type-
 		// start token follows the `?`; an operator/`.`/terminator after it
-		// means the `?` is a postfix assert on the expression `x`.
+		// means the `?` is a postfix assert on the expression `x`. (A `[` after
+		// `?` is never a type — slices/arrays aren't nullable — so it stays an
+		// assert, hence tok_lsquare is deliberately absent below.)
 		p.advance()
 		after2 := p.current()
 		p.pushback(after)
 		p.pushback(name)
 		switch after2.t {
-		case tok_ident, tok_owned, tok_mut, tok_fn, tok_star, tok_question, tok_maybe_ptr:
+		case tok_ident, tok_owned, tok_mut, tok_fn, tok_star, tok_question:
 			return true
 		}
 		return false

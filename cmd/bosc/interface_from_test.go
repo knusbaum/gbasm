@@ -59,43 +59,43 @@ func TestInterfaceFromClause(t *testing.T) {
 	}{
 		{
 			name:  "receiver borrow",
-			body:  `interface stringer { string(self *self) byte[] from(self) }`,
+			body:  `interface stringer { string(self *self) []byte from(self) }`,
 			iface: "stringer", method: "string",
 			want: [][]int{{0}},
 		},
 		{
 			name:  "receiver borrow, extra param ignored",
-			body:  `interface keyed { at(self *self, k byte[]) byte[] from(self) }`,
+			body:  `interface keyed { at(self *self, k []byte) []byte from(self) }`,
 			iface: "keyed", method: "at",
 			want: [][]int{{0}},
 		},
 		{
 			name:  "multi-source params resolve to indices",
-			body:  `interface either { pick(self *self, a byte[], b byte[]) byte[] from(a, b) }`,
+			body:  `interface either { pick(self *self, a []byte, b []byte) []byte from(a, b) }`,
 			iface: "either", method: "pick",
 			want: [][]int{{1, 2}},
 		},
 		{
 			name:  "out-of-order sources sort",
-			body:  `interface ord { pick(self *self, a byte[], b byte[]) byte[] from(b, a) }`,
+			body:  `interface ord { pick(self *self, a []byte, b []byte) []byte from(b, a) }`,
 			iface: "ord", method: "pick",
 			want: [][]int{{1, 2}},
 		},
 		{
 			name:  "repeated source dedups",
-			body:  `interface dup { f(self *self) byte[] from(self, self) }`,
+			body:  `interface dup { f(self *self) []byte from(self, self) }`,
 			iface: "dup", method: "f",
 			want: [][]int{{0}},
 		},
 		{
 			name:  "multi-return both borrow self",
-			body:  `interface splitter { split(self *self) byte[] from(self), byte[] from(self) }`,
+			body:  `interface splitter { split(self *self) []byte from(self), []byte from(self) }`,
 			iface: "splitter", method: "split",
 			want: [][]int{{0}, {0}},
 		},
 		{
 			name:  "multi-return: borrowing slot then bare scalar slot",
-			body:  `interface taker { take(self *self) byte[] from(self), i64 }`,
+			body:  `interface taker { take(self *self) []byte from(self), i64 }`,
 			iface: "taker", method: "take",
 			want: [][]int{{0}, nil},
 		},
@@ -112,7 +112,7 @@ func TestInterfaceFromClause(t *testing.T) {
 // TestInterfaceNoFromClause confirms an interface with no `from` anywhere has
 // nil ReturnAliases (borrows nothing) and parses identically to before.
 func TestInterfaceNoFromClause(t *testing.T) {
-	ctx := toASTForTest(t, `interface plain { foo(self *self) byte[] }`)
+	ctx := toASTForTest(t, `interface plain { foo(self *self) []byte }`)
 	sig := ifaceMethodForTest(t, ctx, "plain", "foo")
 	assert.Nil(t, sig.ReturnAliases)
 }
@@ -123,8 +123,8 @@ func TestInterfaceNoFromClause(t *testing.T) {
 // method carries none. This is the declared side of assert_to's ⊆ gate.
 func TestIfaceDescDeclaredMasks(t *testing.T) {
 	ctx := toASTForTest(t, `
-interface viewer { bytes(self *self) byte[] from(self) }
-interface plain { bytes(self *self) byte[] }`)
+interface viewer { bytes(self *self) []byte from(self) }
+interface plain { bytes(self *self) []byte }`)
 	reqMasks := func(iface string) []uint64 {
 		d, ok := ctx.InterfaceForName(iface)
 		if !ok {

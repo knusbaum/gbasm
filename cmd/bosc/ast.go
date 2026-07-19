@@ -2082,57 +2082,73 @@ func coerceType(c *Context, dst, src ASTType) (effective ASTType, reason coerceR
 	return ASTType{}, coerceTypeMismatch
 }
 
+// String renders the type in PREFIX form (DESIGN_prefix_type_syntax.md) — the
+// exact inverse of parseTypeName. It peels the outermost constructor and
+// recurses, inverting ptrWrap / sliceWrap / arrayWrap: a pointer shifts the
+// qualifier masks down one level, a slice un-bumps its element's quals from
+// bit 1, an array reads them at the shared bit 0. This is what gets written into
+// `.bo` type strings, so it must round-trip through the parser byte-for-byte.
 func (t ASTType) String() string {
-	// Outer pointer qualifiers (if any) wrap the rest of the type.
+	// The top level is a binding level, not a reference operand: a leading
+	// bit-0 `mut` there is the binding's mutability (spelled `var`), which the
+	// parser rejects in a type string, so it must not be emitted. Inside a
+	// pointer/slice operand it IS part of the type (`*mut T`, `[]mut byte`) and
+	// stringRef renders it.
+	return t.stringRef(false)
+}
+
+// stringRef renders the type in prefix form. refOperand mirrors the parser: it
+// is true when this level is the operand of a `*` or `[]` (the only place a
+// leading `mut` is legal). owned/? are legal at any level and always render.
+func (t ASTType) stringRef(refOperand bool) string {
 	var sb strings.Builder
+	// Leading (bit-0) qualifiers for THIS level. For a pointer these are the
+	// pointer's own owned/nullable/mut and precede the '*' (`owned ?*T`); for a
+	// base they precede the name (`?error`, `owned T`).
 	if t.OwnedMask&1 != 0 {
 		sb.WriteString("owned ")
 	}
-	for i := 0; i < t.Indirection; i++ {
-		sb.WriteRune('*')
-		if t.NilMask&(1<<uint(i)) != 0 {
-			sb.WriteRune('?')
-		}
-		if t.MutMask&(1<<uint(i+1)) != 0 {
-			sb.WriteString("mut ")
-		}
-		if t.OwnedMask&(1<<uint(i+1)) != 0 {
-			sb.WriteString("owned ")
-		}
+	if refOperand && t.MutMask&1 != 0 {
+		sb.WriteString("mut ")
 	}
-	// A nullable non-pointer (a nullable interface, `?error`) carries its
-	// nullability as a leading `?` on the base — the pointer loop above only
-	// renders `?` at pointer levels, so without this it would round-trip as a
-	// non-nullable interface and break cross-package satisfaction.
-	if t.Indirection == 0 && t.NilMask&1 != 0 {
-		sb.WriteRune('?')
+	if t.NilMask&1 != 0 {
+		sb.WriteString("?")
 	}
-	if t.IsSliceOrArray() {
-		s := t.Element.String()
-		var inner string
+
+	// Pointer: emit one '*' and recurse on the pointee (masks shifted down one).
+	// The pointee is a reference operand.
+	if t.Indirection > 0 {
+		sb.WriteString("*")
+		inner := t
+		inner.OwnedMask >>= 1
+		inner.MutMask >>= 1
+		inner.NilMask >>= 1
+		inner.Indirection--
+		sb.WriteString(inner.stringRef(true))
+		return sb.String()
+	}
+
+	// Slice / array: emit the prefix bracket and recurse on the element. The
+	// element's own qualifier bits were moved onto this level by the wrap —
+	// bumped to bit 1 for a slice, kept at bit 0 (shared) for an array — so an
+	// array's element renders bare while a slice's element gets its quals back.
+	// A slice element is a reference operand (`[]mut T` is legal); an array
+	// element is not (`[N]mut T` is meaningless).
+	if t.Element != nil {
 		if t.IsArray() {
-			inner = fmt.Sprintf("%s[%d]", s, t.ArraySize)
+			sb.WriteString(fmt.Sprintf("[%d]", t.ArraySize))
+			sb.WriteString(t.Element.stringRef(false))
 		} else {
-			prefix := ""
-			if t.OwnedMask&(1<<1) != 0 {
-				prefix = "owned "
-			}
-			if t.MutMask&(1<<1) != 0 {
-				prefix += "mut "
-			}
-			inner = prefix + s + "[]"
+			sb.WriteString("[]")
+			elem := *t.Element
+			elem.OwnedMask |= (t.OwnedMask >> 1) & 1
+			elem.MutMask |= (t.MutMask >> 1) & 1
+			sb.WriteString(elem.stringRef(true))
 		}
-		// Parenthesize when there is outer pointer indirection so "*byte[]"
-		// (slice of *byte) is distinguishable from "*(byte[])" (pointer to
-		// a byte slice).
-		if t.Indirection > 0 {
-			sb.WriteString("(")
-			sb.WriteString(inner)
-			sb.WriteString(")")
-		} else {
-			sb.WriteString(inner)
-		}
-	} else if t.FuncSig != nil {
+		return sb.String()
+	}
+
+	if t.FuncSig != nil {
 		// Render compactly (no spaces between tokens) so the rendered
 		// form survives bas's whitespace-tokenized `var name type ...`
 		// directive. Arguments whose own type strings contain spaces
@@ -4104,14 +4120,11 @@ func buildStructDecl(name string, structNode *Node, p position) *StructDecl {
 	sd.TName = name
 	sd.IsPub = structNode.isPub
 	sd.p = p
-	for _, a := range structNode.args {
-		if a.t != n_stfield {
-			ParseErrorF(a, "Expected a struct field, but found %s", a.t)
-		}
-		sd.Fields = append(sd.Fields, Binding{
-			Name: a.sval,
-			Type: mkTypename(a.args[0]),
-		})
+	// The struct's fields come from the ASTType's AnonFields — parseTypeName now
+	// folds `struct { f T, ... }` straight into a <prebuilt> ASTType.
+	at := mkTypename(structNode)
+	for _, f := range at.AnonFields {
+		sd.Fields = append(sd.Fields, Binding{Name: f.Name, Type: f.Type})
 	}
 	return &sd
 }
@@ -4517,13 +4530,13 @@ func (n *Node) toASTTop(c *Context) AST {
 		}
 		return &al
 	case n_typedecl:
-		if n.args[0].sval == "<struct>" {
+		underlying := mkTypename(n.args[0])
+		if underlying.AnonFields != nil {
 			n.args[0].isPub = n.isPub
 			sd := buildStructDecl(n.sval, n.args[0], n.p)
 			c.DefineStruct(sd.TName, sd)
 			return sd
 		}
-		underlying := mkTypename(n.args[0])
 		// Propagate Signed from base type if it's a built-in.
 		switch underlying.Name {
 		case "i8", "i16", "i32", "i64":
@@ -4532,7 +4545,7 @@ func (n *Node) toASTTop(c *Context) AST {
 		c.DefineTypeAlias(n.p, n.sval, underlying)
 		return &TypeAliasDecl{Name: n.sval, IsPub: n.isPub, Underlying: underlying, p: n.p}
 	case n_typedecl_with_methods:
-		if n.args[0].sval == "<struct>" {
+		if mkTypename(n.args[0]).AnonFields != nil {
 			n.args[0].isPub = n.isPub
 			sd := buildStructDecl(n.sval, n.args[0], n.p)
 			c.DefineStruct(sd.TName, sd)

@@ -11,16 +11,16 @@ import (
 // values are ground truth captured from the current parser, written as real
 // ASTType literals so field names are compile-checked.
 //
-//   - TestTypeEncodingPostfix: the *current* parser must produce `want` for the
-//     postfix form. Transitional — it validates that `want` is true ground truth
-//     (it passes against today's parser) and guards the encoding during the
-//     rewrite. DELETE THIS TEST at migration completion (postfix won't parse).
-//   - TestTypeEncodingPrefix: the *new* parser must produce the SAME `want` for
-//     the prefix form. Fails until parseTypeName is rewritten — the TDD target;
-//     un-skip it then. This is the durable test that survives the migration.
+//   - TestTypeEncodingPrefix: the new prefix parser must produce `want` for the
+//     prefix form. This is the durable correctness test.
+//   - TestTypeEncodingPostfixRejected: the old postfix spelling must NOT still
+//     yield the migrated type — a clean-break guard that catches any accidental
+//     reintroduction of postfix parsing while the corpus is being migrated.
+//     (Before the parser flip this column's job was to validate `want` against
+//     the old parser; that's done — it passed at 09a4576.)
 //
-// Completion checklist: delete TestTypeEncodingPostfix + the `postfix` column,
-// un-skip TestTypeEncodingPrefix.
+// Completion checklist: once the corpus is fully prefix, the postfix column and
+// its guard can be dropped, leaving TestTypeEncodingPrefix as the sole test.
 
 // atSame is a strict, position-insensitive, recursive ASTType equality. Stricter
 // than SameExact (which recurses into Element with the laxer Same) and it skips
@@ -28,7 +28,7 @@ import (
 func atSame(a, b ASTType) bool {
 	if a.Name != b.Name || a.Indirection != b.Indirection || a.ArraySize != b.ArraySize ||
 		a.MutMask != b.MutMask || a.OwnedMask != b.OwnedMask || a.NilMask != b.NilMask ||
-		a.Signed != b.Signed {
+		a.Signed != b.Signed || a.MultiReturn != b.MultiReturn {
 		return false
 	}
 	if (a.Element == nil) != (b.Element == nil) {
@@ -36,6 +36,27 @@ func atSame(a, b ASTType) bool {
 	}
 	if a.Element != nil && !atSame(*a.Element, *b.Element) {
 		return false
+	}
+	if (a.FuncSig == nil) != (b.FuncSig == nil) {
+		return false
+	}
+	if a.FuncSig != nil {
+		if len(a.FuncSig.Args) != len(b.FuncSig.Args) || !atSame(a.FuncSig.Return, b.FuncSig.Return) {
+			return false
+		}
+		for i := range a.FuncSig.Args {
+			if !atSame(a.FuncSig.Args[i], b.FuncSig.Args[i]) {
+				return false
+			}
+		}
+	}
+	if len(a.AnonFields) != len(b.AnonFields) {
+		return false
+	}
+	for i := range a.AnonFields {
+		if a.AnonFields[i].Name != b.AnonFields[i].Name || !atSame(a.AnonFields[i].Type, b.AnonFields[i].Type) {
+			return false
+		}
 	}
 	return true
 }
@@ -86,23 +107,82 @@ var typeEncodingCases = []struct {
 	{"*?i64", "?*i64", ASTType{Name: "i64", Indirection: 1, NilMask: 0b1, Signed: true}},
 	{"*?*i64", "?**i64", ASTType{Name: "i64", Indirection: 2, NilMask: 0b1, Signed: true}},
 	{"owned *?owned mut node", "owned ?*owned mut node", ASTType{Name: "node", Indirection: 1, MutMask: 0b10, OwnedMask: 0b11, NilMask: 0b1}},
+
+	// String() branches the primitive cases above never exercise, but that the
+	// runtime `.bo`s serialize (io.bos: `?error`, `owned FD`, fn-typed values):
+	// a nullable-interface base (NilMask&1 at Indirection 0), a function type,
+	// and an anonymous struct type. These gate the runtime-bundle rebuild.
+	{"?error", "?error", ASTType{Name: "error", NilMask: 0b1}},
+	{"fn(byte[])i64", "fn([]byte)i64", ASTType{FuncSig: &FuncSig{
+		Args:   []ASTType{{Element: &ASTType{Name: "byte"}}},
+		Return: ASTType{Name: "i64", Signed: true},
+	}}},
+	{"struct{a:i64,b:byte[]}", "struct{a:i64,b:[]byte}", ASTType{AnonFields: []Binding{
+		{Name: "a", Type: ASTType{Name: "i64", Signed: true}},
+		{Name: "b", Type: ASTType{Element: &ASTType{Name: "byte"}}},
+	}}},
 }
 
-func TestTypeEncodingPostfix(t *testing.T) {
+// TestTypeEncodingRoundTrip locks ASTType.String() as the exact inverse of the
+// parser: parse the prefix form, render it back with String(), re-parse, and the
+// result must still be `want`. This is the `.bo` serialization round-trip.
+func TestTypeEncodingRoundTrip(t *testing.T) {
 	for _, c := range typeEncodingCases {
-		at, err := parseTypeString(c.postfix)
+		at, err := parseTypeString(c.prefix)
 		if err != nil {
-			t.Errorf("%-24q parse err: %v", c.postfix, err)
+			t.Errorf("%-24q parse err: %v", c.prefix, err)
 			continue
 		}
-		if !atSame(at, c.want) {
-			t.Errorf("%-24q\n  got  %s\n  want %s", c.postfix, dumpAT(at), dumpAT(c.want))
+		rendered := at.String()
+		back, err := parseTypeString(rendered)
+		if err != nil {
+			t.Errorf("%-24q -> String()=%q re-parse err: %v", c.prefix, rendered, err)
+			continue
+		}
+		if !atSame(back, c.want) {
+			t.Errorf("%-24q -> String()=%q\n  got  %s\n  want %s", c.prefix, rendered, dumpAT(back), dumpAT(c.want))
+		}
+	}
+}
+
+// A leading bit-0 `mut` is the binding's mutability (spelled `var`), not part of
+// the type string — the parser rejects it at top level, so String() must omit it
+// there while still rendering it inside a pointer/slice operand. (Regression: an
+// owner type carried as `mut B` was rendering "mut B" and would not re-parse.)
+func TestTypeEncodingTopLevelMutOmitted(t *testing.T) {
+	cases := []struct {
+		at   ASTType
+		want string
+	}{
+		{ASTType{Name: "B", MutMask: 0b1}, "B"},                                                    // mut struct owner
+		{ASTType{Element: &ASTType{Name: "byte"}, MutMask: 0b1}, "[]byte"},                         // mut slice value
+		{ASTType{Name: "i64", Indirection: 1, MutMask: 0b10, Signed: true}, "*mut i64"},            // pointee mut stays
+		{ASTType{Element: &ASTType{Name: "byte"}, MutMask: 0b10}, "[]mut byte"},                    // element mut stays
+	}
+	for _, c := range cases {
+		got := c.at.String()
+		if got != c.want {
+			t.Errorf("String() = %q, want %q", got, c.want)
+		}
+		if _, err := parseTypeString(got); err != nil {
+			t.Errorf("rendered %q does not re-parse: %v", got, err)
+		}
+	}
+}
+
+func TestTypeEncodingPostfixRejected(t *testing.T) {
+	for _, c := range typeEncodingCases {
+		if c.postfix == c.prefix {
+			continue // e.g. "*i64" — unchanged by the migration, not a postfix form
+		}
+		at, err := parseTypeString(c.postfix)
+		if err == nil && atSame(at, c.want) {
+			t.Errorf("postfix %q still parses to the migrated type — the clean break is broken", c.postfix)
 		}
 	}
 }
 
 func TestTypeEncodingPrefix(t *testing.T) {
-	t.Skip("TDD target: un-skip once parseTypeName is prefix (DESIGN §7 step 2)")
 	for _, c := range typeEncodingCases {
 		at, err := parseTypeString(c.prefix)
 		if err != nil {

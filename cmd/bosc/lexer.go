@@ -752,10 +752,9 @@ func (l *lexer) Next() (rt token, re error) {
 		return token{t: tok_plus, p: p}, nil
 	case '*':
 		l.nextRune()
-		if l.headRune() == '?' {
-			l.nextRune()
-			return token{t: tok_maybe_ptr, p: p}, nil
-		}
+		// Note: `*?` is NOT a combined token — prefix type syntax needs `?*T`
+		// (nullable pointer) and `*?T` (pointer to nullable) to differ, so `?`
+		// lexes on its own (tok_question) and the parser orders them.
 		if l.headRune() == '=' {
 			l.nextRune()
 			return token{t: tok_stareq, p: p}, nil

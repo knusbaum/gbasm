@@ -8,6 +8,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// tn builds the <prebuilt> n_typename node that parseTypeName now returns for a
+// parsed type. (Types are assembled into an ASTType at parse time and carried in
+// the node's prebuilt field, rather than described by sval/ival/args.) Tests run
+// with nopos=true, so the ASTType's zero position matches.
+func tn(at ASTType) *Node {
+	return &Node{t: n_typename, sval: "<prebuilt>", prebuilt: &at}
+}
+
 func TestParser(t *testing.T) {
 	nopos = true
 	defer func() { nopos = false }()
@@ -280,10 +288,10 @@ func TestParser(t *testing.T) {
 		{
 			in: "fn foo (x num, y *num, z **num) ***num { return 0  }",
 			out: &Node{t: n_fn, ival: 3, sval: "foo", args: []*Node{
-				&Node{t: n_arg, sval: "x", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-				&Node{t: n_arg, sval: "y", args: []*Node{&Node{t: n_typename, sval: "num", ival: 1}}},
-				&Node{t: n_arg, sval: "z", args: []*Node{&Node{t: n_typename, sval: "num", ival: 2}}},
-				&Node{t: n_typename, sval: "num", ival: 3},
+				&Node{t: n_arg, sval: "x", args: []*Node{tn(ASTType{Name: "num"})}},
+				&Node{t: n_arg, sval: "y", args: []*Node{tn(ASTType{Name: "num", Indirection: 1})}},
+				&Node{t: n_arg, sval: "z", args: []*Node{tn(ASTType{Name: "num", Indirection: 2})}},
+				tn(ASTType{Name: "num", Indirection: 3}),
 				&Node{t: n_block, args: []*Node{
 					&Node{t: n_return, args: []*Node{&Node{t: n_number, ival: 0}}},
 				}},
@@ -292,9 +300,9 @@ func TestParser(t *testing.T) {
 		{
 			in: "fn foo (x num, y num) num { printf(\"X is %v\\nY is %v\\n\", x, y) return 0  }",
 			out: &Node{t: n_fn, ival: 2, sval: "foo", args: []*Node{
-				&Node{t: n_arg, sval: "x", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-				&Node{t: n_arg, sval: "y", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-				&Node{t: n_typename, sval: "num"},
+				&Node{t: n_arg, sval: "x", args: []*Node{tn(ASTType{Name: "num"})}},
+				&Node{t: n_arg, sval: "y", args: []*Node{tn(ASTType{Name: "num"})}},
+				tn(ASTType{Name: "num"}),
 				&Node{t: n_block, args: []*Node{
 					&Node{t: n_funcall, sval: "printf", args: []*Node{
 						&Node{t: n_str, sval: "X is %v\nY is %v\n"},
@@ -310,9 +318,9 @@ func TestParser(t *testing.T) {
 			out: &Node{t: n_eq, args: []*Node{
 				&Node{t: n_symbol, sval: "printxy"},
 				&Node{t: n_fn, ival: 2, sval: "bar", args: []*Node{
-					&Node{t: n_arg, sval: "x", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-					&Node{t: n_arg, sval: "y", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-					&Node{t: n_typename, sval: "num"},
+					&Node{t: n_arg, sval: "x", args: []*Node{tn(ASTType{Name: "num"})}},
+					&Node{t: n_arg, sval: "y", args: []*Node{tn(ASTType{Name: "num"})}},
+					tn(ASTType{Name: "num"}),
 					&Node{t: n_block, args: []*Node{
 						&Node{t: n_funcall, sval: "printf", args: []*Node{
 							&Node{t: n_str, sval: "X is %v\nY is %v\n"},
@@ -327,13 +335,13 @@ func TestParser(t *testing.T) {
 		{
 			in: "type rect struct { x num y num w num h num in *screen}",
 			out: &Node{t: n_typedecl, sval: "rect", args: []*Node{
-				&Node{t: n_typename, sval: "<struct>", args: []*Node{
-					&Node{t: n_stfield, sval: "x", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-					&Node{t: n_stfield, sval: "y", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-					&Node{t: n_stfield, sval: "w", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-					&Node{t: n_stfield, sval: "h", args: []*Node{&Node{t: n_typename, sval: "num"}}},
-					&Node{t: n_stfield, sval: "in", args: []*Node{&Node{t: n_typename, sval: "screen", ival: 1}}},
-				}},
+				tn(ASTType{AnonFields: []Binding{
+					{Name: "x", Type: ASTType{Name: "num"}},
+					{Name: "y", Type: ASTType{Name: "num"}},
+					{Name: "w", Type: ASTType{Name: "num"}},
+					{Name: "h", Type: ASTType{Name: "num"}},
+					{Name: "in", Type: ASTType{Name: "screen", Indirection: 1}},
+				}}),
 			}},
 		},
 		{
@@ -348,34 +356,25 @@ func TestParser(t *testing.T) {
 		},
 		{
 			in:  "var x int",
-			out: &Node{t: n_var, sval: "x", args: []*Node{&Node{t: n_typename, sval: "int"}}},
+			out: &Node{t: n_var, sval: "x", args: []*Node{tn(ASTType{Name: "int"})}},
 		},
 		{
 			in:  "var x *int",
-			out: &Node{t: n_var, sval: "x", args: []*Node{&Node{t: n_typename, sval: "int", ival: 1}}},
+			out: &Node{t: n_var, sval: "x", args: []*Node{tn(ASTType{Name: "int", Indirection: 1})}},
 		},
 		{
-			in: "var x int[10]",
+			in: "var x [10]int",
 			out: &Node{t: n_var, sval: "x", args: []*Node{
-				&Node{
-					t:    n_typename,
-					sval: "int",
-					args: []*Node{
-						&Node{t: n_index, ival: 10},
-					},
-				}}},
+				tn(ASTType{ArraySize: 10, Element: &ASTType{Name: "int"}}),
+			}},
 		},
 		{
-			in: "var x *int[10]",
+			// Prefix `[10]*int` is unambiguously an array of 10 pointers — the
+			// old postfix `*int[10]` meant the same but read like a pointer.
+			in: "var x [10]*int",
 			out: &Node{t: n_var, sval: "x", args: []*Node{
-				&Node{
-					t:    n_typename,
-					sval: "int",
-					ival: 1,
-					args: []*Node{
-						&Node{t: n_index, ival: 10},
-					},
-				}}},
+				tn(ASTType{ArraySize: 10, Element: &ASTType{Name: "int", Indirection: 1}}),
+			}},
 		},
 		{
 			in: "a.b",
@@ -421,7 +420,7 @@ func TestParser(t *testing.T) {
 			out: &Node{t: n_fn, ival: 0, sval: "main", args: []*Node{
 				&Node{t: n_typename, sval: "void"},
 				&Node{t: n_block, args: []*Node{
-					&Node{t: n_var, sval: "b", args: []*Node{&Node{t: n_typename, sval: "byte"}}},
+					&Node{t: n_var, sval: "b", args: []*Node{tn(ASTType{Name: "byte"})}},
 					&Node{t: n_eq, args: []*Node{
 						&Node{t: n_symbol, sval: "b"},
 						&Node{t: n_byte, ival: uint64('h')},
@@ -461,7 +460,7 @@ func TestParser(t *testing.T) {
 			in: "x.(i64)",
 			out: &Node{t: n_typeassert, args: []*Node{
 				&Node{t: n_symbol, sval: "x"},
-				&Node{t: n_typename, sval: "i64"},
+				tn(ASTType{Name: "i64", Signed: true}),
 			}},
 		},
 		{
@@ -470,7 +469,7 @@ func TestParser(t *testing.T) {
 			in: "x.(*foo)",
 			out: &Node{t: n_typeassert, args: []*Node{
 				&Node{t: n_symbol, sval: "x"},
-				&Node{t: n_typename, sval: "foo", ival: 1},
+				tn(ASTType{Name: "foo", Indirection: 1}),
 			}},
 		},
 		{
@@ -479,9 +478,7 @@ func TestParser(t *testing.T) {
 			in: "fn f(a ...i64) { }",
 			out: &Node{t: n_fn, ival: 1, sval: "f", args: []*Node{
 				&Node{t: n_arg, sval: "a", ival: 2, args: []*Node{
-					&Node{t: n_typename, sval: "i64", args: []*Node{
-						&Node{t: n_slice},
-					}},
+					tn(ASTType{Element: &ASTType{Name: "i64", Signed: true}}),
 				}},
 				&Node{t: n_typename, sval: "void"},
 				&Node{t: n_block, args: nil},
@@ -510,7 +507,7 @@ func TestParser(t *testing.T) {
 					&Node{t: n_symbol, sval: "ok"},
 					&Node{t: n_typeassert, args: []*Node{
 						&Node{t: n_symbol, sval: "x"},
-						&Node{t: n_typename, sval: "i64"},
+						tn(ASTType{Name: "i64", Signed: true}),
 					}},
 				}},
 			}},
@@ -613,13 +610,11 @@ func TestParser(t *testing.T) {
 	}
 }
 
-// TestParseParenTypeGroup exercises the parenthesized type group form
-// (`*(byte[])`, `*mut (byte[])`). The parens make the leading pointer
-// prefixes bind to the whole group rather than to the slice element, so
-// `*(byte[])` is a pointer-to-slice (Indirection==1, Element is the byte
-// slice) — the inverse of `*byte[]`, which is a slice of byte-pointers
-// (Indirection==0, Element is a byte pointer).
-func TestParseParenTypeGroup(t *testing.T) {
+// TestParsePrefixReferenceTypes exercises the pointer/slice ordering that
+// prefix syntax makes unambiguous — the whole reason for the migration. In
+// postfix, `*byte[]` (slice of byte-pointers) vs pointer-to-slice needed a
+// paren group `*(byte[])`; in prefix the two are just `[]*byte` and `*[]byte`.
+func TestParsePrefixReferenceTypes(t *testing.T) {
 	nopos = true
 	defer func() { nopos = false }()
 	for _, tt := range []struct {
@@ -628,7 +623,7 @@ func TestParseParenTypeGroup(t *testing.T) {
 	}{
 		{
 			// pointer to a byte slice.
-			in: "*(byte[])",
+			in: "*[]byte",
 			want: ASTType{
 				Indirection: 1,
 				Element:     &ASTType{Name: "byte"},
@@ -637,7 +632,7 @@ func TestParseParenTypeGroup(t *testing.T) {
 		{
 			// write-through (mut) pointer to a byte slice: the mut bit lands
 			// on the outer pointer level (bit 1), not on the slice element.
-			in: "*mut (byte[])",
+			in: "*mut []byte",
 			want: ASTType{
 				Indirection: 1,
 				MutMask:     1 << 1,
@@ -645,10 +640,9 @@ func TestParseParenTypeGroup(t *testing.T) {
 			},
 		},
 		{
-			// Contrast: without the parens, the same prefix binds to the
-			// element. `*byte[]` is a slice (Indirection==0) of byte pointers
-			// (Element.Indirection==1).
-			in: "*byte[]",
+			// Contrast: a slice of byte-pointers. `[]*byte` reads outer-to-inner,
+			// so the `*` binds to the element (Element.Indirection==1).
+			in: "[]*byte",
 			want: ASTType{
 				Element: &ASTType{Name: "byte", Indirection: 1},
 			},
