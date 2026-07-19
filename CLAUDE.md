@@ -200,6 +200,24 @@ When a test fails, the runner leaves `${t}.bosc.out`, `${t}.bas.out`,
 `${t}.bo` in place so you can re-run pieces by hand. The runner
 only deletes them on a clean pass.
 
+### Testing gotchas
+
+- **Rebuild the toolchain after changing bosc/bas source.** The `cmd/bosc`
+  and `cmd/bas` suites cache a locally-built `bosc`/`bas`/`bld` and
+  pre-assemble the runtime into the working dir. After a compiler/assembler
+  change, `make all` and clean stale `cmd/bosc/*.bs`/`*.bo` before re-running,
+  or you test the old binaries against fresh sources and get misleading
+  passes/failures.
+- **Run `mmk go_test` after tour or runtime changes.** The all-lessons tour
+  verifier lives in `tour/verify_test.go` (not `internal/tour` or
+  `cmd/btourd`) and compiles every lesson against the *prebuilt* runtime
+  bundle; `mmk go_test` rebuilds that bundle first — a bare `go test ./...`
+  may run against stale objects.
+- **Coverage is invariants + codegen equivalence-classes + a periodic audit** —
+  the model and the recurring audit process live in
+  `docs/reference/COVERAGE_MATRIX.md`. New codegen paths get an
+  equivalence-class test, not a one-off.
+
 ### Building an example
 
 ```
@@ -416,6 +434,23 @@ terminal path (the interface-comparison pattern) rather than `setcc`.
 Modeling EFLAGS properly is a deliberate non-goal (large effort, and the
 adjacency rule + flag-safe materialization is a cheap workaround).
 
+#### Return-statement type compatibility is a two-step check
+
+Return-type checking is NOT a single `Accepts` call. An owned-value drop
+(`valType.HasOwned() && !retType.HasOwned()`) is rejected *before* `Accepts`
+runs; then compatibility uses `ResolveUnderlying` + `Accepts` with a
+`sameIgnoringOwned` escape so owned↔non-owned variants of the same underlying
+type still pass. Collapsing this to one `Accepts` either lets an owned value be
+silently dropped or rejects legitimate owned↔borrowed returns.
+
+#### Interface dispatch consumes the interface on an owned receiver
+
+When an interface method's receiver parameter carries any `owned` bit, calling
+it through the interface must `MoveConsume` the *interface variable* itself —
+receiver consumption is separate from consuming the call's user arguments, and
+is forbidden on a non-owned interface. Miss it and a consumed resource behind an
+interface stays usable after its destructor ran.
+
 ---
 
 ## Things to know about the working tree
@@ -465,6 +500,19 @@ the user asks. They're outputs.
 - **Don't edit `x86_64.xml`** — it's the Intel reference dump
   that the encoder reads. Adding instructions means re-deriving
   this file, not patching it.
+- **Minimize build-time tool prerequisites.** The toolchain builds
+  with `go` + `make` + `mmk` and nothing else; don't add new
+  build-time dependencies lightly. (`npm` is acceptable for
+  frontend/playground work, and libraries it pulls are fine.)
+- **Repo knowledge goes in checked-in files, not agent memory.**
+  Anything needed to work in this repo — mechanics, gotchas,
+  conventions, architecture, design philosophy — belongs in
+  CLAUDE.md (or DESIGN.md / a `docs/` file), because those travel
+  with the repo. Machine-local agent memory must never be the sole
+  home of repo working-knowledge (it's invisible on another machine
+  and drifts out of sync). Reserve memory for genuinely personal,
+  cross-repo preferences and ephemeral session context; feature
+  *status* comes from the `docs/` directories, never a memory.
 
 ---
 
@@ -558,7 +606,14 @@ maintained. If you find a divergence:
    feature, update DESIGN.md as part of the work.
 
 The repo prefers **conservative defaults with explicit opt-out**:
-`const` before `var`, immutable references before `mut`,
-non-escaping borrows before owned, no implicit ownership
+immutable `:=` bindings before `var`, immutable references before
+`mut`, non-escaping borrows before owned, no implicit ownership
 promotion. When adding a new feature, the question to ask first is
 "what's the strictest form, and what's the explicit opt-out?"
+
+The design north-star: **Boson itself must be the easiest dialect
+that achieves the goal — strictness is in service of ease, not
+opposed to it.** Never ship a softer or "teaching" variant of the
+language to dodge friction; fix the friction in the language
+proper. When a rule feels hard to use, the answer is a better
+rule, not an escape hatch.
