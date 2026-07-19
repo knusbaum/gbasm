@@ -161,9 +161,9 @@ careful C library author does by hand.
 
 ---
 
-## Interfaces (open decision — vtable-pointer recommended)
+## Interfaces (decided: vtable-pointer)
 
-Two representations, both idiomatic C, different scaling:
+Two representations were considered, both idiomatic C, different scaling:
 
 - **vtable-pointer (recommended):** `struct { void *self; const I_vtable *vtable; }`
   with one `static const I_vtable` per concrete type; call as
@@ -177,8 +177,8 @@ Two representations, both idiomatic C, different scaling:
   count and every assignment/pass copies all pointers. Idiomatic only for tiny
   1–3-method callbacks.
 
-Recommendation: vtable-pointer as the default (idiomatic *and* efficient). Pending
-final call.
+**Decided: vtable-pointer** (idiomatic *and* efficient — the recognizable C
+polymorphism idiom, constant-size values, scales to any method count).
 
 ---
 
@@ -235,7 +235,7 @@ overflow) are expected mismatches, not bugs — so it is a strong net, not a pro
 
 ## Open decisions
 
-- **Interface representation** — vtable-pointer (rec) vs. flattened.
+- ~~Interface representation~~ — **decided: vtable-pointer** (2026-07-19).
 - **Runtime floor** — raw syscalls (ratified for the self-contained case) vs.
   libc; for the drop-in use case the module ultimately targets the host's libc.
 - **Bounds/nil checks** — always on, or a knob (a hand-written module may omit
