@@ -49,9 +49,16 @@ type cEmitter struct {
 // reported via fatalCtx, matching the .bs path.
 func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 	u := &cUnit{c: c}
-	var body bytes.Buffer
+	// Forward declarations first — Boson permits calling a function before its
+	// definition, but C needs a prior declaration — then the definitions.
+	var protos, defs bytes.Buffer
 	for _, a := range asts {
-		if err := emitCDecl(&body, u, a); err != nil {
+		if err := emitCProto(&protos, u, a); err != nil {
+			fatalCtx("Fatal: %v", err)
+		}
+	}
+	for _, a := range asts {
+		if err := emitCDecl(&defs, u, a); err != nil {
 			fatalCtx("Fatal: %v", err)
 		}
 	}
@@ -63,7 +70,37 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 		fmt.Fprintf(of, "#include <stdio.h>\n")
 	}
 	fmt.Fprintf(of, "\n")
-	io.Copy(of, &body)
+	if protos.Len() > 0 {
+		io.Copy(of, &protos)
+		fmt.Fprintf(of, "\n")
+	}
+	io.Copy(of, &defs)
+}
+
+// emitCProto writes a forward declaration for a function so it can be called
+// before its definition. main is the entry point and needs none; variadics and
+// non-functions are left to the definition pass to handle or reject.
+func emitCProto(w io.Writer, u *cUnit, a AST) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if ie, ok := r.(*interpreterError); ok {
+				err = ie
+				return
+			}
+			panic(r)
+		}
+	}()
+	f, ok := a.(*FuncDecl)
+	if !ok || f.Variadic {
+		return nil
+	}
+	if u.c.Pkgname() == "main" && f.Name == "main" {
+		return nil
+	}
+	em := &cEmitter{u: u, locals: map[string]ASTType{}}
+	linkage, head := em.cFuncHead(f, false)
+	fmt.Fprintf(w, "%s%s;\n", linkage, head)
+	return nil
 }
 
 // cOracleGate runs the native lowering as a semantic gate for the C backend.
@@ -150,6 +187,26 @@ func emitCFunc(w io.Writer, u *cUnit, f *FuncDecl) {
 	}
 
 	em := &cEmitter{u: u, locals: make(map[string]ASTType, len(f.Args))}
+	linkage, head := em.cFuncHead(f, isEntry)
+	fmt.Fprintf(w, "%s%s {\n", linkage, head)
+	if f.Body != nil {
+		for _, stmt := range f.Body.Body {
+			em.stmt(w, stmt, 1)
+		}
+	}
+	if isEntry && isVoidType(u.c, f.Return) {
+		fmt.Fprintf(w, "\treturn 0;\n")
+	}
+	fmt.Fprintf(w, "}\n\n")
+}
+
+// cFuncHead builds the linkage keyword and C declarator (return type, name,
+// parameter list) for a function — shared by its prototype and its definition
+// so the two never diverge. `main` in package main is the C entry point;
+// non-`pub` functions are file-local `static`, exactly as a hand-written C
+// module marks its internal helpers. (Package-prefixed naming for cross-package
+// linkage arrives with cross-package calls.)
+func (em *cEmitter) cFuncHead(f *FuncDecl, isEntry bool) (linkage, head string) {
 	params := make([]string, 0, len(f.Args))
 	for _, arg := range f.Args {
 		em.locals[arg.Name] = arg.Type
@@ -159,43 +216,171 @@ func emitCFunc(w io.Writer, u *cUnit, f *FuncDecl) {
 	if len(params) > 0 {
 		sig = strings.Join(params, ", ")
 	}
-
-	switch {
-	case isEntry:
-		fmt.Fprintf(w, "int main(%s) {\n", sig)
-	case f.IsPub:
-		// Exported: visible across translation units. (Package-prefixed
-		// naming for cross-package linkage arrives with cross-package calls.)
-		fmt.Fprintf(w, "%s %s(%s) {\n", em.ctype(f.Return), cIdent(f.Name), sig)
-	default:
-		// File-local: `static`, exactly as a hand-written C module marks its
-		// internal helpers.
-		fmt.Fprintf(w, "static %s %s(%s) {\n", em.ctype(f.Return), cIdent(f.Name), sig)
+	if isEntry {
+		return "", "int main(" + sig + ")"
 	}
-	if f.Body != nil {
-		for _, stmt := range f.Body.Body {
-			em.stmt(w, stmt)
-		}
+	head = em.ctype(f.Return) + " " + cIdent(f.Name) + "(" + sig + ")"
+	if f.IsPub {
+		return "", head
 	}
-	if isEntry && isVoidType(u.c, f.Return) {
-		fmt.Fprintf(w, "\treturn 0;\n")
-	}
-	fmt.Fprintf(w, "}\n\n")
+	return "static ", head
 }
 
-func (em *cEmitter) stmt(w io.Writer, a AST) {
+func (em *cEmitter) stmt(w io.Writer, a AST, ind int) {
+	tab := cTab(ind)
 	switch n := a.(type) {
 	case *Return:
 		if n.Val == nil {
-			fmt.Fprintf(w, "\treturn;\n")
+			fmt.Fprintf(w, "%sreturn;\n", tab)
 		} else {
-			fmt.Fprintf(w, "\treturn %s;\n", em.expr(n.Val))
+			fmt.Fprintf(w, "%sreturn %s;\n", tab, em.expr(n.Val))
 		}
 	case *Funcall:
-		fmt.Fprintf(w, "\t%s;\n", em.call(n))
+		fmt.Fprintf(w, "%s%s;\n", tab, em.call(n))
+	case *VarDecl:
+		t := em.declType(n.Type, n.Init)
+		em.locals[n.Name] = t
+		if n.Init != nil {
+			fmt.Fprintf(w, "%s%s %s = %s;\n", tab, em.ctype(t), cIdent(n.Name), em.expr(n.Init))
+		} else {
+			fmt.Fprintf(w, "%s%s %s;\n", tab, em.ctype(t), cIdent(n.Name))
+		}
+	case *Assignment:
+		fmt.Fprintf(w, "%s%s = %s;\n", tab, em.expr(n.Target), em.expr(n.Val))
+	case *IfStmt:
+		em.ifStmt(w, n, ind, true)
+	case *For:
+		fmt.Fprintf(w, "%sfor (%s; %s; %s) ", tab, em.forClause(n.Init), em.condExpr(n.Cond), em.forClause(n.Step))
+		em.block(w, n.Body, ind)
+		fmt.Fprintf(w, "\n")
+	case *Loop:
+		fmt.Fprintf(w, "%sfor (;;) ", tab)
+		em.block(w, n.Body, ind)
+		fmt.Fprintf(w, "\n")
+	case *Break:
+		fmt.Fprintf(w, "%sbreak;\n", tab)
+	case *Continue:
+		fmt.Fprintf(w, "%scontinue;\n", tab)
+	case *Block:
+		em.block(w, n, ind)
+		fmt.Fprintf(w, "\n")
 	default:
 		cUnsupported(posOf(a), fmt.Sprintf("statement %T", a))
 	}
+}
+
+func cTab(n int) string { return strings.Repeat("\t", n) }
+
+// block emits a braced compound statement (no trailing newline, so the caller
+// can append ` else …`).
+func (em *cEmitter) block(w io.Writer, a AST, ind int) {
+	fmt.Fprintf(w, "{\n")
+	if b, ok := a.(*Block); ok {
+		for _, s := range b.Body {
+			em.stmt(w, s, ind+1)
+		}
+	} else if a != nil {
+		em.stmt(w, a, ind+1)
+	}
+	fmt.Fprintf(w, "%s}", cTab(ind))
+}
+
+// ifStmt emits an if/else, chaining `else if` inline for readability.
+func (em *cEmitter) ifStmt(w io.Writer, n *IfStmt, ind int, leadTab bool) {
+	if leadTab {
+		fmt.Fprintf(w, "%s", cTab(ind))
+	}
+	fmt.Fprintf(w, "if (%s) ", em.expr(n.Cond))
+	em.block(w, n.Then, ind)
+	if n.Else == nil {
+		fmt.Fprintf(w, "\n")
+		return
+	}
+	fmt.Fprintf(w, " else ")
+	if ei, ok := n.Else.(*IfStmt); ok {
+		em.ifStmt(w, ei, ind, false)
+	} else {
+		em.block(w, n.Else, ind)
+		fmt.Fprintf(w, "\n")
+	}
+}
+
+func (em *cEmitter) condExpr(a AST) string {
+	if a == nil {
+		return ""
+	}
+	return em.expr(a)
+}
+
+// forClause emits a for-loop init/step clause (a declaration or assignment)
+// with no trailing semicolon.
+func (em *cEmitter) forClause(a AST) string {
+	if a == nil {
+		return ""
+	}
+	switch n := a.(type) {
+	case *VarDecl:
+		t := em.declType(n.Type, n.Init)
+		em.locals[n.Name] = t
+		if n.Init != nil {
+			return em.ctype(t) + " " + cIdent(n.Name) + " = " + em.expr(n.Init)
+		}
+		return em.ctype(t) + " " + cIdent(n.Name)
+	case *Assignment:
+		return em.expr(n.Target) + " = " + em.expr(n.Val)
+	case *Funcall:
+		return em.call(n)
+	default:
+		cUnsupported(posOf(a), fmt.Sprintf("for-clause %T", a))
+		return ""
+	}
+}
+
+// declType resolves a binding's C-relevant type: its written type, or — for a
+// `:=` binding whose type is inferred — the type of its initializer.
+func (em *cEmitter) declType(t ASTType, init AST) ASTType {
+	if t.Name == "<infer>" {
+		return em.inferType(init)
+	}
+	return t
+}
+
+// inferType computes the type of an initializer expression, for `:=` bindings.
+// It answers from the in-scope locals (not the Context, whose function-scope
+// bindings aren't established on the C path) and from node-local information.
+func (em *cEmitter) inferType(a AST) ASTType {
+	switch n := a.(type) {
+	case *Literal:
+		switch n.Val.(type) {
+		case uint64:
+			return numASTType() // untyped integer literals infer as i64
+		case bool:
+			return boolASTType()
+		case string:
+			return byteSliceASTType()
+		}
+	case *Symbol:
+		if t, ok := em.locals[n.Name]; ok {
+			return t
+		}
+	case *Op2:
+		switch n.Type {
+		case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_booland, n_boolor:
+			return boolASTType()
+		default:
+			return em.inferType(n.First) // arithmetic result takes the operand type
+		}
+	case *Not:
+		return boolASTType()
+	case *BitNot:
+		return em.inferType(n.Val)
+	case *Funcall:
+		// The callee's return type does not depend on argument types, so this
+		// resolves through the Context even when arguments are locals.
+		return em.u.c.ResolveUnderlying(n.ASTType(em.u.c))
+	}
+	cUnsupported(posOf(a), fmt.Sprintf("type inference for a %T initializer", a))
+	return ASTType{}
 }
 
 func (em *cEmitter) expr(a AST) string {
@@ -208,10 +393,24 @@ func (em *cEmitter) expr(a AST) string {
 		return em.call(n)
 	case *Op2:
 		return em.op2(n)
+	case *Not:
+		return "!" + em.unaryOperand(n.Val)
+	case *BitNot:
+		return "~" + em.unaryOperand(n.Val)
 	default:
 		cUnsupported(posOf(a), fmt.Sprintf("expression %T", a))
 		return ""
 	}
+}
+
+// unaryOperand renders the operand of a unary operator, parenthesizing a
+// binary sub-expression (unary binds tighter than any binary operator).
+func (em *cEmitter) unaryOperand(a AST) string {
+	s := em.expr(a)
+	if _, ok := a.(*Op2); ok {
+		return "(" + s + ")"
+	}
+	return s
 }
 
 func (em *cEmitter) call(f *Funcall) string {
@@ -263,6 +462,14 @@ func (em *cEmitter) runtimeCall(f *Funcall, pkg, name string) string {
 // parentheses (only where the tree structure requires them), so the output
 // reads like hand-written C rather than fully-parenthesized machine output.
 func (em *cEmitter) op2(o *Op2) string {
+	// `-x` lowers to `0 - x` in the AST; re-sugar it to a readable unary minus.
+	if o.Type == n_sub {
+		if lit, ok := o.First.(*Literal); ok {
+			if v, ok := lit.Val.(uint64); ok && v == 0 {
+				return "-" + em.unaryOperand(o.Second)
+			}
+		}
+	}
 	prec := cPrec(o.Type)
 	return em.operand(o.First, prec, false) + " " + cBinSym(o.Type) + " " + em.operand(o.Second, prec, true)
 }
@@ -379,6 +586,10 @@ func cBinSym(t nodetype) string {
 		return "=="
 	case n_neq:
 		return "!="
+	case n_booland:
+		return "&&"
+	case n_boolor:
+		return "||"
 	}
 	return "?"
 }
@@ -403,6 +614,10 @@ func cPrec(t nodetype) int {
 		return 4
 	case n_bitor:
 		return 3
+	case n_booland:
+		return 2
+	case n_boolor:
+		return 1
 	}
 	return 0
 }
