@@ -4378,17 +4378,34 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, "\tlea %s [%s+0]\n", addr.ref, v.ref)
 		}
 
+		// Backing length: the default high bound when `hi` is omitted, and
+		// the reference for the high-bound check below.
+		length := newSpot(of, c, c.Temp(), numASTType())
+		if v.t.IsSlice() {
+			fmt.Fprintf(of, "\tmov %s [%s+8]\n", length.ref, v.ref)
+		} else {
+			// v.t is a fixed array; use its declared size.
+			fmt.Fprintf(of, "\tmov %s %d\n", length.ref, v.t.ArraySize)
+		}
+
 		var upper spot
 		if ast.Upper != nil {
 			upper = compileTop(of, c, ast.Upper, nullspot)
+			// Bounds: hi must not exceed the backing length. The compare is
+			// unsigned (jbe), so a negative hi — enormous as u64 — also
+			// traps. cmp/jbe must stay adjacent: bas does not model EFLAGS,
+			// so nothing may materialize an operand between them (the trap's
+			// mov/call come after the branch, on the failing path only, and
+			// _init.index_oob exits without returning).
+			hiok := c.Label("slice_hi_ok")
+			fmt.Fprintf(of, "\tcmp %s %s\n", upper.ref, length.ref)
+			fmt.Fprintf(of, "\tjbe %s\n", hiok)
+			fmt.Fprintf(of, "\tmov rdi %s\n", upper.ref)
+			fmt.Fprintf(of, "\tmov rsi %s\n", length.ref)
+			fmt.Fprintf(of, "\tcall _init.index_oob\n")
+			fmt.Fprintf(of, "\tlabel %s\n", hiok)
 		} else {
-			upper = newSpot(of, c, c.Temp(), numASTType())
-			if v.t.IsSlice() {
-				fmt.Fprintf(of, "\tmov %s [%s+8]\n", upper.ref, v.ref)
-			} else {
-				// v.t is a fixed array; use its declared size.
-				fmt.Fprintf(of, "\tmov %s %d\n", upper.ref, v.t.ArraySize)
-			}
+			upper = length
 		}
 
 		if ast.Lower != nil {
@@ -4396,6 +4413,16 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if baset.Size(c) > 8 {
 				panic("Slicing for types > 8 bytes not implemented.")
 			}
+			// Bounds: lo must not exceed hi (upper still holds hi here,
+			// before the sub below). A negative lo or lo>hi both trap via
+			// the same unsigned compare. cmp/jbe kept adjacent as above.
+			look := c.Label("slice_lo_ok")
+			fmt.Fprintf(of, "\tcmp %s %s\n", lower.ref, upper.ref)
+			fmt.Fprintf(of, "\tjbe %s\n", look)
+			fmt.Fprintf(of, "\tmov rdi %s\n", lower.ref)
+			fmt.Fprintf(of, "\tmov rsi %s\n", upper.ref)
+			fmt.Fprintf(of, "\tcall _init.index_oob\n")
+			fmt.Fprintf(of, "\tlabel %s\n", look)
 			fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", addr.ref, addr.ref, lower.ref, baset.Size(c))
 			fmt.Fprintf(of, "\tsub %s %s\n", upper.ref, lower.ref)
 			lower.free(of)

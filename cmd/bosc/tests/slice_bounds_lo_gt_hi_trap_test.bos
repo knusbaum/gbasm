@@ -1,0 +1,15 @@
+package main
+
+import "fmt"
+
+// lo > hi must trap. Without the check, `upper - lower` underflows to an
+// enormous unsigned length. This exercises the low-bound check, which is
+// a separate branch from the high-bound check.
+fn main() {
+	nums [3]i64 := [10, 20, 30]
+	a i64 := 2
+	b i64 := 1
+	fmt.print("before\n")
+	bad []i64 := nums[a:b]
+	fmt.print("after len=%d\n", len(bad))
+}

@@ -1,0 +1,15 @@
+package main
+
+import "fmt"
+
+// Slicing past the backing length must trap at the slice operation
+// itself. nums has length 3; nums[0:hi] with hi=5 is out of range and
+// must fire the bounds trap (exit 1) rather than silently producing a
+// slice whose length runs off the end of the backing storage.
+fn main() {
+	nums [3]i64 := [10, 20, 30]
+	hi i64 := 5
+	fmt.print("before\n")
+	bad []i64 := nums[0:hi]
+	fmt.print("after len=%d\n", len(bad))
+}

@@ -1,0 +1,14 @@
+package main
+
+import "fmt"
+
+// A negative low index must trap. The bounds check uses an unsigned
+// compare precisely so a negative index — enormous as u64 — is caught;
+// a signed compare would wrongly accept it and compute a wild address.
+fn main() {
+	nums [3]i64 := [10, 20, 30]
+	lo i64 := 0 - 1
+	fmt.print("before\n")
+	bad []i64 := nums[lo:2]
+	fmt.print("after len=%d\n", len(bad))
+}

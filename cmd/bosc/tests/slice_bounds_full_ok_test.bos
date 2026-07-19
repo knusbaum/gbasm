@@ -1,0 +1,14 @@
+package main
+
+import "fmt"
+
+// hi == len is the valid boundary and must NOT trap (the check uses
+// jbe, allowing equal). Slicing the full length yields every element.
+fn main() {
+	nums [3]i64 := [10, 20, 30]
+	all []i64 := nums[0:3]
+	var i i64 := 0
+	for (i = 0; i < len(all); i = i + 1) {
+		fmt.print("%d\n", all[i])
+	}
+}
