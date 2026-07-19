@@ -1,14 +1,22 @@
 all: bosc
 
-file bosc {
+# Toolchain binaries: untyped (phony) so mmk always invokes `go build`,
+# which is fast under Go's own build cache and is the only layer that
+# tracks .go source changes accurately. The previous `file <name> { go
+# build ... }` form pinned freshness to the binary's mtime with no deps,
+# so once the binary existed mmk skipped the body and edits to .go files
+# (here or in the shared core) never propagated into this test suite —
+# you'd test the old toolchain against fresh sources. Matches the phony
+# form already used in the top-level mmkfile and cmd/bas/mmkfile.
+bosc {
     go build .
 }
 
-file bas {
+bas {
     go build ../bas
 }
 
-file bld {
+bld {
     go build ../bld
 }
 
