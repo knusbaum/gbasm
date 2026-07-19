@@ -1,0 +1,20 @@
+package main
+
+import "string"
+
+// alloc(byte[N]) allocates a heap fixed array and returns owned *mut (byte[N]);
+// dereferencing the pointer is an lvalue, so (*arr)[:] slices the heap storage
+// with no copy. The result type is nameable with the parenthesized pointer-to-
+// array form. free releases it.
+fn main() {
+	arr owned *mut (byte[16]) := alloc(byte[16])
+	s mut byte[] := (*arr)[:]
+	string.puti(len(s))          // 16
+	string.putc(10)
+	s[0] = 72                    // 'H'
+	s[1] = 105                   // 'i'
+	(*arr)[2] = 33               // '!' via index through the pointer
+	string.puts(s[0:3])          // "Hi!" — slice sees the writes
+	string.putc(10)
+	free(arr)
+}

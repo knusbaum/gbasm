@@ -676,13 +676,16 @@ func (p *Parser) parseTypeName() *Node {
 				ownedmask |= 1 << (indirection + 1)
 			}
 		} else { // outermost is a fixed array
-			// 'mut' on a fixed array is meaningless: element mutability is
-			// governed by the binding (var vs not), not a type qualifier.
-			// 'owned', by contrast, is the whole-array obligation — the bit
-			// stays at the value level (bit `indirection`), exactly like
+			// A VALUE-level 'mut' on a fixed array (`mut byte[N]`, bit 0) is
+			// meaningless: element mutability is governed by the binding (var
+			// vs not), not a type qualifier. But a POINTER-level 'mut' is the
+			// pointer element's own write-through qualifier and is valid —
+			// `*mut byte[N]` is an array of `*mut byte` (because `[]` binds
+			// tighter than `*`), analogous to `*mut byte[]`. 'owned' stays at
+			// the value level (the whole-array obligation), like
 			// `owned <struct>`. See DESIGN.md §Bit-level encoding.
-			if mutmask&(1<<indirection) != 0 {
-				panic(&interpreterError{"'mut' is only valid on slice types, not fixed-size arrays", firstWrapperPos})
+			if indirection == 0 && mutmask&1 != 0 {
+				panic(&interpreterError{"'mut' on a fixed-size array value is meaningless; array element mutability comes from the binding (use `var`). For a write-through pointer element, `*mut T[N]` is an array of `*mut T`; for a pointer to a mutable array, write `*mut (T[N])`", firstWrapperPos})
 			}
 		}
 		return &Node{

@@ -1,0 +1,11 @@
+package main
+import "string"
+fn main() {
+	arr := alloc(i64[4])
+	s mut i64[] := (*arr)[:]
+	s[0] = 7
+	s[3] = 9
+	string.puti(s[0] + s[3])     // 16
+	string.putc(10)
+	free(arr)
+}

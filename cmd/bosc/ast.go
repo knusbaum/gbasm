@@ -2578,6 +2578,17 @@ func typeExprFromAST(c *Context, a AST) (ASTType, bool) {
 				return ASTType{Name: name}, true
 			}
 		}
+	case *Index:
+		// A fixed-array type expression `T[N]` parses as Index(T, N) with a
+		// constant size (NAST nil). Build the array type, matching mkTypename's
+		// {Element: &elem, ArraySize: N} shape, so e.g. `alloc(byte[1024])`
+		// yields the same type an annotation would. A runtime index (NAST set)
+		// or a zero size is not a type.
+		if v.NAST == nil && v.N > 0 {
+			if elem, ok := typeExprFromAST(c, v.Val); ok {
+				return ASTType{Element: &elem, ArraySize: int(v.N)}, true
+			}
+		}
 	}
 	return ASTType{}, false
 }
