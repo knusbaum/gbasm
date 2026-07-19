@@ -202,11 +202,45 @@ left-to-right; no parens needed.
 | `*(byte[])` | `*[]byte` | pointer to slice |
 | `*(byte[8])` | `*[8]byte` | pointer to array |
 | `*mut (byte[])` (the old confusion) | `*[]mut byte` | pointer to slice of mutable byte |
-| `owned byte[]` | `owned []byte` | owned slice (obligation on the whole slice) |
-| `owned byte[N]` | `owned [N]byte` | owned array |
+| `owned byte[]` | `[]owned byte` | slice of **owned** byte (owned **moves inside** — verified: encodes as element-owned) |
+| `owned byte[N]` | `owned [N]byte` | owned **array** (array leading-owned stays outer — no bump) |
+| `byte[8][1]` | `[1][8]byte` | array 1 of array 8 (**bracket order reverses** in multi-dim) |
+| `*?i64` | `?*i64` | nullable pointer (`?` moves before `*`) |
 
-Note the migration trap: **`mut byte[]` → `[]mut byte`**, *not* `mut []byte`
-(the naïve "keep `mut` in front" produces the *other*, valid-but-wrong meaning).
+Note the migration traps (verified against ground-truth `ASTType` dumps):
+- **`mut byte[]` → `[]mut byte`** and **`owned byte[]` → `[]owned byte`** — for a
+  **slice**, a leading `mut`/`owned` binds the *element* and moves inside the
+  brackets. `mut []byte` / `owned []byte` are the *other*, newly-expressible
+  types (mutable/owned **slice value**).
+- **Arrays do the opposite:** `owned byte[N]` → `owned [N]byte` (the array value
+  is owned; no bump). `[N]owned T` and `owned [N]T` both mean "owned array" —
+  arrays are one object (§2.6).
+- **Multi-dim arrays reverse:** `byte[8][1]` → `[1][8]byte` (the leftmost postfix
+  bracket is innermost).
+- **`*?` → `?*`** (nullable pointer).
+
+### 3.3 Internal encoding (what the constructors build)
+
+The `ASTType` representation is unchanged; the parser must produce byte-identical
+values, verified against ground-truth dumps. Building an inner type `E` then
+applying a constructor:
+
+- **base name** → `{Name, Signed}` (Signed for `i8`/`i16`/`i32`/`i64`).
+- **`*` (pointer to E)** → `E` with *all masks shifted `<<1`* and `Indirection++`
+  (works whether `E` is scalar/pointer — flat `Name`+`Indirection` — or slice/
+  array — `Element` preserved). Then leading quals of the pointer go at **bit 0**
+  (`owned`→Own bit0, `?`→Nil bit0). `mut` on a pointer *value* is illegal.
+- **`[]` (slice of E)** → `{Element: &E', masks = E.masks << 1}` where `E'` is `E`
+  with its masks cleared — i.e. `E`'s element quals **bump up one bit onto the
+  slice**. Leading quals of the slice go at **bit 0** (`owned`→owned-slice;
+  `mut`→mutable-slice, legal only as a reference operand; `?`→illegal).
+- **`[N]` (array of E)** → `{Element: &E', ArraySize: N, masks = E.masks}` (masks
+  moved with **no** shift — the array value shares its element storage). Leading
+  quals at bit 0 (`owned`→owned array; `mut`→illegal; `?`→illegal).
+
+Legality (§2.4/§3.1) is enforced during the fold: `mut` is legal only when the
+level is a reference operand (parsed under a `*` or `[]`); `?` only when the
+level is a pointer or interface.
 
 ### 3.1 Legality rules (what the parser accepts / rejects)
 
