@@ -5,22 +5,15 @@ import (
 	"testing"
 )
 
-// This is the before/after oracle for the postfix→prefix type-syntax migration
-// (DESIGN_prefix_type_syntax.md). Each case pairs a postfix form (today) with
-// its target prefix form and the exact ASTType both must produce — the `want`
-// values are ground truth captured from the current parser, written as real
-// ASTType literals so field names are compile-checked.
+// Correctness tests for prefix type-syntax encoding
+// (DESIGN_prefix_type_syntax.md). Each case pairs a type spelling with the exact
+// ASTType it must produce, written as a real ASTType literal so field names are
+// compile-checked.
 //
-//   - TestTypeEncodingPrefix: the new prefix parser must produce `want` for the
-//     prefix form. This is the durable correctness test.
-//   - TestTypeEncodingPostfixRejected: the old postfix spelling must NOT still
-//     yield the migrated type — a clean-break guard that catches any accidental
-//     reintroduction of postfix parsing while the corpus is being migrated.
-//     (Before the parser flip this column's job was to validate `want` against
-//     the old parser; that's done — it passed at 09a4576.)
-//
-// Completion checklist: once the corpus is fully prefix, the postfix column and
-// its guard can be dropped, leaving TestTypeEncodingPrefix as the sole test.
+//   - TestTypeEncodingPrefix: parseTypeString(spelling) must equal `want`.
+//   - TestTypeEncodingRoundTrip: parse → String() → re-parse must still equal
+//     `want` (the `.bo` serialization round-trip).
+//   - TestTypeEncodingTopLevelMutOmitted: String() omits a binding-level `mut`.
 
 // atSame is a strict, position-insensitive, recursive ASTType equality. Stricter
 // than SameExact (which recurses into Element with the laxer Same) and it skips
@@ -71,63 +64,76 @@ func dumpAT(t ASTType) string {
 	return s
 }
 
-// s builds a slice ASTType {[]elem}; a builds an array {[n]elem}. Only used to
+// sl builds a slice ASTType {[]elem}; ar builds an array {[n]elem}. Only used to
 // keep the nested `want` literals readable — they wrap a given element verbatim,
 // they do NOT re-derive the mask "bump", so they can't mask a parser bug (the
 // masks are written out explicitly on each `want`).
-func sl(elem ASTType) ASTType   { return ASTType{Element: &elem} }
+func sl(elem ASTType) ASTType     { return ASTType{Element: &elem} }
 func ar(n int, e ASTType) ASTType { return ASTType{ArraySize: n, Element: &e} }
 
 var typeEncodingCases = []struct {
-	postfix, prefix string
-	want            ASTType
+	prefix string
+	want   ASTType
 }{
-	{"i64", "i64", ASTType{Name: "i64", Signed: true}},
-	{"byte", "byte", ASTType{Name: "byte"}},
-	{"bool", "bool", ASTType{Name: "bool"}},
-	{"byte[]", "[]byte", sl(ASTType{Name: "byte"})},
-	{"i64[]", "[]i64", sl(ASTType{Name: "i64", Signed: true})},
-	{"byte[8]", "[8]byte", ar(8, ASTType{Name: "byte"})},
-	{"i64[3]", "[3]i64", ar(3, ASTType{Name: "i64", Signed: true})},
-	{"byte[][]", "[][]byte", sl(sl(ASTType{Name: "byte"}))},
-	{"byte[8][1]", "[1][8]byte", ar(1, ar(8, ASTType{Name: "byte"}))},
-	{"byte[][1]", "[1][]byte", ar(1, sl(ASTType{Name: "byte"}))},
-	{"*i64", "*i64", ASTType{Name: "i64", Indirection: 1, Signed: true}},
-	{"**i64", "**i64", ASTType{Name: "i64", Indirection: 2, Signed: true}},
-	{"*byte", "*byte", ASTType{Name: "byte", Indirection: 1}},
-	{"*byte[]", "[]*byte", sl(ASTType{Name: "byte", Indirection: 1})},
-	{"*(byte[])", "*[]byte", ASTType{Indirection: 1, Element: &ASTType{Name: "byte"}}},
-	{"*(byte[8])", "*[8]byte", ASTType{Indirection: 1, ArraySize: 8, Element: &ASTType{Name: "byte"}}},
-	{"*mut i64", "*mut i64", ASTType{Name: "i64", Indirection: 1, MutMask: 0b10, Signed: true}},
-	{"mut byte[]", "[]mut byte", ASTType{MutMask: 0b10, Element: &ASTType{Name: "byte"}}},
-	{"owned byte[]", "[]owned byte", ASTType{OwnedMask: 0b10, Element: &ASTType{Name: "byte"}}},
-	{"owned byte[8]", "owned [8]byte", ASTType{ArraySize: 8, OwnedMask: 0b1, Element: &ASTType{Name: "byte"}}},
-	{"owned *mut i64", "owned *mut i64", ASTType{Name: "i64", Indirection: 1, MutMask: 0b10, OwnedMask: 0b1, Signed: true}},
-	{"owned *owned mut node", "owned *owned mut node", ASTType{Name: "node", Indirection: 1, MutMask: 0b10, OwnedMask: 0b11}},
-	{"*?i64", "?*i64", ASTType{Name: "i64", Indirection: 1, NilMask: 0b1, Signed: true}},
-	{"*?*i64", "?**i64", ASTType{Name: "i64", Indirection: 2, NilMask: 0b1, Signed: true}},
-	{"owned *?owned mut node", "owned ?*owned mut node", ASTType{Name: "node", Indirection: 1, MutMask: 0b10, OwnedMask: 0b11, NilMask: 0b1}},
+	{"i64", ASTType{Name: "i64", Signed: true}},
+	{"byte", ASTType{Name: "byte"}},
+	{"bool", ASTType{Name: "bool"}},
+	{"[]byte", sl(ASTType{Name: "byte"})},
+	{"[]i64", sl(ASTType{Name: "i64", Signed: true})},
+	{"[8]byte", ar(8, ASTType{Name: "byte"})},
+	{"[3]i64", ar(3, ASTType{Name: "i64", Signed: true})},
+	{"[][]byte", sl(sl(ASTType{Name: "byte"}))},
+	{"[1][8]byte", ar(1, ar(8, ASTType{Name: "byte"}))},
+	{"[1][]byte", ar(1, sl(ASTType{Name: "byte"}))},
+	{"*i64", ASTType{Name: "i64", Indirection: 1, Signed: true}},
+	{"**i64", ASTType{Name: "i64", Indirection: 2, Signed: true}},
+	{"*byte", ASTType{Name: "byte", Indirection: 1}},
+	{"[]*byte", sl(ASTType{Name: "byte", Indirection: 1})},
+	{"*[]byte", ASTType{Indirection: 1, Element: &ASTType{Name: "byte"}}},
+	{"*[8]byte", ASTType{Indirection: 1, ArraySize: 8, Element: &ASTType{Name: "byte"}}},
+	{"*mut i64", ASTType{Name: "i64", Indirection: 1, MutMask: 0b10, Signed: true}},
+	{"[]mut byte", ASTType{MutMask: 0b10, Element: &ASTType{Name: "byte"}}},
+	{"[]owned byte", ASTType{OwnedMask: 0b10, Element: &ASTType{Name: "byte"}}},
+	{"owned [8]byte", ASTType{ArraySize: 8, OwnedMask: 0b1, Element: &ASTType{Name: "byte"}}},
+	{"owned *mut i64", ASTType{Name: "i64", Indirection: 1, MutMask: 0b10, OwnedMask: 0b1, Signed: true}},
+	{"owned *owned mut node", ASTType{Name: "node", Indirection: 1, MutMask: 0b10, OwnedMask: 0b11}},
+	{"?*i64", ASTType{Name: "i64", Indirection: 1, NilMask: 0b1, Signed: true}},
+	{"?**i64", ASTType{Name: "i64", Indirection: 2, NilMask: 0b1, Signed: true}},
+	{"owned ?*owned mut node", ASTType{Name: "node", Indirection: 1, MutMask: 0b10, OwnedMask: 0b11, NilMask: 0b1}},
 
 	// Arrays of pointers: owned/mut collapse onto the shared array level, but a
 	// pointer element's nullability stays on the ELEMENT (an array is never
 	// nullable). Regression: arrayWrap was moving nil to the array too.
-	{"*?i64[3]", "[3]?*i64", ASTType{ArraySize: 3, Element: &ASTType{Name: "i64", Indirection: 1, NilMask: 0b1, Signed: true}}},
-	{"*mut i64[3]", "[3]*mut i64", ASTType{ArraySize: 3, MutMask: 0b10, Element: &ASTType{Name: "i64", Indirection: 1, Signed: true}}},
-	{"owned *i64[3]", "[3]owned *i64", ASTType{ArraySize: 3, OwnedMask: 0b1, Element: &ASTType{Name: "i64", Indirection: 1, Signed: true}}},
+	{"[3]?*i64", ASTType{ArraySize: 3, Element: &ASTType{Name: "i64", Indirection: 1, NilMask: 0b1, Signed: true}}},
+	{"[3]*mut i64", ASTType{ArraySize: 3, MutMask: 0b10, Element: &ASTType{Name: "i64", Indirection: 1, Signed: true}}},
+	{"[3]owned *i64", ASTType{ArraySize: 3, OwnedMask: 0b1, Element: &ASTType{Name: "i64", Indirection: 1, Signed: true}}},
 
 	// String() branches the primitive cases above never exercise, but that the
 	// runtime `.bo`s serialize (io.bos: `?error`, `owned FD`, fn-typed values):
 	// a nullable-interface base (NilMask&1 at Indirection 0), a function type,
 	// and an anonymous struct type. These gate the runtime-bundle rebuild.
-	{"?error", "?error", ASTType{Name: "error", NilMask: 0b1}},
-	{"fn(byte[])i64", "fn([]byte)i64", ASTType{FuncSig: &FuncSig{
+	{"?error", ASTType{Name: "error", NilMask: 0b1}},
+	{"fn([]byte)i64", ASTType{FuncSig: &FuncSig{
 		Args:   []ASTType{{Element: &ASTType{Name: "byte"}}},
 		Return: ASTType{Name: "i64", Signed: true},
 	}}},
-	{"struct{a:i64,b:byte[]}", "struct{a:i64,b:[]byte}", ASTType{AnonFields: []Binding{
+	{"struct{a:i64,b:[]byte}", ASTType{AnonFields: []Binding{
 		{Name: "a", Type: ASTType{Name: "i64", Signed: true}},
 		{Name: "b", Type: ASTType{Element: &ASTType{Name: "byte"}}},
 	}}},
+}
+
+func TestTypeEncodingPrefix(t *testing.T) {
+	for _, c := range typeEncodingCases {
+		at, err := parseTypeString(c.prefix)
+		if err != nil {
+			t.Errorf("%-24q parse err: %v", c.prefix, err)
+			continue
+		}
+		if !atSame(at, c.want) {
+			t.Errorf("%-24q\n  got  %s\n  want %s", c.prefix, dumpAT(at), dumpAT(c.want))
+		}
+	}
 }
 
 // TestTypeEncodingRoundTrip locks ASTType.String() as the exact inverse of the
@@ -161,10 +167,10 @@ func TestTypeEncodingTopLevelMutOmitted(t *testing.T) {
 		at   ASTType
 		want string
 	}{
-		{ASTType{Name: "B", MutMask: 0b1}, "B"},                                                    // mut struct owner
-		{ASTType{Element: &ASTType{Name: "byte"}, MutMask: 0b1}, "[]byte"},                         // mut slice value
-		{ASTType{Name: "i64", Indirection: 1, MutMask: 0b10, Signed: true}, "*mut i64"},            // pointee mut stays
-		{ASTType{Element: &ASTType{Name: "byte"}, MutMask: 0b10}, "[]mut byte"},                    // element mut stays
+		{ASTType{Name: "B", MutMask: 0b1}, "B"},                                         // mut struct owner
+		{ASTType{Element: &ASTType{Name: "byte"}, MutMask: 0b1}, "[]byte"},              // mut slice value
+		{ASTType{Name: "i64", Indirection: 1, MutMask: 0b10, Signed: true}, "*mut i64"}, // pointee mut stays
+		{ASTType{Element: &ASTType{Name: "byte"}, MutMask: 0b10}, "[]mut byte"},         // element mut stays
 	}
 	for _, c := range cases {
 		got := c.at.String()
@@ -173,31 +179,6 @@ func TestTypeEncodingTopLevelMutOmitted(t *testing.T) {
 		}
 		if _, err := parseTypeString(got); err != nil {
 			t.Errorf("rendered %q does not re-parse: %v", got, err)
-		}
-	}
-}
-
-func TestTypeEncodingPostfixRejected(t *testing.T) {
-	for _, c := range typeEncodingCases {
-		if c.postfix == c.prefix {
-			continue // e.g. "*i64" — unchanged by the migration, not a postfix form
-		}
-		at, err := parseTypeString(c.postfix)
-		if err == nil && atSame(at, c.want) {
-			t.Errorf("postfix %q still parses to the migrated type — the clean break is broken", c.postfix)
-		}
-	}
-}
-
-func TestTypeEncodingPrefix(t *testing.T) {
-	for _, c := range typeEncodingCases {
-		at, err := parseTypeString(c.prefix)
-		if err != nil {
-			t.Errorf("%-24q parse err: %v", c.prefix, err)
-			continue
-		}
-		if !atSame(at, c.want) {
-			t.Errorf("%-24q\n  got  %s\n  want %s", c.prefix, dumpAT(at), dumpAT(c.want))
 		}
 	}
 }
