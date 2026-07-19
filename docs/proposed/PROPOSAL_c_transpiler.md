@@ -2,14 +2,20 @@
 
 ## History
 
-- 2026-07-19 — Integer-overflow semantics settled (**wraps**, both signs;
-  DESIGN.md §Expressions), resolving the open language question in the wrap
-  bullet — the arithmetic helper is fixed to the unsigned dance.
-- 2026-07-19 — Revised UB handling: the emitter must emit **well-formed C**
-  (unsigned-type wrap, `memcpy` punning, explicit shift masks and div guards;
-  UBSan policing), not define UB away with flags — so `cc` stays free to optimize
-  and the output stays genuinely portable. Ratified the raw-syscall floor;
-  recorded the safe-C-generator future direction.
+- 2026-07-19 — **Reframed to readability-first.** The primary goal is idiomatic,
+  human-readable C (a Boson module that drops into a real C project undetected),
+  not a "portable optimizing backend that happens to emit C." This supersedes the
+  earlier "emit well-formed C / never invoke UB" framing: the output is real C
+  with C's semantics, so `+` maps to `+` and signed-overflow UB is handled
+  case-by-case as a human C author would (unsigned wrap is still C-defined). Set
+  natural naming (no mangling), the public/private header split with escape
+  analysis, and the interface-representation open decision. Phase 1a landed
+  (functions/i64/calls/arithmetic; branch `c-transpiler`).
+- 2026-07-19 — Integer-overflow semantics settled at the *language* level
+  (**wraps**, both signs; DESIGN.md §Expressions). The native backend honors it;
+  the C backend's fidelity is discussed below.
+- 2026-07-19 — (superseded) Revised UB handling toward well-formed C via helpers.
+  The readability reframe above replaces this for the C backend.
 - 2026-07-19 — Proposed. Grounded in the codegen fork point, the runtime
   representations, and the check-segregation audit
   ([`../reference/AUDIT_codegen_check_segregation.md`](../reference/AUDIT_codegen_check_segregation.md)).
@@ -18,331 +24,235 @@
 
 ## Summary
 
-Add a second code-generation backend that emits **C** instead of `.bs` assembly.
-The C backend is a *sibling* of `compile.go`: it forks from the same typed AST
-(after `ToAST` + the checker) and emits **structured, high-level C** —
-preserving `if`/`for`/`while`/`switch`, typed structs, and expressions — then
-hands register allocation and optimization to an off-the-shelf C compiler. The
-existing `.bs`/`bas`/`bld` path is unchanged and remains the from-scratch,
-self-contained, x86-64-Linux toolchain; the C path is the **portable, optimizing**
-alternative, selected by a flag.
+Add a second code-generation backend that emits **idiomatic, human-readable C**.
+The output must look hand-written — natural type names, natural identifiers,
+natural operators, the source's own structure — so a Boson module can be
+transpiled and dropped into an existing C project with nobody the wiser. The
+consumer of the C is a **human**, not just a compiler.
 
-The design conceit that makes this tractable: **Boson is the safe subset of C
-made explicit.** Interfaces are already vtable structs, `values` are tagged
-unions, slices are fat pointers, ownership is explicit (no RAII). So the
-translation is mostly a syntax-directed re-printing of an already-safe program —
-the compiler *proved* safety on the Boson side; C only has to carry it forward as
-faithfully as C allows (`const`, `NULL`), never to *enforce* it.
+The backend is a *sibling* of `compile.go`: it forks from the same typed AST
+(after `ToAST` + the checker) and re-prints it as structured C rather than
+lowering to `.bs`. But its target audience is a C *reader*. Boson earns its keep
+at **authoring time** — enforcing ownership, mutability, bounds, and nullability,
+and generating headers and vtables — and hands back clean C. The existing
+`.bs`/`bas`/`bld` path is unchanged and remains the semantics-exact,
+self-contained toolchain.
+
+> If we only wanted an optimizer, we would target LLVM IR. **Readability is the
+> entire point** — it turns Boson from a toy into a tool for writing safe C.
 
 ---
 
 ## Motivation
 
-- **Portability.** Any target with a C compiler — ARM64, macOS, Windows, RISC-V,
-  embedded — for near-zero incremental effort. Today the toolchain is x86-64
-  Linux only.
-- **Optimization.** `gcc`/`clang` -O2 vastly exceeds a single-pass compiler plus
-  the `bas` register allocator (there is deliberately no optimizer in the native
-  path). This is a large performance win at low cost.
-- **Interop / FFI.** C output is inspectable, debuggable with standard tools, and
-  a natural bridge to C libraries.
-- **A second opinion.** Compiling the same program two independent ways is a
-  powerful correctness check (see *Differential testing*), and C sanitizers
-  (UBSan/ASan) become available as bug-finding tools for Boson programs.
+The driving use case: **write a module in Boson, transpile to C, maintain it as
+C.** You get Boson's invariant enforcement and codegen (vtables, headers) while
+producing code your C project's other authors read and edit as ordinary C.
+
+Secondary benefits that come along for free: portability (any target with a C
+compiler), the C optimizer, FFI/interop, and a second-opinion correctness check
+(the same program compiled two independent ways; UBSan/ASan on the output).
 
 ---
 
-## Settled premises
+## Premises
 
-1. **High-level, structured target.** `emitC` forks from the typed AST as a
-   sibling of `compile.go`, **never a modification of it**. `compile.go` lowers
-   all the way to a register machine with flattened control flow; C wants the
-   opposite (keep structure, let `cc` lower). Different altitude, different file.
-2. **Two backends coexist.** C does not replace `.bs`. They serve different
-   goals; the tax is that new language features must be lowered twice (mitigated
-   by differential testing and by the segregation work below).
-3. **Self-contained output.** Emit C, compile with `cc` to a native binary.
-   Interop with the from-scratch ELF linker is explicitly *not* a goal — it would
-   defeat the portability that motivates the whole backend.
-4. **Safety is proven up-front, carried forward best-effort.** The front end
-   already accepted the program. C emission adds `const` and respects `NULL`
-   where it can, but these are defense-in-depth, not the safety mechanism. Bounds
-   traps and nil-asserts are emitted explicitly (they are runtime checks, not
-   type rules).
-5. **Explicit drops → a dumb backend.** Boson has no RAII; `dispose` emits
-   nothing and `free(p)` is the programmer's own call. The emitter never computes
-   destructor points — it passes ownership operations through verbatim, exactly
-   as the checker authorized.
+1. **Human-readable output is the primary goal.** Idiomatic C: `<stdint.h>` type
+   names, natural identifiers, operators inline at the use site, control flow and
+   structure preserved. No manufactured helper functions for things C spells with
+   an operator; no name mangling.
+2. **High-level structured sibling of `compile.go`.** Forks from the typed AST;
+   never a modification of the `.bs` lowering (which flattens control flow and
+   allocates registers — the opposite of what a C reader wants).
+3. **Two backends, two fidelity contracts.** The native `.bs` backend is
+   semantics-exact and self-contained. The C backend prioritizes *source*
+   fidelity (see below); its runtime semantics are C's.
+4. **Safety is enforced at authoring time.** The front end already accepted the
+   program. The C output carries the *checks a human writes* (explicit bounds/nil
+   guards) and `const`/`NULL` where natural, but does not smuggle exotic runtime
+   semantics into the code to re-prove what the checker proved.
+5. **Explicit drops → passthrough.** No RAII; `dispose` emits nothing, `free(p)`
+   is the author's own call. The emitter computes no destructor points.
 
 ---
 
-## The representation contract
+## The fidelity contract (and the overflow resolution)
 
-The generated code and the hand-written C runtime floor must agree **byte-for-byte**
-on aggregate layout. That contract lives in a generated header, **`boson.h`**,
-included by every emitted `.c` and by the floor. Core mappings:
+The C backend chooses **source fidelity over semantic fidelity**: the output is
+real C, and where Boson's semantics and idiomatic C diverge, idiomatic C wins and
+the divergence is documented. Concretely:
+
+- **`+` maps to `+`.** Signed-overflow is UB in C; the emitted C carries C's
+  rules, exactly like every hand-written C module. **Unsigned** overflow *is*
+  C-defined (modular), so Boson's wrap is preserved there. Boson's defined
+  *signed* wrap is a **language** guarantee honored by the native backend; an
+  author who needs portable wrapping in C uses an unsigned type — which is what
+  careful C already does. We do not emit `bo_add_i64(x,y)` helpers and we do not
+  require host flags like `-fwrapv` (either would betray the drop-in goal).
+- **C's other corners** (oversized shifts, div-by-zero, aliasing on type-punning)
+  are handled the same way: emit what a competent C author writes, and address a
+  specific corner *only if it actually bites in practice*, by updating the
+  emitter for that case. We do not preemptively contort the output to dodge UB
+  the source will almost never hit.
+- A **UBSan build of the output** remains available as a diagnostic when chasing a
+  real miscompile, but it is a tool, not a gate.
+
+This is the deliberate consequence of a *human* target. It reverses the earlier
+"never invoke UB" stance, which belonged to the self-contained-optimizer framing.
+
+---
+
+## Representation (natural C)
 
 | Boson | C | notes |
 |---|---|---|
-| `i8..i64` / `byte` | `int8_t..int64_t` / `uint8_t` | fixed-width `<stdint.h>` |
-| `bool` | `_Bool` | |
-| `*T`, `?*T` | `T*` | nullable is just a pointer that may be `NULL`; the checker already proved non-null derefs |
-| `mut` / non-`mut` | non-`const` / `const` | best-effort; C `const` is shallow, so this is advisory |
-| `[]T` (slice) | `boson_slice_T { T* ptr; int64_t len; }` | 16-byte fat pointer, **no capacity** (matches native: re-slicing can't grow) |
-| `[N]T` (array) | `T[N]`, or a `struct { T v[N]; }` wrapper where value semantics are needed | |
-| `struct` | `struct` | field offsets are `cc`'s job, not ours (self-contained) |
-| interface `I` | `boson_iface { void* data; const boson_vtable_I* vt; }` | 16-byte; per-`(concrete,I)` static vtable global |
-| `values` / ADT | `struct { int64_t tag; union { … } payload; }` | flat tagged union, `switch` reads word 0 |
-| multi-return | by-value `struct` return | C has no multi-return; the synthetic `{_0,_1,…}` struct already exists in the AST |
-| `owned` | *(nothing)* | compile-time only; zero runtime representation |
-| function `pkg.f` | mangled C function (see *Name mangling*) | |
+| `i8..i64` / `byte` / `u8..u64` | `int8_t..int64_t` / `uint8_t..uint64_t` | `<stdint.h>` names |
+| `bool` | `bool` | `<stdbool.h>` |
+| `*T`, `?*T` | `T *` | nullable is a pointer that may be `NULL`; the checker proved non-null derefs |
+| `mut` / non-`mut` | non-`const` / `const` where natural | best-effort; C `const` is shallow |
+| `[]T` (slice) | `struct { T *ptr; int64_t len; }` | readable field names; no capacity |
+| `[N]T` (array) | `T[N]` (or a small struct wrapper for value semantics) | |
+| `struct` | `struct` | layout is `cc`'s job |
+| interface `I` | `struct { void *self; const I_vtable *vtable; }` | vtable-pointer; see open decision |
+| `values` / ADT | `struct { int64_t tag; union { … } payload; }` | tagged union; `switch` reads `tag` |
+| multi-return | out-struct by value, or out-params — whichever reads better | natural C, not a synthetic type |
+| `owned` | *(nothing)* | compile-time only |
 
-Interface **dispatch** maps directly: `iface.vt->method(iface.data, args…)`, with
-per-`(concrete type, interface)` vtables emitted as `static const` globals
-(`compile.go` already materializes these for `.bs`; the C emitter emits the same
-tables as C initializers). ADT construction sets `tag` + the active union arm;
-`switch` compares `tag`.
+Bounds/nil checks emit as the `if (i >= s.len) …` guard a human writes (likely a
+knob — a hand-written module may omit them in release).
 
 ---
 
-## Hard cases
+## Naming (idiomatic C, not mangling)
 
-Most constructs map trivially. These do not, and are the substance of the design.
+No length-encoded mangling. C's flat namespace is handled the way C libraries
+handle it — **prefix conventions**:
 
-### Emitting well-formed C — the emitter must never invoke UB
+- File-local (non-`pub`) function → bare name, `static`.
+- Exported (`pub`) function in `package foo` → `foo_name` (the SDL/libgit2
+  convention); a `pub` method `Type.m` → `foo_type_m`.
+- `package main`'s `main` → the C `main` directly (its return is the exit code).
+- A Boson name colliding with a C keyword gets a trailing `_`, as a human would.
 
-The `.bs` backend inherits x86's *defined* semantics for several operations that
-are *undefined behavior* in C. The wrong response is to define them away with
-flags (`-fwrapv`, `-fno-strict-aliasing`): that ships C which *is* UB and merely
-asks one compiler to tolerate it — and it would be silently broken the day the
-generated C is lifted out and compiled normally (the eventual safe-C-generator
-goal). **The emitter's obligation is to generate C that is well-formed in the
-first place.** Then no UB-defining flags are needed and `cc -O2`/`-O3` is free to
-optimize aggressively, *because* there is no UB for the optimizer to exploit.
+Injectivity is by convention plus **collision detection** — if two symbols would
+collide in C's flat namespace, the transpiler reports it (like a linker), rather
+than emitting gibberish to guarantee uniqueness.
 
-Each x86-defined-but-C-UB operation has a well-formed realization (compiling to
-the same instructions):
+---
 
-- **Integer wrap** — only *signed* `+`, `-`, `*`, and unary `-` can overflow, and
-  signed overflow is UB in C. (Unsigned types — `byte`, `u*` — are already
-  modular-defined and need nothing; comparisons and bitwise ops can't overflow
-  and stay bare.) To reproduce the native backend's wrapping without UB, route
-  those ops through a tiny per-width helper in `boson.h` that computes in the
-  unsigned type and converts back — generated code reads `bo_add_i64(a, b)`, and
-  only the helper body holds the cast idiom (`(int64_t)((uint64_t)a +
-  (uint64_t)b)`). The unsigned math is fully defined (modular); the narrowing
-  back is *implementation-defined* (two's complement everywhere, mandated by
-  C23) — **not UB**. Deliberately *not* `__builtin_add_overflow` (a gcc/clang
-  extension; the safe-C-generator goal wants pure standard C). The language
-  decision is **settled — Boson integer overflow wraps** (both signs; DESIGN.md
-  §Expressions), so the helper body is the unsigned dance, full stop: never bare
-  signed `a + b`, never a trap. (A future `checked_*` intrinsic would lower to
-  its own explicitly-checked helper — orthogonal to the default arithmetic.)
-- **Type punning** (interface inline value-backed `data`, the `any` type-switch)
-  — never read bytes back through an incompatible pointer type. Move them with
-  **`memcpy`**, the standard-blessed way to reinterpret representation, exempt
-  from the strict-aliasing rule. (For pointer-*backed* interfaces the `data`
-  pointer points at a genuine `T`, so reading it as `T*` is already legal — no
-  punning at all.)
-- **Shifts** — emit an explicit mask so the count is always in range:
-  `x << (n & 63)` (`& 31` for 32-bit). No shift by `>=` width ever reaches the C.
-- **Division / modulo** — emit an explicit guard that traps on a zero divisor
-  (and on `INT64_MIN / -1`, itself both UB in C and `#DE` on x86), exactly like
-  the bounds checks: `if (d == 0) bo_div_zero();`. Never rely on the hardware
-  fault (UB from C's view); generate the check.
+## Headers and the public/private split
 
-This is a **checklist the emitter must satisfy**, and it is *testable*: compiling
-the generated C under `-fsanitize=undefined` (UBSan) must produce no diagnostics
-across the corpus. That check — not a flag — is what enforces well-formedness.
+Transpiling `foo.bos` yields **`foo.c`** (implementation + everything private)
+and **`foo.h`** (the public API: `pub` function prototypes and `pub` type
+definitions). The subtlety is C's opaque-vs-transparent tension: a Boson-private
+type can still be forced into the header because C callers need its *size*. Per
+private type, an **escape analysis**:
 
-### Name mangling — *not* a freebie
+- **escapes by value** into a public signature (returned/passed by value, or
+  embedded by value in a public type) → its full definition is promoted to the
+  header, with a comment noting it is Boson-private, exposed for ABI reasons;
+- **escapes only behind a pointer** → an opaque forward declaration in the header
+  (`typedef struct Foo Foo;`), full definition in the `.c` — the idiomatic C
+  opaque-pointer;
+- **never escapes** → stays entirely in the `.c`.
 
-Boson symbols are `pkg.name`, methods `pkg.Type.method`, plus generated globals
-(`__vtable_…`, `__typedesc_…`, `__projection_…`). Two problems with a naive
-`.`→`__`:
+This gives maximal encapsulation within what C physically permits — exactly what a
+careful C library author does by hand.
 
-1. **Not injective.** A name `pkg.Foo_bar` would collide with the method
-   `pkg.Foo.bar`.
-2. **C reserves identifiers** beginning with an underscore (file scope) and any
-   containing a double underscore — so `_init`, `_heap`, `__vtable_…` are all in
-   reserved namespaces.
+---
 
-**Recommendation:** an injective, length-prefixed (Itanium-lite) scheme under a
-non-underscore prefix, e.g. `bo_` + per-segment `<len><segment>`:
-`string.strlen` → `bo_6string6strlen`; `io.FD.read` → `bo_2io2FD4read`;
-`_init.start` → `bo_5_init5start` (the embedded leading underscore is now
-interior, so the identifier is not reserved). Generated globals get their own
-tag namespace under the same prefix. Small, self-contained design task — flagged,
-not hand-waved.
+## Interfaces (open decision — vtable-pointer recommended)
 
-### Bounds checks and traps
+Two representations, both idiomatic C, different scaling:
 
-Indexing and slice operations emit explicit checks mirroring the native traps
-(including the slice-operation and negative-index checks added alongside this
-proposal): `if ((uint64_t)i >= s.len) bo_index_oob(i, s.len);` — unsigned compare
-so negatives trap, identical semantics to `_init.index_oob`. `nil_assert`
-likewise. These are ordinary emitted C, not UB concerns.
+- **vtable-pointer (recommended):** `struct { void *self; const I_vtable *vtable; }`
+  with one `static const I_vtable` per concrete type; call as
+  `it.vtable->method(it.self, …)`. This is *the* recognizable C polymorphism idiom
+  (kernel `f_op`, GObject, COM). 16-byte value, cheap to pass, scales to any
+  method count. Cost: a generated static table per (type, interface) — normal,
+  hand-looking C.
+- **flattened:** inline function pointers per interface value
+  (`struct { void *self; ret (*method1)(…); … }`), called as `it.method1(it.self, …)`.
+  Marginally simpler call site, no table globals; but the value grows with method
+  count and every assignment/pass copies all pointers. Idiomatic only for tiny
+  1–3-method callbacks.
 
-### Multi-return, drops, entry point
-
-- **Multi-return:** the AST already lowers this to a synthetic `{_0,_1,…}`
-  struct (`MultiReturn`); emit it as a by-value struct return and destructure at
-  the call site. Crosses package boundaries like any struct.
-- **Drops:** `free(p)` → the floor's `bo_heap_free(p)`; `dispose` → nothing.
-- **Entry point:** `_init.start` *becomes* C's `int main(int argc, char** argv)`
-  — the floor builds the `[][]byte` argv Boson expects and calls `main.main`;
-  the process exit code is `main`'s return.
+Recommendation: vtable-pointer as the default (idiomatic *and* efficient). Pending
+final call.
 
 ---
 
 ## Architecture
 
-### Fork point
-
-In the driver's per-AST loop (`cmd/bosc/main.go`), a `-target=c` selects `emitC`
-in place of `Compile`, with C analogues of `WriteVtables`/`WriteStrings`/
-`WriteStrSliceHeaders`. `compile.go` is untouched. `emitC` is a syntax-directed
-AST walker + a type-mapper (→ `boson.h` types) + the name-mangler; there is no
-new IR — **C is the high-level IR**.
-
-### The oracle — a full second pass, not "an extra walk"
-
-Until the leaked semantic checks are hoisted (the audit), a from-AST backend
-cannot re-derive language errors on its own: the census established that the
-flow-sensitive checks are *interleaved into `compile.go`'s lowering*, with no
-standalone checker pass to invoke. So soundness is bought by running the mature
-path as a **gate**: compile to `.bs` into `/dev/null` (which performs the flow
-checks), and only if it passes, run `emitC`. This yields, by construction:
-
-```
-accepted(C-target) = accepted(.bs) ∩ supported(emitC)
-```
-
-so the C path can never accept a program the native compiler rejects, even while
-`emitC` is young. Mechanically it is a **full compile** (cheap relative to `cc`,
-but not trivial), and because `Compile` mutates the `Context`, the emit pass
-runs on a **re-derived AST + `Context`** (re-run `ToAST`), not the gate's dirtied
-state. The oracle is a scaffold: it is over-strict (it also inherits
-`.bs`-specific rejections that aren't language rules) and it transfers
-*language-acceptance* parity, **not runtime-safety parity** (a latent lowering
-unsoundness is inherited — cf. the slice-bounds hole fixed this session). It
-retires as the audit's hoist proceeds and the checker becomes a real, separate
-pass.
-
-### `boson.h` and the compilation model
-
-`boson.h` is the layout contract: it defines `boson_slice_*`, `boson_iface`,
-`boson_vtable_*`, the ADT tagged-union shapes, and the floor's prototypes. Both
-the generated `.c` and the hand-written floor include it; if they disagree on a
-struct offset, the floor and the emitted code silently corrupt each other, so
-this header is a first-class architectural element.
-
-**Recommended model: one `.c` + one `.h` per package**, mirroring the existing
-`.bo` + importcfg model — preserves separate compilation and matches how imports
-already resolve. (Alternative: whole-program single-`.c`; simpler but no
-separate compilation. Decide in phase 1.)
-
-### Runtime floor
-
-Most of the runtime is already **Boson source** (`io`, `fmt`, `string` logic) and
-is transpiled by the same backend — only the thin syscall/entry floor needs
-hand-written C: `_init` (argv construction, entry), `_heap` (`mmap`/`munmap`),
-`_io_sys` (the read/write/open/close primitives), and the `index_oob`/`nil_assert`
-traps. This is *less* hand-written code than the native path's `.bs` floor, and C
-makes it easier (`int main`, libc or raw syscalls).
-
-### Driver and build integration
-
-`bosc -target=c -o pkg.c pkg.bos` emits C; a `boson.mmk` rule (`bos_exe` variant)
-transpiles every package in the import closure, then invokes `cc` to compile and
-link. No UB-defining flags are required (see *Emitting well-formed C*), so
-optimization can be aggressive; test builds additionally pass
-`-fsanitize=undefined` to police the well-formedness obligation. The oracle runs
-as part of `bosc` when `-target=c` is set.
+- **Fork point.** `bosc -target=c` selects `emitCFile` in place of the `.bs`
+  `Compile` (`cmd/bosc/main.go`); the `.bs` path is untouched. `emitc.go` is a
+  syntax-directed AST walker + type mapper + a small per-function `cEmitter` that
+  tracks in-scope locals (function-scope bindings are not established in the
+  `Context` on this path). There is no new IR — C is the high-level IR.
+- **The oracle (soundness scaffold).** Until the leaked semantic checks are
+  hoisted (see the audit), a from-AST backend cannot re-derive language errors on
+  its own — the flow-sensitive checks are interleaved into `compile.go`'s
+  lowering. So the mature `.bs` path runs as a **gate** (compile to a discard
+  writer; emit C only if it passes), giving `accepted(C) = accepted(.bs) ∩
+  supported(emitC)` by construction. It is a full compile (cheap relative to
+  `cc`) and runs on a re-derived AST/Context. It retires as the audit's hoist
+  makes the checker a standalone pass. *(Not yet wired; phase 1 currently guards
+  only via emitC's own "not supported" errors.)*
+- **Build integration.** A `boson.mmk` rule transpiles each package to `.c`/`.h`
+  and invokes `cc`. No special UB-defining flags; a UBSan build is available for
+  diagnostics.
 
 ---
 
 ## Testing: differential against the native backend
 
-The ~490-file `.bos` corpus becomes a **correctness oracle for the transpiler at
-near-zero cost**: build each test through *both* backends and compare stdout (and
-exit code for trap tests) against the *same* `.expected`. Any divergence between
-the `.bs`-run and the C-run is a transpiler bug.
-
-Scoping honestly (it is a strong net, not a proof): it is **phase-gated** (needs
-the C floor before any corpus test can run through C) and covers only programs
-both backends accept with deterministic stdout. Complement it with **UBSan on the
-C output** across the corpus — that is the check that the emitter met its
-well-formedness obligation; a wrap or punning mistake shows up as a UBSan
-diagnostic or a differential-stdout mismatch, not as a latent `-O`-level surprise.
+The ~490-file `.bos` corpus is a near-free correctness oracle: build each test
+through *both* backends and compare stdout / exit code against the *same*
+`.expected`. Any divergence is a transpiler bug. Honestly scoped: phase-gated
+(needs the runtime floor first), covers only programs both backends accept with
+deterministic output, and the documented C/Boson semantic divergences (signed
+overflow) are expected mismatches, not bugs — so it is a strong net, not a proof.
 
 ---
 
 ## Phased plan
 
-Each phase keeps the oracle on and adds corpus coverage through the C path.
-
-1. **Skeleton end-to-end.** Single `main` package; `i64`; function calls;
-   integer/string output via a minimal hand-written C floor + `boson.h`. Goal:
-   "hello" and integer output through `cc`. Establishes the mangler, the driver
-   flag, the `boson.mmk` rule, and the mandated compile flags.
-2. **Aggregates.** Structs, fixed arrays, slices, indexing + the bounds/nil
-   traps. `boson_slice_*` generation.
-3. **Control flow + expressions + casts.** Full operator set (with the UB
-   guards), `if`/`for`/`while`, string constants and `&literal` static-init.
-4. **Interfaces + ADTs.** Vtable structs and dispatch; tagged-union `values` and
-   `switch`; `any` type-switch (the strict-aliasing-sensitive path).
-5. **Ownership passthrough + multi-return + cross-package.** `free`/`dispose`;
-   struct-return multi-value; per-package `.c`/`.h` and the importcfg analogue.
-6. **Transpile the Boson-source runtime.** Bring `io`/`fmt`/`string` through the
-   C backend; shrink the hand floor to the syscall/entry minimum.
-7. **Relax the oracle** as the audit's hoist lands and the checker becomes a
-   standalone pass.
+1. **1a — done.** Single `main` package; `i64`; function defs/calls; `return`;
+   integer arithmetic. Idiomatic output verified end-to-end through `cc`.
+2. **1b — output.** Integer/string output via a minimal, itself-hand-looking C
+   floor (or libc), so stdout is visible and differential testing can begin.
+   Wire a `cc`-driven test harness and the oracle.
+3. **Aggregates.** Structs, arrays, slices + the explicit bounds/nil guards; the
+   public/private header split and escape analysis.
+4. **Control flow + full expressions + casts.**
+5. **Interfaces + ADTs.** The chosen interface representation; tagged-union
+   `switch`; the `any` type-switch.
+6. **Ownership passthrough + multi-return + cross-package** (introduces the
+   package-prefix naming).
+7. **Relax the oracle** as the audit's hoist lands.
 
 ---
 
-## Open decisions (recommendations for ratification)
+## Open decisions
 
-- **Runtime floor: raw Linux syscalls.** *Ratified.* Matches the toolchain's
-  dependency-light, static-from-scratch ethos, and the runtime is already
-  raw-syscall. libc (portability across OSes, less floor code) is deferred to the
-  *Future direction* below, where lifting to libc is the natural step for
-  hand-authored safe-C output.
-- **Driver surface:** `bosc -target=c` (one compiler, two backends — *rec*) vs. a
-  separate `bosc2c`/`bcc` tool.
-- **C standard:** C99 vs C11. *Rec: C11* (`_Static_assert` for the layout
-  contract, `_Alignas` if needed) with no other hard C11 dependence.
-- **Compilation model:** per-package `.c`/`.h` (*rec*, separate compilation) vs.
-  whole-program single `.c`.
-- **Mangling scheme:** ratify the length-prefixed `bo_` scheme above (or pick
-  another injective one).
+- **Interface representation** — vtable-pointer (rec) vs. flattened.
+- **Runtime floor** — raw syscalls (ratified for the self-contained case) vs.
+  libc; for the drop-in use case the module ultimately targets the host's libc.
+- **Bounds/nil checks** — always on, or a knob (a hand-written module may omit
+  them in release).
+- **Formatting** — tabs vs. spaces, brace style; pick one idiomatic default.
+- **Driver/build** — `bosc -target=c` (in place) and the `boson.mmk` rule shape.
 
 ---
-
-## Future direction: Boson as a safe-C generator
-
-A longer-horizon use of this backend is authoring **safe C by writing Boson**:
-generate the C, then lift it out of the toolchain — drop `boson.h`, port the
-Boson-specific runtime shims to libc by hand — and maintain it as ordinary C.
-This is why the *well-formedness* obligation is non-negotiable rather than a
-nicety: hand-edited output that only behaved under `-fwrapv`/`-fno-strict-aliasing`
-would be a latent trap. Nothing here is built now; it is the north star that keeps
-the emitted C honest, and the raw-syscall floor plus per-package model are the
-first steps compatible with it. One step at a time.
 
 ## Risks and non-goals
 
-- **Two-backend maintenance tax** — every new feature lowers twice. Mitigated by
-  differential testing (catches drift immediately) and by the segregation hoist
-  (semantics checked once, in the shared front end).
-- **Emitting UB** — the *emitter*, not a flag, is responsible for well-formed C
-  (see the obligations checklist); the residual risk is a *new* construct
-  emitting UB, which UBSan-across-the-corpus plus differential testing are
-  positioned to catch.
-- **Oracle over-strictness** — the C path initially rejects some programs only
-  because the `.bs` backend has non-language-specific limits; acceptable early,
-  and the reason the oracle is a scaffold rather than the end state.
-- **Non-goal:** replacing the native backend, or matching the Boson ABI for
-  linker interop. The C path is self-contained and cc-native.
-- **Non-goal:** exhaustive per-AST-node emission rules — those are implementation;
-  this proposal fixes the contract, the hard cases, and the plan.
+- **Two-backend maintenance tax** — every feature lowers twice; mitigated by
+  differential testing and the segregation hoist.
+- **Semantic divergence from the native backend** (signed overflow, other C
+  corners) — accepted and documented as the cost of a human target; use unsigned
+  for portable wrap.
+- **Non-goal:** matching the Boson ABI for linker interop, or re-proving checked
+  invariants at runtime in the C. The C is real C; Boson did the proving.
+- **Non-goal:** exhaustive per-AST-node emission rules in this doc — that's
+  implementation.
