@@ -2559,63 +2559,43 @@ func (f *Funcall) QualifiedName() string {
 	return f.FName()
 }
 
-func typeExprFromAST(c *Context, a AST) (ASTType, bool) {
+// isBareTypeNameExpr reports whether an expression is really a bare TYPE name
+// (a scalar/struct/alias name, `pkg.Type`, or a `T[N]`-shaped index of one).
+// Used ONLY to give `new(T)` a directed "use alloc(T)" error — it is a name
+// lookup, not a type parser. Types are parsed in exactly one place now
+// (parseTypeName); `alloc` carries its parsed type on the Alloc node.
+func isBareTypeNameExpr(c *Context, a AST) bool {
 	switch v := a.(type) {
 	case *Symbol:
-		if t, ok := c.TypeByName(v.Name); ok {
-			return t, true
+		if _, ok := c.TypeByName(v.Name); ok {
+			return true
 		}
-		if _, ok := c.StructDeclForName(v.Name); ok {
-			return ASTType{Name: v.Name}, true
-		}
+		_, ok := c.StructDeclForName(v.Name)
+		return ok
 	case *Dot:
 		if pkg, ok := v.Val.(*Symbol); ok {
 			name := pkg.Name + "." + v.Member
-			if t, ok := c.TypeByName(name); ok {
-				return t, true
+			if _, ok := c.TypeByName(name); ok {
+				return true
 			}
-			if _, ok := c.StructDeclForName(name); ok {
-				return ASTType{Name: name}, true
-			}
+			_, ok := c.StructDeclForName(name)
+			return ok
 		}
 	case *Index:
-		// A fixed-array type expression `T[N]` parses as Index(T, N) with a
-		// constant size (NAST nil). Build the array type, matching mkTypename's
-		// {Element: &elem, ArraySize: N} shape, so e.g. `alloc(byte[1024])`
-		// yields the same type an annotation would. A runtime index (NAST set)
-		// or a zero size is not a type.
 		if v.NAST == nil && v.N > 0 {
-			if elem, ok := typeExprFromAST(c, v.Val); ok {
-				return ASTType{Element: &elem, ArraySize: int(v.N)}, true
-			}
+			return isBareTypeNameExpr(c, v.Val)
 		}
 	}
-	return ASTType{}, false
+	return false
 }
 
 func (f *Funcall) ASTType(c *Context) ASTType {
 	pkg, name := f.PkgAndName()
-	if pkg == "" && name == "alloc" {
-		if len(f.Args) != 1 {
-			CompileErrorF(f, "alloc(T) requires exactly one type argument")
-		}
-		t, ok := typeExprFromAST(c, f.Args[0])
-		if !ok {
-			CompileErrorF(f.Args[0], "alloc argument must be a type")
-		}
-		t.Indirection++
-		t.MutMask <<= 1
-		t.OwnedMask <<= 1
-		t.NilMask <<= 1
-		t.OwnedMask |= 1
-		t.MutMask |= 1 << 1
-		return t
-	}
 	if pkg == "" && name == "new" {
 		if len(f.Args) != 1 {
 			CompileErrorF(f, "new(expr) requires exactly one argument")
 		}
-		if _, ok := typeExprFromAST(c, f.Args[0]); ok {
+		if isBareTypeNameExpr(c, f.Args[0]) {
 			CompileErrorF(f.Args[0], "new(T) is not implemented yet; use alloc(T) for zero-initializable types or new(expr)")
 		}
 		t := f.Args[0].ASTType(c)
@@ -3892,6 +3872,28 @@ func (*Dispose) ASTType(*Context) ASTType { return voidASTType() }
 func (d *Dispose) Note() string           { return fmt.Sprintf("dispose(%s)", d.Var) }
 func (d *Dispose) Pos() position          { return d.p }
 
+// Alloc is the `alloc(T)` intrinsic. Its argument is a TYPE, parsed by the one
+// type parser (parseTypeName) at parse time and carried here as Type — no
+// reinterpretation of an expression AST. ASTType returns the heap pointer the
+// intrinsic yields: `owned *mut T`.
+type Alloc struct {
+	Type ASTType
+	p    position
+}
+
+func (a *Alloc) ASTType(c *Context) ASTType {
+	t := a.Type
+	t.Indirection++
+	t.MutMask <<= 1
+	t.OwnedMask <<= 1
+	t.NilMask <<= 1
+	t.OwnedMask |= 1      // the returned pointer is owned
+	t.MutMask |= 1 << 1   // ...and grants write-through to the pointee
+	return t
+}
+func (a *Alloc) Note() string  { return fmt.Sprintf("alloc(%s)", a.Type) }
+func (a *Alloc) Pos() position { return a.p }
+
 type Break struct {
 	p position
 }
@@ -4501,6 +4503,10 @@ func (n *Node) toASTTop(c *Context) AST {
 		}
 	case n_dispose:
 		return &Dispose{Var: n.sval, p: n.p}
+	case n_alloc:
+		// The single arg is a type node parsed by parseTypeName; fold it into
+		// an ASTType with the one type builder, exactly like any annotation.
+		return &Alloc{Type: mkTypename(n.args[0]), p: n.p}
 	case n_ownedpromo:
 		return &OwnedPromotion{Val: n.args[0].toASTTop(c), p: n.p}
 	case n_arrlit:

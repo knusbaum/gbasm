@@ -57,6 +57,7 @@ const (
 	n_address
 	n_deref
 	n_dispose
+	n_alloc // alloc(T) — arg is a type node (n_typename), not an expression
 	n_typedecl
 	n_ownedpromo
 	n_arrlit
@@ -176,6 +177,8 @@ func (t nodetype) String() string {
 		return "n_deref"
 	case n_dispose:
 		return "n_dispose"
+	case n_alloc:
+		return "n_alloc"
 	case n_typedecl:
 		return "n_typedecl"
 	case n_ownedpromo:
@@ -822,6 +825,17 @@ func (p *Parser) parsePostfix(v *Node) *Node {
 			// handler recognizes and lowers to a Funcall whose Callee is
 			// a Dot selector.
 			switch {
+			case v.t == n_symbol && v.sval == "alloc":
+				// alloc(T): the argument is a TYPE, parsed by the one type
+				// parser (parseTypeName) — not the expression grammar. This
+				// keeps a single type syntax everywhere and means alloc follows
+				// whatever parseTypeName accepts. `_heap.alloc(size)` is a
+				// qualified call (an n_dot), so it never reaches this bare-
+				// symbol branch and is unaffected.
+				p.advance() // consume '('
+				tn := p.parseTypeName()
+				p.expect(tok_rparen)
+				v = &Node{t: n_alloc, p: v.p, args: []*Node{tn}}
 			case v.t == n_symbol:
 				p.advance()
 				args := p.parseArgs()

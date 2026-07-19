@@ -1,7 +1,10 @@
 package main
 
+// alloc takes a TYPE, not a value. Passing a variable is caught with a
+// targeted message (parseTypeName reads `n` as a type name, but `n` is a
+// binding).
 fn main() {
 	var n i64 := 1
-	var p owned *mut i64 := alloc(n)
+	p := alloc(n)
 	free(p)
 }

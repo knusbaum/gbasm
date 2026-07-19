@@ -313,7 +313,7 @@ func recordStructCallResultAtPath(c *Context, destPath string, destType ASTType,
 func resolveCalleeForAlias(ic *Context, call *Funcall) (*FuncDecl, []AST) {
 	pkg, fname := call.PkgAndName()
 	// Builtins and casts carry no alias set.
-	if pkg == "" && (fname == "alloc" || fname == "new" || fname == "free" || fname == "len") {
+	if pkg == "" && (fname == "new" || fname == "free" || fname == "len") {
 		return nil, nil
 	}
 	// A type-cast Funcall (T(expr)) carries no alias set. The call form

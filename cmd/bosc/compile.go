@@ -1878,6 +1878,15 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 			return pointerExprForAST(c, ast.Val, assignedName)
 		}
 		return c.PointerFlow().UnknownPointer()
+	case *Alloc:
+		// alloc always yields a fresh owned heap pointer. Register it as an
+		// allocated origin so free() and use-after-free tracking see it — the
+		// same origin the owned-pointer Funcall-result case below produced when
+		// alloc was still a Funcall.
+		if assignedName != "" {
+			return c.PointerFlow().NewAllocatedOrigin(flow.Binding(assignedName))
+		}
+		return c.PointerFlow().UnknownPointer()
 	case *Funcall:
 		// A type-cast Funcall (T(expr) where T is a type name) is structurally
 		// a Funcall but semantically a reinterpretation of expr. compileCast
@@ -2449,16 +2458,19 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 	return dest
 }
 
-func compileAllocBuiltin(of io.Writer, c *Context, a AST, ast *Funcall, dest spot) spot {
-	if len(ast.Args) != 1 {
-		CompileErrorF(a, "alloc(T) requires exactly one type argument")
-	}
-	t, ok := typeExprFromAST(c, ast.Args[0])
-	if !ok {
-		CompileErrorF(ast.Args[0], "alloc argument must be a type")
+func compileAlloc(of io.Writer, c *Context, ast *Alloc, dest spot) spot {
+	t := ast.Type
+	// parseTypeName accepts any identifier as a type name, so `alloc(x)` where
+	// x is a variable parses as a type named x. Catch that common mistake with
+	// a targeted message; a genuinely undefined name still surfaces as "No such
+	// type" from Size below.
+	if base := shapeBaseName(t); base != "" {
+		if _, isVar := c.TypeForVar(base); isVar {
+			CompileErrorF(ast, "alloc takes a type, but %q is a variable", base)
+		}
 	}
 	if !t.ZeroInitializable(c) {
-		CompileErrorF(ast.Args[0], "alloc(%s) requires a zero-initializable type; use new(expr) to allocate initialized storage", t)
+		CompileErrorF(ast, "alloc(%s) requires a zero-initializable type; use new(expr) to allocate initialized storage", t)
 	}
 	retType := ast.ASTType(c)
 	if dest.empty() {
@@ -2538,7 +2550,7 @@ func compileNewBuiltin(of io.Writer, c *Context, a AST, ast *Funcall, dest spot)
 	if len(ast.Args) != 1 {
 		CompileErrorF(a, "new(expr) requires exactly one argument")
 	}
-	if _, ok := typeExprFromAST(c, ast.Args[0]); ok {
+	if isBareTypeNameExpr(c, ast.Args[0]) {
 		CompileErrorF(ast.Args[0], "new(T) is not implemented yet; use alloc(T) for zero-initializable types or new(expr)")
 	}
 	retType := ast.ASTType(c)
@@ -3744,11 +3756,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		sc.ForgetPointerBindings()
 		sc.FreeLocalVars(of)
 		return nullspot
+	case *Alloc:
+		return compileAlloc(of, c, ast, dest)
 	case *Funcall:
 		pkg, fname := ast.PkgAndName()
-		if pkg == "" && fname == "alloc" {
-			return compileAllocBuiltin(of, c, a, ast, dest)
-		}
 		if pkg == "" && fname == "new" {
 			return compileNewBuiltin(of, c, a, ast, dest)
 		}
