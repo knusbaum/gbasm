@@ -1,8 +1,10 @@
-# PLAN: Prefix type syntax + the mutability model
+# DESIGN: Prefix type syntax + the mutability model
 
 Status: **design agreed, not yet implemented.** This captures the decisions
-from the design discussion so they aren't lost. Nothing here is built yet
-(except the `alloc` prerequisite, which is done — see §6).
+from the design discussion so they aren't lost. The mutability model (§2) is
+the durable part — it's the reference for how `mut`/`owned`/`?` work regardless
+of the syntax migration; §7 is the transient implementation plan. Nothing here
+is built yet except the `alloc` prerequisite (§6).
 
 The change: move array/slice **type** syntax from postfix to prefix
 (`byte[N]` → `[N]byte`, `byte[]` → `[]byte`), Go/Rust style, and settle the
