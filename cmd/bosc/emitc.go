@@ -33,6 +33,8 @@ type cUnit struct {
 	c           *Context
 	needStdio   bool
 	needStdbool bool
+	needStdlib  bool
+	needOob     bool // the boson_oob bounds-trap helper is used
 }
 
 // cEmitter is per-function state: the parameters/locals in scope, plus the
@@ -77,10 +79,19 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 	if u.needStdbool {
 		fmt.Fprintf(of, "#include <stdbool.h>\n")
 	}
-	if u.needStdio {
+	if u.needStdio || u.needOob {
 		fmt.Fprintf(of, "#include <stdio.h>\n")
 	}
+	if u.needStdlib || u.needOob {
+		fmt.Fprintf(of, "#include <stdlib.h>\n")
+	}
 	fmt.Fprintf(of, "\n")
+	if u.needOob {
+		fmt.Fprintf(of, "static void boson_oob(int64_t i, int64_t n) {\n")
+		fmt.Fprintf(of, "\tprintf(\"Fatal: Index Out Of Bounds: index[%%lld] for object with length: %%lld\\n\", (long long)i, (long long)n);\n")
+		fmt.Fprintf(of, "\texit(1);\n")
+		fmt.Fprintf(of, "}\n\n")
+	}
 	if fwd.Len() > 0 {
 		io.Copy(of, &fwd)
 		fmt.Fprintf(of, "\n")
@@ -256,6 +267,12 @@ func emitCFunc(w io.Writer, u *cUnit, f *FuncDecl) {
 func (em *cEmitter) cFuncHead(f *FuncDecl, isEntry bool) (linkage, head string) {
 	params := make([]string, 0, len(f.Args))
 	for _, arg := range f.Args {
+		// A C array parameter decays to a pointer (pass-by-reference), which
+		// would break Boson's by-value array semantics — defer it rather than
+		// emit wrong C. (A struct wrapper is the eventual fix.)
+		if at := em.u.c.ResolveUnderlying(arg.Type); at.IsArray() {
+			cUnsupported(arg.p, "array parameter (by-value passing deferred; pass a slice)")
+		}
 		em.locals[arg.Name] = arg.Type
 		params = append(params, em.cDecl(arg.Type, cIdent(arg.Name)))
 	}
@@ -280,23 +297,45 @@ func (em *cEmitter) stmt(w io.Writer, a AST, ind int) {
 		if n.Val == nil {
 			fmt.Fprintf(w, "%sreturn;\n", tab)
 		} else {
+			em.hoistGuards(w, n.Val, ind)
 			fmt.Fprintf(w, "%sreturn %s;\n", tab, em.expr(n.Val))
 		}
 	case *Funcall:
+		em.hoistGuards(w, n, ind)
 		fmt.Fprintf(w, "%s%s;\n", tab, em.call(n))
 	case *VarDecl:
 		t := em.declType(n.Type, n.Init)
 		em.locals[n.Name] = t
-		if n.Init != nil {
+		if al, ok := n.Init.(*ArrayLiteral); ok {
+			parts := make([]string, len(al.Elements))
+			for i, e := range al.Elements {
+				em.hoistGuards(w, e, ind)
+				parts[i] = em.expr(e)
+			}
+			fmt.Fprintf(w, "%s%s = {%s};\n", tab, em.cDecl(t, cIdent(n.Name)), strings.Join(parts, ", "))
+		} else if n.Init != nil {
+			em.hoistGuards(w, n.Init, ind)
 			fmt.Fprintf(w, "%s%s = %s;\n", tab, em.cDecl(t, cIdent(n.Name)), em.expr(n.Init))
 		} else {
 			fmt.Fprintf(w, "%s%s;\n", tab, em.cDecl(t, cIdent(n.Name)))
 		}
 	case *Assignment:
+		em.hoistGuards(w, n.Target, ind)
+		em.hoistGuards(w, n.Val, ind)
 		fmt.Fprintf(w, "%s%s = %s;\n", tab, em.expr(n.Target), em.expr(n.Val))
 	case *IfStmt:
+		em.hoistGuards(w, n.Cond, ind)
 		em.ifStmt(w, n, ind, true)
 	case *For:
+		if hasIndex(n.Cond) || hasIndex(n.Step) {
+			cUnsupported(posOf(a), "indexing in a for-loop condition or step")
+		}
+		switch fc := n.Init.(type) {
+		case *VarDecl:
+			em.hoistGuards(w, fc.Init, ind)
+		case *Assignment:
+			em.hoistGuards(w, fc.Val, ind)
+		}
 		fmt.Fprintf(w, "%sfor (%s; %s; %s) ", tab, em.forClause(n.Init), em.condExpr(n.Cond), em.forClause(n.Step))
 		em.block(w, n.Body, ind)
 		fmt.Fprintf(w, "\n")
@@ -447,6 +486,16 @@ func (em *cEmitter) inferType(a AST) ASTType {
 		return em.inferType(n.Val)
 	case *StructLiteral:
 		return n.Type
+	case *Index:
+		bt := em.u.c.ResolveUnderlying(em.inferType(n.Val))
+		if bt.Element != nil {
+			return *bt.Element
+		}
+	case *ArrayLiteral:
+		if len(n.Elements) > 0 {
+			elem := em.inferType(n.Elements[0])
+			return ASTType{ArraySize: len(n.Elements), Element: &elem}
+		}
 	case *Funcall:
 		// The callee's return type does not depend on argument types, so this
 		// resolves through the Context even when arguments are locals.
@@ -486,6 +535,19 @@ func (em *cEmitter) expr(a AST) string {
 		// The checker proved non-null; a null deref crashes in C much as the
 		// Boson nil trap would exit. Pass the value through.
 		return em.expr(n.Val)
+	case *Index:
+		// Clean access; the bounds check is hoisted ahead of the statement.
+		base := em.postfixBase(n.Val)
+		bt := em.u.c.ResolveUnderlying(em.inferType(n.Val))
+		if bt.IsSlice() {
+			base += ".ptr"
+		}
+		return base + "[" + em.indexExpr(n) + "]"
+	case *ArrayLiteral:
+		// Only valid as an initializer (handled in VarDecl); a brace-init is
+		// not a general C expression.
+		cUnsupported(n.p, "array literal outside an initializer")
+		return ""
 	default:
 		cUnsupported(posOf(a), fmt.Sprintf("expression %T", a))
 		return ""
@@ -707,8 +769,16 @@ func (em *cEmitter) ctype(t ASTType) string {
 func cStructName(name string) string { return cIdent(name) }
 
 // cDecl renders a declaration "<type> <name>", attaching a pointer's `*` to the
-// name (`int64_t *x`) as a human would.
+// name (`int64_t *x`) and an array's `[N]` after it (`int64_t a[3]`) as a human
+// would.
 func (em *cEmitter) cDecl(t ASTType, name string) string {
+	rt := em.u.c.ResolveUnderlying(t)
+	if rt.Element != nil && rt.ArraySize > 0 {
+		if elem := em.u.c.ResolveUnderlying(*rt.Element); elem.Element != nil && elem.ArraySize > 0 {
+			cUnsupported(rt.p, "multidimensional array")
+		}
+		return em.cDecl(*rt.Element, name) + fmt.Sprintf("[%d]", rt.ArraySize)
+	}
 	ct := em.ctype(t)
 	if strings.HasSuffix(ct, "*") {
 		return ct + name
@@ -851,6 +921,103 @@ var cKeywords = map[string]bool{
 }
 
 // ---- helpers -------------------------------------------------------------
+
+// indexExpr renders an index — a dynamic expression or a constant.
+func (em *cEmitter) indexExpr(n *Index) string {
+	if n.NAST != nil {
+		return em.expr(n.NAST)
+	}
+	return fmt.Sprintf("%d", n.N)
+}
+
+// hoistGuards emits the bounds checks an expression needs as guard statements
+// ahead of the statement containing it, so the accesses themselves stay clean.
+// Nested indices are checked innermost-first, in evaluation order.
+func (em *cEmitter) hoistGuards(w io.Writer, a AST, ind int) {
+	if a == nil {
+		return
+	}
+	switch n := a.(type) {
+	case *Op2:
+		em.hoistGuards(w, n.First, ind)
+		em.hoistGuards(w, n.Second, ind)
+	case *Funcall:
+		for _, arg := range n.Args {
+			em.hoistGuards(w, arg, ind)
+		}
+	case *Dot:
+		em.hoistGuards(w, n.Val, ind)
+	case *Deref:
+		em.hoistGuards(w, n.Val, ind)
+	case *Not:
+		em.hoistGuards(w, n.Val, ind)
+	case *BitNot:
+		em.hoistGuards(w, n.Val, ind)
+	case *NonNullAssert:
+		em.hoistGuards(w, n.Val, ind)
+	case *StructLiteral:
+		for _, f := range n.Fields {
+			em.hoistGuards(w, f.Val, ind)
+		}
+	case *Index:
+		em.hoistGuards(w, n.Val, ind)
+		em.hoistGuards(w, n.NAST, ind)
+		em.emitBoundsCheck(w, n, ind)
+	}
+}
+
+func (em *cEmitter) emitBoundsCheck(w io.Writer, n *Index, ind int) {
+	bt := em.u.c.ResolveUnderlying(em.inferType(n.Val))
+	// A constant index into a fixed array is verified in-bounds at compile time
+	// (the native path rejects an out-of-range constant), so no runtime check.
+	if n.NAST == nil && bt.IsArray() {
+		return
+	}
+	if n.NAST != nil && containsFuncall(n.NAST) {
+		cUnsupported(posOf(n.NAST), "a side-effecting index expression")
+	}
+	idx := em.indexExpr(n)
+	var length string
+	switch {
+	case bt.IsSlice():
+		length = em.postfixBase(n.Val) + ".len"
+	case bt.IsArray():
+		length = fmt.Sprintf("%d", bt.ArraySize)
+	default:
+		cUnsupported(posOf(n), "index of a non-array, non-slice")
+	}
+	fmt.Fprintf(w, "%sif ((uint64_t)(%s) >= (uint64_t)(%s)) boson_oob(%s, %s);\n",
+		cTab(ind), idx, length, idx, length)
+	em.u.needOob = true
+}
+
+// hasIndex reports whether an expression contains any indexing (used to defer
+// for-loop conditions/steps, where a hoisted check would run at the wrong time).
+func hasIndex(a AST) bool {
+	switch n := a.(type) {
+	case *Index:
+		return true
+	case *Op2:
+		return hasIndex(n.First) || hasIndex(n.Second)
+	case *Funcall:
+		for _, arg := range n.Args {
+			if hasIndex(arg) {
+				return true
+			}
+		}
+	case *Dot:
+		return hasIndex(n.Val)
+	case *Deref:
+		return hasIndex(n.Val)
+	case *Not:
+		return hasIndex(n.Val)
+	case *BitNot:
+		return hasIndex(n.Val)
+	case *NonNullAssert:
+		return hasIndex(n.Val)
+	}
+	return false
+}
 
 func cUnsupported(p position, what string) {
 	panic(&interpreterError{msg: fmt.Sprintf("c backend (phase 1): %s not yet supported", what), p: p})

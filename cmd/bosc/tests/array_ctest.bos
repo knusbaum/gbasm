@@ -1,0 +1,10 @@
+package main
+import "string"
+fn main() {
+	nums [3]i64 := [10, 20, 30]
+	var i i64 := 0
+	for (i = 0; i < 3; i = i + 1) {
+		string.puti(nums[i])
+		string.putc(10)
+	}
+}

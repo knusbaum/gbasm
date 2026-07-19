@@ -1,0 +1,18 @@
+package main
+
+import "string"
+
+// Passing an array copies it (value semantics): the callee mutating its
+// parameter must NOT change the caller's array. This pins the semantics the
+// C backend must preserve once array-by-value parameter passing is
+// implemented (via a struct wrapper); the C backend currently SKIPs it.
+fn mutate(var a [3]i64) {
+	a[0] = 999
+}
+
+fn main() {
+	nums [3]i64 := [1, 2, 3]
+	mutate(nums)
+	string.puti(nums[0])
+	string.putc(10)
+}
