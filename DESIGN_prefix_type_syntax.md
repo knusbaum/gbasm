@@ -1,10 +1,11 @@
 # DESIGN: Prefix type syntax + the mutability model
 
-Status: **design agreed, not yet implemented.** This captures the decisions
-from the design discussion so they aren't lost. The mutability model (§2) is
-the durable part — it's the reference for how `mut`/`owned`/`?` work regardless
-of the syntax migration; §7 is the transient implementation plan. Nothing here
-is built yet except the `alloc` prerequisite (§6).
+Status: **design complete and parser-ready; not yet implemented.** Every rule
+is settled — the mutability model (§2), the grammar (§3), the legality/ordering
+enumeration (§3.1/§3.2). The mutability model is the durable part — it's the
+reference for how `mut`/`owned`/`?` work regardless of the syntax migration; §7
+is the transient implementation plan. Nothing is built yet except the `alloc`
+prerequisite (§6). Next action: implement per §7 step 2.
 
 The change: move array/slice **type** syntax from postfix to prefix
 (`byte[N]` → `[N]byte`, `byte[]` → `[]byte`), Go/Rust style, and settle the
@@ -207,8 +208,67 @@ left-to-right; no parens needed.
 Note the migration trap: **`mut byte[]` → `[]mut byte`**, *not* `mut []byte`
 (the naïve "keep `mut` in front" produces the *other*, valid-but-wrong meaning).
 
-Illegal (must be rejected): `[N]mut T` (mut after an array specifier),
-`mut *T`-legality TBD (see open items).
+### 3.1 Legality rules (what the parser accepts / rejects)
+
+Read a written type left-to-right as a stream of **constructors** — `*`
+(pointer), `[]` (slice), `[N]` (array), each opening a new level and binding
+right — and **qualifiers** — `owned`, `mut`, `?`, each annotating the level they
+precede. A *level* is the value produced at a point in that chain: the outermost
+one (the whole type / binding), the pointee of a `*`, the element of a `[]`/
+`[N]`, and so on. Then:
+
+- **`owned`** — legal at **every** level; always written in the type (there is
+  no `owned` keyword). `owned *T`, `*owned T`, `owned []T`, `[]owned T`,
+  `owned [N]T`, `[N]owned T` are all legal.
+- **`mut`** — legal **only at a reference-operand level**: the nearest
+  *constructor* to its left (skipping `owned`/`?`) must be `*` or `[]`.
+  **Rejected** when it is leading (outermost → that's the binding, use `var`),
+  when its nearest-left constructor is `[N]` (array element — value
+  aggregation), or anywhere a leading `mut` would appear (return types, struct
+  fields — §2.1).
+- **`?`** — legal **only immediately before a pointer or interface**: `?*…`
+  (nullable pointer), `?I` (nullable interface). Rejected before a value / array
+  / slice / struct (`?i64`, `?[]T`, `?[N]T`, `?S` all illegal).
+
+Canonical stacking order at one level: **`owned`**, then **`mut`**, with **`?`**
+immediately preceding the `*`/interface it applies to (`?*T`, `owned ?*T`).
+`owned` and `mut` set independent bits and commute; the printer emits this one
+order (parser may accept the `owned`/`mut` swap — they're the same bits).
+
+### 3.2 Enumeration (representative cases)
+
+| prefix form | legal? | reads as / why not |
+|---|---|---|
+| `i64`, `[]byte`, `[8]byte`, `*i64`, `**i64` | ✓ | scalar / slice / array / pointer / ptr-to-ptr |
+| `[][]byte` | ✓ | slice of slice |
+| `[2][3]byte` | ✓ | array 2 of array 3 (**one** value) |
+| `[]*byte`, `[8]*byte` | ✓ | slice/array **of pointers** |
+| `*[]byte`, `*[8]byte` | ✓ | pointer **to** slice/array |
+| `*mut i64` | ✓ | pointer to mutable i64 |
+| `[]mut byte` | ✓ | slice of mutable byte (writable elements) |
+| `[]*mut byte`, `[8]*mut byte`, `*[]mut byte` | ✓ | mut after `*`/`[]` — the reference reintroduces a level |
+| `*mut [8]byte` | ✓ | pointer to a **mutable array** (mut is the pointee-array's mutability, from `*mut`) |
+| `[8]mut byte` | ✗ | `mut` after `[N]` — array elements share the array's binding mutability; write `var arr [8]byte` |
+| `mut i64`, `mut *T`, `mut []T`, `mut [8]T` | ✗ | leading `mut` — that's the binding; use `var` |
+| `*[8]mut byte` | ✗ | `mut` after `[8]` (the pointee array's element); for a writable pointee array use `*mut [8]byte` |
+| `owned *T`, `*owned T` | ✓ | owned pointer / pointer to owned T |
+| `owned []T`, `[]owned T` | ✓ | owned slice / slice of owned T |
+| `owned [N]T`, `[N]owned T` | ✓ | owned array / array of owned T |
+| `owned *mut T` | ✓ | owned pointer to mutable T |
+| `owned *owned mut node` | ✓ | owned pointer to owned-mutable node (two obligations — the linked-list node) |
+| `?*T` | ✓ | **nullable pointer** to T |
+| `*?T` | ✓ | pointer to **nullable-T** (T must be pointer/interface: `*?I`, `*?*U`) |
+| `?I`, `owned ?I` | ✓ | nullable / owned-nullable interface |
+| `[]?*T` | ✓ | slice of nullable pointers |
+| `owned ?*owned mut node` | ✓ | owned nullable pointer to owned-mutable node (the linked node's full shape; `?` moved from `*?` to `?*`) |
+| `?i64`, `?S` (S a struct), `?[]T`, `?[N]T` | ✗ | `?` before a non-pointer/non-interface |
+| `*?i64` | ✗ | pointee `?i64` isn't nullable |
+
+**Migration note on `?`:** today's combined `*?T` means *nullable pointer*; in
+prefix that becomes **`?*T`** (and the token `tok_maybe_ptr` splits into `*` +
+`?`). So `owned *?owned mut node` (a runtime/linked shape) migrates to
+`owned ?*owned mut node`. A `*?…` in the *migrated* source means the new
+"pointer to nullable" — don't mechanically preserve old `*?`.
 
 ---
 
@@ -327,13 +387,13 @@ The reasoning that settled it:
 
 ### Order of operations
 
-1. **Lock the grammar spec** — the full modifier-ordering table (see §8), since
-   the script encodes it.
+1. ~~Lock the grammar spec~~ — **done** (§2 rules, §3.1/§3.2 enumeration).
 2. **Implement** `parseTypeName` (ordered fold) + `ASTType.String()` (invert) +
-   `mkTypename`.
+   `mkTypename`, against §3.1/§3.2. Split the `*?` token (`*` + `?`).
 3. **Rebuild** the runtime bundle + examples (format bump).
 4. **Script** the ~700 primitive corpus sites; hand-do the ~28 + `DESIGN.md` +
-   examples + runtime `.bos`/`.bs`.
+   examples + runtime `.bos`/`.bs`. Slice rule `mut T[]` → `[]mut T`; `?`
+   rule old `*?T` → `?*T`.
 5. **Run the suite → red = missed/mangled → iterate to green.** Green ⇒ done.
 
 Land it as one logical unit; intermediate red states are fine, the tip is green.
@@ -358,15 +418,10 @@ Land it as one logical unit; intermediate red states are fine, the tip is green.
   pointer to nullable. §2.7.
 - ~~Redundant forms~~ → the one is `var` + leading `mut`, killed by "leading `mut`
   never written." `[N]mut T` rejected, `[N]owned T` allowed. No others known.
+- ~~Full modifier-ordering enumeration~~ → **written** as §3.1 (legality rules)
+  and §3.2 (enumeration). This was the last pre-parser artifact.
 
-**Still to produce before parser code:**
-
-1. **Full modifier-ordering enumeration** — the exact legal/illegal grammar for
-   `owned`/`mut`/`?` × `*` × `[]`/`[N]`, with nested cases worked through:
-   `*[]mut byte`, `[]*mut byte`, `[][]byte`, `[]owned *mut T`, `[N]*mut T`,
-   `owned [N]T`, `[N]owned T`, etc. The §2 rules fully determine each case; this
-   is just writing them all out as the concrete table the parser and migration
-   script are built against. **This is the one remaining artifact.**
+**Nothing else outstanding — the design is parser-ready.**
 
 **Implementation checks (not decisions):**
 
