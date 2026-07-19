@@ -227,6 +227,7 @@ EOF
 
 clean : {
     rm -f tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout *.importcfg
+    rm -f tests/*.bos.c tests/*.cexe tests/*.cstdout
     rm -f bosc bas bld string.bo init.bo heap.bo iface.bo builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo errors.bo errors.bs visibility.bo visibility.bs geom.bo geom.bs ifaces.bo ifaces.bs fmt.bo fmt.bs fmt.importcfg test.importcfg retalias_pkg.bo retalias_pkg.bs retalias_pkg.importcfg
 }
 
@@ -236,7 +237,14 @@ go_tests {
 
 bosc_tests : $(ls tests/*_test.bos)
 
-test: go_tests bosc_tests {
+# C transpiler backend tests: transpile `*_ctest.bos` with `-target=c`,
+# compile the emitted C with the system cc, run it, and diff stdout against
+# `.expected`. The importcfg is shared with the .bs suite (the front end still
+# resolves imports the same way); the emitted C maps runtime output to libc,
+# so no Boson runtime linking is involved.
+c_tests : $(ls tests/*_ctest.bos)
+
+test: go_tests bosc_tests c_tests {
     mmk clean
 }
     
@@ -365,6 +373,37 @@ test: go_tests bosc_tests {
 			fail=$(echo -e "$fail\n${target} FAIL")
 			exit 1
 		fi
+    fi
+    echo ${target} PASS
+}
+
+# C transpiler backend: transpile with -target=c, compile the emitted C with
+# the system cc, run it, and diff stdout against ${target}.expected.
+'tests/(.*)_ctest.bos' : bosc test.importcfg {
+    ./bosc -target=c -importcfg=test.importcfg -o ${target}.c $target >${target}.bosc.out 2>&1
+    if [[ $? != 0 ]]; then
+        echo "transpile failed for ${target}:"
+        cat ${target}.bosc.out
+        echo ${target} FAIL
+        fail=$(echo -e "$fail\n${target} FAIL")
+        exit 1
+    fi
+    cc -std=c11 -O2 -Wall ${target}.c -o ${target}.cexe >${target}.cc.out 2>&1
+    if [[ $? != 0 ]]; then
+        echo "cc failed for ${target}:"
+        cat ${target}.cc.out
+        echo ${target} FAIL
+        fail=$(echo -e "$fail\n${target} FAIL")
+        exit 1
+    fi
+    ${target}.cexe > ${target}.cstdout
+    if [[ -f "${target}.expected" ]]; then
+        diff -u "${target}.expected" "${target}.cstdout"
+        if [[ $? != 0 ]]; then
+            echo ${target} FAIL
+            fail=$(echo -e "$fail\n${target} FAIL")
+            exit 1
+        fi
     fi
     echo ${target} PASS
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -14,44 +15,61 @@ import (
 // mutability, bounds/nil checking, and (later) vtable/header generation — not
 // exotic runtime semantics smuggled into the output. So the emitter uses real
 // C type names, natural identifiers, and natural operators, and keeps the
-// structure of the source (functions, control flow, expressions). See
-// docs/proposed/PROPOSAL_c_transpiler.md.
+// structure of the source. See docs/proposed/PROPOSAL_c_transpiler.md.
 //
-// Phase 1 scope: a single `main` package, integer scalars, function
-// definitions and calls, `return`, and integer arithmetic. Anything outside
-// phase 1 raises a clear "not yet supported" error — never silent wrong output.
+// Phase 1 scope: a single `main` package; integer scalars; function
+// definitions and calls; `return`; integer arithmetic; string literals; and
+// output via the runtime print primitives, which map to libc (fputs/printf/
+// putchar) — what a C author would write. Anything outside phase 1 raises a
+// clear "not yet supported" error, never silent wrong output.
 //
-// NOT yet wired (follow-on increments): the validation oracle, a cc-driven
-// test harness, generated module headers, aggregates, control flow,
-// interfaces/ADTs, and cross-package calls (which introduce the package-prefix
-// naming scheme; phase 1 uses bare names within the single package).
+// NOT yet wired (follow-on increments): the validation oracle, general
+// cross-package calls, aggregates, control flow, interfaces/ADTs.
 
-// cEmitter carries per-function emit state — the parameters/locals in scope —
-// alongside the compile Context, so expression emission can answer type
-// questions without re-resolving names through the Context (whose
+// cUnit is per-translation-unit emit state: the compile Context and which
+// standard headers the emitted code turned out to need (so the include block
+// is exactly what a human would write — no unused includes).
+type cUnit struct {
+	c           *Context
+	needStdio   bool
+	needStdbool bool
+}
+
+// cEmitter is per-function state: the parameters/locals in scope, plus the
+// enclosing unit. Locals are tracked here rather than in the Context (whose
 // function-scope bindings are not established on the C path).
 type cEmitter struct {
-	c      *Context
+	u      *cUnit
 	locals map[string]ASTType
 }
 
-// emitCFile writes a complete C translation unit for one source file. Errors
-// carry a source position and are reported via fatalCtx, matching the .bs
-// path. (The validation oracle — running the .bs path to a discard writer as a
-// semantic gate — is a follow-on increment.)
+// emitCFile writes a complete C translation unit for one source file. The body
+// is emitted first (into a buffer) so the include block can list exactly the
+// headers that were actually used. Errors carry a source position and are
+// reported via fatalCtx, matching the .bs path.
 func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
-	fmt.Fprintf(of, "#include <stdint.h>\n\n")
+	u := &cUnit{c: c}
+	var body bytes.Buffer
 	for _, a := range asts {
-		if err := emitC(of, c, a); err != nil {
+		if err := emitCDecl(&body, u, a); err != nil {
 			fatalCtx("Fatal: %v", err)
 		}
 	}
+	fmt.Fprintf(of, "#include <stdint.h>\n")
+	if u.needStdbool {
+		fmt.Fprintf(of, "#include <stdbool.h>\n")
+	}
+	if u.needStdio {
+		fmt.Fprintf(of, "#include <stdio.h>\n")
+	}
+	fmt.Fprintf(of, "\n")
+	io.Copy(of, &body)
 }
 
-// emitC lowers one top-level declaration to C, mirroring Compile's per-decl
-// contract. interpreterError panics (which carry a source position) are
-// converted to a returned error so the driver can print source context.
-func emitC(w io.Writer, c *Context, a AST) (err error) {
+// emitCDecl lowers one top-level declaration to C. interpreterError panics
+// (which carry a source position) are converted to a returned error so the
+// driver can print source context.
+func emitCDecl(w io.Writer, u *cUnit, a AST) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			if ie, ok := r.(*interpreterError); ok {
@@ -63,29 +81,29 @@ func emitC(w io.Writer, c *Context, a AST) (err error) {
 	}()
 	switch n := a.(type) {
 	case *FuncDecl:
-		emitCFunc(w, c, n)
+		emitCFunc(w, u, n)
 	default:
 		cUnsupported(posOf(a), fmt.Sprintf("top-level declaration %T", a))
 	}
 	return nil
 }
 
-func emitCFunc(w io.Writer, c *Context, f *FuncDecl) {
+func emitCFunc(w io.Writer, u *cUnit, f *FuncDecl) {
 	if f.Variadic {
 		cUnsupported(f.p, "variadic functions")
 	}
 	// `main` in package main becomes the C entry point directly — no wrapper,
 	// no mangling. Its return value (if any) is the process exit code.
-	isEntry := c.Pkgname() == "main" && f.Name == "main"
+	isEntry := u.c.Pkgname() == "main" && f.Name == "main"
 	if isEntry && len(f.Args) != 0 {
 		cUnsupported(f.p, "main with parameters (argv)")
 	}
 
-	em := &cEmitter{c: c, locals: make(map[string]ASTType, len(f.Args))}
+	em := &cEmitter{u: u, locals: make(map[string]ASTType, len(f.Args))}
 	params := make([]string, 0, len(f.Args))
 	for _, arg := range f.Args {
 		em.locals[arg.Name] = arg.Type
-		params = append(params, cType(c, arg.Type)+" "+cIdent(arg.Name))
+		params = append(params, em.ctype(arg.Type)+" "+cIdent(arg.Name))
 	}
 	sig := "void"
 	if len(params) > 0 {
@@ -98,18 +116,18 @@ func emitCFunc(w io.Writer, c *Context, f *FuncDecl) {
 	case f.IsPub:
 		// Exported: visible across translation units. (Package-prefixed
 		// naming for cross-package linkage arrives with cross-package calls.)
-		fmt.Fprintf(w, "%s %s(%s) {\n", cType(c, f.Return), cIdent(f.Name), sig)
+		fmt.Fprintf(w, "%s %s(%s) {\n", em.ctype(f.Return), cIdent(f.Name), sig)
 	default:
 		// File-local: `static`, exactly as a hand-written C module marks its
 		// internal helpers.
-		fmt.Fprintf(w, "static %s %s(%s) {\n", cType(c, f.Return), cIdent(f.Name), sig)
+		fmt.Fprintf(w, "static %s %s(%s) {\n", em.ctype(f.Return), cIdent(f.Name), sig)
 	}
 	if f.Body != nil {
 		for _, stmt := range f.Body.Body {
 			em.stmt(w, stmt)
 		}
 	}
-	if isEntry && isVoidType(c, f.Return) {
+	if isEntry && isVoidType(u.c, f.Return) {
 		fmt.Fprintf(w, "\treturn 0;\n")
 	}
 	fmt.Fprintf(w, "}\n\n")
@@ -133,7 +151,7 @@ func (em *cEmitter) stmt(w io.Writer, a AST) {
 func (em *cEmitter) expr(a AST) string {
 	switch n := a.(type) {
 	case *Literal:
-		return cLiteral(n)
+		return em.literal(n)
 	case *Symbol:
 		return cIdent(n.Name)
 	case *Funcall:
@@ -147,15 +165,48 @@ func (em *cEmitter) expr(a AST) string {
 }
 
 func (em *cEmitter) call(f *Funcall) string {
-	sym, ok := f.Callee.(*Symbol)
-	if !ok {
-		cUnsupported(f.p, "qualified or method calls")
+	if pkg := f.PkgName(); pkg != "" {
+		// Qualified call. Phase 1 maps the runtime output primitives to libc
+		// (what a C author writes); general cross-package calls come later.
+		return em.runtimeCall(f, pkg, f.FName())
 	}
 	args := make([]string, 0, len(f.Args))
 	for _, arg := range f.Args {
 		args = append(args, em.expr(arg))
 	}
-	return cIdent(sym.Name) + "(" + strings.Join(args, ", ") + ")"
+	return cIdent(f.FName()) + "(" + strings.Join(args, ", ") + ")"
+}
+
+// runtimeCall maps a recognized runtime output primitive to its idiomatic libc
+// equivalent. The print helpers write raw bytes / a value with no added
+// newline, matching the Boson semantics.
+func (em *cEmitter) runtimeCall(f *Funcall, pkg, name string) string {
+	switch pkg + "." + name {
+	case "string.puts":
+		// puts([]byte). Phase 1 handles a string-literal argument (the common
+		// case) via fputs; general byte-slice output waits on slices.
+		if len(f.Args) == 1 {
+			if lit, ok := f.Args[0].(*Literal); ok {
+				if s, ok := lit.Val.(string); ok {
+					em.u.needStdio = true
+					return "fputs(" + cStringLit(s) + ", stdout)"
+				}
+			}
+		}
+		cUnsupported(f.p, "string.puts of a non-literal byte slice")
+	case "string.puti":
+		if len(f.Args) == 1 {
+			em.u.needStdio = true
+			return "printf(\"%lld\", (long long)(" + em.expr(f.Args[0]) + "))"
+		}
+	case "string.putc":
+		if len(f.Args) == 1 {
+			em.u.needStdio = true
+			return "putchar(" + em.expr(f.Args[0]) + ")"
+		}
+	}
+	cUnsupported(f.p, fmt.Sprintf("call to %s.%s", pkg, name))
+	return ""
 }
 
 // op2 emits a binary operation with natural C operators and precedence-aware
@@ -179,15 +230,18 @@ func (em *cEmitter) operand(a AST, parentPrec int, isRight bool) string {
 	return s
 }
 
-func cLiteral(l *Literal) string {
+func (em *cEmitter) literal(l *Literal) string {
 	switch v := l.Val.(type) {
 	case uint64:
 		return fmt.Sprintf("%d", v)
+	case string:
+		return cStringLit(v)
 	case bool:
+		em.u.needStdbool = true
 		if v {
-			return "1"
+			return "true"
 		}
-		return "0"
+		return "false"
 	default:
 		cUnsupported(l.p, fmt.Sprintf("literal of type %T", l.Val))
 		return ""
@@ -196,16 +250,17 @@ func cLiteral(l *Literal) string {
 
 // ---- type mapping --------------------------------------------------------
 
-// cType maps a Boson type to its idiomatic C spelling — the standard
+// ctype maps a Boson type to its idiomatic C spelling — the standard
 // <stdint.h> names, exactly what a careful C programmer writes. Phase 1:
 // integer scalars, bool, and void.
-func cType(c *Context, t ASTType) string {
-	rt := c.ResolveUnderlying(t)
+func (em *cEmitter) ctype(t ASTType) string {
+	rt := em.u.c.ResolveUnderlying(t)
 	if isScalarLeaf(rt) {
 		switch rt.Name {
 		case "void", "":
 			return "void"
 		case "bool":
+			em.u.needStdbool = true
 			return "bool"
 		case "i8":
 			return "int8_t"
@@ -302,7 +357,7 @@ func cPrec(t nodetype) int {
 	return 0
 }
 
-// ---- identifiers ---------------------------------------------------------
+// ---- identifiers & literals ----------------------------------------------
 
 // cIdent renders a Boson identifier as a C identifier. Boson names are already
 // valid C identifier syntax; the only adjustment is suffixing `_` when a name
@@ -312,6 +367,36 @@ func cIdent(name string) string {
 		return name + "_"
 	}
 	return name
+}
+
+// cStringLit renders a Go string (a decoded Boson string literal) as a C
+// string literal, re-escaping the characters C needs escaped. Non-printable
+// bytes use 3-digit octal (\NNN), which C reads unambiguously.
+func cStringLit(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		switch ch := s[i]; ch {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\r':
+			b.WriteString(`\r`)
+		default:
+			if ch < 0x20 || ch >= 0x7f {
+				fmt.Fprintf(&b, `\%03o`, ch)
+			} else {
+				b.WriteByte(ch)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 var cKeywords = map[string]bool{
