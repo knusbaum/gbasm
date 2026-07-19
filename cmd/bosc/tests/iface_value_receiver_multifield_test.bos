@@ -1,0 +1,15 @@
+package main
+import "string"
+
+// A value receiver on a multi-field ≤8-byte struct (two i32 = 8 bytes) reads
+// both fields after the pack-into-register / spill-to-slot round trip.
+type pair struct{ a i32, b i32 } {
+	ok(self pair) bool { return self.a == 3 && self.b == 4 }
+}
+interface Checker { ok(self self) bool }
+
+fn main() {
+	p pair := {a: 3, b: 4}
+	c Checker := p
+	if (c.ok()) { string.puts("yes\n") } else { string.puts("no\n") }
+}

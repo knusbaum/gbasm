@@ -2907,16 +2907,17 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 			fmt.Fprintf(of, "\targi __discard_arg_%d %d %d\n", i, i, a.Type.Size(c)*8)
 			continue
 		}
-		// memBacked params narrower than a pointer (1/2/4 bytes)
-		// need a stack slot for [name+offset] field reads to land
-		// somewhere addressable; the arg arrives in a sub-register
-		// (DIL/DI/EDI...), which isn't a legal memory base on
-		// x86-64. Spill it after the prologue. 8-byte memBacked
-		// params already work through the older argi-into-RDI path
-		// because RDI is a legal base register, and the existing
-		// eviction logic in bas spills it to the reserved stack
-		// offset on demand.
-		if a.Type.Indirection == 0 && typeIsMemoryBacked(c, a.Type) && a.Type.Size(c) < PTR_SIZE {
+		// A memBacked value (struct) ≤ 8 bytes is passed BY VALUE in the
+		// argument register (see setupArgs), but the body addresses its fields
+		// via [name+offset], which needs a memory base. So receive the value in
+		// a temp register (__arg_<name>) and spill it to a stack slot after the
+		// prologue. This must cover the full ≤8 range — including exactly 8 —
+		// because interface dispatch is uniform (`mov rdi,[iface+0]`) and always
+		// hands over the data-slot VALUE; a value receiver reads it through
+		// [self+0], so `self` has to be an addressable copy of that value. (A
+		// >8-byte struct can't be value-backed into an interface and is passed
+		// by address instead — the else branch.)
+		if a.Type.Indirection == 0 && typeIsMemoryBacked(c, a.Type) && a.Type.Size(c) <= PTR_SIZE {
 			sz := a.Type.Size(c)
 			fmt.Fprintf(of, "\tbytes %s %d\n", a.Name, sz)
 			fmt.Fprintf(of, "\targi __arg_%s %d %d\n", a.Name, i, sz*8)
@@ -5548,17 +5549,18 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 			i, argspots[i].ref, order[i])
 		argt := argspots[i].t
 		switch {
-		case argt.Indirection == 0 && typeIsMemoryBacked(c, argt) && argt.Size(c) < PTR_SIZE:
-			// memBacked struct of 1, 2, or 4 bytes: pack the bits from
-			// the stack chunk into the argument register via a width-
-			// matched mov. mov to a 32-bit sub-register zero-extends to
-			// the full 64-bit register on x86-64. 8-byte memBacked
-			// values rode the register-hint + inreg path on the dest
-			// allocation above and fall into the >= PTR_SIZE branch.
+		case argt.Indirection == 0 && typeIsMemoryBacked(c, argt) && argt.Size(c) <= PTR_SIZE:
+			// memBacked struct ≤ 8 bytes (1/2/4/8): pack the value bits from
+			// the stack chunk into the argument register via a width-matched
+			// mov, so the callee receives the value (and spills it to an
+			// addressable slot). This matches the uniform interface-dispatch
+			// ABI, which loads the data-slot value into the register. The
+			// 8-byte case is included deliberately — it previously rode the
+			// by-address path, which desynced from value-backed dispatch.
 			packSmallMemBackedArg(of, c, f.Args[i], argspots[i].ref, argt.Size(c), i, order)
 		case argt.Size(c) >= PTR_SIZE:
-			// Pointer-sized scalar, or >8-byte memBacked passed by
-			// address (the callee derefs).
+			// Pointer-sized scalar (i64/pointer, not memBacked), or >8-byte
+			// memBacked struct passed by address (the callee derefs).
 			fmt.Fprintf(of, "\tinreg %s %s\n", argspots[i].ref, order[i])
 		default:
 			// Scalar narrower than a pointer (i8/i16/i32 etc.).
@@ -5593,6 +5595,8 @@ func packSmallMemBackedArg(of io.Writer, c *Context, errNode AST, srcRef string,
 		fmt.Fprintf(of, "\tmovzx %s word[%s]\n", reg64, srcRef)
 	case 4:
 		fmt.Fprintf(of, "\tmov %s dword[%s]\n", reg32, srcRef)
+	case 8:
+		fmt.Fprintf(of, "\tmov %s qword[%s]\n", reg64, srcRef)
 	default:
 		CompileErrorF(errNode, "passing a %d-byte value by value is not supported; use a pointer or a 1/2/4/8-byte layout", size)
 	}

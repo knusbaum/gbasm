@@ -1,0 +1,34 @@
+package main
+
+import "fmt"
+import "io"
+import "string"
+
+// A value-receiver method on a struct reads its receiver's fields through
+// [self+0]. The struct is value-backed into the interface (a copy in the data
+// slot); dispatch hands the callee that value uniformly, and the callee's
+// prologue spills it to an addressable slot so field reads work. Regression:
+// an 8-byte value receiver used to take the receiver by address and faulted on
+// the value passed by dispatch. Exercised via %v (Formatter), a named
+// interface, and a direct call.
+type point struct{ x i64 } {
+	format(self point, w io.writer) ?error {
+		_, err := fmt.printf(w, "point(%d)", self.x)
+		return err
+	}
+	get(self point) i64 {
+		return self.x
+	}
+}
+
+interface Getter { get(self self) i64 }
+
+fn main() {
+	p point := {x: 42}
+	fmt.print("%v\n", p)      // value-backed -> Formatter dispatch
+	g Getter := p             // value-backed named interface
+	string.puti(g.get())      // dispatch, reads field
+	string.putc(10)
+	string.puti(p.get())      // direct call, reads field
+	string.putc(10)
+}
