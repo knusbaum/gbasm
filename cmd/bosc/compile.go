@@ -2867,7 +2867,11 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		} else {
 			fmt.Fprintf(of, "\tcmp %s %s\n", index.ref, max.ref)
 		}
-		fmt.Fprintf(of, "\tjl %s\n", l)
+		// Unsigned: a negative index is enormous as u64, so it fails the
+		// compare and traps. A signed jl would treat -1 as < len and read
+		// a wild address. (The narrower-type path movzx-zero-extends above,
+		// so signed and unsigned agree there; only the i64 case leaks.)
+		fmt.Fprintf(of, "\tjb %s\n", l)
 		if index.t.Same(numASTType()) {
 			fmt.Fprintf(of, "\tmov rdi %s\n", index.ref)
 		} else {
@@ -4305,7 +4309,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		} else {
 			fmt.Fprintf(of, "\tcmp %s %s\n", index.ref, max.ref)
 		}
-		fmt.Fprintf(of, "\tjl %s\n", l)
+		// Unsigned: a negative index is enormous as u64, so it fails the
+		// compare and traps. A signed jl would treat -1 as < len and read
+		// a wild address. (The narrower-type path movzx-zero-extends above,
+		// so signed and unsigned agree there; only the i64 case leaks.)
+		fmt.Fprintf(of, "\tjb %s\n", l)
 		if index.t.Same(numASTType()) {
 			fmt.Fprintf(of, "\tmov rdi %s\n", index.ref)
 		} else {

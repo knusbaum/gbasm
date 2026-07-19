@@ -1,0 +1,13 @@
+package main
+
+import "fmt"
+
+// A negative runtime index on the write (lvalue) path must trap too —
+// this exercises the separate lvalue index check, not the read path.
+fn main() {
+	var nums [3]i64 := [10, 20, 30]
+	i i64 := 0 - 1
+	fmt.print("before\n")
+	nums[i] = 99
+	fmt.print("after\n")
+}
