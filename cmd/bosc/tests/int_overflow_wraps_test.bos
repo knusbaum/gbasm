@@ -1,0 +1,19 @@
+package main
+
+import "fmt"
+
+// Encodes the language decision: runtime integer overflow wraps (two's
+// complement), for both signed and unsigned types. Uses runtime values
+// (not literal constant expressions, which are range-checked at compile
+// time) so the wrap happens at execution.
+fn main() {
+	// signed i64: INT64_MAX + 1 wraps to INT64_MIN
+	smax i64 := 9223372036854775807
+	one i64 := 1
+	fmt.print("%d\n", smax + one)
+
+	// unsigned u64: UINT64_MAX + 1 wraps to 0
+	umax u64 := 18446744073709551615
+	uone u64 := 1
+	fmt.print("%d\n", umax + uone)
+}

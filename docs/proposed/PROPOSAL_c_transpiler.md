@@ -2,6 +2,9 @@
 
 ## History
 
+- 2026-07-19 — Integer-overflow semantics settled (**wraps**, both signs;
+  DESIGN.md §Expressions), resolving the open language question in the wrap
+  bullet — the arithmetic helper is fixed to the unsigned dance.
 - 2026-07-19 — Revised UB handling: the emitter must emit **well-formed C**
   (unsigned-type wrap, `memcpy` punning, explicit shift masks and div guards;
   UBSan policing), not define UB away with flags — so `cc` stays free to optimize
@@ -130,12 +133,11 @@ the same instructions):
   (uint64_t)b)`). The unsigned math is fully defined (modular); the narrowing
   back is *implementation-defined* (two's complement everywhere, mandated by
   C23) — **not UB**. Deliberately *not* `__builtin_add_overflow` (a gcc/clang
-  extension; the safe-C-generator goal wants pure standard C). **Open language
-  question:** whether integer overflow should *wrap* silently (current native
-  behavior) or *trap* (more in keeping with Boson's safety ethos) — the
-  transpiler follows the native backend either way, and only the helper body
-  changes (unsigned dance vs. overflow-checked trap). What it is never is bare
-  signed `a + b`.
+  extension; the safe-C-generator goal wants pure standard C). The language
+  decision is **settled — Boson integer overflow wraps** (both signs; DESIGN.md
+  §Expressions), so the helper body is the unsigned dance, full stop: never bare
+  signed `a + b`, never a trap. (A future `checked_*` intrinsic would lower to
+  its own explicitly-checked helper — orthogonal to the default arithmetic.)
 - **Type punning** (interface inline value-backed `data`, the `any` type-switch)
   — never read bytes back through an incompatible pointer type. Move them with
   **`memcpy`**, the standard-blessed way to reinterpret representation, exempt

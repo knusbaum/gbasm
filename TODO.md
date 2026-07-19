@@ -18,6 +18,18 @@ floating-point types yet" — revisit it when this lands.
 
 ---
 
+### Checked-arithmetic intrinsics
+Integer overflow wraps by default (defined two's-complement, both signs — see
+DESIGN.md §Expressions). That is cheap and keeps numeric loops vectorizable, but
+silent where a wrap is unintended (size math, untrusted input). Add an explicit
+opt-in: a `checked_add`/`checked_mul`/… intrinsic family returning an
+optional/error on overflow (and/or a checked operator). Mirrors "safe when you
+ask" — the inverse of a wrapping operator on a trapping default. Lowers to an
+overflow-flag check in the native backend and an explicitly-checked helper in the
+C backend.
+
+---
+
 ## Tooling
 
 ### Code formatter (`go fmt`-style)
