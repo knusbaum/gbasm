@@ -1,0 +1,36 @@
+package main
+
+import "string"
+
+// Dereferencing a pointer-to-array yields an LVALUE (the array's storage), not
+// a copy — so slicing, indexing, and aliasing all address the original. The
+// copy is a property of the operation (a value assignment), handled at the
+// assignment site, not the deref. `(*p)[:]` used to panic the compiler
+// ("Array copying not implemented").
+fn main() {
+	var buf byte[8]
+	p := &buf
+
+	// (*p)[:] slices through the deref with no copy: writes alias buf both ways.
+	s mut byte[] := (*p)[:]
+	string.puti(len(s))          // 8
+	string.putc(10)
+	s[0] = 72                    // 'H' through the slice
+	s[1] = 105                   // 'i'
+	string.puts(buf[0:2])        // reads buf directly -> "Hi"
+	string.putc(10)
+	buf[2] = 33                  // '!' directly on buf
+	string.puts(s[2:3])          // reads through the slice -> "!"
+	string.putc(10)
+
+	// (*p)[i] indexes through the deref (also an lvalue use).
+	(*p)[3] = 90                 // 'Z'
+	string.puts(buf[3:4])        // "Z"
+	string.putc(10)
+
+	// var copy: *p as an rvalue makes an INDEPENDENT array copy.
+	var c2 byte[8] := *p
+	c2[0] = 63                   // '?' — must NOT touch buf
+	string.puts(buf[0:1])        // still "H"
+	string.putc(10)
+}

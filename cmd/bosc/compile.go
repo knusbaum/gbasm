@@ -4038,6 +4038,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		t.Indirection -= 1
 		t.MutMask >>= 1 // consume the outermost pointer level's mut bit
+		t.MutMask &^= 1 // mut bit 0 is not meaningful on value/pointer types
+		t.OwnedMask >>= 1
 		t.NilMask >>= 1
 		if t.Indirection == 0 && !t.IsSliceOrArray() {
 			t.MutMask = 0 // plain value: MutMask is not meaningful
@@ -4065,21 +4067,21 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			// it's a pointer. Just copy.
 			fmt.Fprintf(of, "\tmov %s [%s]\n", dest.ref, src)
-		} else if t.ArraySize > 0 {
-			// it's an array.
-			panic("Array copying not implemented yet\n")
 		} else if typeIsMemoryBacked(c, t) {
-			// Memory-backed pointee (a struct, any size): the deref result IS
-			// the struct's address — return the pointer retyped as the pointee
-			// so later field access addresses through it. A value `mov dest
-			// [src]` would load only the first word and then mis-treat it as
-			// the struct (faulting on field access). Must fire for all sizes,
-			// not just >8: an 8-byte struct is exactly what the old `Size > 8`
-			// gate missed. Retype to the *clean* pointee type `t` (masks
-			// already shifted above), not `v.t` with one level dropped — the
-			// latter leaves stale pointer-level mut/nil bits, so an inline use
-			// like `(*px).a` fails the type postcondition ("S16 but produced
-			// S16").
+			// Memory-backed pointee (a struct OR a fixed array, any size): the
+			// deref result IS the pointee's address — return the pointer retyped
+			// as the pointee, an lvalue, so a later field access / index / slice
+			// addresses through it with no copy. `*p` is a place, not a value; a
+			// value copy (`var s2 T := *p`) is the ASSIGNMENT's job, handled at
+			// the assignment site, not here — dereferencing a pointer-to-array
+			// used to panic ("Array copying not implemented") here, conflating
+			// the two. A value `mov dest [src]` would load only the first word
+			// and mis-treat it as the whole aggregate (faulting on field/element
+			// access). Must fire for all sizes, not just >8: an 8-byte struct is
+			// exactly what the old `Size > 8` gate missed. Retype to the *clean*
+			// pointee type `t` (masks already shifted above), not `v.t` with one
+			// level dropped — the latter leaves stale pointer-level mut/nil bits,
+			// so an inline use like `(*px).a` fails the type postcondition.
 			v.t = t
 			return v
 		} else {
