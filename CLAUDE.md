@@ -202,12 +202,16 @@ only deletes them on a clean pass.
 
 ### Testing gotchas
 
-- **Rebuild the toolchain after changing bosc/bas source.** The `cmd/bosc`
-  and `cmd/bas` suites cache a locally-built `bosc`/`bas`/`bld` and
-  pre-assemble the runtime into the working dir. After a compiler/assembler
-  change, `make all` and clean stale `cmd/bosc/*.bs`/`*.bo` before re-running,
-  or you test the old binaries against fresh sources and get misleading
-  passes/failures.
+- **The toolchain rebuilds itself — no manual `make all` before a suite.** The
+  `cmd/bosc` and `cmd/bas` mmkfiles declare `bosc`/`bas`/`bld` as *phony*
+  targets, so every `mmk` invocation re-runs `go build` (a no-op under Go's
+  cache when nothing changed) and the `.bo`/`.bs` runtime fixtures those
+  binaries produce cascade-rebuild with them. A `cmd/bosc/*.go` or shared-core
+  edit therefore propagates automatically into the next `mmk tests/<name>_test.bos`
+  run — you do **not** need to `make all` or clean stale `cmd/bosc/*.bs`/`*.bo`
+  first. (This was historically a footgun: the binaries were `file` targets
+  pinned to their mtime with no `.go` deps, so a stale toolchain ran against
+  fresh sources. Fixed in `ceddfd8`.)
 - **Run `mmk go_test` after tour or runtime changes.** The all-lessons tour
   verifier lives in `tour/verify_test.go` (not `internal/tour` or
   `cmd/btourd`) and compiles every lesson against the *prebuilt* runtime
