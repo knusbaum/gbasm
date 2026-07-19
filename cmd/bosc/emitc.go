@@ -3,58 +3,47 @@ package main
 import (
 	"fmt"
 	"io"
-	"strconv"
 	"strings"
 )
 
 // emitc.go — the Boson→C transpiler backend (phase 1).
 //
-// A high-level, *structured* C emitter that is a sibling of compile.go: it
-// walks the same typed AST but emits C (keeping functions, control flow, and
-// expressions intact) rather than lowering to .bs, letting `cc` do register
-// allocation and optimization. See docs/proposed/PROPOSAL_c_transpiler.md.
+// The goal is idiomatic, human-readable C: a Boson module should transpile to
+// C that looks hand-written, so it can be dropped into a real C project with
+// nobody the wiser. Boson's value is the *authoring-time* layer — ownership,
+// mutability, bounds/nil checking, and (later) vtable/header generation — not
+// exotic runtime semantics smuggled into the output. So the emitter uses real
+// C type names, natural identifiers, and natural operators, and keeps the
+// structure of the source (functions, control flow, expressions). See
+// docs/proposed/PROPOSAL_c_transpiler.md.
 //
 // Phase 1 scope: a single `main` package, integer scalars, function
-// definitions and calls, `return`, and integer arithmetic. Signed +,-,* go
-// through the wrapping helpers in runtime/c/boson.h so the emitted C is
-// well-formed (no signed-overflow UB) while reproducing Boson's defined
-// two's-complement wrap. Anything outside phase 1 raises a clear
-// "not yet supported" error — never silent wrong output.
+// definitions and calls, `return`, and integer arithmetic. Anything outside
+// phase 1 raises a clear "not yet supported" error — never silent wrong output.
 //
-// NOT yet wired (follow-on increments): the validation oracle (run the .bs
-// path to a discard writer as a semantic gate before emitting), aggregates,
-// control flow, interfaces/ADTs, cross-package calls, and the boson.mmk rule.
+// NOT yet wired (follow-on increments): the validation oracle, a cc-driven
+// test harness, generated module headers, aggregates, control flow,
+// interfaces/ADTs, and cross-package calls (which introduce the package-prefix
+// naming scheme; phase 1 uses bare names within the single package).
 
 // cEmitter carries per-function emit state — the parameters/locals in scope —
-// alongside the compile Context. Expression emission answers type questions
-// (e.g. operand signedness, to pick the wrap helper) from `locals` rather than
-// re-resolving names through the Context, whose function-scope bindings are
-// not established on the C path.
+// alongside the compile Context, so expression emission can answer type
+// questions without re-resolving names through the Context (whose
+// function-scope bindings are not established on the C path).
 type cEmitter struct {
 	c      *Context
 	locals map[string]ASTType
 }
 
-// emitCFile writes a complete C translation unit for one source file: the
-// boson.h include, each top-level declaration, and — for package main — the
-// int-main entry point. Errors carry a source position and are reported via
-// fatalCtx, matching the .bs path. (The validation oracle is a follow-on
-// increment; for now emitC's own "not yet supported" errors are the guard.)
+// emitCFile writes a complete C translation unit for one source file. Errors
+// carry a source position and are reported via fatalCtx, matching the .bs
+// path. (The validation oracle — running the .bs path to a discard writer as a
+// semantic gate — is a follow-on increment.)
 func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
-	fmt.Fprintf(of, "#include \"boson.h\"\n\n")
+	fmt.Fprintf(of, "#include <stdint.h>\n\n")
 	for _, a := range asts {
 		if err := emitC(of, c, a); err != nil {
 			fatalCtx("Fatal: %v", err)
-		}
-	}
-	if pkgname == "main" {
-		for _, a := range asts {
-			if fd, ok := a.(*FuncDecl); ok && fd.Name == "main" {
-				if err := emitCEntry(of, c, fd); err != nil {
-					fatalCtx("Fatal: %v", err)
-				}
-				break
-			}
 		}
 	}
 }
@@ -81,51 +70,47 @@ func emitC(w io.Writer, c *Context, a AST) (err error) {
 	return nil
 }
 
-// emitCEntry writes the C `int main` the process starts at, calling the
-// mangled Boson main and using its return value (if any) as the exit code.
-func emitCEntry(w io.Writer, c *Context, f *FuncDecl) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			if ie, ok := r.(*interpreterError); ok {
-				err = ie
-				return
-			}
-			panic(r)
-		}
-	}()
-	if len(f.Args) != 0 {
-		cUnsupported(f.p, "main with parameters (argv)")
-	}
-	name := cFuncName(c.Pkgname(), f.Name)
-	fmt.Fprintf(w, "int main(void) {\n")
-	if isIntScalar(c, f.Return) {
-		fmt.Fprintf(w, "\treturn (int)%s();\n", name)
-	} else {
-		fmt.Fprintf(w, "\t%s();\n\treturn 0;\n", name)
-	}
-	fmt.Fprintf(w, "}\n")
-	return nil
-}
-
 func emitCFunc(w io.Writer, c *Context, f *FuncDecl) {
 	if f.Variadic {
 		cUnsupported(f.p, "variadic functions")
 	}
+	// `main` in package main becomes the C entry point directly — no wrapper,
+	// no mangling. Its return value (if any) is the process exit code.
+	isEntry := c.Pkgname() == "main" && f.Name == "main"
+	if isEntry && len(f.Args) != 0 {
+		cUnsupported(f.p, "main with parameters (argv)")
+	}
+
 	em := &cEmitter{c: c, locals: make(map[string]ASTType, len(f.Args))}
 	params := make([]string, 0, len(f.Args))
 	for _, arg := range f.Args {
 		em.locals[arg.Name] = arg.Type
-		params = append(params, cType(c, arg.Type)+" "+cLocalName(arg.Name))
+		params = append(params, cType(c, arg.Type)+" "+cIdent(arg.Name))
 	}
 	sig := "void"
 	if len(params) > 0 {
 		sig = strings.Join(params, ", ")
 	}
-	fmt.Fprintf(w, "static %s %s(%s) {\n", cType(c, f.Return), cFuncName(c.Pkgname(), f.Name), sig)
+
+	switch {
+	case isEntry:
+		fmt.Fprintf(w, "int main(%s) {\n", sig)
+	case f.IsPub:
+		// Exported: visible across translation units. (Package-prefixed
+		// naming for cross-package linkage arrives with cross-package calls.)
+		fmt.Fprintf(w, "%s %s(%s) {\n", cType(c, f.Return), cIdent(f.Name), sig)
+	default:
+		// File-local: `static`, exactly as a hand-written C module marks its
+		// internal helpers.
+		fmt.Fprintf(w, "static %s %s(%s) {\n", cType(c, f.Return), cIdent(f.Name), sig)
+	}
 	if f.Body != nil {
 		for _, stmt := range f.Body.Body {
 			em.stmt(w, stmt)
 		}
+	}
+	if isEntry && isVoidType(c, f.Return) {
+		fmt.Fprintf(w, "\treturn 0;\n")
 	}
 	fmt.Fprintf(w, "}\n\n")
 }
@@ -150,7 +135,7 @@ func (em *cEmitter) expr(a AST) string {
 	case *Literal:
 		return cLiteral(n)
 	case *Symbol:
-		return cLocalName(n.Name)
+		return cIdent(n.Name)
 	case *Funcall:
 		return em.call(n)
 	case *Op2:
@@ -170,54 +155,34 @@ func (em *cEmitter) call(f *Funcall) string {
 	for _, arg := range f.Args {
 		args = append(args, em.expr(arg))
 	}
-	return cFuncName(em.c.Pkgname(), sym.Name) + "(" + strings.Join(args, ", ") + ")"
+	return cIdent(sym.Name) + "(" + strings.Join(args, ", ") + ")"
 }
 
+// op2 emits a binary operation with natural C operators and precedence-aware
+// parentheses (only where the tree structure requires them), so the output
+// reads like hand-written C rather than fully-parenthesized machine output.
 func (em *cEmitter) op2(o *Op2) string {
-	a := em.expr(o.First)
-	b := em.expr(o.Second)
-	switch o.Type {
-	case n_add, n_sub, n_mul:
-		// Signed +,-,* wrap via the boson.h helpers (well-formed C, no
-		// signed-overflow UB); unsigned is already modular-defined and stays
-		// a bare operator.
-		if s, ok := signedScalarSuffix(em.c, em.typeOf(o.First)); ok {
-			return cWrapHelper(o.Type, s) + "(" + a + ", " + b + ")"
-		}
-		return "(" + a + " " + opSym(o.Type) + " " + b + ")"
-	case n_div, n_mod, n_bitand, n_bitor, n_xor, n_shl, n_shr:
-		return "(" + a + " " + opSym(o.Type) + " " + b + ")"
-	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq:
-		return "(" + a + " " + cCmpSym(o.Type) + " " + b + ")"
-	default:
-		cUnsupported(posOf(o.First), fmt.Sprintf("operator %q", opSym(o.Type)))
-		return ""
-	}
+	prec := cPrec(o.Type)
+	return em.operand(o.First, prec, false) + " " + cBinSym(o.Type) + " " + em.operand(o.Second, prec, true)
 }
 
-// typeOf returns the Boson type of an expression for phase-1 emit decisions
-// (operand signedness). It answers from the in-scope locals rather than the
-// Context, since function-scope bindings are not established on the C path.
-// Unknown expressions return the zero ASTType (treated as non-signed), which
-// only affects the wrap-helper choice for constructs phase 1 doesn't yet emit.
-func (em *cEmitter) typeOf(a AST) ASTType {
-	switch n := a.(type) {
-	case *Symbol:
-		if t, ok := em.locals[n.Name]; ok {
-			return t
+func (em *cEmitter) operand(a AST, parentPrec int, isRight bool) string {
+	s := em.expr(a)
+	if child, ok := a.(*Op2); ok {
+		cp := cPrec(child.Type)
+		// Left operand needs parens only when it binds looser; the right
+		// operand also needs them at equal precedence (left-associativity).
+		if cp < parentPrec || (isRight && cp == parentPrec) {
+			return "(" + s + ")"
 		}
-	case *Literal:
-		return n.ASTType(em.c)
-	case *Op2:
-		return em.typeOf(n.First)
 	}
-	return ASTType{}
+	return s
 }
 
 func cLiteral(l *Literal) string {
 	switch v := l.Val.(type) {
 	case uint64:
-		return strconv.FormatUint(v, 10)
+		return fmt.Sprintf("%d", v)
 	case bool:
 		if v {
 			return "1"
@@ -231,8 +196,9 @@ func cLiteral(l *Literal) string {
 
 // ---- type mapping --------------------------------------------------------
 
-// cType maps a Boson type to its C spelling. Phase 1: integer scalars, bool,
-// and void.
+// cType maps a Boson type to its idiomatic C spelling — the standard
+// <stdint.h> names, exactly what a careful C programmer writes. Phase 1:
+// integer scalars, bool, and void.
 func cType(c *Context, t ASTType) string {
 	rt := c.ResolveUnderlying(t)
 	if isScalarLeaf(rt) {
@@ -240,9 +206,23 @@ func cType(c *Context, t ASTType) string {
 		case "void", "":
 			return "void"
 		case "bool":
-			return "bo_bool"
-		case "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "byte":
-			return "bo_" + rt.Name
+			return "bool"
+		case "i8":
+			return "int8_t"
+		case "i16":
+			return "int16_t"
+		case "i32":
+			return "int32_t"
+		case "i64":
+			return "int64_t"
+		case "u8", "byte":
+			return "uint8_t"
+		case "u16":
+			return "uint16_t"
+		case "u32":
+			return "uint32_t"
+		case "u64":
+			return "uint64_t"
 		}
 	}
 	cUnsupported(t.p, fmt.Sprintf("type %q", t.String()))
@@ -253,58 +233,35 @@ func isScalarLeaf(t ASTType) bool {
 	return t.Indirection == 0 && t.Element == nil && t.FuncSig == nil && t.AnonFields == nil
 }
 
-// isIntScalar reports whether t is a (non-void) integer/bool scalar — used to
-// decide whether `main`'s return value becomes the process exit code.
-func isIntScalar(c *Context, t ASTType) bool {
+func isVoidType(c *Context, t ASTType) bool {
 	rt := c.ResolveUnderlying(t)
-	return isScalarLeaf(rt) && rt.Name != "void" && rt.Name != ""
+	return isScalarLeaf(rt) && (rt.Name == "void" || rt.Name == "")
 }
 
-// signedScalarSuffix returns the width suffix (e.g. "i64") if t is a signed
-// integer scalar, so the wrapping helper can be named.
-func signedScalarSuffix(c *Context, t ASTType) (string, bool) {
-	rt := c.ResolveUnderlying(t)
-	if isScalarLeaf(rt) && rt.Signed {
-		return rt.Name, true
-	}
-	return "", false
-}
+// ---- operators -----------------------------------------------------------
 
-// ---- name mangling -------------------------------------------------------
-//
-// Injective length-prefixed scheme under the reserved-namespace-safe `bo_`
-// prefix (see the proposal): each segment is <len><segment>, so `.`-joined
-// qualified names can't collide with underscore-containing identifiers, and a
-// leading-underscore package (`_init`) becomes interior and thus non-reserved.
-
-func cFuncName(pkg, name string) string {
-	return "bo_" + cSeg(pkg) + cSeg(name)
-}
-
-func cSeg(s string) string {
-	return strconv.Itoa(len(s)) + s
-}
-
-// cLocalName mangles a local/parameter name. The `bl_` prefix keeps Boson
-// names that happen to be C keywords (`int`, `return`, …) from colliding.
-func cLocalName(name string) string {
-	return "bl_" + name
-}
-
-func cWrapHelper(op nodetype, suffix string) string {
-	switch op {
-	case n_add:
-		return "bo_add_" + suffix
-	case n_sub:
-		return "bo_sub_" + suffix
-	case n_mul:
-		return "bo_mul_" + suffix
-	}
-	return "bo_op_" + suffix
-}
-
-func cCmpSym(t nodetype) string {
+func cBinSym(t nodetype) string {
 	switch t {
+	case n_add:
+		return "+"
+	case n_sub:
+		return "-"
+	case n_mul:
+		return "*"
+	case n_div:
+		return "/"
+	case n_mod:
+		return "%"
+	case n_bitand:
+		return "&"
+	case n_bitor:
+		return "|"
+	case n_xor:
+		return "^"
+	case n_shl:
+		return "<<"
+	case n_shr:
+		return ">>"
 	case n_lt:
 		return "<"
 	case n_le:
@@ -319,6 +276,53 @@ func cCmpSym(t nodetype) string {
 		return "!="
 	}
 	return "?"
+}
+
+// cPrec is the C operator precedence (higher binds tighter), used only to
+// decide when a sub-expression needs parentheses.
+func cPrec(t nodetype) int {
+	switch t {
+	case n_mul, n_div, n_mod:
+		return 10
+	case n_add, n_sub:
+		return 9
+	case n_shl, n_shr:
+		return 8
+	case n_lt, n_le, n_gt, n_ge:
+		return 7
+	case n_deq, n_neq:
+		return 6
+	case n_bitand:
+		return 5
+	case n_xor:
+		return 4
+	case n_bitor:
+		return 3
+	}
+	return 0
+}
+
+// ---- identifiers ---------------------------------------------------------
+
+// cIdent renders a Boson identifier as a C identifier. Boson names are already
+// valid C identifier syntax; the only adjustment is suffixing `_` when a name
+// collides with a C keyword, matching what a human would do.
+func cIdent(name string) string {
+	if cKeywords[name] {
+		return name + "_"
+	}
+	return name
+}
+
+var cKeywords = map[string]bool{
+	"auto": true, "break": true, "case": true, "char": true, "const": true,
+	"continue": true, "default": true, "do": true, "double": true, "else": true,
+	"enum": true, "extern": true, "float": true, "for": true, "goto": true,
+	"if": true, "inline": true, "int": true, "long": true, "register": true,
+	"restrict": true, "return": true, "short": true, "signed": true,
+	"sizeof": true, "static": true, "struct": true, "switch": true,
+	"typedef": true, "union": true, "unsigned": true, "void": true,
+	"volatile": true, "while": true, "bool": true, "_Bool": true,
 }
 
 // ---- helpers -------------------------------------------------------------
