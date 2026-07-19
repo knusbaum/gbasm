@@ -1,9 +1,9 @@
 ---
-title: Strings as byte[]
+title: Strings as []byte
 section: Data
 order: 2
 ---
-Boson has no separate string type — a string literal *is* a `byte[]`, a
+Boson has no separate string type — a string literal *is* a `[]byte`, a
 slice of bytes. So everything you know about slices applies: `len` gives the
 byte count, and indexing yields a single `byte`.
 

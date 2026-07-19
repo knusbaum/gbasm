@@ -3,10 +3,11 @@ title: Arrays and Slices
 section: Data
 order: 1
 ---
-An **array** has a fixed length baked into its type: `i64[4]` is exactly
-four `i64`s, written with a literal like `[10, 20, 30, 40]`.
+An **array** has a fixed length baked into its type: `[4]i64` is exactly
+four `i64`s, written with a literal like `[10, 20, 30, 40]`. The length
+comes first, then the element type — read `[4]i64` as "4 of i64".
 
-A **slice** (`i64[]`, no number) is a view into a run of elements — it knows
+A **slice** (`[]i64`, no number) is a view into a run of elements — it knows
 its length but doesn't own a fixed size. You make one by slicing an array
 with `[lo:hi]`, which views the elements from `lo` up to *but not including*
 `hi`. Either bound can be omitted, defaulting to the start or the end:

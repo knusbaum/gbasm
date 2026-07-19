@@ -5,7 +5,7 @@ order: 5
 ---
 Bindings declared at file scope — outside any function — are globals, shared
 across the whole package. They can carry an initializer that is computed at
-build time, including array literals: `var counts i64[3] = [5, 10, 15]` is
+build time, including array literals: `var counts [3]i64 = [5, 10, 15]` is
 laid out statically, no runtime setup.
 
 Here a `const base` and a `var counts` array are read directly inside

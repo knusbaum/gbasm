@@ -10,5 +10,6 @@ write. To write through a pointer, it must be a `*mut`: a mutable view.
 place. You can only take a `*mut` of something you're allowed to mutate, so
 `&x` here works because `x` is a `var`.
 
-The same `mut` marker applies to slices: a `mut byte[]` is a slice whose
-elements you can assign to, while a plain `byte[]` is read-only.
+The same `mut` marker applies to slices, binding to the element it sits
+before: a `[]mut byte` is a slice whose elements you can assign to, while a
+plain `[]byte` is read-only.
