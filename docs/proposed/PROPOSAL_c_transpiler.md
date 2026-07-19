@@ -2,6 +2,11 @@
 
 ## History
 
+- 2026-07-19 — Oracle refined to a **re-derived gate that ratchets checks
+  upstream**: run `emitC` first, then the `Compile` gate; a gate rejection of a
+  program `emitC` emitted marks a check that lives only in `compile.go`, which is
+  hoisted to `ToAST` (if a language semantic) rather than duplicated in `emitC`
+  or left to `Compile`. Ties the C backend directly to the segregation audit.
 - 2026-07-19 — **Reframed to readability-first.** The primary goal is idiomatic,
   human-readable C (a Boson module that drops into a real C project undetected),
   not a "portable optimizing backend that happens to emit C." This supersedes the
@@ -189,15 +194,36 @@ polymorphism idiom, constant-size values, scales to any method count).
   syntax-directed AST walker + type mapper + a small per-function `cEmitter` that
   tracks in-scope locals (function-scope bindings are not established in the
   `Context` on this path). There is no new IR — C is the high-level IR.
-- **The oracle (soundness scaffold).** Until the leaked semantic checks are
-  hoisted (see the audit), a from-AST backend cannot re-derive language errors on
-  its own — the flow-sensitive checks are interleaved into `compile.go`'s
-  lowering. So the mature `.bs` path runs as a **gate** (compile to a discard
-  writer; emit C only if it passes), giving `accepted(C) = accepted(.bs) ∩
-  supported(emitC)` by construction. It is a full compile (cheap relative to
-  `cc`) and runs on a re-derived AST/Context. It retires as the audit's hoist
-  makes the checker a standalone pass. *(Not yet wired; phase 1 currently guards
-  only via emitC's own "not supported" errors.)*
+- **The oracle — a re-derived gate that also ratchets checks upstream.** `emitC`
+  does no semantic checking; Boson's ownership/move/escape enforcement runs
+  inside `Compile` (verified: the `MoveConsume` calls fire from `compile.go`, not
+  `ToAST`), so a from-AST backend that skipped `Compile` would emit *unsafe* C
+  (e.g. a `use(p)` after `dispose(p)` — a use-after-free the native path
+  rejects). So the native lowering runs as a **gate**: `Compile` to a discard
+  writer on a **re-derived** AST + `Context` (a second `ToAST` pass, so
+  `Compile`'s `Context` mutations never touch `emitC`'s), emitting C only if the
+  gate passes. Guarantees `accepted(C) = accepted(.bs) ∩ supported(emitC)`.
+
+  Order: **`emitC` first (to a buffer), then the gate; write the buffer only if
+  the gate passes.** That ordering turns the gate into a **ratchet** on the
+  check-segregation work. Because `emitC` checks nothing, a gate rejection of a
+  program that `ToAST` accepted and `emitC` emitted means the check lives *only*
+  in `compile.go` — missing from the front end. Triage each such case:
+    - **language semantic** (type/name/arity/move/escape/…) → **hoist** it from
+      `compile.go` into `ToAST`/the checker
+      ([`../reference/AUDIT_codegen_check_segregation.md`](../reference/AUDIT_codegen_check_segregation.md)).
+      The front end then catches it, the gate stops seeing it, and *both*
+      backends inherit it.
+    - **genuine backend limitation** (`.bs`-specific: >6 args, 8-bit multiply,
+      the `volatile`+`inreg` limit) → leave it; that is the over-strictness we
+      accept early.
+
+  The check is **never** added to `emitC` (that would duplicate it) — `ToAST` is
+  the single home, and we never lean on `Compile` as the permanent catcher. The
+  oracle thus keeps the C backend sound *today* and drives `compile.go`'s leaked
+  checks upstream over time, shrinking the gate until the checker is a standalone
+  pass and it retires. *(Not yet wired; phase 1 currently guards only via
+  `emitC`'s own "not supported" errors.)*
 - **Build integration.** A `boson.mmk` rule transpiles each package to `.c`/`.h`
   and invokes `cc`. No special UB-defining flags; a UBSan build is available for
   diagnostics.

@@ -2,6 +2,9 @@
 
 ## History
 
+- 2026-07-19 — Noted that the C transpiler's oracle (gate run *after* `emitC`)
+  is the dynamic discovery mechanism for this worklist — every gate rejection of
+  an `emitC`-emitted program is a leaked check to hoist.
 - 2026-07-19 — Initial audit. Census of every user-facing error site in
   `cmd/bosc/compile.go` + `globals.go`, classified **semantic** vs **lowering**
   vs **ambiguous**, to size how much language-semantics checking has leaked into
@@ -54,6 +57,17 @@ unsoundness in `.bs` lowering is faithfully inherited — see the slice-bounds h
 found and fixed this session, `0cca0ac`). The end state is proper segregation:
 hoist the leaked semantic checks into the front end, and the oracle becomes
 vestigial. **This audit is the worklist for that hoist.**
+
+The oracle also *discovers* this worklist dynamically. By running the gate
+**after** `emitC` (which does no semantic checking of its own), any program that
+`ToAST` accepted and `emitC` emitted but the gate rejects is, by construction, a
+check that lives *only* in `compile.go`. Each such case is triaged: a language
+semantic is hoisted into `ToAST`/the checker (so both backends inherit it and the
+gate stops seeing it); a genuine `.bs`-backend limitation is left as accepted
+over-strictness. The check is never duplicated into `emitC`. So the C transpiler's
+gate is the ratchet that turns this static census into a steadily-shrinking
+backlog. See the oracle section of
+[`../proposed/PROPOSAL_c_transpiler.md`](../proposed/PROPOSAL_c_transpiler.md).
 
 ---
 
