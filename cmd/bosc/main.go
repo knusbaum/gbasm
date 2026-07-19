@@ -15,6 +15,7 @@ var out = flag.String("o", "", "Write the linked executable to this file")
 var help = flag.Bool("h", false, "Print this help message.")
 var importcfg = flag.String("importcfg", "", "Path to importcfg file mapping package names to .bo paths")
 var listImports = flag.Bool("listimports", false, "Print all import paths from the input files (one per line) and exit. No compilation is performed.")
+var target = flag.String("target", "bs", "code-generation target: `bs` (native .bs assembly) or `c` (C transpiler, experimental)")
 
 // loadImportcfg reads a file with lines of the form `name=path/to/file.bo` and
 // returns a map from package name to file path. Blank lines and lines beginning
@@ -223,14 +224,14 @@ func main() {
 		if of == nil {
 			log.Fatalf("No out file.\n")
 		}
-		if !wrotePkg {
+		if *target != "c" && !wrotePkg {
 			fmt.Fprintf(of, "package %s\n\n", pkgname)
 		}
 		// The builtin package is the single home for the primitive scalar
 		// typedescs (__typedesc_i64, __typedesc_byte, ...). Every other
 		// package that coerces a primitive into an interface relocates
 		// against these shared symbols.
-		if pkgname == "builtin" {
+		if *target != "c" && pkgname == "builtin" {
 			emitBuiltinScalarTypedescs(of)
 		}
 		p := NewParserAt(flag.Arg(fi), reader, linesConsumed+1)
@@ -277,6 +278,14 @@ func main() {
 				fatalCtx("Failed to parse: %v", err)
 			}
 			asts = append(asts, a)
+		}
+
+		// C transpiler backend: emit a C translation unit instead of .bs and
+		// move to the next file (skips the native codegen + vtable/string
+		// tables below). See emitc.go / docs/proposed/PROPOSAL_c_transpiler.md.
+		if *target == "c" {
+			emitCFile(of, actx, pkgname, asts)
+			continue
 		}
 
 		for _, a := range asts {
