@@ -34,6 +34,7 @@ Designs not yet built — drafts, ideas, accepted-but-unbuilt proposals.
 - [`DESIGN_10_field_provenance.md`](proposed/DESIGN_10_field_provenance.md) — Scoping: #10 — field-buried borrow escapes the frame
 - [`DESIGN_origin_generations.md`](proposed/DESIGN_origin_generations.md) — Design note — Origin generations
 - [`PROPOSAL_arm64_backend.md`](proposed/PROPOSAL_arm64_backend.md) — Proposal: arm64 Backend for bas and bosc
+- [`PROPOSAL_c_transpiler.md`](proposed/PROPOSAL_c_transpiler.md) — Proposal: Boson→C transpiler backend (portable, optimizing; sibling of the .bs backend)
 - [`PROPOSAL_interface_equality.md`](proposed/PROPOSAL_interface_equality.md) — Proposal: Equality Comparison for Interface Values
 - [`PROPOSAL_macho_revive.md`](proposed/PROPOSAL_macho_revive.md) — Proposal: Revive Mach-O Executable Support
 
