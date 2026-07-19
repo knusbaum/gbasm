@@ -12,10 +12,15 @@ import (
 // ASTType literals so field names are compile-checked.
 //
 //   - TestTypeEncodingPostfix: the *current* parser must produce `want` for the
-//     postfix form. Locks today's behavior; flips to reject-postfix once the
-//     parser goes prefix-only.
+//     postfix form. Transitional — it validates that `want` is true ground truth
+//     (it passes against today's parser) and guards the encoding during the
+//     rewrite. DELETE THIS TEST at migration completion (postfix won't parse).
 //   - TestTypeEncodingPrefix: the *new* parser must produce the SAME `want` for
-//     the prefix form. Fails until parseTypeName is rewritten — the TDD target.
+//     the prefix form. Fails until parseTypeName is rewritten — the TDD target;
+//     un-skip it then. This is the durable test that survives the migration.
+//
+// Completion checklist: delete TestTypeEncodingPostfix + the `postfix` column,
+// un-skip TestTypeEncodingPrefix.
 
 // atSame is a strict, position-insensitive, recursive ASTType equality. Stricter
 // than SameExact (which recurses into Element with the laxer Same) and it skips
