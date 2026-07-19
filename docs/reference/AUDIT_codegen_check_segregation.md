@@ -69,6 +69,20 @@ gate is the ratchet that turns this static census into a steadily-shrinking
 backlog. See the oracle section of
 [`../proposed/PROPOSAL_c_transpiler.md`](../proposed/PROPOSAL_c_transpiler.md).
 
+**First ratchet run (2026-07-19).** Running the 313 `_err_test.bos` programs
+through the C path (front end → emitC → gate): **14** caught by the front end
+(`ToAST`/parse — already segregated), **27** caught only by the gate (leaked into
+`compile.go` — concrete hoist candidates), **272** unclassifiable yet (emitC
+feature gap, before the gate), and — crucially — **0 escaped** (every invalid
+program is caught by *something*, so the C backend is sound). The 27 cluster as:
+operand/assignment/init **type** checks ("operator + requires integer operands",
+"Cannot initialize i64 with value of type bool", "mismatched number types"),
+**literal-range** ("Integer literal 128 does not fit in type i8", decidable at
+`ToAST`), **mutability** ("Cannot assign to immutable binding", ×5 tests / one
+check), **discard-read**, and **ownership** ("owned binding … out of scope
+without being consumed" — flow-sensitive, so the checker rather than `ToAST`).
+The 27 is a lower bound: the 272 SKIPs re-classify as emitC coverage grows.
+
 ---
 
 ## Method
