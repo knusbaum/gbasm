@@ -234,10 +234,20 @@ polymorphism idiom, constant-size values, scales to any method count).
 
 The ~490-file `.bos` corpus is a near-free correctness oracle: build each test
 through *both* backends and compare stdout / exit code against the *same*
-`.expected`. Any divergence is a transpiler bug. Honestly scoped: phase-gated
-(needs the runtime floor first), covers only programs both backends accept with
-deterministic output, and the documented C/Boson semantic divergences (signed
-overflow) are expected mismatches, not bugs — so it is a strong net, not a proof.
+`.expected`. `cmd/bosc/c_corpus.sh` sweeps it and reports three buckets:
+
+- **PASS** — transpiled, compiled with `cc`, ran, output matched.
+- **SKIP** — emitC hit a "not yet supported" gap. Expected; **shrinks as emitC
+  grows** (this is the coverage metric).
+- **FAIL** — emitC emitted uncompilable or wrong-output C, or the oracle rejected
+  a valid program. **FAIL must stay 0** — the soundness invariant: the backend
+  never miscompiles what it accepts.
+
+So the corpus doubles as coverage tracker (PASS trending up) and regression guard
+(FAIL pinned at 0), and the SKIP histogram is the **data-driven growth order**
+for emitC. Baseline at phase 1b: PASS=6, SKIP=404, FAIL=0 of 410 non-err tests;
+top blockers are structs and local `var`s. (Documented C/Boson divergences —
+signed overflow — would show as expected mismatches; none observed yet.)
 
 ---
 
@@ -248,14 +258,24 @@ overflow) are expected mismatches, not bugs — so it is a strong net, not a pro
 2. **1b — output + harness + oracle. Done.** Integer/string output mapped to
    libc (`fputs`/`printf`/`putchar`); a `cc`-driven `c_tests` harness; and the
    re-derived oracle gate (`cOracleGate`) with a `c_err_tests` negative class.
-3. **Aggregates.** Structs, arrays, slices + the explicit bounds/nil guards; the
-   public/private header split and escape analysis.
-4. **Control flow + full expressions + casts.**
-5. **Interfaces + ADTs.** The chosen interface representation; tagged-union
+Order beyond 1b is **driven by the corpus sweep** (`c_corpus.sh`) — implement the
+most common blocker, re-sweep, repeat — rather than a fixed sequence. As of the
+phase-1b baseline that order is:
+
+3. **Procedural core.** Local `var`s + assignment, control flow (`if`/`for`/
+   `while`), and the rest of the expression forms (unary, casts, `&&`/`||`).
+   Foundational and masked *behind* the top blockers in the histogram.
+4. **Structs** — the single largest cluster (~148 tests): declarations, field
+   access, struct literals, and the public/private header split + escape
+   analysis.
+5. **Slices/arrays** — `[]byte` &c., indexing, and the explicit bounds/nil guards.
+6. **Interfaces + ADTs** — the vtable-pointer representation; tagged-union
    `switch`; the `any` type-switch.
-6. **Ownership passthrough + multi-return + cross-package** (introduces the
-   package-prefix naming).
-7. **Relax the oracle** as the audit's hoist lands.
+7. **Runtime/stdlib + imports** — the intrinsic runtime C shim (`_heap`,
+   `_io_sys`, …), the user-package import mechanism (`foo.h`/`foo.c`, `foo_bar`,
+   `#include`), then transpiling `io`/`fmt` (needs the features above) and
+   reimplementing `string` in Boson.
+8. **Relax the oracle** as the audit's hoist lands.
 
 ---
 
