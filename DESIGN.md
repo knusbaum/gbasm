@@ -58,9 +58,9 @@ Boolean literals are `true` and `false` (reserved words), each of type `bool`. A
 | Type | Description |
 |------|-------------|
 | `*T` | Non-null pointer to T |
-| `*?T` | Nullable pointer to T |
-| `T[]` | Slice (fat pointer: data pointer + length, 16 bytes) |
-| `T[N]` | Fixed-size array |
+| `?*T` | Nullable pointer to T |
+| `[]T` | Slice (fat pointer: data pointer + length, 16 bytes) |
+| `[N]T` | Fixed-size array |
 | `type Name struct { ... }` | Named record type (file scope) |
 | `struct { ... }` | Anonymous struct type (usable as a parameter, return, or var type) |
 | `fn(args) ret` | Function-pointer type (pointer-sized) |
@@ -78,21 +78,26 @@ fn use_result(r struct { quot i64, rem i64 }) i64 { return r.quot + r.rem }
 
 Types are divided into **direct** (fit in a single register: scalars, pointers) and **indirect** (too large for a register: structs, arrays, slices — held as pointers in registers, with their data on the stack or in memory).
 
-String literals have type `byte[]` (an immutable slice of bytes). The data is stored in the data section (in `o.Data` rather than `o.Vars`, distinguishing immutable string constants from writable globals at the metadata level) and the slice header has the literal's length. A future hardening pass can split `.data` and `.rodata` into separate LOAD segments so this immutability is hardware-enforced; today the distinction is only at the source level.
+String literals have type `[]byte` (an immutable slice of bytes). The data is stored in the data section (in `o.Data` rather than `o.Vars`, distinguishing immutable string constants from writable globals at the metadata level) and the slice header has the literal's length. A future hardening pass can split `.data` and `.rodata` into separate LOAD segments so this immutability is hardware-enforced; today the distinction is only at the source level.
 
 ### Type qualifiers
 
 Three orthogonal qualifiers can apply to types:
 
 - **`mut`** — write-through mutability for pointers and slices. `*mut T` lets you write to T through the pointer; `*T` does not. Nests independently at each pointer level (`*mut *T`, `**mut T`).
-- **`?` on pointers** — nullability marker. `*T` is non-null; `*?T` may be `nil`. Non-null pointers can be used where nullable pointers are expected. Nullable pointers require a proof or assertion before non-null use: `if (p) { ... }` narrows `p` to non-null inside the true branch, `if (!p) { ... } else { ... }` narrows it in the else branch, and postfix `p?` inserts a runtime nil check and produces a non-null pointer.
-- **`?` on interfaces** — same marker. `T` (interface) is always valid; `?T` may be null (vtable = 0). A non-nullable interface can't be constructed null, so the *only* producer of a null interface is a fallible cast (see [type assertion](#interface-to-interface-assertion)), which yields `?T`. A `?T` must be narrowed before dispatch — `if (k != nil) { k.method() }` narrows `?T → T` in the true branch (a vtable-`!= 0` test) — and dispatching, or asserting/widening from, an un-narrowed `?T` is rejected, exactly like dereferencing a `*?` pointer.
+- **`?` on pointers** — nullability marker. `*T` is non-null; `?*T` may be `nil`. Non-null pointers can be used where nullable pointers are expected. Nullable pointers require a proof or assertion before non-null use: `if (p) { ... }` narrows `p` to non-null inside the true branch, `if (!p) { ... } else { ... }` narrows it in the else branch, and postfix `p?` inserts a runtime nil check and produces a non-null pointer.
+- **`?` on interfaces** — same marker. `T` (interface) is always valid; `?T` may be null (vtable = 0). A non-nullable interface can't be constructed null, so the *only* producer of a null interface is a fallible cast (see [type assertion](#interface-to-interface-assertion)), which yields `?T`. A `?T` must be narrowed before dispatch — `if (k != nil) { k.method() }` narrows `?T → T` in the true branch (a vtable-`!= 0` test) — and dispatching, or asserting/widening from, an un-narrowed `?T` is rejected, exactly like dereferencing a `?*` pointer.
 - **`owned`** — compile-time ownership obligation that must be discharged before the variable goes out of scope. See [Ownership](#ownership).
 - **`:=` / `var`** — binding mutability: a binding is introduced with `:=` and is immutable; `var` makes it reassignable. Distinct from `mut`. Immutable is the default everywhere — bare `:=` locals and globals, and unmarked parameters; `var` is the opt-in for reassignment.
 
-### Type syntax: parenthesized groups
+### Type syntax: prefix reading order
 
-The `[]` slice/array suffix binds tighter than the leading `*` pointer prefix, so `*byte[]` parses as a *slice of `*byte`* (`(*byte)[]`), not a pointer to a slice. To express a pointer to a slice — the type of `&s` where `s byte[]`, and of a function-scope `&"literal"` — wrap the inner type in parentheses: `*(byte[])` is a pointer to a byte slice, `*mut (byte[])` a write-through one. The parenthesized form is the exact inverse of `ASTType.String()`, which already emits `*(byte[])` for pointer-to-slice; `parseTypeName` accepts the group after the `*` prefixes and layers the outer pointer levels onto the inner type. This is what lets `%s`-style code name and dereference (`*p`) the pointer-to-slice that a `...any` string argument produces.
+Type modifiers are **prefix** and read left-to-right, each binding to the type on its right (Go/Rust order). The pointer/slice ambiguity that C-style suffix syntax needs parentheses to resolve simply does not arise:
+
+- `[]*byte` — a **slice of** `*byte`. The `[]` is outermost; the `*` binds to the element `byte`.
+- `*[]byte` — a **pointer to** a `[]byte` slice. The `*` is outermost. This is the type of `&s` where `s []byte`, and of a function-scope `&"literal"`, so `%s`-style code can name and dereference (`*p`) the pointer-to-slice a `...any` string argument produces.
+
+`mut`, `owned`, and `?` bind the same way: `[]mut byte` is a slice of mutable bytes, `?*byte` a nullable pointer, `*mut []byte` a pointer to a mutable slice, `[N]?*T` an array of nullable pointers. Arrays reverse when nested: `[1][8]byte` is one row of eight bytes. `ASTType.String()` emits exactly this canonical prefix form and `parseTypeName` is its inverse — the two round-trip byte-for-byte (`cmd/bosc/type_encoding_test.go`).
 
 ### Type aliases
 
@@ -136,7 +141,7 @@ Struct field access uses `.` for both direct structs and pointer-to-struct (`p.x
 Postfix `?` asserts that a nullable pointer is non-null:
 
 ```
-var p *?node := ...
+var p ?*node := ...
 if (p) {
     use(p)       // p is treated as *node in this branch
 }
@@ -318,7 +323,7 @@ Built-ins are split into two groups: **compiler intrinsics** (lowered by bosc it
 
 | Built-in | Type | Description |
 |----------|------|-------------|
-| `len(s)` | `(T[]) i64` or `(T[N]) i64` | Length of a slice (runtime load of the fat-pointer length word) or fixed array (compile-time constant `N`). |
+| `len(s)` | `([]T) i64` or `([N]T) i64` | Length of a slice (runtime load of the fat-pointer length word) or fixed array (compile-time constant `N`). |
 | `alloc(T)` | `owned *mut T` | Allocate writable storage for one `T`; consumes a type expression, not a runtime value. |
 | `new(expr)` | `owned *mut T` | Allocate writable storage for the expression's type, initialize with `expr`, return an owned pointer. |
 | `free(p)` | `void` | Free an `owned *T` / `owned *mut T` pointer and consume that pointer's obligation. |
@@ -332,7 +337,7 @@ The `builtin` package is special: bosc auto-imports it into every package (excep
 
 | Name | Form | Description |
 |------|------|-------------|
-| `error` | `interface { message(e *self) byte[]; destroy(e owned *self) }` | The standard error-condition interface. Concrete types satisfy it by providing both methods; see [Example: the error interface](#example-the-error-interface). |
+| `error` | `interface { message(e *self) []byte; destroy(e owned *self) }` | The standard error-condition interface. Concrete types satisfy it by providing both methods; see [Example: the error interface](#example-the-error-interface). |
 
 Bare references to `error` resolve to `builtin.error` without needing an explicit `import "builtin"`.
 
@@ -340,7 +345,7 @@ Bare references to `error` resolve to `builtin.error` without needing an explici
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `string.puts` | `(byte[]) void` | Write a byte slice to stdout |
+| `string.puts` | `([]byte) void` | Write a byte slice to stdout |
 | `string.puti` | `(i64) void` | Print a signed integer to stdout |
 | `string.putb` | `(byte) void` | Print a byte value as a decimal integer |
 | `string.putc` | `(byte) void` | Print a single byte as a character |
@@ -351,48 +356,48 @@ File IO lives in the `io` and `_io_sys` packages. The typed FD API in `io`:
 | Function/Method | Signature | Description |
 |------|------|------|
 | `io.O_RDONLY`, `O_WRONLY`, `O_RDWR`, `O_CREAT`, `O_EXCL`, `O_TRUNC`, `O_APPEND`, `O_NONBLOCK`, `O_CLOEXEC` | `i64` | File-mode flag constants matching Linux `<fcntl.h>`. Combine with bitwise `|`. |
-| `io.open` | `(path byte[], flags i64, mode i64) owned FD, i64` | Open a file. Returns `(fd, err)` where `err` is `0` on success or a positive errno on failure. On failure the returned `FD` is invalid and must be `dispose`d rather than `close`d. |
-| `io.FD.read` | `(fd *FD, buf mut byte[]) i64, i64` | Read up to `len(buf)` bytes. Returns `(n, err)` — `n=0` on EOF; partial reads with `err=0` may be retried. |
-| `io.FD.write` | `(fd *FD, buf byte[]) i64, i64` | Write `buf`. Returns `(n, err)`; short writes with `err=0` are not errors. |
+| `io.open` | `(path []byte, flags i64, mode i64) owned FD, i64` | Open a file. Returns `(fd, err)` where `err` is `0` on success or a positive errno on failure. On failure the returned `FD` is invalid and must be `dispose`d rather than `close`d. |
+| `io.FD.read` | `(fd *FD, buf []mut byte) i64, i64` | Read up to `len(buf)` bytes. Returns `(n, err)` — `n=0` on EOF; partial reads with `err=0` may be retried. |
+| `io.FD.write` | `(fd *FD, buf []byte) i64, i64` | Write `buf`. Returns `(n, err)`; short writes with `err=0` are not errors. |
 | `io.FD.close` | `(fd *owned FD) i64` | Close the fd and consume the owned obligation. Returns `0` on success or a positive errno. |
 | `io.STDIN`/`STDOUT`/`STDERR` | `FD` | Standard file descriptors (0, 1, 2). Borrowed — must not be `close`d. |
-| `io.reader` | `interface { read(r *self, buf mut byte[]) i64, i64 }` | Anything readable; `FD` satisfies it. |
-| `io.writer` | `interface { write(w *self, buf byte[]) i64, i64 }` | Anything writable; `FD` satisfies it. |
+| `io.reader` | `interface { read(r *self, buf []mut byte) i64, i64 }` | Anything readable; `FD` satisfies it. |
+| `io.writer` | `interface { write(w *self, buf []byte) i64, i64 }` | Anything writable; `FD` satisfies it. |
 | `io.copy` | `(dst writer, src reader) i64` | Copy bytes from `src` to `dst` until EOF; returns total bytes copied (or a negative errno on a read/write error). |
 
 The raw syscall wrappers, taking i64 fd values directly, live in `_io_sys`:
 
 | Function | Signature | Description |
 |------|------|------|
-| `_io_sys.read` | `(i64 fd, mut byte[] buf) i64` | Raw `read(2)` syscall |
-| `_io_sys.write` | `(i64 fd, byte[] buf) i64` | Raw `write(2)` syscall |
-| `_io_sys.open` | `(byte[] path, i64 flags, i64 mode) i64` | Raw `open(2)` syscall |
+| `_io_sys.read` | `(i64 fd, []mut byte buf) i64` | Raw `read(2)` syscall |
+| `_io_sys.write` | `(i64 fd, []byte buf) i64` | Raw `write(2)` syscall |
+| `_io_sys.open` | `([]byte path, i64 flags, i64 mode) i64` | Raw `open(2)` syscall |
 | `_io_sys.close` | `(i64 fd) i64` | Raw `close(2)` syscall |
 
 The `_init` package provides `_init.start` (the ELF entry point) and `_init.index_oob` (called by bounds checks). The `_heap` package provides the bootstrap allocator (mmap-backed: each allocation is one mapping with a small size header, `free` calls `munmap`). The `_iface` package provides `assert_to`, the runtime helper backing interface-to-interface type assertion (lazy per-typedesc itab cache). The `pair` package exists as a minimal cross-package struct used by tests.
 
 **`fmt` package** — composable formatting, built on `io.writer` and runtime type assertion. Five layers, smallest first; all storage is caller-owned (no GC obligations in the public surface), and the only heap traffic is the lazy itab cache inside `%v` dispatch.
 
-*Layer 1 — raw conversions* render one value into the head of a caller-provided `mut byte[]` and return the rendered bytes as a sub-slice of that buffer (`out[0:k]`, a borrow of the `out` parameter made legal by return-alias inference). No allocation, no I/O. The caller reads the result's `len` for the byte count and compares it against `n_digits`/`n_udigits`/`n_hex_digits` to detect truncation.
+*Layer 1 — raw conversions* render one value into the head of a caller-provided `[]mut byte` and return the rendered bytes as a sub-slice of that buffer (`out[0:k]`, a borrow of the `out` parameter made legal by return-alias inference). No allocation, no I/O. The caller reads the result's `len` for the byte count and compares it against `n_digits`/`n_udigits`/`n_hex_digits` to detect truncation.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `fmt.itoa` | `(out mut byte[], n i64) i64` | Signed decimal; leading `-`. |
-| `fmt.utoa` | `(out mut byte[], n u64) i64` | Unsigned decimal. |
-| `fmt.htoa` | `(out mut byte[], n u64) i64` | Lowercase hex, no `0x` prefix. |
+| `fmt.itoa` | `(out []mut byte, n i64) i64` | Signed decimal; leading `-`. |
+| `fmt.utoa` | `(out []mut byte, n u64) i64` | Unsigned decimal. |
+| `fmt.htoa` | `(out []mut byte, n u64) i64` | Lowercase hex, no `0x` prefix. |
 | `fmt.n_digits` / `n_udigits` / `n_hex_digits` | `(n) i64` | Predicted byte counts (for truncation detection). |
 
 Truncation: if `out` is too small, the longest prefix that fits is written and the returned count equals `len(out)`; compare against the matching `n_*` helper to detect it.
 
 *Layer 2 — writer helpers* format one value into a stack scratch buffer and emit it through an `io.writer` in exactly one `write` call, returning the `(written, error)` pair that mirrors `io.writer.write`: `fmt.str`, `fmt.int`, `fmt.uint`, `fmt.hex` (`0x`-prefixed), `fmt.char`, `fmt.bool`, `fmt.nl`.
 
-*Layer 3 — `fmt.Builder`* is a bring-your-own-memory accumulator: `struct { buf mut byte[], pos i64, err_ error }`, constructed inline by struct literal (no constructor). Append methods (`str`/`int`/`uint`/`hex`/`char`/`bool`/`nl`) follow a latched-error pattern — the first append that would overflow sets `err_` to `io.io_err.ENOSPC` and every later append is a no-op; inspect `error()` once at the end. `bytes()` returns the borrowed view `buf[0:pos]`; `space()` is remaining capacity; `reset()` rewinds the cursor and clears the latched error. The append methods return nothing (not `*mut Builder`): Boson forbids returning the borrowed `*mut` receiver, so chaining is expressed as a sequence of statements. `fmt.BuilderWriter{b: &builder}` adapts a `*mut Builder` to the `*self`-shaped `io.writer` so a Builder can be a `printf`/`Formatter` sink.
+*Layer 3 — `fmt.Builder`* is a bring-your-own-memory accumulator: `struct { buf []mut byte, pos i64, err_ error }`, constructed inline by struct literal (no constructor). Append methods (`str`/`int`/`uint`/`hex`/`char`/`bool`/`nl`) follow a latched-error pattern — the first append that would overflow sets `err_` to `io.io_err.ENOSPC` and every later append is a no-op; inspect `error()` once at the end. `bytes()` returns the borrowed view `buf[0:pos]`; `space()` is remaining capacity; `reset()` rewinds the cursor and clears the latched error. The append methods return nothing (not `*mut Builder`): Boson forbids returning the borrowed `*mut` receiver, so chaining is expressed as a sequence of statements. `fmt.BuilderWriter{b: &builder}` adapts a `*mut Builder` to the `*self`-shaped `io.writer` so a Builder can be a `printf`/`Formatter` sink.
 
-*Layer 4 — user-extension interfaces* `fmt.stringer { string(self *self) byte[] from(self) }` and `fmt.Formatter { format(self *self, w io.writer) error }`. The `from(self)` clause lets a stringer return a borrowed view of its own bytes (`return self.buf`, zero allocation); a static-returning `string()` also satisfies it (∅ ⊆ {self}). A type renders under `%v` via `stringer` if it implements it (cheap, no writer); otherwise via `Formatter` (constructs into a writer). Both are discovered at runtime through interface assertion.
+*Layer 4 — user-extension interfaces* `fmt.stringer { string(self *self) []byte from(self) }` and `fmt.Formatter { format(self *self, w io.writer) error }`. The `from(self)` clause lets a stringer return a borrowed view of its own bytes (`return self.buf`, zero allocation); a static-returning `string()` also satisfies it (∅ ⊆ {self}). A type renders under `%v` via `stringer` if it implements it (cheap, no writer); otherwise via `Formatter` (constructs into a writer). Both are discovered at runtime through interface assertion.
 
-*Layer 5 — variadic helpers* `fmt.print(format byte[], args ...any) i64, error` (to stdout) and `fmt.printf(w io.writer, format byte[], args ...any) i64, error`. A verb names a *rendering*; the argument's own type (carried by the `any`) decides correctness, so there is no verb whose job is to announce the type. Directives: `%d`→decimal for any integer type (signed types signed, unsigned unsigned), `%x`→`0x`-prefixed hex for any integer type, `%s`→pointer-to-`byte[]` (`&name` or `&"literal"`), `%c`→an integer as a character (its low byte), `%v`→natural by the value's type (integers in decimal, `bool` as `true`/`false`, `byte[]` as text, then `stringer`/`Formatter`, else a `%!v(?)` placeholder), `%%`→literal `%`. (C's `%u`/`%t` are gone — the type already carries signedness and boolean-ness; the verbs that existed only to restate the argument's type are unneeded.) A verb against a genuinely incompatible value (e.g. `%d` of a `bool`) writes an inline `%!d(BADTYPE)`-style marker and latches a non-OK error but continues; an unknown verb (e.g. `%q`) consumes its arg, writes `%!q(BADTYPE)`, and latches the same error; an out-of-args slot writes `%!d(MISSING)`; surplus args are appended `%v`-style and latch a surplus error; a write failure stops immediately. The `BADTYPE` / `?` placeholders are fixed v1 markers: surfacing the arg's actual type name in the marker awaits a typedesc-name intrinsic that bosc does not yet expose to source (fmt proposal Open Question #6); until it lands the markers carry no type name. `Formatter` dispatch wraps the writer in a stack-allocated counting adapter so the returned byte total includes the Formatter's output.
+*Layer 5 — variadic helpers* `fmt.print(format []byte, args ...any) i64, error` (to stdout) and `fmt.printf(w io.writer, format []byte, args ...any) i64, error`. A verb names a *rendering*; the argument's own type (carried by the `any`) decides correctness, so there is no verb whose job is to announce the type. Directives: `%d`→decimal for any integer type (signed types signed, unsigned unsigned), `%x`→`0x`-prefixed hex for any integer type, `%s`→pointer-to-`[]byte` (`&name` or `&"literal"`), `%c`→an integer as a character (its low byte), `%v`→natural by the value's type (integers in decimal, `bool` as `true`/`false`, `[]byte` as text, then `stringer`/`Formatter`, else a `%!v(?)` placeholder), `%%`→literal `%`. (C's `%u`/`%t` are gone — the type already carries signedness and boolean-ness; the verbs that existed only to restate the argument's type are unneeded.) A verb against a genuinely incompatible value (e.g. `%d` of a `bool`) writes an inline `%!d(BADTYPE)`-style marker and latches a non-OK error but continues; an unknown verb (e.g. `%q`) consumes its arg, writes `%!q(BADTYPE)`, and latches the same error; an out-of-args slot writes `%!d(MISSING)`; surplus args are appended `%v`-style and latch a surplus error; a write failure stops immediately. The `BADTYPE` / `?` placeholders are fixed v1 markers: surfacing the arg's actual type name in the marker awaits a typedesc-name intrinsic that bosc does not yet expose to source (fmt proposal Open Question #6); until it lands the markers carry no type name. `Formatter` dispatch wraps the writer in a stack-allocated counting adapter so the returned byte total includes the Formatter's output.
 
-Because a slice (16 bytes) cannot be coerced into an interface by value, `byte[]` arguments at a `...any` call site must be addressed — `fmt.print("%s", &name)`. Function-scope `&"literal"` (below) supplies the literal form `fmt.print("%s", &"hello")`.
+Because a slice (16 bytes) cannot be coerced into an interface by value, `[]byte` arguments at a `...any` call site must be addressed — `fmt.print("%s", &name)`. Function-scope `&"literal"` (below) supplies the literal form `fmt.print("%s", &"hello")`.
 
 `alloc(T)` is only valid for zero-initializable types. Types containing non-null pointers are not zero-initializable, so they must be constructed with `new(expr)` or some other initialized storage path.
 
@@ -575,8 +580,8 @@ fn close(fd owned i64) void {
 - `owned *T` → OwnedMask bit 0 set (the pointer itself is owned)
 - `owned *owned T` → OwnedMask bits 0+1 (both obligations exist independently)
 - `*mut T` → MutMask bit 1 set (write-through to T)
-- `owned T[]` → OwnedMask set at the backing level (the slice owns the buffer it points at)
-- `owned T[N]` → OwnedMask bit 0 set (the whole array value is one obligation)
+- `[]owned T` → OwnedMask set at the backing level (the slice owns the buffer it points at)
+- `owned [N]T` → OwnedMask bit 0 set (the whole array value is one obligation)
 
 The same convention applies to MutMask. This means `*mut T` and `*owned T` are placed symmetrically — both qualifiers sit between the `*` and the type they modify.
 
@@ -587,27 +592,27 @@ The same convention applies to MutMask. This means `*mut T` and `*owned T` are p
 `owned` on an aggregate denotes a **single** whole-aggregate obligation, never
 per-element obligations. There is no per-element ownership in the language:
 
-- **`owned T[]` (slice).** A slice is a fat pointer `{ptr → backing, len}`. The
+- **`[]owned T` (slice).** A slice is a fat pointer `{ptr → backing, len}`. The
   `owned` bit attaches to the **backing level** — the same slot `*owned T` uses
-  for "the T at the other end is owned." So `owned T[]` means *the slice owns the
+  for "the T at the other end is owned." So `[]owned T` means *the slice owns the
   buffer it points at*: one obligation, discharged with a single `free` of the
   backing. The elements are not individually owned.
-- **`owned T[N]` (fixed array).** A fixed array has no separate backing — the
+- **`owned [N]T` (fixed array).** A fixed array has no separate backing — the
   array *is* its storage, inline, exactly like a struct's bytes. So `owned`
-  attaches to the value itself (bit 0), and `owned T[N]` means *the whole array
+  attaches to the value itself (bit 0), and `owned [N]T` means *the whole array
   value is one obligation*, disposed as a unit. This is the array analogue of
   `owned <struct>`, where the entire struct value is a single obligation
   ([Owned struct fields](#owned-struct-fields)).
 
 `mut` and `owned` diverge on fixed arrays, and the divergence is principled:
 
-- **`mut T[N]` is rejected.** Fixed-array element mutability is governed by the
+- **`mut [N]T` is rejected.** Fixed-array element mutability is governed by the
   *binding* (`var` vs not — see [Mutability](#mutability-and-the-type-system)),
   not by a type qualifier, so a `mut` on a fixed array would be redundant. `mut`
-  on a *slice* (`mut T[]`) is meaningful — it is the write-through-element form —
+  on a *slice* (`[]mut T`) is meaningful — it is the write-through-element form —
   because a slice's elements live behind a pointer whose write permission is a
   property of the reference.
-- **`owned T[N]` is accepted** (whole-array obligation, above). Unlike `mut`, the
+- **`owned [N]T` is accepted** (whole-array obligation, above). Unlike `mut`, the
   obligation is a property of the value, not of a reference's write permission,
   so it is as meaningful on a fixed array as on a struct.
 
@@ -660,7 +665,7 @@ Passing `owned *owned T` to a function taking `*owned T` or `owned *T` — consu
 Ownership is unique, but access may alias. The compiler separates these two ideas:
 
 - **Ownership aliases are not allowed.** An `owned T` obligation cannot be held by two bindings at once. Passing to an owned parameter moves it; assigning to another owned binding moves it; using it afterward is rejected.
-- **Non-owning aliases are allowed but tracked.** A value of type `*T`, `*mut T`, `*?T`, etc. may be copied freely. A value-typed binding coerced from an owned source (`var t i64 := fd`) may also be created freely. In both cases the alias is recorded in flow state with the source's Origin, and the compiler invalidates it when the source is moved.
+- **Non-owning aliases are allowed but tracked.** A value of type `*T`, `*mut T`, `?*T`, etc. may be copied freely. A value-typed binding coerced from an owned source (`var t i64 := fd`) may also be created freely. In both cases the alias is recorded in flow state with the source's Origin, and the compiler invalidates it when the source is moved.
 - **Coercing to a non-owned destination strips ownership.** Passing `owned *owned mut node` to a parameter of type `*node` or `*mut node` does not move either obligation: `Accepts` strips owned at the coercion site. The callee receives only an access capability. Coercing to an `owned` destination (e.g. `*owned node`) moves instead.
 - **Value coercion is alias, not copy.** Stripping `owned` from a non-pointer source (e.g. `var t i64 := fd_owned`) duplicates the bit pattern into the destination but records a flow-state alias back to the source. Reading the destination after the source is moved is rejected as "cannot dereference pointer to X: the target was consumed," the same diagnostic a borrowed `*T` would produce. To obtain an independent obligation, construct it explicitly through a copy-returning function (see [Controlled copying](#controlled-copying)).
 
@@ -680,19 +685,19 @@ This is intentionally not Rust-style exclusive mutable borrowing. Multiple non-o
 ```
 type box struct {
     val i64
-    child owned *?owned mut node
+    child owned ?*owned mut node
 }
 
 fn bad(b owned *owned mut box) {
     alias *mut box := b
-    var child owned *?owned mut node := b.child
+    var child owned ?*owned mut node := b.child
     alias.child = nil       // may have overwritten the field whose obligation was moved
     free(b)                 // COMPILE ERROR: b.child fact was invalidated
 }
 
 fn ok(b owned *owned mut box) {
     alias *mut box := b
-    var child owned *?owned mut node := b.child
+    var child owned ?*owned mut node := b.child
     alias.val = 10          // does not touch owned storage
     free(b)                 // allowed if all owned fields are known consumed
     if (child) { free(child) }
@@ -831,17 +836,17 @@ Owned nullable pointer fields may also be moved out of an owned aggregate, and �
 ```
 type node struct {
     val i64
-    next owned *?owned mut node
+    next owned ?*owned mut node
 }
 
-fn destroy_one(n owned *owned mut node) owned *?owned mut node {
-    var next owned *?owned mut node := n.next  // consumes n.next, sets n.next = nil
+fn destroy_one(n owned *owned mut node) owned ?*owned mut node {
+    var next owned ?*owned mut node := n.next  // consumes n.next, sets n.next = nil
     free(n)                                  // allowed: n.next is known consumed
     return next
 }
 ```
 
-Non-null pointer fields cannot be moved out this way because there is no valid nil value to leave behind. If a field is intended to be moveable, it must be nullable (`*?T`).
+Non-null pointer fields cannot be moved out this way because there is no valid nil value to leave behind. If a field is intended to be moveable, it must be nullable (`?*T`).
 
 The compiler tracks consumed owned fields through flow paths such as `curr.next`. These facts participate in branch merging: if one branch consumes an owned field and another does not, the join is rejected. Assigning to a path invalidates facts for that path and its descendants, so a fact like `curr.next consumed` does not survive `curr = next`.
 
@@ -899,7 +904,7 @@ For the common cases — stack-owned values and heap-owned values with bundled o
 Nullable owned pointers are useful for data structures because they provide a clear "empty" value when moving ownership out of fields:
 
 ```
-var next owned *?owned mut node := curr.next
+var next owned ?*owned mut node := curr.next
 ```
 
 The source field becomes `nil`, so there is never a second owned pointer to the same allocation. Flow analysis also understands boolean checks on nullable pointers:
@@ -990,7 +995,7 @@ fn forward(n *node) i64 {
 A borrowed pointer may not be STORED somewhere that outlives the call:
 
 ```
-var saved *?node
+var saved ?*node
 
 fn bad_global(n *node) {
     saved = n               // COMPILE ERROR: borrowed pointer escapes
@@ -1008,11 +1013,11 @@ fn id(n *node) *node {
     return n                // OK: id's return aliases parameter 0
 }
 
-fn first_word(s byte[]) byte[] {
+fn first_word(s []byte) []byte {
     return s[0:1]           // OK: a sub-slice of the parameter
 }
 
-fn new_builder(buf mut byte[]) Builder {
+fn new_builder(buf []mut byte) Builder {
     return Builder{buf: buf, pos: 0}   // OK: the struct's field borrows buf
 }
 
@@ -1037,7 +1042,7 @@ denotes the receiver):
 
 ```
 pub interface stringer {
-    string(self *self) byte[] from(self)   // result may be a view of the receiver
+    string(self *self) []byte from(self)   // result may be a view of the receiver
 }
 ```
 
@@ -1081,7 +1086,7 @@ Read-only borrows preserve facts:
 fn inspect(b *box) i64 { return b.val }
 
 fn destroy(b owned *owned mut box) {
-    var child owned *?owned mut node := b.child
+    var child owned ?*owned mut node := b.child
     inspect(b)       // read-only borrow; b.child fact remains valid
     free(b)
     if (child) { free(child) }
@@ -1094,7 +1099,7 @@ Mutable borrows are conservative across function calls because the callee body m
 fn touch(b *mut box) { b.val = b.val + 1 }
 
 fn destroy(b owned *owned mut box) {
-    var child owned *?owned mut node := b.child
+    var child owned ?*owned mut node := b.child
     touch(b)         // may have written owned fields; b.child fact invalidated
     free(b)          // COMPILE ERROR
 }
@@ -1138,7 +1143,7 @@ rebind (`n = …`), a write to a value field or fixed-array element rooted
 at the binding (`s.f = …`, `a[i] = …` on a by-value `a`), or taking a
 mutable view of it (`&n`, `&n.f`, slicing an array `n[:]` — all of which
 yield `*mut`/`mut` only because the binding is `var`). Writing *through* a
-pointer (`*p = …`) or a `mut T[]` slice does not count — that mutability
+pointer (`*p = …`) or a `[]mut T` slice does not count — that mutability
 comes from the pointee type, not the binding, so such a binding stays
 immutable. Parameters are exempt (a `var` parameter documents a contract
 even if a given body doesn't reassign it). The check is enforced per
@@ -1160,7 +1165,7 @@ runs the call and drops the result. To keep a parameter's name for
 documentation while satisfying the use rule, read it into a discard:
 
 ```
-fn write(self *T, buf byte[]) {
+fn write(self *T, buf []byte) {
     _ := buf   // `buf` is read (used); the value is discarded
 }
 ```
@@ -1169,7 +1174,7 @@ One hard limit, shared with everything else `_` touches: **an owned value
 can't be discarded.** `_` of an owned-typed value, slot, or parameter is
 an error — an obligation must be consumed, never dropped.
 
-### Axis 2: Write-through mutability (`*mut T`, `mut T[]`)
+### Axis 2: Write-through mutability (`*mut T`, `[]mut T`)
 
 This axis only exists for *reference types* — pointers and slices. It controls whether you can write to the data *through* the reference. It is a property of the type, not the binding.
 
@@ -1177,8 +1182,8 @@ This axis only exists for *reference types* — pointers and slices. It controls
 *T        // pointer: cannot write through
 *mut T    // pointer: can write through
 
-T[]       // slice: cannot write through (elements are read-only)
-mut T[]   // slice: can write through (elements are writable)
+[]T       // slice: cannot write through (elements are read-only)
+[]mut T   // slice: can write through (elements are writable)
 ```
 
 An immutable binding to a `*mut T` cannot be rebound, but can still write through the pointer. A `var` binding to a `*T` can be rebound to a different pointer, but cannot write through it.
@@ -1277,7 +1282,7 @@ In static-init context (see [Static Initializers](#static-initializers)) two mor
 
 Non-string `&literal` at runtime is rejected with "cannot take the address of this expression at runtime; address-of-literal is only valid in static initializers" — there's no stable storage to point at for an arbitrary expression outside file scope.
 
-**Function-scope `&"literal"` is the one exception.** Taking the address of a *string literal* at function scope is valid: `&"hello"` evaluates to a pointer to a 16-byte static slice header `{ptr -> bytes, len}` synthesized in read-only-style static memory (one header per distinct literal, identical literals shared). Its lifetime is forever and its storage is never written, so the result is a stable, never-dies pointer to a `byte[]` — exactly what a `...any` call site needs for a string argument (`fmt.print("%s", &"hello")`). The header rides the same anonymous-global machinery (`StringSliceHeader` / `WriteStrSliceHeaders` in bosc) that file-scope `&SomeStruct{...}` uses, emitted as a block-form `var` directive with a relocation to the underlying string constant. The result type is pointer-to-byte-slice, written `*(byte[])` (see [Type syntax: parenthesized groups](#type-syntax-parenthesized-groups)).
+**Function-scope `&"literal"` is the one exception.** Taking the address of a *string literal* at function scope is valid: `&"hello"` evaluates to a pointer to a 16-byte static slice header `{ptr -> bytes, len}` synthesized in read-only-style static memory (one header per distinct literal, identical literals shared). Its lifetime is forever and its storage is never written, so the result is a stable, never-dies pointer to a `[]byte` — exactly what a `...any` call site needs for a string argument (`fmt.print("%s", &"hello")`). The header rides the same anonymous-global machinery (`StringSliceHeader` / `WriteStrSliceHeaders` in bosc) that file-scope `&SomeStruct{...}` uses, emitted as a block-form `var` directive with a relocation to the underlying string constant. The result type is pointer-to-byte-slice, written `*[]byte` (see [Type syntax: prefix reading order](#type-syntax-prefix-reading-order)).
 
 ### Function pointers
 
@@ -1320,7 +1325,7 @@ Parser limitation: `(args)` postfix is only legal after a bare symbol or `pkg.fn
 
 ### Implicit coercion
 
-`*mut T` is implicitly coercible to `*T`, and `mut T[]` is implicitly coercible to `T[]`. A more-capable reference can always be used where a less-capable one is expected:
+`*mut T` is implicitly coercible to `*T`, and `[]mut T` is implicitly coercible to `[]T`. A more-capable reference can always be used where a less-capable one is expected:
 
 ```
 fn foo(x *i16) { ... }
@@ -1333,13 +1338,13 @@ The reverse is not permitted — a `*T` cannot be passed where `*mut T` is requi
 
 ### Strings
 
-Strings are immutable slices of bytes: `byte[]`. The `str` type (a bare pointer to null-terminated bytes) does not exist. String literals have type `byte[]`.
+Strings are immutable slices of bytes: `[]byte`. The `str` type (a bare pointer to null-terminated bytes) does not exist. String literals have type `[]byte`.
 
 ```
-greeting byte[] := "hello\n"   // typical string constant
+greeting []byte := "hello\n"   // typical string constant
 ```
 
-A mutable byte buffer has type `mut byte[]`. String literals cannot be coerced to `mut byte[]` — they're emitted by the compiler as `data` rather than `var` (the metadata distinction noted under [Types](#types)) and are intended to be treated as read-only even though the current loader maps the whole data section writable.
+A mutable byte buffer has type `[]mut byte`. String literals cannot be coerced to `[]mut byte` — they're emitted by the compiler as `data` rather than `var` (the metadata distinction noted under [Types](#types)) and are intended to be treated as read-only even though the current loader maps the whole data section writable.
 
 String literals are emitted by the compiler with both the slice data and a trailing null byte, so they can be passed to APIs that require null-terminated strings (like the `open` syscall) even though the null is outside the slice's stated length.
 
@@ -1416,11 +1421,11 @@ Field separators inside a struct body may be `,`, a newline (the lexer inserts `
 
 ```
 interface Writer {
-    write(self *self, b byte[]) i64
+    write(self *self, b []byte) i64
 }
 
 interface error {
-    message(self *self) byte[]
+    message(self *self) []byte
     destroy(self owned *self)
 }
 ```
@@ -1442,8 +1447,8 @@ A type `T` satisfies interface `I` if, for every method `m` declared in `I`, typ
 | Source coerced into `I` | Receiver shapes the method may declare |
 |--------------------------|----------------------------------------|
 | a bare value (`T`)       | value receiver (`self`) only |
-| a read-only pointer (`*T`, `*?T`) | `*self` only |
-| a mutable pointer (`*mut T`, `*?mut T`) | `*self` **or** `*mut self` |
+| a read-only pointer (`*T`, `?*T`) | `*self` only |
+| a mutable pointer (`*mut T`, `?*mut T`) | `*self` **or** `*mut self` |
 
 The mutable-source row encodes the legal `*mut → *` weakening: a mutable view may call a `*self` (read-only) method. The reverse — a read-only `*T` source driving a `*mut self` (mutating) method — is **rejected**, because that would mutate through a view that promised not to. (`&x` of a `var` yields `*mut T`, so the common `greet(&d)` pattern coerces a mutable pointer and can satisfy either receiver kind; `&x` of an immutable binding yields a read-only `*T`.)
 
@@ -1543,12 +1548,12 @@ The concrete method (e.g. `destroy(self owned *myerror)`) receives the pointer a
 
 ```
 interface error {
-    message(self *self) byte[]
+    message(self *self) []byte
     destroy(self owned *self)
 }
 
 type myerror i64 {
-    message(self *myerror) byte[] {
+    message(self *myerror) []byte {
         return "an error occurred\n"
     }
     destroy(self owned *myerror) {
@@ -1599,7 +1604,7 @@ type color values {
     GREEN
     BLUE
 } {
-    name(c color) byte[] {
+    name(c color) []byte {
         if (c == color.RED)   { return "red" }
         if (c == color.GREEN) { return "green" }
         return "blue"
@@ -1610,13 +1615,13 @@ type color values {
 And projection-bearing:
 
 ```
-type io_error values (i64, byte[]) {
+type io_error values (i64, []byte) {
     NOT_FOUND:         404, "not found"
     PERMISSION_DENIED: 403, "permission denied"
     BUSY:              503, "busy"
 } {
-    message(e io_error) byte[] {
-        return byte[](e)
+    message(e io_error) []byte {
+        return []byte(e)
     }
 }
 ```
@@ -1643,7 +1648,7 @@ Selector resolution (`io_error.NOT_FOUND`, `errors.io_error.NOT_FOUND`, `pkg.Typ
 
 A values type is represented at runtime as its private tag — `i64` in v1, dense from 0 in declaration order. The tag itself is unreachable from user code: there is no operation that exposes the raw bits, and conversion to an integer always goes through a declared integer projection.
 
-Projection data lives in compiler-generated static tables, one per declared projection type, indexed by tag. For the `io_error` declaration above, codegen emits two table symbols (`__projection_io_error__0` for the `i64` projection, `__projection_io_error__1` for the `byte[]` projection) plus the method functions.
+Projection data lives in compiler-generated static tables, one per declared projection type, indexed by tag. For the `io_error` declaration above, codegen emits two table symbols (`__projection_io_error__0` for the `i64` projection, `__projection_io_error__1` for the `[]byte` projection) plus the method functions.
 
 The projection-table symbol scheme uses the case's *index in the projection signature* rather than the projection type's printed form. Earlier revisions encoded the type's structure into the key, but every flat-string encoding is collidable against some user-chosen type alias. Indices are scoped to a single values declaration (whose duplicate-projection check already enforces uniqueness), so a numeric index can never collide.
 
@@ -1653,13 +1658,13 @@ A cast `T(e)` where `e` has values type `V` and `T` is one of `V`'s declared pro
 
 ```
 e io_error := io_error.NOT_FOUND
-string.puts(byte[](e))      // copies the byte[] projection at tag(e)
+string.puts([]byte(e))      // copies the []byte projection at tag(e)
 string.puti(i64(e))         // copies the i64 projection at tag(e)
 ```
 
 There is no implicit conversion: every projection use is an explicit cast. Casting to a type the values declaration does *not* project to is rejected with the directed `Cannot cast V to T: V has no T projection` diagnostic.
 
-The cast path handles scalar and memory-backed projection element types uniformly: scalar projections (i8…i64, function pointers, plain pointers) lower to a single `mov dest [base+idx*scale]`; memory-backed projections (`byte[]`, structs, fixed arrays) lower to a `lea` of the table slot followed by `spot_memcpy`. Element sizes that x86-64's SIB byte cannot encode (16-byte slice headers, larger structs) precompute the byte offset (`shl` for power-of-two sizes, `imul` otherwise) and index with scale 1.
+The cast path handles scalar and memory-backed projection element types uniformly: scalar projections (i8…i64, function pointers, plain pointers) lower to a single `mov dest [base+idx*scale]`; memory-backed projections (`[]byte`, structs, fixed arrays) lower to a `lea` of the table slot followed by `spot_memcpy`. Element sizes that x86-64's SIB byte cannot encode (16-byte slice headers, larger structs) precompute the byte offset (`shl` for power-of-two sizes, `imul` otherwise) and index with scale 1.
 
 ### Closed symbolic set
 
@@ -1683,13 +1688,13 @@ Different values types are rejected from comparison even when both are represent
 
 ### Value-receiver methods and interface satisfaction
 
-Methods on a values type are emitted as regular three-part symbols (`pkg.io_error.message`) and are called the same way as any other type-block method. With a value-receiver shape (`message(e io_error) byte[]`), `v.method()` passes `v` directly — no address is taken, no memory backing is forced.
+Methods on a values type are emitted as regular three-part symbols (`pkg.io_error.message`) and are called the same way as any other type-block method. With a value-receiver shape (`message(e io_error) []byte`), `v.method()` passes `v` directly — no address is taken, no memory backing is forced.
 
 A values type whose methods are value-receiver shaped and whose tag fits in 8 bytes satisfies a value-receiver interface without heap allocation. The interface fat pointer carries the tag in its data word and the producer's vtable in the vtable word:
 
 ```
 interface error_val {
-    message(e self) byte[]
+    message(e self) []byte
 }
 
 fn open() error_val {
@@ -1709,12 +1714,12 @@ values io_error {
     case NOT_FOUND 0
     case PERMISSION_DENIED 1
     projection i64
-    projection byte[]
+    projection []byte
     method message
 }
 ```
 
-This carries the case list (with private tags), the projection signature, and the bare method names. The importing package reconstructs the `ValuesDecl` from this directive and from the already-imported function table, so `errors.io_error.NOT_FOUND`, `byte[](err)`, and `err.message()` all work cross-package without re-running the producer's `ToAST`. The projection-table symbols themselves are referenced by their qualified form (`errors.__projection_io_error__0`); the consumer emits a reference and the linker resolves it to the producer's data section.
+This carries the case list (with private tags), the projection signature, and the bare method names. The importing package reconstructs the `ValuesDecl` from this directive and from the already-imported function table, so `errors.io_error.NOT_FOUND`, `[]byte(err)`, and `err.message()` all work cross-package without re-running the producer's `ToAST`. The projection-table symbols themselves are referenced by their qualified form (`errors.__projection_io_error__0`); the consumer emits a reference and the linker resolves it to the producer's data section.
 
 ### Payload variants (ADTs) and the variant `switch`
 
@@ -1724,8 +1729,8 @@ with brace syntax, and the tag selects which struct:
 
 ```
 type file_info values {
-    FILE_INFO{ fd i64, path byte[] }
-    SOCKET{ fd i64, addr byte[] }
+    FILE_INFO{ fd i64, path []byte }
+    SOCKET{ fd i64, addr []byte }
     CLOSED
 }
 ```
@@ -1734,7 +1739,7 @@ A payload-bearing value is laid out flat as `{ tag : i64 }` followed by the
 largest variant's payload, and is memory-backed like any struct. A recursive
 payload must go through a pointer (`NODE{ left *tree }`); a by-value cycle has no
 finite size and is rejected. Payload variants and the constant-projection form
-(`values (i64, byte[]) {...}`) are mutually exclusive on one type.
+(`values (i64, []byte) {...}`) are mutually exclusive on one type.
 
 Construction uses struct-literal syntax on the case selector; a bare variant is
 just its selector:
@@ -1824,11 +1829,11 @@ var b any := &m     ; pointer-backed: data = &m,  shape word = *mut i64
 ### Variadic parameters
 
 A function's last parameter may be variadic, written `name ...T`. Inside the
-body it is an ordinary `T[]` slice; the `...` is shed at the body boundary.
+body it is an ordinary `[]T` slice; the `...` is shed at the body boundary.
 
 ```
-fn sum(xs ...i64) i64 { ... }       ; xs has type i64[] in the body
-fn printf(fmt byte[], args ...any)  ; args has type any[]
+fn sum(xs ...i64) i64 { ... }       ; xs has type []i64 in the body
+fn printf(fmt []byte, args ...any)  ; args has type []any
 ```
 
 Rules:
@@ -1836,7 +1841,7 @@ Rules:
 - The variadic parameter must be **last**; only one is allowed.
 - At each call site, the compiler stack-allocates a backing array in the
   caller's frame, coerces each trailing argument into an element (per-element
-  concrete→interface coercion for an `any[]` element type, or a width-matched
+  concrete→interface coercion for an `[]any` element type, or a width-matched
   value copy for a scalar element type), and passes a slice header pointing at
   that array. No heap allocation.
 - An untyped integer literal argument is materialized as `i64` before coercion.
@@ -1968,9 +1973,9 @@ Bindings work at file scope the same as inside functions:
 var counter i64                  // zero-initialized
 var answer  i64 := 42             // primitive literal
 var label   byte := 'Z'
-var buf     byte[100]            // zero-filled fixed array
+var buf     [100]byte            // zero-filled fixed array
 
-greeting byte[] := "hi\n"   // slice over a string constant
+greeting []byte := "hi\n"   // slice over a string constant
 ```
 
 File-scope declarations are visible to every function in the package, regardless of source order. They are forward-bindable: a function defined earlier in the file can call into a global declared later. This is consistent with how cross-function calls work and is implemented by an early pass that registers all top-level names before any body codegen happens.
@@ -1984,9 +1989,9 @@ The supported forms compose recursively:
 - Integer literals (any width, any signedness; negative via the `0 - N` parser shape).
 - Byte literals.
 - String literals into `byte[N]` (inline copy, zero-padded).
-- String literals into `byte[]` (16-byte slice header with a relocation to a string constant in `.data`).
+- String literals into `[]byte` (16-byte slice header with a relocation to a string constant in `.data`).
 - Struct literals (each field encoded recursively, byte offsets concatenated, relocations shifted into the outer struct's coordinates).
-- Array literals `[e1, e2, …]` into `T[N]` (element-by-element encoding, length must match) or into `T[]` (anonymous backing array `T[len]` queued via the anonymous-globals path, plus a 16-byte slice header with a relocation to it).
+- Array literals `[e1, e2, …]` into `[N]T` (element-by-element encoding, length must match) or into `[]T` (anonymous backing array `T[len]` queued via the anonymous-globals path, plus a 16-byte slice header with a relocation to it).
 - `&someGlobal` — 8-byte pointer slot with a relocation to the named global.
 - `&SomeStruct{...}` — recursively encodes the inner struct into a fresh anonymous global (`__static_0`, `__static_1`, …) and emits a pointer slot relocated to it.
 - `&someGlobalArr[N]` for compile-time-constant N — a single relocation to the array's symbol with `Addend = N * elementSize`. Pointer-into-array without any auxiliary storage.
@@ -2001,7 +2006,7 @@ Anything else (function calls, runtime expressions, type mismatches, length mism
 type config struct {
     threshold i64
     current   *i64       // pointer field
-    greeting  byte[]     // slice field
+    greeting  []byte     // slice field
 }
 
 var counter i64 := 0
@@ -2319,7 +2324,7 @@ The linker requires each input `.bo` to declare a non-empty `Pkgname` and reject
 
 After all sections are positioned and section base addresses are known, the linker walks each placed var's `Relocs` and writes the absolute virtual address `targetVA + Addend` into the 8-byte pointer slot at `Offset`. Code-section relocations remain PC-relative 32-bit (`Relocation.Apply`) — distinct math from `DataReloc.Apply`'s 64-bit absolute writes.
 
-The ELF entry point is fixed: the linker looks for `_init.start`. The `_init` package (provided by the runtime's `init_linux.bs`) must define a `start` function that calls `main.main` (passing argv as `byte[][]` in rdi) and exits with main's return value.
+The ELF entry point is fixed: the linker looks for `_init.start`. The `_init` package (provided by the runtime's `init_linux.bs`) must define a `start` function that calls `main.main` (passing argv as `[][]byte` in rdi) and exits with main's return value.
 
 ---
 
@@ -2437,7 +2442,7 @@ The runtime lives at `runtime/<pkg>/*.bs` under `BOSON_HOME` and is shared by ev
 | `_heap`    | `heap_linux.bs` | mmap-backed allocation and deallocation for `alloc`, `new`, and `free`. |
 | `_io_sys`  | `io_sys_linux.bs` | Raw Linux file-IO syscall wrappers (`read`, `write`, `open`, `close`) taking i64 fds. |
 | `string`   | `string.bs`, `puts_linux.bs` | String formatting and stdout primitives: `puts`, `puti`, `putb`, `putc`, `exit`, plus internal `strlen`, `itoa`, `uitoa`. File IO is no longer here; see `_io_sys` and `io`. |
-| `io`       | `io.bos` | Typed file IO: `type FD i64` with `read`/`write`/`close` methods; `fn open(byte[], i64, i64) owned FD, i64`; `STDIN`/`STDOUT`/`STDERR` globals; `reader`/`writer` interfaces; `fn copy(writer, reader) i64`. Wraps `_io_sys`. |
+| `io`       | `io.bos` | Typed file IO: `type FD i64` with `read`/`write`/`close` methods; `fn open([]byte, i64, i64) owned FD, i64`; `STDIN`/`STDOUT`/`STDERR` globals; `reader`/`writer` interfaces; `fn copy(writer, reader) i64`. Wraps `_io_sys`. |
 | `pair`     | `pair.bos` | Minimal cross-package struct used only by tests. |
 | `builtin`  | `builtin.bos` | Auto-imported into every package. Currently holds the `error` interface and acts as the home for documentation of compiler intrinsics. |
 
@@ -2477,17 +2482,17 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Compile-time integer literal arithmetic (`<intlit>` type) with arbitrary precision
 - Type aliases (`type Name Underlying`) with distinct-type semantics
 - Type casts (`T(expr)`) including widening/narrowing/reinterpretation
-- Slices (`T[]`), fixed arrays (`T[N]`), pointers (`*T`), structs
+- Slices (`[]T`), fixed arrays (`[N]T`), pointers (`*T`), structs
 - Anonymous struct types (`struct { quot i64, rem i64 }`) as parameter, return, and var types
 - Bare struct literals (`{ field: val }`) with shape inferred from the surrounding context (return, typed initializer, assignment lvalue, argument position)
 - `x := expr` / `var x := expr` type inference from the initializer (`<intlit>` resolves to `i64`; void/nil sources rejected)
-- Nullable pointers (`*?T`), non-null pointers (`*T`), boolean narrowing for nullable pointers, and postfix `?` non-null assertions
-- Nested slices/arrays (`byte[][]`, `T[N][M]`, etc.)
+- Nullable pointers (`?*T`), non-null pointers (`*T`), boolean narrowing for nullable pointers, and postfix `?` non-null assertions
+- Nested slices/arrays (`[][]byte`, `[N]T[M]`, etc.)
 - Immutable and `var` bindings with declaration initializers (`x i64 := 42`)
 - `var`-never-reassigned enforcement: a `var` whose mutability is never used (no rebind, value-field/array write, or mutable-view/`&`/array-slice) is a compile error directing the author to drop `var`; checked per scope, parameters exempt
 - Unused-binding enforcement: a binding (local or parameter) that is never read, address-taken, passed, or consumed is a compile error; checked per scope at scope exit and per function for parameters; unused subsumes never-reassigned when both apply
 - The discard `_`: a write-only, never-readable, repeatable binding target valid in declarations, assignments, destructuring slots, and parameters; the initializer/argument is still evaluated; discarding an owned value is rejected
-- File-scope variable declarations with compile-time-constant initializers — integer/byte literals, string-into-`byte[N]`, string-into-`byte[]` (slice with relocated pointer), struct literals composing all of the above, array literals (`[1, 2, 3]`) for fixed-array and slice destinations, `&someGlobal`, `&SomeStruct{...}` (anonymous globals), `&globalArr[N]` (pointer-into-array via relocation addend)
+- File-scope variable declarations with compile-time-constant initializers — integer/byte literals, string-into-`byte[N]`, string-into-`[]byte` (slice with relocated pointer), struct literals composing all of the above, array literals (`[1, 2, 3]`) for fixed-array and slice destinations, `&someGlobal`, `&SomeStruct{...}` (anonymous globals), `&globalArr[N]` (pointer-into-array via relocation addend)
 - Array literals at runtime as initializers for fixed-array locals; slice destinations rejected with a directed error (lifetime issue)
 - Full nested `*mut T` write-through mutability with implicit coercion
 - Full `owned T` ownership type system: move semantics, `dispose()`, `owned()` promotion, owned struct fields, owned-field move tracking, if/else branch analysis, loop backedge/exit checks, and scope-exit checks
@@ -2497,7 +2502,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Field-level pointer provenance: per-field pointer facts in flow state catch self-referential struct escapes at return, dispose/free invalidating field-pointer aliases, and out-of-scope local-address extraction through a struct field
 - Interfaces: structural satisfaction at coercion sites, fat-pointer representation (data + vtable, 16 bytes), automatic vtable emission per `(base, shape, I)` coercion, indirect dispatch through the vtable, and `owned I` / `I` interface qualifiers. The vtable carries a `[typedesc_ptr, shape_word, method_0..N]` layout: slot 0 is the single per-base-type `__typedesc_<base>` symbol (built-in scalar typedescs emitted by `builtin`), slot 1 is a canonical 64-bit shape word encoding the source's pointer/mut/slice/array shape, methods follow at slot 2+
 - The `any` built-in empty interface (zero methods, satisfied by every concrete type, available without import); used as a coercion target and as the element type of an untyped variadic
-- Variadic parameters (`name ...T`, last only): desugared to a `T[]` slice built on the caller's stack with per-element coercion, explicit `slice...` forwarding, and borrow-checked non-escaping callee slice
+- Variadic parameters (`name ...T`, last only): desugared to a `[]T` slice built on the caller's stack with per-element coercion, explicit `slice...` forwarding, and borrow-checked non-escaping callee slice
 - Concrete-type assertion (`x.(T)` → `multiretu{T, bool}`, bound via the two-value declaration form) lowering to an inline two-compare check (typedesc identity + exact shape-word equality), and a type switch (`switch (v x.(type)) { case T {...} default {...} }`) with first-match-wins flow-narrowed case binding
 - Interface-to-interface assertion (`x.(I)` and `case SomeIface` in a type switch) backed by the `_iface.assert_to` runtime helper and per-typedesc lazy itab caches; the structured `__typedesc_<T>` / `__typedesc_cache_<T>` / `__iface_desc_<I>` records (with FNV-1a name/sig hashes, canonical non-receiver signature text, and a shape-derived receiver-shape match) are home-package-emitted and resolved cross-package by relocation; `x.(any)` allocates a 2-slot itab preserving the `[typedesc, shape]` invariant
 - Coercion-time interface satisfaction uses the full shape-word receiver-shape filter (distinguishing value / `*self` directions exactly), in lockstep with the runtime helper's derivation; the new `typedesc` / `typedesc_cache` / `iface_desc` bas directives serialize the records and bas enforces the typedesc/cache single-emitter pairing; `bdump` pretty-prints all three
@@ -2508,9 +2513,9 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Path-based imports with qualified calls (`import "stdlib/io"; io.puts(...)`)
 - Cross-package struct types (`pair.pair`, `pair.pair{...}` literals) with auto-qualification of leaf type names at import time
 - Bosc-emitted function signatures (`type fn(...) ret`) so cross-package function calls work with Boson-source packages as well as hand-written bas runtime packages
-- `argv` passed to `main(args byte[][])` by the `_init.start` entry stub
-- `&arr[i]`, `&s.field` at runtime; function-scope `&"literal"` (static slice header, type `*(byte[])`); other `&literal` forms rejected at runtime with a directed error
-- Parenthesized type groups `*(byte[])` / `*mut (byte[])` for naming pointer-to-slice types
+- `argv` passed to `main(args [][]byte)` by the `_init.start` entry stub
+- `&arr[i]`, `&s.field` at runtime; function-scope `&"literal"` (static slice header, type `*[]byte`); other `&literal` forms rejected at runtime with a directed error
+- Parenthesized type groups `*[]byte` / `*mut ([]byte)` for naming pointer-to-slice types
 - Cross-package struct methods: a struct's method set rides the `struct` directive (method-name list) into the `.bo` and is reconstructed on import, so methods on imported structs resolve at compile time (parallel to type-alias methods)
 - The `fmt` runtime package (five-layer formatting: raw conversions, writer helpers, `Builder`, `stringer`/`Formatter`, `print`/`printf`)
 - Register-scaled indexing into globals via `lea` materialization (no `[symbol + reg*scale]` SIB form exists on x86-64; bosc emits an `lea` to materialize the base, then `[reg + idx*scale]`)
@@ -2533,7 +2538,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Boson source string and character literal escapes: `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, `\'`, `\xHH`
 - Type-alias casts as file-scope static initializers (`var fd FD := FD(3)`, qualified form `io.FD(3)`)
 - Position tracking through a leading file-level doc comment preamble (errors point at the correct source line even when the file begins with comments)
-- `values` types (`type Name values { ... }`): closed symbolic case sets with compiler-private dense `i64` tags, scoped case access (`T.CASE`, `pkg.T.CASE`), declared static projections with explicit projection casts (`i64(e)`, `byte[](e)`, struct projections, function-pointer projections), optional value-receiver methods, value-backed interface satisfaction without heap allocation, and cross-package use through a `.bo` `values` directive
+- `values` types (`type Name values { ... }`): closed symbolic case sets with compiler-private dense `i64` tags, scoped case access (`T.CASE`, `pkg.T.CASE`), declared static projections with explicit projection casts (`i64(e)`, `[]byte(e)`, struct projections, function-pointer projections), optional value-receiver methods, value-backed interface satisfaction without heap allocation, and cross-package use through a `.bo` `values` directive
 - Value-receiver methods (`name(e T)` rather than `name(e *T)`) on `i64`-sized type aliases and `values` types; recognized at call-site dispatch and accepted as the receiver shape for value-backed interface coercion
 - Shared selector resolver (`cmd/bosc/resolve.go`) classifying `Dot` chains into `ResolvedRuntimeValue` / `ResolvedPackage` / `ResolvedType` / `ResolvedValuesType` / `ResolvedValuesCase` / `ResolvedStructField` / `ResolvedFunction`; `Funcall.Callee` carries the resolved chain, so qualified calls, methods, function pointers, and values cases reach codegen through the same path
 - Cross-kind name collision rejection at package level between type-shaped declarations (struct / typealias / interface / values / imported package), so a values type cannot silently shadow a struct or vice versa
