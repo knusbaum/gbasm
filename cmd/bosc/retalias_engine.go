@@ -389,10 +389,46 @@ func returnExprParamAliases(c *Context, f *FuncDecl, expr AST, slotType ASTType)
 	slotIsView := rt.Indirection > 0 || rt.IsSlice() || c.IsInterfaceType(rt)
 
 	if slotIsView {
-		// Read 1: the expression's own tracked origin.
+		// A concrete VALUE coerced to an interface slot is value-backed: the fat
+		// pointer's data word holds a COPY of the value (a MOVE, when the source
+		// is owned), not a reference to the source's storage. So the value's OWN
+		// origin does not alias or escape — unlike a POINTER source, whose data
+		// word IS the borrowed pointer. This is the small-owned-error-by-value
+		// pattern: `return a` where a is an owned ≤8-byte struct returned as an
+		// owned interface moves cleanly out.
+		srct := expr.ASTType(c).StripOwned()
+		valueBackedIface := c.IsInterfaceType(rt) && srct.Indirection == 0 &&
+			!srct.IsSlice() && !c.IsInterfaceType(srct)
+
+		// Read 1: the expression's own tracked origin. Skipped for a value
+		// source into an interface (its own storage isn't aliased — see above).
 		ptr := pointerExprForAST(c, expr, "")
-		if ptr.KnownOrigin {
+		if ptr.KnownOrigin && !valueBackedIface {
 			record(ptr.Origin)
+		}
+
+		// A value-backed struct copies borrowed POINTER/SLICE fields verbatim,
+		// so a returned copy still aliases whatever those fields borrow. Record
+		// the source's field origins (a local field origin rejects; a borrowed
+		// param field records an alias). A field-free value (scalar, or a struct
+		// whose fields are plain/owned) records nothing — the move is clean.
+		if valueBackedIface {
+			switch v := unwrapReturnExpr(expr).(type) {
+			case *Symbol:
+				if !c.IsGlobalBinding(v.Name) {
+					for _, origin := range c.PointerFlow().FieldOrigins(flow.Binding(v.Name)) {
+						record(origin)
+					}
+				}
+			case *StructLiteral:
+				const synth = "__retval_iface"
+				c.PointerFlow().ForgetFieldPointers(flow.Binding(synth))
+				recordStructLiteralFieldFacts(c, VarFlowPath(synth), v)
+				for _, origin := range c.PointerFlow().FieldOrigins(flow.Binding(synth)) {
+					record(origin)
+				}
+				c.PointerFlow().ForgetFieldPointers(flow.Binding(synth))
+			}
 		}
 
 		// Read 2: rooted field/sub-slice views whose precise path fact is

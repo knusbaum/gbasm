@@ -1,0 +1,35 @@
+package main
+
+import "fmt"
+import "io"
+
+// A small (≤8-byte) owned struct can be returned as an owned interface by
+// VALUE — the value-backed data slot carries a copy of the bits, and because
+// the source is owned, the copy is a MOVE out of the function (no heap alloc,
+// no borrow of the dead frame). The owned interface is later consumed by a
+// consuming method. Regression: the return-alias engine treated the value
+// source as a borrowed local escaping ("Borrowed slice escapes through return").
+type foo struct{ x owned i64 } {
+	format(self foo, w io.writer) ?error {
+		_, err := fmt.printf(w, "foo(%d)", self.x)
+		return err
+	}
+	message(_ foo) byte[] {
+		return "fake error"
+	}
+	destroy(e owned foo) {
+		fmt.print("destroyed\n")
+		dispose(e)
+	}
+}
+
+fn boo() owned built_error {
+	a owned foo := {x: 10}
+	return a
+}
+
+fn main() {
+	x owned built_error := boo()
+	fmt.print("X: %v\n", x)
+	x.destroy()
+}

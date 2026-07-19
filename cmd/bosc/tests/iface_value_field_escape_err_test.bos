@@ -1,0 +1,15 @@
+package main
+
+// A value-backed struct copies its fields verbatim, so a borrowed pointer field
+// still dangles if the struct is returned as an interface. Must be rejected even
+// though the struct's OWN storage would move cleanly.
+type box struct{ p *i64 } { get(self box) i64 { return *self.p } }
+interface Getter { get(self self) i64 }
+
+fn leak() Getter {
+	n i64 := 5
+	b box := {p: &n}
+	return b
+}
+
+fn main() { }

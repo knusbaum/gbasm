@@ -1,0 +1,2 @@
+Compiling tests/iface_value_field_escape_err_test.bos
+Fatal: Cannot return "b" by value: field "p" contains a pointer to local-scope storage; the alias would dangle in the returned copy
