@@ -40,22 +40,44 @@ property of a reference.** It is a **qualifier that binds right and marks the
 type immediately to its right as mutable — at every level**, exactly like `*`
 and `[]` are constructors that apply to what's on their right.
 
-### 2.1 `var` is the declaration-spelling of the outermost `mut`
+### 2.1 The outermost `mut` is `var`, and a user never writes a leading `mut`
 
 ```
-var x i64 := 10      // x's TYPE is `mut i64` — a mutable i64
+var x i64 := 10      // x's full type is `mut i64` — a mutable i64
 x i64 := 10          // x's type is `i64` — an immutable i64
 ```
 
-A declaration hoists the **outermost** `mut` out of the type and onto the `var`
-keyword before the name. The type still conceptually carries it. This is the
-seam between declaration syntax and type syntax.
+An object's full type conceptually carries an outermost (binding) `mut`, but a
+user **never writes it as a leading `mut`**. There is exactly one written form
+for it — `var` — and it lives only at **bindings**:
 
-- **Locals:** `var` before the name (immutable by default). Confirmed.
+- **Locals:** `var` before the name (immutable by default).
 - **Params:** same — `fn f(var p T)` makes `p` rebindable; params are `const`
   (immutable binding) by default (`parseParams`, parser.go).
-- **Struct fields:** a field's mutability comes from the containing struct
-  *value's* binding — fields are not independently `var`.
+
+**A leading `mut` on a type is forbidden in every source position** (see §2.4).
+The outermost mut is legal only where a type is *read*, not written — error
+messages, type displays — where the compiler may render a value's full type as
+`mut i64`. Rationale: allowing a leading `mut` would give two spellings of a
+mutable local (`var x i64` vs `x mut i64`) and break the "scan for `var`"
+invariant.
+
+**Return types and struct fields are pseudo-declarations** — a name and a type,
+with no `var` slot — so they carry **no** outer mut either, which makes them
+match `var`-declaration semantics rather than being a special case:
+
+- A **return value's** mutability is the *caller's* binding (`x := f()` vs
+  `var x := f()`), so a leading `mut` on a return type is inert — forbidden.
+  (Forbidding immutable-return → mutable-binding was considered and rejected: it
+  would force `mut T` on nearly every function, since the whole point is that
+  the caller decides.)
+- A **struct field's** mutability is the containing struct *value's* binding —
+  one object, mutability controlled in exactly one place (consistent with arrays
+  having no inner mut, §2.3/§2.6). Interior-mutable fields (a `Cell`-style
+  "writable even in an immutable struct") are a deliberate future feature, not a
+  side effect of "there's no `var` here" — and you already get interior
+  mutability through a `*mut` pointer field. Deferred with the owned-aggregate
+  work (§2.7, item 3 / §9).
 
 ### 2.2 A pointer is just a reference
 
@@ -69,9 +91,10 @@ concept. The two things you do with a pointer:
   (outer) mutability: `mut *i64` = "mutable pointer to immutable i64" → you can
   reassign `p`, you can't write `*p`. In a decl that's `var p *i64`.
 
-So `mut *mut i64` = mutable pointer to mutable i64 = `var p *mut i64`. (The
-current "`mut *T` is illegal" rule is a *legacy syntactic* restriction, not a
-semantic one — under bind-right `mut *T` is a perfectly good type.)
+So a *mutable pointer to a mutable i64* is `var p *mut i64` — the outer
+(pointer's own) mutability via `var`, the inner (pointee) via `*mut`. Note there
+is **no written `mut *T`**: that would be a leading `mut` (outer mutability),
+which is `var` (§2.1). "Mutable pointer" is a binding property, spelled `var`.
 
 ### 2.3 The load-bearing principle
 
@@ -85,15 +108,20 @@ semantic one — under bind-right `mut *T` is a perfectly good type.)
   contents into the parent's single storage. There is no seam, so **no
   independent `mut`**; the contents share the parent's (binding's) mutability.
 
-### 2.4 Where `mut` is legal
+### 2.4 Where `mut` is legal in *written* source
 
-| position of `mut` | qualifies | legal? |
+| position of `mut` | qualifies | written form? |
 |---|---|---|
-| outermost (before everything) | the binding | ✓ — spelled `var` in a decl |
-| immediately after `*` | the pointee | ✓ |
-| immediately after `[]` (slice) | the elements | ✓ |
+| outermost (leading `mut`) | the binding | ✗ — **never written**; use `var` at a binding (§2.1) |
+| immediately after `*` | the pointee | ✓ `*mut T` |
+| immediately after `[]` (slice) | the elements | ✓ `[]mut T` |
 | immediately after `[N]` (array) | — nothing independent | ✗ **rejected** |
 | on a struct field's own type | — nothing independent | ✗ **rejected** |
+
+So in written type syntax, `mut` appears **only** as `*mut …` / `[]mut …`
+(inner, reference-operand). The outermost (binding) mutability is `var`, never a
+leading `mut`; a leading `mut` is legal only in *read-only* renderings (error
+messages, type display), never parsed from source.
 
 `[]` (slice, a **reference**) and `[N]` (array, a **value**) look like siblings
 in prefix syntax but behave **oppositely** for `mut`. That is the value/
@@ -147,8 +175,13 @@ Same bind-right parse, different validity because they *mean* different things:
   meaningful, unlike mutating one): `owned *T` (own the pointer) vs `*owned T`
   (pointee owned); `owned []T` (own the backing) vs `[]owned T` (each element
   owned). Legal after `[N]` too.
-- **`?`** — nullable. Legal only where nullability exists (pointer, interface):
-  `*?T`, `?I`. Not on plain values or (currently) slices.
+- **`?`** — nullable. Binds right like the rest: **`?*T`** = nullable pointer
+  to T (the `?` qualifies the `*T`), **`*?T`** = pointer to nullable-T (the
+  pointee is nullable). Legal only where nullability exists — the operand of `?`
+  must be a **pointer or interface**; `?i64`, `?Struct` are illegal (values
+  aren't nullable). *Implementation:* `?` becomes a standalone bind-right
+  qualifier, so today's combined `*?` token (`tok_maybe_ptr`) splits into
+  `*` + `?`.
 
 ---
 
@@ -307,28 +340,42 @@ Land it as one logical unit; intermediate red states are fine, the tip is green.
 
 ---
 
-## 8. Open items to pin before writing the parser
+## 8. Open items
+
+**Resolved** (decisions in §2.1–2.7):
+
+- ~~Outermost `mut` in non-declaration positions~~ → **no outer mut anywhere it
+  would be written.** Leading `mut` is never user-written; `var` is the sole
+  binding-mutability form (locals/params); return types and struct fields are
+  pseudo-declarations with no outer mut (their mutability is the caller's
+  binding / the struct's binding). §2.1, §2.4.
+- ~~Is `mut *T` legal?~~ → **No.** `mut *T` is a leading `mut` (outer); a mutable
+  pointer is `var p *T`. §2.2.
+- ~~`owned` after `[N]`~~ → **Legal.** `owned` binds right, valid at every level;
+  the *semantics* of owned arrays/slices is deferred (§9). §2.7.
+- ~~`?` on slices / `?` placement~~ → **`?` binds right; operand must be a pointer
+  or interface**, so slices stay non-nullable. `?*T` nullable pointer, `*?T`
+  pointer to nullable. §2.7.
+- ~~Redundant forms~~ → the one is `var` + leading `mut`, killed by "leading `mut`
+  never written." `[N]mut T` rejected, `[N]owned T` allowed. No others known.
+
+**Still to produce before parser code:**
 
 1. **Full modifier-ordering enumeration** — the exact legal/illegal grammar for
    `owned`/`mut`/`?` × `*` × `[]`/`[N]`, with nested cases worked through:
    `*[]mut byte`, `[]*mut byte`, `[][]byte`, `[]owned *mut T`, `[N]*mut T`,
-   `owned [N]T`, `[N]owned T`, etc. This is the artifact to build the parser and
-   the migration script against.
-2. **Outermost `mut` in non-declaration positions.** In a decl it's `var`
-   (locals, params confirmed). What about **return types** and **struct field
-   types**, which have no `var` slot? (`fn f() *mut T` — the returned pointer's
-   own reassignability is moot; the caller binds a fresh value. Struct field
-   mutability comes from the struct's binding.) State where the outer-level
-   `mut`/`var` is and isn't spellable across decl / param / field / return /
-   nested positions.
-3. **Is `mut *T` legal in type position?** The model says it's meaningful
-   (= `var p *T`). Today the parser rejects `mut` before `*`. Decide whether the
-   prefix grammar allows `mut *T` outside declarations (e.g. as a param /
-   return / nested type).
-4. **Redundant forms: reject vs allow-and-ignore.** `[N]mut T` → reject
-   (decided). `[N]owned T` → allow. Anything else that's redundant-but-harmless?
-5. **`?` on slices?** Currently nullability is pointer/interface only. Confirm
-   slices stay non-nullable in the prefix grammar.
+   `owned [N]T`, `[N]owned T`, etc. The §2 rules fully determine each case; this
+   is just writing them all out as the concrete table the parser and migration
+   script are built against. **This is the one remaining artifact.**
+
+**Implementation checks (not decisions):**
+
+- The parser must **reject** a leading `mut` from source while the printer **may
+  emit** it (read-only renderings). These don't collide on the `.bo` round-trip
+  provided binding mutability stays a separate flag (`Binding.IsConst`/`isVar`,
+  not a `MutMask` bit), so serialized type strings carry no outer mut for the
+  shared parser to choke on. Confirm during implementation.
+- Split the combined `*?` token (`tok_maybe_ptr`) into `*` + `?`.
 
 ---
 
