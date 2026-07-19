@@ -1,0 +1,11 @@
+package main
+
+// The C backend's oracle gate must reject this: `leak` takes an owned value
+// but never consumes it. emitC alone would emit `static void leak(int64_t x)
+// {}` — valid C that cc accepts (owned has no C representation) — so only the
+// gate (running the native lowering's ownership checker) catches it.
+fn leak(x owned i64) {
+}
+
+fn main() {
+}

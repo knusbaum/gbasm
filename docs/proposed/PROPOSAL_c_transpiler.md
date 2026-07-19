@@ -222,8 +222,8 @@ polymorphism idiom, constant-size values, scales to any method count).
   the single home, and we never lean on `Compile` as the permanent catcher. The
   oracle thus keeps the C backend sound *today* and drives `compile.go`'s leaked
   checks upstream over time, shrinking the gate until the checker is a standalone
-  pass and it retires. *(Not yet wired; phase 1 currently guards only via
-  `emitC`'s own "not supported" errors.)*
+  pass and it retires. *(Wired: `cOracleGate` in `emitc.go`, re-deriving from the
+  retained parse nodes; a `*_cerr.bos` negative-test class exercises a rejection.)*
 - **Build integration.** A `boson.mmk` rule transpiles each package to `.c`/`.h`
   and invokes `cc`. No special UB-defining flags; a UBSan build is available for
   diagnostics.
@@ -245,9 +245,9 @@ overflow) are expected mismatches, not bugs — so it is a strong net, not a pro
 
 1. **1a — done.** Single `main` package; `i64`; function defs/calls; `return`;
    integer arithmetic. Idiomatic output verified end-to-end through `cc`.
-2. **1b — output.** Integer/string output via a minimal, itself-hand-looking C
-   floor (or libc), so stdout is visible and differential testing can begin.
-   Wire a `cc`-driven test harness and the oracle.
+2. **1b — output + harness + oracle. Done.** Integer/string output mapped to
+   libc (`fputs`/`printf`/`putchar`); a `cc`-driven `c_tests` harness; and the
+   re-derived oracle gate (`cOracleGate`) with a `c_err_tests` negative class.
 3. **Aggregates.** Structs, arrays, slices + the explicit bounds/nil guards; the
    public/private header split and escape analysis.
 4. **Control flow + full expressions + casts.**

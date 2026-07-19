@@ -239,6 +239,9 @@ func main() {
 		//ctx := NewCompileContext()
 		var bs bytes.Buffer
 		var asts []AST
+		// Parse nodes are retained so the C backend's oracle can re-derive a
+		// fresh AST + Context for its gate pass (see cOracleGate).
+		var parseNodes []*Node
 		actx := NewContext()
 		actx.SetPkgname(pkgname)
 		// Auto-import builtin into every package except builtin itself.
@@ -259,6 +262,7 @@ func main() {
 			if n == nil {
 				break
 			}
+			parseNodes = append(parseNodes, n)
 			if n.t == n_import {
 				// n.sval is the package name from `import "name"`. Look up its
 				// .bo path in the importcfg.
@@ -284,7 +288,13 @@ func main() {
 		// move to the next file (skips the native codegen + vtable/string
 		// tables below). See emitc.go / docs/proposed/PROPOSAL_c_transpiler.md.
 		if *target == "c" {
-			emitCFile(of, actx, pkgname, asts)
+			// Emit into a buffer first (emitC is read-only on actx), then run
+			// the oracle gate — the native lowering does the semantic checking
+			// emitC lacks. Write the C only if the gate accepts the program.
+			var cbuf bytes.Buffer
+			emitCFile(&cbuf, actx, pkgname, asts)
+			cOracleGate(pkgname, parseNodes, imports)
+			io.Copy(of, &cbuf)
 			continue
 		}
 

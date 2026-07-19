@@ -66,6 +66,56 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 	io.Copy(of, &body)
 }
 
+// cOracleGate runs the native lowering as a semantic gate for the C backend.
+//
+// emitC does no checking of its own — Boson's ownership/move/escape enforcement
+// lives in Compile, not ToAST — so a program the front end and emitC both
+// accept can still be semantically invalid (e.g. a use after dispose). The gate
+// re-derives a fresh AST + Context from the parse nodes (so Compile's Context
+// mutations never touch the emit pass) and runs Compile to a discard writer
+// purely for its checks; any rejection aborts the build with the same
+// diagnostic the .bs path would give. Emit C only after this returns.
+//
+// It mirrors the .bs driver: ToAST every declaration first (so forward
+// references resolve), then Compile each. Running the gate AFTER emitC makes it
+// a ratchet on check segregation — a gate rejection of a program emitC emitted
+// is a check that lives only in compile.go and should be hoisted into ToAST
+// (unless it is a genuine .bs backend limitation). See
+// docs/proposed/PROPOSAL_c_transpiler.md and
+// docs/reference/AUDIT_codegen_check_segregation.md.
+func cOracleGate(pkgname string, parseNodes []*Node, imports map[string]string) {
+	ctx := NewContext()
+	ctx.SetPkgname(pkgname)
+	// Auto-import builtin into every package except builtin itself — matching
+	// the main driver, so the re-derived context is identical.
+	if pkgname != "builtin" {
+		if builtinPath, ok := imports["builtin"]; ok {
+			if err := ctx.Import("builtin", builtinPath); err != nil {
+				fatalCtx("Fatal: c-backend gate: auto-import builtin: %v", err)
+			}
+		}
+	}
+	var gateAsts []AST
+	for _, n := range parseNodes {
+		if n.t == n_import {
+			if err := ctx.Import(n.sval, imports[n.sval]); err != nil {
+				fatalCtx("Fatal: c-backend gate: %v", err)
+			}
+			continue
+		}
+		a, err := n.ToAST(ctx)
+		if err != nil {
+			fatalCtx("Fatal: %v", err)
+		}
+		gateAsts = append(gateAsts, a)
+	}
+	for _, a := range gateAsts {
+		if err := Compile(io.Discard, ctx, a); err != nil {
+			fatalCtx("Fatal: %v", err)
+		}
+	}
+}
+
 // emitCDecl lowers one top-level declaration to C. interpreterError panics
 // (which carry a source position) are converted to a returned error so the
 // driver can print source context.

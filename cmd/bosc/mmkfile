@@ -244,7 +244,13 @@ bosc_tests : $(ls tests/*_test.bos)
 # so no Boson runtime linking is involved.
 c_tests : $(ls tests/*_ctest.bos)
 
-test: go_tests bosc_tests c_tests {
+# C transpiler backend negative tests: `*_cerr.bos` must be REJECTED by the
+# oracle gate (the native lowering's semantic checks, which emitC lacks). Named
+# `_cerr.bos` rather than `_cerr_test.bos` so the `*_test.bos` glob above does
+# not also pick them up.
+c_err_tests : $(ls tests/*_cerr.bos)
+
+test: go_tests bosc_tests c_tests c_err_tests {
     mmk clean
 }
     
@@ -404,6 +410,20 @@ test: go_tests bosc_tests c_tests {
             fail=$(echo -e "$fail\n${target} FAIL")
             exit 1
         fi
+    fi
+    echo ${target} PASS
+}
+
+# C transpiler backend negative test: the oracle gate must reject the program
+# (transpile exits non-zero and no C is emitted).
+'tests/(.*)_cerr.bos' : bosc test.importcfg {
+    ./bosc -target=c -importcfg=test.importcfg -o ${target}.c $target >${target}.bosc.out 2>&1
+    if [[ $? == 0 ]]; then
+        echo "expected the c-backend gate to reject ${target}, but it succeeded:"
+        cat ${target}.bosc.out
+        echo ${target} FAIL
+        fail=$(echo -e "$fail\n${target} FAIL")
+        exit 1
     fi
     echo ${target} PASS
 }
