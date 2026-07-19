@@ -1,5 +1,9 @@
 # REPORT: Indexed-aggregate provenance model
 
+## History
+
+- 2026-07-19 — Filed under `docs/reference/` in the docs reorganization.
+
 ## Summary
 
 The escape checker's `arr.[]` element-fact bucket is unsound under

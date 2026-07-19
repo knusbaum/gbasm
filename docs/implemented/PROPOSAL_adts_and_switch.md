@@ -1,5 +1,9 @@
 # Proposal: payload-carrying `values` (ADTs) + a variant `switch`
 
+## History
+
+- 2026-07-19 — Filed under `docs/implemented/` in the docs reorganization; the feature had already shipped. Earlier history predates this log.
+
 Status: design. No code yet.
 
 This proposal adds **payload-carrying variants** to the existing `values` type

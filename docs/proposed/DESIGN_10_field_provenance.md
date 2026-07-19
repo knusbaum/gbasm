@@ -1,5 +1,9 @@
 # Scoping: #10 — field-buried borrow escapes the frame
 
+## History
+
+- 2026-07-19 — Filed under `docs/proposed/` in the docs reorganization. Earlier history predates this log.
+
 **Problem.** A borrow of local storage, buried in an aggregate field, escapes
 the frame and is then used after the local is consumed — undetected. Four
 faces, all the same shape (`&s.x` stored into a field that outlives `s`):

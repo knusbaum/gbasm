@@ -1,8 +1,9 @@
 # Boson TODO
 
 A lightweight backlog of changes we want but that don't yet have a full
-`PROPOSAL_*.md`. Keep entries short — just enough context to pick the work
-up later. Promote an item to a `PROPOSAL_*.md` when it's ready to design.
+proposal. Keep entries short — just enough context to pick the work up later.
+Promote an item to a `PROPOSAL_<name>.md` in `docs/proposed/` when it's ready to
+design (see the docs convention in CLAUDE.md § Documentation and design docs).
 
 ---
 
@@ -27,6 +28,17 @@ true layout, like `gofmt`. Would also give the editor integrations
 
 ---
 
+## Docs
+
+### Backfill DESIGN.md coverage of shipped features
+`docs/implemented/` proposals are frozen historical records and `DESIGN.md` is
+the single living reference (see CLAUDE.md § Documentation and design docs). Some
+features likely shipped without their canonical spec fully folded into
+`DESIGN.md`. Audit each `docs/implemented/` proposal against `DESIGN.md` and fill
+the gaps so the reference stands on its own.
+
+---
+
 ## Runtime / Codegen
 
 ### Read-only `.rodata` hardening
@@ -41,7 +53,7 @@ so string-constant immutability is hardware-enforced.
 ## Tour
 
 ### Command-line arguments lesson
-The tour never teaches `fn main(args byte[][])` (argv) or `fn main() i64`
+The tour never teaches `fn main(args [][]byte)` (argv) or `fn main() i64`
 (exit code) — every lesson uses `fn main()`. Add a short lesson once
 slices and strings are introduced (Data section), then drop the
 forward-reference now sitting in the Functions lesson.
@@ -67,7 +79,7 @@ vs. embedded bundle) as part of it.
 A borrow of local storage buried in an aggregate field can escape the frame
 (through a call, a `new()` constructor, a pointer write, or a global) and be used
 after the local is consumed, undetected. Four faces; full design + empirical
-findings in `DESIGN_10_field_provenance.md`. Settled: coarse param-level
+findings in `docs/proposed/DESIGN_10_field_provenance.md`. Settled: coarse param-level
 summaries are sound for borrows (the caller flattens a named struct arg's field
 origins); field-level is *precision*, not soundness.
 
@@ -87,7 +99,7 @@ origins); field-level is *precision*, not soundness.
 (`ReturnAliases [][]FieldAlias`, param-relative aliasing projection, k-limited,
 param-level interface grammar with coarsen-then-⊆ satisfaction). Stops over-
 rejecting independent/owned fields of a partially-borrowing aggregate. Full rep
-design in `DESIGN_10_field_provenance.md`.
+design in `docs/proposed/DESIGN_10_field_provenance.md`.
 
 Held drivers: `cov_owned_field_borrow_escapes_{call,pointee_construct,pointee_store}_err`,
 `cov_owned_aggregate_return_borrow_lost_err`.

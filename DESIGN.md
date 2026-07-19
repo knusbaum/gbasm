@@ -819,7 +819,7 @@ fn inspect(b box) {
 
 `owned(expr)` remains an explicit assertion escape hatch: it promotes the expression to an owned type without proving that every owned field came from an owned source. This is useful for construction patterns that the compiler does not yet track precisely.
 
-A **non-null owned field** — whether a pointer (`owned *T`), a scalar (`owned i64`, `owned FD`), or a struct value (`owned T`) — may be moved out of an owned aggregate, so an aggregate holding owned resources can be destructed field by field (see [`PROPOSAL_owned_field_move.md`](PROPOSAL_owned_field_move.md)). Moving a field out copies its value to the destination and records the field's obligation as consumed — just like moving a local `owned` binding. As defense-in-depth a register-sized slot is scrubbed to zero on move-out; a memory-backed struct-value field's bits are left in place (a wider store the scrub does not attempt), since correctness rests on the consumed-field tracking and the alias/escape gates, not on the scrub. The rules:
+A **non-null owned field** — whether a pointer (`owned *T`), a scalar (`owned i64`, `owned FD`), or a struct value (`owned T`) — may be moved out of an owned aggregate, so an aggregate holding owned resources can be destructed field by field (see [`PROPOSAL_owned_field_move.md`](docs/implemented/PROPOSAL_owned_field_move.md)). Moving a field out copies its value to the destination and records the field's obligation as consumed — just like moving a local `owned` binding. As defense-in-depth a register-sized slot is scrubbed to zero on move-out; a memory-backed struct-value field's bits are left in place (a wider store the scrub does not attempt), since correctness rests on the consumed-field tracking and the alias/escape gates, not on the scrub. The rules:
 
 - Moving the field out leaves the aggregate **inconsistent** (the field has no nil placeholder; the slot is zeroed and the non-null type carries no nil check). While inconsistent, the aggregate may not **escape its scope** — it can't be passed to a function, returned, moved to another binding, or aliased (`&f` / `var x := f`) — because the local consistency fact can't cross those boundaries. Only the shape-blind intrinsics `dispose` and `free` may consume it. Reading a moved-out field is a use-after-move error.
 - **Re-initialization** restores consistency: assigning to a moved-out field (`f.a = new(...)`) is legal and marks it live again; once no non-null owned field is consumed, the aggregate may escape normally. Assigning to a *live* owned field is still rejected (it would leak its current value):
@@ -946,7 +946,7 @@ Note that `copy` takes `*T`, not `*owned T`. It does not need to own the source 
 
 ### Future direction: typestate and witnessed borrows
 
-Two related limitations exist in the current system. (A third — partial consumption of an aggregate's **owned fields** — has been **implemented**; see [Owned struct fields](#owned-struct-fields) and [`PROPOSAL_owned_field_move.md`](PROPOSAL_owned_field_move.md). A non-null owned field can be moved out, tracked as a local "inconsistent aggregate" fact that may not cross a scope boundary. The remaining two below are still future work.)
+Two related limitations exist in the current system. (A third — partial consumption of an aggregate's **owned fields** — has been **implemented**; see [Owned struct fields](#owned-struct-fields) and [`PROPOSAL_owned_field_move.md`](docs/implemented/PROPOSAL_owned_field_move.md). A non-null owned field can be moved out, tracked as a local "inconsistent aggregate" fact that may not cross a scope boundary. The remaining two below are still future work.)
 
 **Partial consumption of stacked types.** `owned *owned T` cannot have one obligation consumed independently of the other. Doing so would require the variable's type to change at a specific program point — that is typestate. This forces BYOM patterns to use separate variables for separate obligations rather than stacking them.
 
@@ -2515,7 +2515,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Bosc-emitted function signatures (`type fn(...) ret`) so cross-package function calls work with Boson-source packages as well as hand-written bas runtime packages
 - `argv` passed to `main(args [][]byte)` by the `_init.start` entry stub
 - `&arr[i]`, `&s.field` at runtime; function-scope `&"literal"` (static slice header, type `*[]byte`); other `&literal` forms rejected at runtime with a directed error
-- Parenthesized type groups `*[]byte` / `*mut ([]byte)` for naming pointer-to-slice types
+- Prefix pointer-to-slice / pointer-to-array types (`*[]byte`, `*mut []byte`, `*[8]byte`), distinct from slices/arrays of pointers (`[]*byte`, `[8]*byte`)
 - Cross-package struct methods: a struct's method set rides the `struct` directive (method-name list) into the `.bo` and is reconstructed on import, so methods on imported structs resolve at compile time (parallel to type-alias methods)
 - The `fmt` runtime package (five-layer formatting: raw conversions, writer helpers, `Builder`, `stringer`/`Formatter`, `print`/`printf`)
 - Register-scaled indexing into globals via `lea` materialization (no `[symbol + reg*scale]` SIB form exists on x86-64; bosc emits an `lea` to materialize the base, then `[reg + idx*scale]`)

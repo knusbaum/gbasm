@@ -1,5 +1,9 @@
 # Proposal: Immutable-by-default bindings (`:=`), drop `const`
 
+## History
+
+- 2026-07-19 — Filed under `docs/implemented/` in the docs reorganization; the feature had already shipped. Earlier history predates this log.
+
 ## Summary
 
 Make immutable the **default** binding form and mutability the explicit

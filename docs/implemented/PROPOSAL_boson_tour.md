@@ -1,5 +1,9 @@
 # Proposal: Boson Tour
 
+## History
+
+- 2026-07-19 — Filed under `docs/implemented/` in the docs reorganization; the feature had already shipped. Earlier history predates this log.
+
 ## Summary
 
 Build an interactive walkthrough of Boson's language features, similar in

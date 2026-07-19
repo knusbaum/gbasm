@@ -1,5 +1,9 @@
 # Design note: return-alias inference engine (rebuild)
 
+## History
+
+- 2026-07-19 — Filed under `docs/implemented/` in the docs reorganization; the feature had already shipped. Earlier history predates this log.
+
 **Status:** in progress on branch `feature/return-alias-inference`
 (checkpoint commit `ee64ad1`). This note records the *engine* design we
 converged on after finding the first engine (the demand-driven

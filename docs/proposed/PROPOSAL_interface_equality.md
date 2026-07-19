@@ -1,5 +1,9 @@
 # Proposal: Equality Comparison for Interface Values
 
+## History
+
+- 2026-07-19 — Filed under `docs/proposed/` in the docs reorganization. Earlier history predates this log.
+
 ## Status
 
 Proposed. Not implemented.
@@ -187,7 +191,7 @@ reason.
 ### Representation-specific meaning of the data word
 
 The comparison itself is defined for both interface representations described
-by [DESIGN.md §Interfaces](DESIGN.md):
+by [DESIGN.md §Interfaces](../../DESIGN.md):
 
 - **Value-backed:** the concrete type is ≤ 8 bytes and every method of the
   interface declares a value receiver. The `data` word stores the concrete

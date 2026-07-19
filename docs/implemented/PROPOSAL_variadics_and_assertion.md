@@ -1,11 +1,13 @@
 # Proposal: Variadics, the `any` Interface, and Type Assertion
 
-## Status
+## History
 
-Draft. Not implemented. Depends on no other in-flight proposal.
-Companion to [`PROPOSAL_fmt_package.md`](PROPOSAL_fmt_package.md): once
-this lands, the deferred `printf` open question in that proposal becomes
-implementable.
+- 2026-07-19 — Filed under `docs/implemented/` in the docs reorganization; the feature had already shipped. Earlier history predates this log.
+
+## Background
+
+Companion to [`PROPOSAL_fmt_package.md`](PROPOSAL_fmt_package.md): with this
+landed, the `printf` open question that proposal deferred became implementable.
 
 ## Summary
 

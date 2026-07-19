@@ -1,5 +1,9 @@
 # Proposal: Boson Playground
 
+## History
+
+- 2026-07-19 — Filed under `docs/implemented/` in the docs reorganization; the feature had already shipped. Earlier history predates this log.
+
 ## Summary
 
 Build a browser-based Boson playground, similar in spirit to
@@ -59,7 +63,7 @@ The playground should serve both without splitting into two products.
 - Long-running benchmarks.
 - A permanent source archive with user accounts.
 - Cross-architecture execution before the toolchain has real target
-  abstraction (see [PROPOSAL_arm64_backend.md](PROPOSAL_arm64_backend.md)).
+  abstraction (see [PROPOSAL_arm64_backend.md](../proposed/PROPOSAL_arm64_backend.md)).
 - In-browser compilation in v1; the toolchain runs server-side. WebAssembly
   is a future direction, not a v1 requirement.
 - Formatter integration. There is no Boson formatter yet.
@@ -747,7 +751,7 @@ backend is stable.
 - **Language server** using `bosc` as a daemon: autocomplete, jump-to-def,
   hover types.
 - **Cross-architecture targets** once
-  [PROPOSAL_arm64_backend.md](PROPOSAL_arm64_backend.md) lands. The run
+  [PROPOSAL_arm64_backend.md](../proposed/PROPOSAL_arm64_backend.md) lands. The run
   request can carry a `target` field selecting `linux/amd64` or
   `linux/arm64`; the runner image needs the cross binaries and a playground
   runtime bundle for each target.
@@ -765,9 +769,9 @@ backend is stable.
   but serves its own content — lessons, prose, and checks — independent
   of the playground's example set. The two should not be co-deployed or
   share a content directory.
-- [PROPOSAL_arm64_backend.md](PROPOSAL_arm64_backend.md) — once arm64
+- [PROPOSAL_arm64_backend.md](../proposed/PROPOSAL_arm64_backend.md) — once arm64
   lands, the playground can expose architecture as a per-run setting.
-- [PROPOSAL_macho_revive.md](PROPOSAL_macho_revive.md) — playground
+- [PROPOSAL_macho_revive.md](../proposed/PROPOSAL_macho_revive.md) — playground
   targets ELF64/Linux for execution. macOS object output is interesting
   for downloadable artifacts, not for the sandboxed runner.
 

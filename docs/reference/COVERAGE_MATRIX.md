@@ -1,5 +1,9 @@
 # Test coverage model — invariants, equivalence classes, the audit
 
+## History
+
+- 2026-07-19 — Filed under `docs/reference/` in the docs reorganization.
+
 This is a **living process doc**, not a one-time matrix. Test coverage of the
 compiler's mechanics is organized around three artifacts with three lifespans:
 

@@ -114,7 +114,7 @@ Every linked program pulls in some subset of these.
 
 | Package | Files | Purpose |
 |---------|-------|---------|
-| `_init`    | `init_linux.bs` | Process entry (`_init.start`). Builds `byte[][]` argv on stack, calls `main.main(args byte[][])` (or `main.main()`), exits with main's rax. Also defines `index_oob` (bounds-check trap) and `nil_assert`. |
+| `_init`    | `init_linux.bs` | Process entry (`_init.start`). Builds `[][]byte` argv on stack, calls `main.main(args [][]byte)` (or `main.main()`), exits with main's rax. Also defines `index_oob` (bounds-check trap) and `nil_assert`. |
 | `_heap`    | `heap_linux.bs` | `_heap.alloc(i64) *mut byte` and `_heap.free(*mut byte)`. One mmap mapping per allocation; small size header; `free` calls munmap. Minimal, no pooling. |
 | `_io_sys`  | `io_sys_linux.bs` | Raw Linux file-IO syscall wrappers: `_io_sys.read/write/open/close`. The low-level primitives that `io` is built on; end-user code should prefer `io`'s typed FD API. |
 | `string`   | `string.bs`, `puts_linux.bs` | String formatting and stdout output: `puts`, `puti`, `putb`, `putc`, `lenb`, `lenn`, `lenbb`, `exit`. Internal: `strlen`, `itoa`, `uitoa`, `ucountdigits`. File-IO syscalls live in `_io_sys`; the `io` package wraps them with a typed FD. |
@@ -465,6 +465,66 @@ the user asks. They're outputs.
 - **Don't edit `x86_64.xml`** — it's the Intel reference dump
   that the encoder reads. Adding instructions means re-deriving
   this file, not patching it.
+
+---
+
+## Documentation and design docs
+
+Design and proposal docs live under `docs/`, **one directory per lifecycle
+state — the directory *is* the source of truth for a doc's status.** There is no
+status field to keep in sync; to learn whether something is built, look at which
+directory its doc is in.
+
+| Directory | Meaning |
+|-----------|---------|
+| `docs/proposed/`    | Designs not yet built — drafts, ideas, accepted-but-unbuilt proposals. |
+| `docs/implemented/` | Designs for features that have shipped and are tested — the record of *what was built and why*. |
+| `docs/reference/`   | Living analysis that isn't a feature proposal: coverage models, audits, reports. |
+
+The three root-level docs are always-current entry points and never move: this
+file (`CLAUDE.md`), `DESIGN.md` (the language/toolchain reference), and `TODO.md`
+(the short-form backlog).
+
+**`DESIGN.md` is the single living source of truth for the language and
+toolchain.** When a feature ships, fold its canonical spec into `DESIGN.md` and
+update its Implementation Status; the proposal in `docs/implemented/` then
+**freezes** — it becomes a historical record of the design and its rationale and
+is *never* chased against later language changes (a frozen proposal only ever
+gains a "superseded by …" note if the feature is later redesigned). So: to learn
+*what the language does now*, read `DESIGN.md`; to learn *why a feature was
+designed the way it was*, read its frozen proposal. A doc in `docs/implemented/`
+is therefore expected to be stale relative to the current language — that is by
+design, and its History log ends at the implementation entry.
+
+**Lifecycle.** An idea starts as a one-liner in `TODO.md`; when it's ready to
+design it graduates to a `PROPOSAL_<name>.md` (or `DESIGN_<name>.md`) in
+`docs/proposed/`; when the feature ships, **`git mv` the doc to
+`docs/implemented/` in the same change that lands the code.** Reference docs are
+authored directly in `docs/reference/`. Filename prefixes denote *kind*
+(`PROPOSAL_`, `DESIGN_`, `PLAN_`, `REPORT_`, `AUDIT_`) and are kept across moves;
+the directory, not the prefix or any in-doc label, carries status.
+
+**Every doc under `docs/` carries a `## History` log** immediately after its H1
+title: a reverse-chronological (newest-first) list of dated entries recording
+when the doc was materially updated, when the feature was implemented, and when
+its status transitioned (moved directories). Format:
+
+```
+## History
+
+- 2026-08-10 — Implemented (commit abc1234); moved to docs/implemented/.
+- 2026-07-22 — Design settled after review.
+- 2026-07-01 — Proposed.
+```
+
+Rules for the History log:
+- One entry per line, newest first: `- YYYY-MM-DD — <what changed>`.
+- **Add an entry whenever you materially edit a doc, land its implementation, or
+  move it between `docs/` directories.** A directory move and its History entry
+  belong in the same commit — never move a doc without logging why.
+- Cite the commit hash on implementation/transition entries where it helps.
+- Don't back-fill dates you don't have: start the log at the first tracked
+  change and note that earlier history isn't reconstructed.
 
 ---
 

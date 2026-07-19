@@ -1,5 +1,9 @@
 # DESIGN: Prefix type syntax + the mutability model
 
+## History
+
+- 2026-07-19 — Filed under `docs/implemented/` in the docs reorganization; the feature had already shipped. Earlier history predates this log.
+
 Status: **design complete and parser-ready; not yet implemented.** Every rule
 is settled — the mutability model (§2), the grammar (§3), the legality/ordering
 enumeration (§3.1/§3.2). The mutability model is the durable part — it's the

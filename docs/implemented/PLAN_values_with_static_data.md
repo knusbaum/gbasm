@@ -1,5 +1,9 @@
 # Implementation Plan: `values` Types With Static Projections
 
+## History
+
+- 2026-07-19 — Filed under `docs/implemented/` in the docs reorganization; the feature had already shipped. Earlier history predates this log.
+
 ## Context
 
 `PROPOSAL_values_with_static_data.md` proposes a `values` form for declaring a

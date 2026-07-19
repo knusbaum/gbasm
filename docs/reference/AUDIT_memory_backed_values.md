@@ -1,5 +1,9 @@
 # Coverage audit — memory-backed value mechanics
 
+## History
+
+- 2026-07-19 — Filed under `docs/reference/` in the docs reorganization.
+
 > This is the **first execution of the audit procedure** in
 > [`COVERAGE_MATRIX.md`](COVERAGE_MATRIX.md) §5: a white-box re-grep of the
 > value/address proxies plus invariant probes. Findings here are violations of

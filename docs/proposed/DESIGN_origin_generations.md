@@ -1,5 +1,9 @@
 # Design note — Origin generations
 
+## History
+
+- 2026-07-19 — Filed under `docs/proposed/` in the docs reorganization. Earlier history predates this log.
+
 Status: planned, not started. **Reviewed** — see §10 for the decisions that
 came out of review (notably: choose **(G)**, *not* eager creation). A blocking
 prerequisite surfaced while investigating: a separate **struct value-copy

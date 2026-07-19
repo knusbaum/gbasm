@@ -1,5 +1,9 @@
 # Proposal: Inferred Return-Parameter Aliasing
 
+## History
+
+- 2026-07-19 — Filed under `docs/implemented/` in the docs reorganization; the feature had already shipped. Earlier history predates this log.
+
 ## Status
 
 Implemented. Independent of the other in-flight proposals, but motivated

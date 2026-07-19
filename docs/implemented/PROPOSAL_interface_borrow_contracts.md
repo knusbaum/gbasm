@@ -1,16 +1,18 @@
 # Proposal: Interface Borrow Contracts (`from` clauses)
 
-## Status
+## History
 
-Draft, design settled, not yet implemented. The direct, planned follow-on to
+- 2026-07-19 — Filed under `docs/implemented/` in the docs reorganization; the feature had already shipped. Earlier history predates this log.
+
+## Background
+
+The direct follow-on to
 [`PROPOSAL_return_alias_inference.md`](PROPOSAL_return_alias_inference.md)
 and its engine
-([`DESIGN_return_alias_engine.md`](DESIGN_return_alias_engine.md)),
-both of which shipped. This proposal *relaxes* the strict interface
-guard those introduced; it does not revise the inference itself. The review
-design questions are resolved (see [Decisions](#decisions)); **v1 scope is
-interface-methods-only**, with the optional concrete/free-function `from`
-(D2/D4) a decided fast-follow.
+([`DESIGN_return_alias_engine.md`](DESIGN_return_alias_engine.md)).
+This proposal *relaxes* the strict interface guard those introduced; it does
+not revise the inference itself. **v1 scope is interface-methods-only**, with
+the optional concrete/free-function `from` (D2/D4) a decided fast-follow.
 
 This is the "option (b)" the return-alias proposal deferred. Return-alias
 inference lets a *function* return a borrow of its parameters, inferring

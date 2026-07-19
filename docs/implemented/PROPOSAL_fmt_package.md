@@ -1,12 +1,16 @@
 # Proposal: `fmt` Formatting Package
 
-## Status
+## History
 
-Draft. Not implemented. Companion to [`PROPOSAL_variadics_and_assertion.md`](PROPOSAL_variadics_and_assertion.md) —
-this revision of the fmt design assumes the `any` interface,
-variadic parameters, and type assertion all land first. Where the
-earlier draft of this proposal deferred `printf` for lack of
-language support, this version makes it Layer 5 and ships it.
+- 2026-07-19 — Filed under `docs/implemented/` in the docs reorganization; the feature had already shipped. Earlier history predates this log.
+
+## Background
+
+Companion to [`PROPOSAL_variadics_and_assertion.md`](PROPOSAL_variadics_and_assertion.md):
+this revision of the fmt design assumes the `any` interface, variadic
+parameters, and type assertion — all of which landed first. Where the earlier
+draft deferred `printf` for lack of language support, this version makes it
+Layer 5 and ships it.
 
 ## Summary
 

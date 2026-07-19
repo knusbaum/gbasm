@@ -1,5 +1,9 @@
 # Proposal: arm64 Backend for bas and bosc
 
+## History
+
+- 2026-07-19 — Filed under `docs/proposed/` in the docs reorganization. Earlier history predates this log.
+
 ## Summary
 
 Add an arm64 target to `bas` and a matching code-generation mode to `bosc`.

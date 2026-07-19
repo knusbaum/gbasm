@@ -1,5 +1,9 @@
 # Proposal: Revive Mach-O Executable Support
 
+## History
+
+- 2026-07-19 — Filed under `docs/proposed/` in the docs reorganization. Earlier history predates this log.
+
 ## Summary
 
 Revive Mach-O output by replacing the old disconnected x86-64-only
