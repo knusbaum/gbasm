@@ -41,6 +41,7 @@ Designs not yet built — drafts, ideas, accepted-but-unbuilt proposals.
 
 Living analysis that isn't a feature proposal: coverage models, audits, reports.
 
+- [`AUDIT_codegen_check_segregation.md`](reference/AUDIT_codegen_check_segregation.md) — Census of semantic checks leaked into codegen (semantic vs lowering); hoist worklist for a from-AST backend
 - [`AUDIT_memory_backed_values.md`](reference/AUDIT_memory_backed_values.md) — Coverage audit — memory-backed value mechanics
 - [`COVERAGE_MATRIX.md`](reference/COVERAGE_MATRIX.md) — Test coverage model — invariants, equivalence classes, the audit
 - [`REPORT_array_slice_provenance.md`](reference/REPORT_array_slice_provenance.md) — REPORT: Indexed-aggregate provenance model

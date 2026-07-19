@@ -39,6 +39,29 @@ the gaps so the reference stands on its own.
 
 ---
 
+## Compiler architecture
+
+### Hoist leaked semantic checks out of codegen
+`compile.go` enforces ~179 language/type/flow rules that logically belong in
+`ToAST`/the checker, not in `.bs` lowering. Full classified census (semantic vs
+lowering vs ambiguous, with top hoist candidates) in
+[`docs/reference/AUDIT_codegen_check_segregation.md`](docs/reference/AUDIT_codegen_check_segregation.md).
+Target: codegen only ever raises *lowering* concerns ("not supported"/bug); all
+semantics caught earlier — the prerequisite for a sound from-AST second backend
+(e.g. a C transpiler) and for retiring the validation-oracle scaffold. The
+ownership/move/escape bulk is flow-sensitive → checker, not `ToAST`; do the
+type-only families (name resolution, arity, cast legality, struct-literal shape)
+first.
+
+### Constant negative index should be a compile-time error
+`nums[-1]` is decidable at compile time but only *runtime*-traps today, while
+`nums[3]` (positive constant OOB) is already a compile-time error. The runtime
+memory-safety hole is closed (unsigned index compare, `84ef387`); the remaining
+work is the compile-time check — a small, clean hoist into `ToAST` that also
+removes the positive/negative asymmetry. First concrete entry off the audit above.
+
+---
+
 ## Runtime / Codegen
 
 ### Read-only `.rodata` hardening
