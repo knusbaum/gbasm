@@ -5,9 +5,9 @@ package main
 // the else (second). mergeFieldPointerExpr surfaces a local from EITHER
 // branch, so the returned-struct local-field escape is rejected regardless of
 // branch order — asserting the order-independence the field merge claims.
-type B struct { buf byte[] }
-fn f(s byte[], cond bool) B {
-	var loc byte[16]
+type B struct { buf []byte }
+fn f(s []byte, cond bool) B {
+	var loc [16]byte
 	var b B
 	if (cond) {
 		b.buf = loc[:]

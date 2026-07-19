@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-fn dumpbs(bs byte[]) {
+fn dumpbs(bs []byte) {
 	var i i64
 	for (i = 0; i < len(bs); i = i + 1) {
 		string.putb(bs[i])
@@ -12,7 +12,7 @@ fn dumpbs(bs byte[]) {
 }
 
 fn main() {
-	var a byte[20]
+	var a [20]byte
 
 	var i byte
 	var ten byte
@@ -22,7 +22,7 @@ fn main() {
 	}
 	dumpbs(a[:10])
 
-	var bs mut byte[]
+	var bs []mut byte
 	bs = a[10:]
 	for(i = 0; i < ten; i = i + 1) {
 		bs[i] = i+10

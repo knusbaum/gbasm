@@ -7,7 +7,7 @@ import "string"
 // instead of straight to a file descriptor, then the accumulated bytes are
 // extracted and printed.
 fn main() i64 {
-	var backing byte[128]
+	var backing [128]byte
 	var b fmt.Builder := fmt.Builder{buf: backing[:], pos: 0, err_: nil}
 	var bw fmt.BuilderWriter := fmt.BuilderWriter{b: &b}
 	n, err := fmt.printf(&bw, "name=%s n=%d\n", &"alice", 42)

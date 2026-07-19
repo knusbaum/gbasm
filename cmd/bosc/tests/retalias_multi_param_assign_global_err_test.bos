@@ -7,17 +7,17 @@ package main
 // contributing argument is local; the assignment to longer-lived global
 // storage is rejected. This is the no-assignedName transient path: the
 // result origin is the most-restrictive contributor (the local one).
-var g byte[]
+var g []byte
 
-fn pick(a byte[], b byte[], use_a bool) byte[] {
+fn pick(a []byte, b []byte, use_a bool) []byte {
 	if (use_a) {
 		return a
 	}
 	return b
 }
 
-fn store(s byte[]) {
-	var l byte[16]
+fn store(s []byte) {
+	var l [16]byte
 	g = pick(l[0:8], s, yes())
 }
 

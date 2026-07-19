@@ -108,6 +108,13 @@ var typeEncodingCases = []struct {
 	{"*?*i64", "?**i64", ASTType{Name: "i64", Indirection: 2, NilMask: 0b1, Signed: true}},
 	{"owned *?owned mut node", "owned ?*owned mut node", ASTType{Name: "node", Indirection: 1, MutMask: 0b10, OwnedMask: 0b11, NilMask: 0b1}},
 
+	// Arrays of pointers: owned/mut collapse onto the shared array level, but a
+	// pointer element's nullability stays on the ELEMENT (an array is never
+	// nullable). Regression: arrayWrap was moving nil to the array too.
+	{"*?i64[3]", "[3]?*i64", ASTType{ArraySize: 3, Element: &ASTType{Name: "i64", Indirection: 1, NilMask: 0b1, Signed: true}}},
+	{"*mut i64[3]", "[3]*mut i64", ASTType{ArraySize: 3, MutMask: 0b10, Element: &ASTType{Name: "i64", Indirection: 1, Signed: true}}},
+	{"owned *i64[3]", "[3]owned *i64", ASTType{ArraySize: 3, OwnedMask: 0b1, Element: &ASTType{Name: "i64", Indirection: 1, Signed: true}}},
+
 	// String() branches the primitive cases above never exercise, but that the
 	// runtime `.bo`s serialize (io.bos: `?error`, `owned FD`, fn-typed values):
 	// a nullable-interface base (NilMask&1 at Indirection 0), a function type,

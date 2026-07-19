@@ -851,15 +851,13 @@ func (c *Context) TypeByName(name string) (ASTType, bool) {
 	if _, ok := c.StructDeclForName(name); ok {
 		return ASTType{Name: name}, true
 	}
-	// Slice-type expressions in cast position: `byte[](e)` arrives here
-	// as the name `"byte[]"`. Peel the suffix and recursively resolve
-	// the inner type to build a proper slice ASTType. Projection casts
-	// in particular need this so the parser's `byte[](e)` cast lands on
-	// a known slice type the cast path can match against.
-	if strings.HasSuffix(name, "[]") {
-		inner := strings.TrimSuffix(name, "[]")
-		if it, ok := c.TypeByName(inner); ok {
-			return ASTType{Element: &it}, true
+	// Slice/array-type expressions in cast position: `[]byte(e)` arrives here
+	// as the name `"[]byte"` (the parser's prefix cast). Any bracketed name is
+	// a full prefix type string — resolve it through the one type parser so
+	// projection casts land on a known slice/array type the cast path matches.
+	if strings.ContainsAny(name, "[]") {
+		if at, err := parseTypeString(name); err == nil {
+			return at, true
 		}
 	}
 	return ASTType{}, false
@@ -2137,7 +2135,13 @@ func (t ASTType) stringRef(refOperand bool) string {
 	if t.Element != nil {
 		if t.IsArray() {
 			sb.WriteString(fmt.Sprintf("[%d]", t.ArraySize))
-			sb.WriteString(t.Element.stringRef(false))
+			// The array shares its owned/mut with the element (no shift); nil
+			// stayed on the element. Restore owned/mut so the element renders
+			// them (e.g. `[3]owned *i64`, `[3]?*i64`).
+			elem := *t.Element
+			elem.OwnedMask |= t.OwnedMask
+			elem.MutMask |= t.MutMask
+			sb.WriteString(elem.stringRef(false))
 		} else {
 			sb.WriteString("[]")
 			elem := *t.Element

@@ -6,7 +6,7 @@ type leaf struct {
 
 type box struct {
 	val i64
-	child owned *?owned mut leaf
+	child owned ?*owned mut leaf
 }
 
 fn read(b *box) i64 {
@@ -14,7 +14,7 @@ fn read(b *box) i64 {
 }
 
 fn destroy(b owned *owned mut box) {
-	child owned *?owned mut leaf := b.child
+	child owned ?*owned mut leaf := b.child
 	read(b)
 	free(b)
 	if(child) {

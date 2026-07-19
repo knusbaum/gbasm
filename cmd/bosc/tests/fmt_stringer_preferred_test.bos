@@ -10,7 +10,7 @@ import "io"
 // coercion. If the Formatter were preferred, the output would read
 // "FORMATTER" instead.
 type tag struct { label i64 } {
-	string(_ *tag) byte[] { return "STRINGER" }
+	string(_ *tag) []byte { return "STRINGER" }
 	format(_ *tag, w io.writer) ?error {
 		_, err := w.write("FORMATTER")
 		return err

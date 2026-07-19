@@ -7,7 +7,7 @@ import "string"
 // the accumulated bytes. (The Builder is non-chaining in this implementation
 // — see the fmt DEVIATION note — so the "chain" is a sequence of statements.)
 fn main() i64 {
-	var backing byte[256]
+	var backing [256]byte
 	var b fmt.Builder := fmt.Builder{buf: backing[:], pos: 0, err_: nil}
 	b.str("x=")
 	b.int(0 - 5)

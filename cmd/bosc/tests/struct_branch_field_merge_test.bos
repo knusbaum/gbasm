@@ -4,7 +4,7 @@ import "string"
 
 type Foo struct {
 	x  i64
-	xp *?i64
+	xp ?*i64
 }
 
 var gx i64

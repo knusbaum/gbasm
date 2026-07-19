@@ -11,7 +11,7 @@ var pcounter *i64 := &counter
 type config struct {
 	threshold i64
 	current   *i64    // pointer field, hand-wired to point at counter
-	greeting  byte[]  // slice field, init from string literal
+	greeting  []byte  // slice field, init from string literal
 }
 
 var cfg config := config{

@@ -9,19 +9,19 @@ import "string"
 // the caller passes a live buffer and reads the view in scope. (Guards the
 // recording side of recordStructReturnCallFieldFacts and the var-bound path
 // that the direct-form tests do not exercise.)
-type B struct { buf byte[] }
+type B struct { buf []byte }
 
-fn mk(s byte[]) B {
+fn mk(s []byte) B {
 	return B{buf: s}
 }
 
-fn outer(p byte[]) B {
+fn outer(p []byte) B {
 	b B := mk(p)
 	return b
 }
 
 fn main() i64 {
-	storage byte[] := "bound"
+	storage []byte := "bound"
 	b B := outer(storage)
 	string.puts(b.buf)
 	string.puts("\n")

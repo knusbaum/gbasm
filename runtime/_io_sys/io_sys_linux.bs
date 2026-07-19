@@ -19,7 +19,7 @@ package _io_sys
 // call number: 0
 pub function read
 	// fd, buf
-	type fn(i64, mut byte[]) i64
+	type fn(i64, []mut byte) i64
 	prologue
 
 	mov rdx [rsi+8]
@@ -35,7 +35,7 @@ pub function read
 // call number: 1
 pub function write
 	// fd, buf
-	type fn(i64, byte[]) i64
+	type fn(i64, []byte) i64
 	prologue
 
 	mov rdx [rsi+8]
@@ -52,7 +52,7 @@ pub function write
 // path must be a null-terminated byte slice.
 pub function open
 	// path, flags, mode
-	type fn(byte[], i64, i64) i64
+	type fn([]byte, i64, i64) i64
 	prologue
 
 	// Extract the data pointer from the slice header; pass it to the syscall.

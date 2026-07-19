@@ -6,15 +6,15 @@ package main
 // The local reaches a returned slot through the multi-param call, so the
 // return must be rejected — the multi-param union representation does not
 // let a local contributor slip through.
-fn pick(a byte[], b byte[], use_a bool) byte[] {
+fn pick(a []byte, b []byte, use_a bool) []byte {
 	if (use_a) {
 		return a
 	}
 	return b
 }
 
-fn caller(s byte[]) byte[] {
-	var l byte[16]
+fn caller(s []byte) []byte {
+	var l [16]byte
 	return pick(l[0:8], s, yes())
 }
 

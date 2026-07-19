@@ -1,14 +1,14 @@
 // Package fmt provides string formatting shaped to Boson's constraints: no
-// GC, immutable byte[] strings, and value-shape interface-coercion limits.
+// GC, immutable []byte strings, and value-shape interface-coercion limits.
 //
 // Five layers, smallest first:
 //
 //   1. Raw conversions (itoa/utoa/htoa) write a single typed value into the
-//      head of a caller-provided mut byte[]. No allocation, no I/O.
+//      head of a caller-provided []mut byte. No allocation, no I/O.
 //   2. Writer helpers (str/int/uint/hex/char/bool/nl) format one value into a
 //      stack scratch buffer and emit it through an io.writer in one write.
 //   3. Builder is a bring-your-own-memory accumulator over a caller-supplied
-//      mut byte[], with append methods and a borrowed byte[] view.
+//      []mut byte, with append methods and a borrowed []byte view.
 //   4. stringer and Formatter are the two user-extension "render me" hooks,
 //      discovered at runtime via interface assertion.
 //   5. print/printf are printf-style variadic helpers backed by per-arg type
@@ -84,7 +84,7 @@ pub fn n_hex_digits(n u64) i64 {
 // whole of out (len == len(out)) — compare len against n_digits(n) to detect
 // truncation. The result borrows out, so it stays valid as long as the
 // caller's buffer does (the return-alias inference records this).
-pub fn itoa(out mut byte[], n i64) byte[] {
+pub fn itoa(out []mut byte, n i64) []byte {
 	need i64 := n_digits(n)
 	cap i64 := len(out)
 	if (need <= cap) {
@@ -98,7 +98,7 @@ pub fn itoa(out mut byte[], n i64) byte[] {
 
 // write_decimal renders n into out using exactly `width` bytes (width ==
 // n_digits(n)); the buffer is known to be large enough.
-fn write_decimal(out mut byte[], n i64, width i64) {
+fn write_decimal(out []mut byte, n i64, width i64) {
 	if (n == 0) {
 		out[0] = 48        // '0'
 		return
@@ -129,9 +129,9 @@ fn write_decimal(out mut byte[], n i64, width i64) {
 // keeps only the leading `keep` bytes (keep < width). It builds the full
 // form into the buffer's tail region conceptually, but since the buffer is
 // short, it renders into a stack scratch and copies the prefix.
-fn write_decimal_trunc(out mut byte[], n i64, width i64, keep i64) {
-	var scratch byte[24]
-	s mut byte[] := scratch[:]
+fn write_decimal_trunc(out []mut byte, n i64, width i64, keep i64) {
+	var scratch [24]byte
+	s []mut byte := scratch[:]
 	// width <= 21 always fits in 24.
 	write_decimal(s, n, width)
 	var i i64 := 0
@@ -143,15 +143,15 @@ fn write_decimal_trunc(out mut byte[], n i64, width i64, keep i64) {
 // utoa writes the canonical unsigned-decimal form of n and returns the
 // rendered bytes as a sub-slice of out. Same truncation contract as itoa
 // (compare len against n_udigits(n)).
-pub fn utoa(out mut byte[], n u64) byte[] {
+pub fn utoa(out []mut byte, n u64) []byte {
 	need i64 := n_udigits(n)
 	cap i64 := len(out)
 	if (need <= cap) {
 		write_udecimal(out, n, need)
 		return out[0:need]
 	}
-	var scratch byte[24]
-	s mut byte[] := scratch[:]
+	var scratch [24]byte
+	s []mut byte := scratch[:]
 	write_udecimal(s, n, need)
 	var i i64 := 0
 	for (; i < cap; i = i + 1) {
@@ -160,7 +160,7 @@ pub fn utoa(out mut byte[], n u64) byte[] {
 	return out[0:cap]
 }
 
-fn write_udecimal(out mut byte[], n u64, width i64) {
+fn write_udecimal(out []mut byte, n u64, width i64) {
 	if (n == 0) {
 		out[0] = 48
 		return
@@ -178,15 +178,15 @@ fn write_udecimal(out mut byte[], n u64, width i64) {
 // returns the rendered bytes as a sub-slice of out. (The "0x" prefix is
 // added by the Layer 2 hex writer.) Same truncation contract as itoa
 // (compare len against n_hex_digits(n)).
-pub fn htoa(out mut byte[], n u64) byte[] {
+pub fn htoa(out []mut byte, n u64) []byte {
 	need i64 := n_hex_digits(n)
 	cap i64 := len(out)
 	if (need <= cap) {
 		write_hex(out, n, need)
 		return out[0:need]
 	}
-	var scratch byte[18]
-	s mut byte[] := scratch[:]
+	var scratch [18]byte
+	s []mut byte := scratch[:]
 	write_hex(s, n, need)
 	var i i64 := 0
 	for (; i < cap; i = i + 1) {
@@ -195,7 +195,7 @@ pub fn htoa(out mut byte[], n u64) byte[] {
 	return out[0:cap]
 }
 
-fn write_hex(out mut byte[], n u64, width i64) {
+fn write_hex(out []mut byte, n u64, width i64) {
 	if (n == 0) {
 		out[0] = 48
 		return
@@ -218,41 +218,41 @@ fn write_hex(out mut byte[], n u64, width i64) {
 // ---------------------------------------------------------------------------
 
 // str writes s to w verbatim. Returns (written, err) mirroring io.writer.write.
-pub fn str(w io.writer, s byte[]) i64, ?error {
+pub fn str(w io.writer, s []byte) i64, ?error {
 	n, err := w.write(s)
 	return n, err
 }
 
 // int formats n as signed decimal into a stack buffer and writes it once.
 pub fn int(w io.writer, n i64) i64, ?error {
-	var buf byte[24]
-	s byte[] := itoa(buf[:], n)
+	var buf [24]byte
+	s []byte := itoa(buf[:], n)
 	k, err := w.write(s)
 	return k, err
 }
 
 // uint formats n as unsigned decimal and writes it once.
 pub fn uint(w io.writer, n u64) i64, ?error {
-	var buf byte[24]
-	s byte[] := utoa(buf[:], n)
+	var buf [24]byte
+	s []byte := utoa(buf[:], n)
 	k, err := w.write(s)
 	return k, err
 }
 
 // hex formats n as "0x"-prefixed lowercase hex and writes it once.
 pub fn hex(w io.writer, n u64) i64, ?error {
-	var buf byte[24]
-	b mut byte[] := buf[:]
+	var buf [24]byte
+	b []mut byte := buf[:]
 	b[0] = 48      // '0'
 	b[1] = 120     // 'x'
-	digits byte[] := htoa(b[2:], n)
+	digits []byte := htoa(b[2:], n)
 	k, err := w.write(buf[0:2 + len(digits)])
 	return k, err
 }
 
 // char writes the single byte c.
 pub fn char(w io.writer, c byte) i64, ?error {
-	var buf byte[1]
+	var buf [1]byte
 	buf[0] = c
 	k, err := w.write(buf[:])
 	return k, err
@@ -282,7 +282,7 @@ pub fn nl(w io.writer) i64, ?error {
 // backing buffer; the lifetime of bytes() is the lifetime of buf. Construct
 // inline with a struct literal — there is no constructor:
 //
-//     var backing byte[256]
+//     var backing [256]byte
 //     var b fmt.Builder = fmt.Builder{
 //         buf: backing[:], pos: 0, err_: nil }
 //
@@ -296,13 +296,13 @@ pub fn nl(w io.writer) i64, ?error {
 // the *mut Builder receiver — so the proposed `b.str(..).int(..)` chaining
 // is not expressible. Sequential statement calls are the sound equivalent.)
 pub type Builder struct {
-	buf  mut byte[]
+	buf  []mut byte
 	pos  i64
 	err_ ?error
 } {
 	// str appends s, truncating nothing — if it would not fit, the latched
 	// error is set and nothing is written.
-	str(b *mut Builder, s byte[]) {
+	str(b *mut Builder, s []byte) {
 		if (b.err_ != nil) { return }
 		room i64 := len(b.buf) - b.pos
 		if (len(s) > room) {
@@ -377,7 +377,7 @@ pub type Builder struct {
 	}
 
 	// bytes returns the accumulated bytes as a borrowed view buf[0:pos].
-	bytes(b *Builder) byte[] {
+	bytes(b *Builder) []byte {
 		return b.buf[0:b.pos]
 	}
 
@@ -409,7 +409,7 @@ pub type BuilderWriter struct {
 	// write appends bs to the underlying Builder. Reading self.b yields the
 	// *mut Builder and the *mut str method is callable through it; the
 	// adapter struct itself is not mutated.
-	write(self *BuilderWriter, bs byte[]) i64, ?error {
+	write(self *BuilderWriter, bs []byte) i64, ?error {
 		before i64 := self.b.pos
 		self.b.str(bs)
 		after i64 := self.b.pos
@@ -435,7 +435,7 @@ pub type BuilderWriter struct {
 // immediately. Preferred over Formatter when both are available; Formatter
 // remains the path for rendering that must stream into a writer.
 pub interface stringer {
-	string(self *self) byte[] from(self)
+	string(self *self) []byte from(self)
 }
 
 // Formatter is implemented by types whose rendering must be constructed at
@@ -457,7 +457,7 @@ type counting_writer struct {
 	inner io.writer
 	n     i64
 } {
-	write(self *mut counting_writer, bs byte[]) i64, ?error {
+	write(self *mut counting_writer, bs []byte) i64, ?error {
 		// Bind the interface-typed field to a local before dispatch — the
 		// compiler does not (yet) dispatch an interface method directly on a
 		// field-access expression receiver.
@@ -469,7 +469,7 @@ type counting_writer struct {
 }
 
 // print formats to stdout. See printf for directive semantics.
-pub fn print(format byte[], args ...any) i64, ?error {
+pub fn print(format []byte, args ...any) i64, ?error {
 	// &io.STDOUT coerces the global FD to the *self-shaped io.writer.
 	return printf(&io.STDOUT, format, args...)
 }
@@ -481,9 +481,9 @@ pub fn print(format byte[], args ...any) i64, ?error {
 //
 //   %d  decimal — any integer type, signed or unsigned by its own type
 //   %x  "0x"-prefixed hex — any integer type
-//   %s  a byte[] (string), written verbatim
+//   %s  a []byte (string), written verbatim
 //   %c  an integer as a character (its low byte)
-//   %v  natural: integers in decimal, bool as true/false, byte[] as text,
+//   %v  natural: integers in decimal, bool as true/false, []byte as text,
 //       else stringer/Formatter, else a %!v(...) placeholder
 //   %%  literal '%'          (consumes no arg)
 //
@@ -492,7 +492,7 @@ pub fn print(format byte[], args ...any) i64, ?error {
 // arg). A write failure stops immediately; mismatch and missing-arg write an
 // inline marker, latch the error, and continue. Surplus args are appended
 // %v-style and latch a surplus error.
-pub fn printf(w io.writer, format byte[], args ...any) i64, ?error {
+pub fn printf(w io.writer, format []byte, args ...any) i64, ?error {
 	var total i64 := 0
 	var latched ?error := nil
 	var argi i64 := 0
@@ -558,7 +558,7 @@ pub fn printf(w io.writer, format byte[], args ...any) i64, ?error {
 
 // wbyte writes a single byte and returns (written, err).
 fn wbyte(w io.writer, c byte) i64, ?error {
-	var buf byte[1]
+	var buf [1]byte
 	buf[0] = c
 	k, err := w.write(buf[:])
 	return k, err
@@ -663,17 +663,17 @@ fn render_one(w io.writer, verb byte, a any) i64, bool, ?error {
 		}
 		return mismatch_result(w, verb)
 	}
-	if (verb == 115) {                    // 's' — a byte[] (string)
+	if (verb == 115) {                    // 's' — a []byte (string)
 		// Accept both a read-only pointer-to-slice (&"literal", &constSlice)
 		// and a write-through one (&mutableVar) — `&` of a var carries the
 		// MUT_PTR shape, while a static string-literal header is a plain PTR.
 		// Assertion is shape-exact, so both shapes are tried.
-		p *(byte[]), ok bool := a.(*(byte[]))
+		p *([]byte), ok bool := a.(*([]byte))
 		if (ok) {
 			k, err := str(w, *p)
 			return k, ferr_stop(err), err
 		}
-		pm *mut (byte[]), okm bool := a.(*mut (byte[]))
+		pm *mut ([]byte), okm bool := a.(*mut ([]byte))
 		if (okm) {
 			k, err := str(w, *pm)
 			return k, ferr_stop(err), err
@@ -738,7 +738,7 @@ fn render_v(w io.writer, a any) i64, bool, ?error {
 		return cw.n, false, nil
 	}
 	// Base types render naturally, by the value's own type: integers in
-	// decimal (signed or unsigned), bool as true/false, byte[] as its text.
+	// decimal (signed or unsigned), bool as true/false, []byte as its text.
 	si i64, oksi bool := try_signed(a)
 	if (oksi) {
 		k, err := int(w, si)
@@ -754,12 +754,12 @@ fn render_v(w io.writer, a any) i64, bool, ?error {
 		k, err := bool(w, bv)
 		return k, ferr_stop(err), err
 	}
-	ps *(byte[]), okps bool := a.(*(byte[]))
+	ps *([]byte), okps bool := a.(*([]byte))
 	if (okps) {
 		k, err := str(w, *ps)
 		return k, ferr_stop(err), err
 	}
-	psm *mut (byte[]), okpsm bool := a.(*mut (byte[]))
+	psm *mut ([]byte), okpsm bool := a.(*mut ([]byte))
 	if (okpsm) {
 		k, err := str(w, *psm)
 		return k, ferr_stop(err), err

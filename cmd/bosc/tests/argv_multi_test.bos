@@ -5,7 +5,7 @@ import "string"
 // Exercise a multi-arg main. The accompanying argv_multi_test.bos.args
 // file causes the test runner to invoke this with the listed words,
 // so args is { argv[0], "alpha", "beta", "gamma" } at runtime.
-fn main(args byte[][]) {
+fn main(args [][]byte) {
 	n i64 := len(args)
 	string.puti(n)
 	string.putc('\n')

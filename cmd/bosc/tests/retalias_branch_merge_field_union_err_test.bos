@@ -10,9 +10,9 @@ package main
 // caller could free the dropped param while the return still borrows it. The
 // fix records the union via a join origin, so the local in slot 1 surfaces
 // and the escape is rejected regardless of branch order.
-type B struct { buf byte[] }
+type B struct { buf []byte }
 
-fn choose(s byte[], t byte[], use_s bool) B {
+fn choose(s []byte, t []byte, use_s bool) B {
 	var b B
 	if (use_s) {
 		b.buf = s
@@ -22,8 +22,8 @@ fn choose(s byte[], t byte[], use_s bool) B {
 	return b
 }
 
-fn caller(s byte[]) B {
-	var loc byte[16]
+fn caller(s []byte) B {
+	var loc [16]byte
 	return choose(s, loc[:], (1 == 0))
 }
 

@@ -8,7 +8,7 @@ type S16 struct { a i64
  b i64 }
 
 fn main() {
-	var arr S8[2]
+	var arr [2]S8
 	s1 := arr[:]
 	s2 := arr[:]
 	s1[0].a = 9

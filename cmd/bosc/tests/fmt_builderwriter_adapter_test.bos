@@ -7,7 +7,7 @@ import "string"
 // the Builder can be a printf sink. The adapter's *self read of its *mut
 // Builder field and forward through is the load-bearing pattern.
 fn main() i64 {
-	var backing byte[128]
+	var backing [128]byte
 	var b fmt.Builder := fmt.Builder{buf: backing[:], pos: 0, err_: nil}
 	var bw fmt.BuilderWriter := fmt.BuilderWriter{b: &b}
 	n, err := fmt.str(&bw, "via adapter ")

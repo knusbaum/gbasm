@@ -16,7 +16,7 @@ type middle struct {
 }
 
 type outer struct {
-	name byte[]
+	name []byte
 	mid  *middle
 }
 

@@ -6,13 +6,13 @@ type leaf struct {
 
 type box struct {
 	val i64
-	child owned *?owned mut leaf
+	child owned ?*owned mut leaf
 }
 
 fn destroy(b owned *owned mut box) {
 	other owned *owned mut box := new(box{val: 2, child: nil})
-	child owned *?owned mut leaf := b.child
-	other_child owned *?owned mut leaf := other.child
+	child owned ?*owned mut leaf := b.child
+	other_child owned ?*owned mut leaf := other.child
 	other.val = 3
 	free(b)
 	free(other)

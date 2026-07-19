@@ -5,11 +5,11 @@ package main
 // method, so pointer-source coercion must be rejected.
 
 interface labeled {
-	tag(v self) byte[]
+	tag(v self) []byte
 }
 
 type only_val i64 {
-	tag(_ only_val) byte[] {
+	tag(_ only_val) []byte {
 		return "val"
 	}
 }

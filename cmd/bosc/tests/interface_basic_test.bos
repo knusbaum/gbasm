@@ -3,19 +3,19 @@ package main
 import "string"
 
 type myint i64 {
-	describe(_ *myint) byte[] {
+	describe(_ *myint) []byte {
 		return "myint"
 	}
 }
 
 interface Describer {
-	describe(d *self) byte[]
+	describe(d *self) []byte
 }
 
 fn main() i64 {
 	var x myint := 42
 	d Describer := &x
-	s byte[] := d.describe()
+	s []byte := d.describe()
 	string.puts(s)
 	string.puts("\n")
 	return 0

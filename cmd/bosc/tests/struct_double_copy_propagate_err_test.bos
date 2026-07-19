@@ -2,7 +2,7 @@ package main
 
 type Foo struct {
 	x  i64
-	xp *?i64
+	xp ?*i64
 }
 
 fn bad() Foo {

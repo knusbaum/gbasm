@@ -12,12 +12,12 @@ package main
 // 5 bytes literal: 'h', 'i' (0x68 0x69), then \xff via the new escape,
 // then \t (0x09) and \n (0x0a) for "hi\t\n" with one non-printable.
 // Output to stdout: "hi" + 0xff + "\t\n".
-var greeting byte[5] "hi\xff\t\n"
+var greeting [5]byte "hi\xff\t\n"
 
 // Size form: 6 zero-filled bytes. Main pokes a few values in and writes
 // them, confirming the global was allocated at the right size and
 // initialized to zero (we rely on the still-zero high bytes).
-var buf byte[6] 6
+var buf [6]byte 6
 
 function main
 	// write(1, greeting, 5)

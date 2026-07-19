@@ -5,13 +5,13 @@ package main
 // case, just one indirection deeper. The destination's lifetime is
 // process-lifetime; the source's lifetime is a frame. Must be rejected.
 
-var g byte[][1]
+var g [1][]byte
 
-fn store(s byte[]) {
+fn store(s []byte) {
 	g[0] = s
 }
 
 fn main() {
-	var local byte[8]
+	var local [8]byte
 	store(local[:])
 }

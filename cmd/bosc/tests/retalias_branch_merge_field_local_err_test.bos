@@ -9,9 +9,9 @@ package main
 // so this returns-a-dangling-local case is rejected regardless of branch
 // order. (Companion to retalias_branch_merge_local_err for the top-level
 // binding merge.)
-type B struct { buf byte[] }
-fn f(s byte[], cond bool) B {
-	var loc byte[16]
+type B struct { buf []byte }
+fn f(s []byte, cond bool) B {
+	var loc [16]byte
 	var b B
 	if (cond) {
 		b.buf = s

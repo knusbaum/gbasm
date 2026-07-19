@@ -5,15 +5,15 @@ import "string"
 // 1,2). An impl whose pick returns `a` borrows {1} ⊆ {1,2}, so it conforms;
 // the result is used within the value's lifetime. Exercises a multi-bit
 // declared mask through the real compiler path.
-interface joiner { pick(self *self, a byte[], b byte[]) byte[] from(a, b) }
+interface joiner { pick(self *self, a []byte, b []byte) []byte from(a, b) }
 type J struct { tag i64 } {
-	pick(_ *J, a byte[], _ byte[]) byte[] { return a }
+	pick(_ *J, a []byte, _ []byte) []byte { return a }
 }
 
 fn main() i64 {
 	var j J := J{tag: 0}
 	v joiner := &j
-	r byte[] := v.pick("aa", "bb")
+	r []byte := v.pick("aa", "bb")
 	string.puts(r)
 	string.putc(10)
 	return 0

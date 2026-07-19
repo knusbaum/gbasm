@@ -3,16 +3,16 @@ package main
 import "string"
 
 interface error_val {
-	message(e self) byte[]
+	message(e self) []byte
 }
 
-type io_error values (byte[]) {
+type io_error values ([]byte) {
 	NOT_FOUND: "not found"
 	PERMISSION_DENIED: "permission denied"
 	BUSY: "busy"
 } {
-	message(e io_error) byte[] {
-		return byte[](e)
+	message(e io_error) []byte {
+		return []byte(e)
 	}
 }
 

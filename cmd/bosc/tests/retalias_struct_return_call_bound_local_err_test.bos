@@ -8,14 +8,14 @@ package main
 // argument surfaces at `return b` via CheckStructFieldEscapeLocal exactly as
 // the direct `b.buf = loc[:]; return b` form does. Before the fix the struct-
 // copy field propagation only handled a *Symbol RHS, so this leaked.
-type B struct { buf byte[] }
+type B struct { buf []byte }
 
-fn mk(s byte[]) B {
+fn mk(s []byte) B {
 	return B{buf: s}
 }
 
 fn outer() B {
-	var loc byte[16]
+	var loc [16]byte
 	var b B := mk(loc[:])
 	return b
 }

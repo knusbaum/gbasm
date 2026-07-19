@@ -9,7 +9,7 @@ fn perror(err error) {
 	fmt.str(&io.STDOUT, "\n")
 }
 
-fn main(args byte[][]) {
+fn main(args [][]byte) {
 	if (len(args) == 1) {
 		err := io.copy(&io.STDOUT, &io.STDIN)
 		if(err != io.io_err.OK) {

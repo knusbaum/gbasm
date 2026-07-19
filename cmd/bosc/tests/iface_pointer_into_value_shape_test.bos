@@ -8,11 +8,11 @@ import "string"
 // via [iface+0] -> RDI, and T's method body reads RDI as a pointer.
 
 interface value_shape {
-	name(v self) byte[]
+	name(v self) []byte
 }
 
 type widget i64 {
-	name(_ *widget) byte[] {
+	name(_ *widget) []byte {
 		return "widget"
 	}
 }

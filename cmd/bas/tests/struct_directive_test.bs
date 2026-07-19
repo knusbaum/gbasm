@@ -15,7 +15,7 @@ struct rect {
 	tl point
 	br point
 	flags byte
-	label byte[16]
+	label [16]byte
 }
 
 // Edge cases: blank lines and comments inside the body.
@@ -24,7 +24,7 @@ struct edges {
 	// leading comment
 	a *mut i64
 
-	b byte[]
+	b []byte
 	// trailing comment
 }
 

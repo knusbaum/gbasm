@@ -1,2 +1,2 @@
 Compiling tests/cov_mut_fixed_array_err_test.bos
-Parse Error: 'mut' on a fixed-size array value is meaningless; array element mutability comes from the binding (use `var`). For a write-through pointer element, `*mut T[N]` is an array of `*mut T`; for a pointer to a mutable array, write `*mut (T[N])`
+Parse Error: a binding's mutability is written `var`, not a leading `mut`; `mut` only qualifies a pointer or slice operand (`*mut T`, `[]mut T`)

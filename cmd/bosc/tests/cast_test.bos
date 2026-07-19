@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-fn check(label byte[], got i64, expected i64) {
+fn check(label []byte, got i64, expected i64) {
 	if (got == expected) {
 		string.puts(label)
 		string.puts(" ok\n")

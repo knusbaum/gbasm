@@ -19,7 +19,7 @@ fn p(n i64) {
 }
 
 fn main() {
-	var arr T[3]
+	var arr [3]T
 	arr[0].a = 5
 	arr[1].a = 7
 	arr[2].a = 9
@@ -37,7 +37,7 @@ fn main() {
 	p(arr[i].a) // 7
 
 	// >8 element
-	var big U[2]
+	var big [2]U
 	big[1].a = 3
 	big[1].b = 4
 	p(big[1].a) // 3

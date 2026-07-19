@@ -6,12 +6,12 @@ package main
 // rule: the impl's inferred borrow {receiver} is not ⊆ Byter's declared ∅.
 // The fix is to declare `from(self)` on Byter (then it conforms). Concrete
 // `h.bytes()` still works; only this uncovered coercion is forbidden.
-type Holder struct { buf byte[] } {
-	bytes(h *Holder) byte[] { return h.buf }
+type Holder struct { buf []byte } {
+	bytes(h *Holder) []byte { return h.buf }
 }
 
 interface Byter {
-	bytes(s *self) byte[]
+	bytes(s *self) []byte
 }
 
 fn coerce(h *Holder) Byter {

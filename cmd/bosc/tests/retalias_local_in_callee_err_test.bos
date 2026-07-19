@@ -3,8 +3,8 @@ package main
 // A function returning a sub-slice of its OWN local array is still rejected
 // in the callee — a local origin, not a borrowed parameter. No amount of
 // caller knowledge rescues a dead stack slot.
-fn bad() byte[] {
-	var local byte[16]
+fn bad() []byte {
+	var local [16]byte
 	return local[0:8]
 }
 

@@ -10,9 +10,9 @@ import "string"
 // 16-byte aggregate return rides in rax+rdx; the function emits the
 // header into those registers and the caller reassembles it.
 
-var buf byte[8]
+var buf [8]byte
 
-fn get_view() byte[] {
+fn get_view() []byte {
 	return buf[:5]
 }
 
@@ -25,7 +25,7 @@ fn main() {
 	buf[5] = 'X'
 	buf[6] = 'Y'
 	buf[7] = 'Z'
-	bs byte[] := get_view()
+	bs []byte := get_view()
 	string.puts(bs)
 	string.puts("\n")
 }

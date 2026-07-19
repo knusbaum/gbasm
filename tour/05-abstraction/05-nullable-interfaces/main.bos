@@ -3,11 +3,11 @@ package main
 import "fmt"
 
 interface named {
-	name(self *self) byte[]
+	name(self *self) []byte
 }
 
 type dog i64 {
-	name(_ *dog) byte[] { return "Rex" }
+	name(_ *dog) []byte { return "Rex" }
 }
 
 fn main() {
@@ -15,7 +15,7 @@ fn main() {
 	a any := &d
 	n ?named := a.(named) // fallible assertion -> nullable interface
 	if (n != nil) {
-		var nm byte[] := n.name()
+		var nm []byte := n.name()
 		fmt.print("name: %s\n", &nm)
 	} else {
 		fmt.print("not named\n")

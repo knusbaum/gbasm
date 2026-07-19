@@ -5,12 +5,12 @@ package main
 // long-lived slot just as a direct `g.buf = s` would.
 
 type B struct {
-	buf byte[]
+	buf []byte
 }
 
 var g B
 
-fn store(s byte[]) {
+fn store(s []byte) {
 	g = B{buf: s}
 }
 

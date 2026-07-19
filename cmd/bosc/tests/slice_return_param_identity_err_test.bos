@@ -4,12 +4,12 @@ package main
 // by value can route a caller's local backing storage past its lifetime, as in
 // bad() below.
 
-fn id(s byte[]) byte[] {
+fn id(s []byte) []byte {
 	return s
 }
 
-fn bad() byte[] {
-	var local byte[8]
+fn bad() []byte {
+	var local [8]byte
 	return id(local[:])
 }
 

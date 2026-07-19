@@ -11,7 +11,7 @@ import "string"
 // in the callee lets the body read fields.
 
 interface labeled {
-	tag(s *self) byte[]
+	tag(s *self) []byte
 }
 
 type bag struct {
@@ -20,7 +20,7 @@ type bag struct {
 	c i8
 	d i8
 } {
-	tag(_ bag) byte[] {
+	tag(_ bag) []byte {
 		return "bag"
 	}
 }

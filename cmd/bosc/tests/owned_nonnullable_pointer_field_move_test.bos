@@ -5,7 +5,7 @@ import "fmt"
 // A non-null owned pointer field can be moved out, cleaned up, and the
 // aggregate then disposed — the partial-disposal / typestate feature
 // (PROPOSAL_owned_field_move.md). Previously this was rejected with
-// "Cannot move non-null pointer field next; use *?T …".
+// "Cannot move non-null pointer field next; use ?*T …".
 type box struct {
 	next owned *mut i64
 }

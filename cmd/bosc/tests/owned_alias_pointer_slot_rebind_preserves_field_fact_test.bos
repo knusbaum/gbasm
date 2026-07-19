@@ -6,15 +6,15 @@ type leaf struct {
 
 type box struct {
 	val i64
-	child owned *?owned mut leaf
+	child owned ?*owned mut leaf
 }
 
 fn destroy(b owned *owned mut box) {
 	other owned *owned mut box := new(box{val: 2, child: nil})
-	other_child owned *?owned mut leaf := other.child
+	other_child owned ?*owned mut leaf := other.child
 	var alias *mut box := b
 	slot *mut *mut box := &alias
-	child owned *?owned mut leaf := b.child
+	child owned ?*owned mut leaf := b.child
 	other_alias *mut box := other
 	*slot = other_alias
 	alias.val = 3

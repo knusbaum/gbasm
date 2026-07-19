@@ -3,7 +3,7 @@ package main
 import "string"
 
 interface error_val {
-	message(e self) byte[]
+	message(e self) []byte
 }
 
 type io_error values {
@@ -11,7 +11,7 @@ type io_error values {
 	PERMISSION_DENIED
 	BUSY
 } {
-	message(e io_error) byte[] {
+	message(e io_error) []byte {
 		if (e == io_error.NOT_FOUND) {
 			return "not found"
 		}

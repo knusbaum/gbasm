@@ -5,11 +5,11 @@ package main
 // pointer-receiver method, so value-source coercion must be rejected.
 
 interface labeled {
-	tag(v *self) byte[]
+	tag(v *self) []byte
 }
 
 type only_ptr i64 {
-	tag(_ *only_ptr) byte[] {
+	tag(_ *only_ptr) []byte {
 		return "ptr"
 	}
 }

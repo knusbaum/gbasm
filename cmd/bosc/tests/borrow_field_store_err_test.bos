@@ -5,7 +5,7 @@ type node struct {
 }
 
 type holder struct {
-	n *?node
+	n ?*node
 }
 
 fn bad(n *node) {

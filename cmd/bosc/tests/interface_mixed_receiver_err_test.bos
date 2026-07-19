@@ -1,8 +1,8 @@
 package main
 
 interface mixed {
-	first(v self) byte[]
-	second(v *self) byte[]
+	first(v self) []byte
+	second(v *self) []byte
 }
 
 fn main() {

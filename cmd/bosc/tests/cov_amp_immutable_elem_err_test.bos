@@ -3,7 +3,7 @@ import "fmt"
 type S struct { a i64 }
 
 fn main() {
-	var src S[2]
+	var src [2]S
 	arr := src
 	p := &arr[0]
 	p.a = 9

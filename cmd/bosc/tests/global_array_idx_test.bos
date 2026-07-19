@@ -11,8 +11,8 @@ import "string"
 // This test covers both: constant offsets and a runtime index loop,
 // for both reads and writes.
 
-var buf byte[8]
-var nums i64[5]
+var buf [8]byte
+var nums [5]i64
 
 fn main() {
 	// Constant-offset writes (single-byte element → [buf+N] form).

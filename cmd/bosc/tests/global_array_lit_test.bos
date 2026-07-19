@@ -4,16 +4,16 @@ import "string"
 
 // Array literals at file scope. Three destination shapes:
 //   - Fixed array T[N]: encoded element-by-element.
-//   - Slice T[]: anonymous backing array + slice header with reloc.
+//   - Slice []T: anonymous backing array + slice header with reloc.
 //   - Struct field that's a fixed array: recursive via struct encoder.
 
-var nums i64[4] := [10, 20, 30, 40]
-var bs byte[3] := [65, 66, 67]                   // 'A' 'B' 'C'
-var slice i64[] := [100, 200, 300]
+var nums [4]i64 := [10, 20, 30, 40]
+var bs [3]byte := [65, 66, 67]                   // 'A' 'B' 'C'
+var slice []i64 := [100, 200, 300]
 
 type config struct {
 	id      i64
-	weights i64[3]
+	weights [3]i64
 }
 
 var cfg config := config{

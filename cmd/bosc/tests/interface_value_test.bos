@@ -3,7 +3,7 @@ package main
 import "string"
 
 type my_err i64 {
-	message(e my_err) byte[] {
+	message(e my_err) []byte {
 		if (e == my_err(7)) {
 			return "whatever"
 		}
@@ -12,7 +12,7 @@ type my_err i64 {
 }
 
 interface error_val {
-	message(e self) byte[]
+	message(e self) []byte
 }
 
 fn make_error() error_val {
@@ -24,7 +24,7 @@ fn show(e error_val) {
 	string.puts("\n")
 }
 
-fn main(_ byte[][]) {
+fn main(_ [][]byte) {
 	e error_val := make_error()
 	show(e)
 }

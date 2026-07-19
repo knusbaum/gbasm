@@ -8,27 +8,27 @@ import "string"
 // borrowed buffer; the caller sees the bytes. Concrete method dispatch on a
 // borrowing-method type still works (the exclusion is only at coercion).
 type Builder struct {
-	buf mut byte[]
+	buf []mut byte
 	pos i64
 } {
-	append(b *mut Builder, s byte[]) {
+	append(b *mut Builder, s []byte) {
 		var i i64 := 0
 		for (; i < len(s); i = i + 1) {
 			b.buf[b.pos] = s[i]
 			b.pos = b.pos + 1
 		}
 	}
-	bytes(b *Builder) byte[] {
+	bytes(b *Builder) []byte {
 		return b.buf[0:b.pos]
 	}
 }
 
-fn new_builder(buf mut byte[]) Builder {
+fn new_builder(buf []mut byte) Builder {
 	return Builder{buf: buf, pos: 0}
 }
 
 fn main() i64 {
-	var storage byte[32]
+	var storage [32]byte
 	var b Builder := new_builder(storage[:])
 	b.append("ab")
 	b.append("cd")

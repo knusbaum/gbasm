@@ -1,11 +1,11 @@
 package main
 
 interface labeled {
-	label(v self) byte[]
+	label(v self) []byte
 }
 
 type good i64 {
-	label(_ good) byte[] {
+	label(_ good) []byte {
 		return "good"
 	}
 }

@@ -1,8 +1,8 @@
 package main
 import "string"
 fn main() {
-	arr := alloc(i64[4])
-	s mut i64[] := (*arr)[:]
+	arr := alloc([4]i64)
+	s []mut i64 := (*arr)[:]
 	s[0] = 7
 	s[3] = 9
 	string.puti(s[0] + s[3])     // 16

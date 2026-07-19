@@ -5,7 +5,7 @@ import "string"
 type poly struct {
 	x i64
 	y i64
-	bs byte[]
+	bs []byte
 }
 
 
@@ -14,13 +14,13 @@ type poly struct {
 // *mut poly out-parameter is rejected (see
 // slice_assign_through_borrowed_ptr_field_err_test.bos), so the helper
 // stays slice-free and the caller does the slice store on its own local.
-fn dosth(_ byte[]) i64, i64, i64 {
+fn dosth(_ []byte) i64, i64, i64 {
 	return 1, 2, 10
 }
 
 
 fn main() i64 {
-	var arr byte[100]
+	var arr [100]byte
 
 	var p poly
 	x i64, y i64, n i64 := dosth(arr[:])

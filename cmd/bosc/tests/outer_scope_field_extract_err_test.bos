@@ -4,11 +4,11 @@ import "string"
 
 type Foo struct {
 	x  i64
-	xp *?i64
+	xp ?*i64
 }
 
 fn main() {
-	var p *?i64 := nil
+	var p ?*i64 := nil
 	{
 		var s Foo := Foo{x: 10, xp: nil}
 		s.xp = &s.x

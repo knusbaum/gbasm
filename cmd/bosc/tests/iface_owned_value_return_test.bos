@@ -14,7 +14,7 @@ type foo struct{ x owned i64 } {
 		_, err := fmt.printf(w, "foo(%d)", self.x)
 		return err
 	}
-	message(_ foo) byte[] {
+	message(_ foo) []byte {
 		return "fake error"
 	}
 	destroy(e owned foo) {

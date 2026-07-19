@@ -5,19 +5,19 @@ import "string"
 // Multi-assign REFRESH: re-destructuring from a call whose slot carries
 // no borrow must CLEAR the previous (local) fact — the old stale fact
 // must not falsely reject the now-global-backed return.
-var gbuf byte[16]
-fn mkslice(s byte[]) byte[], i64 { return s[0:4], 7 }
-fn mkglob() byte[], i64 { return gbuf[0:4], 9 }
-fn refresh() byte[] {
-	var l byte[16]
-	var v byte[], var _ i64 := mkslice(l[0:8])
+var gbuf [16]byte
+fn mkslice(s []byte) []byte, i64 { return s[0:4], 7 }
+fn mkglob() []byte, i64 { return gbuf[0:4], 9 }
+fn refresh() []byte {
+	var l [16]byte
+	var v []byte, var _ i64 := mkslice(l[0:8])
 	v, _ = mkglob()
 	return v
 }
 fn main() i64 {
 	gbuf[0] = 79
 	gbuf[1] = 75
-	r byte[] := refresh()
+	r []byte := refresh()
 	string.putc(r[0])
 	string.putc(r[1])
 	string.puts("\n")

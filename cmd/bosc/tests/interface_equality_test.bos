@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-fn say(name byte[], ok bool) {
+fn say(name []byte, ok bool) {
 	string.puts(name)
 	if (ok) {
 		string.puts(" yes\n")
@@ -12,14 +12,14 @@ fn say(name byte[], ok bool) {
 }
 
 interface labeled {
-	label(v self) byte[]
+	label(v self) []byte
 }
 
 type code values {
 	OK
 	FAIL
 } {
-	label(_ code) byte[] {
+	label(_ code) []byte {
 		return "code"
 	}
 }
@@ -27,17 +27,17 @@ type code values {
 type other values {
 	OK
 } {
-	label(_ other) byte[] {
+	label(_ other) []byte {
 		return "other"
 	}
 }
 
 interface ptr_labeled {
-	label(v *self) byte[]
+	label(v *self) []byte
 }
 
 type thing i64 {
-	label(_ *thing) byte[] {
+	label(_ *thing) []byte {
 		return "thing"
 	}
 }

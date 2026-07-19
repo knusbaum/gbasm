@@ -3,7 +3,7 @@ package main
 import "string"
 
 type evt values {
-	OPENED{ fd i64, path byte[] }
+	OPENED{ fd i64, path []byte }
 	CLOSED
 }
 
@@ -17,7 +17,7 @@ fn main() {
 	string.puts("\n")
 
 	e2 evt := evt.CLOSED
-	msg byte[] := switch e2 {
+	msg []byte := switch e2 {
 		case OPENED  "open"
 		case CLOSED  "shut"
 	}

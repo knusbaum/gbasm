@@ -5,8 +5,8 @@ package main
 // argument position; classifying the recursive-call argument buf[:] (a
 // local origin) rejects it. The local-escape rejection is NOT relaxed
 // inside a cycle.
-fn weird_local(s byte[], cond bool) byte[] {
-	var buf byte[8]
+fn weird_local(s []byte, cond bool) []byte {
+	var buf [8]byte
 	if (cond) {
 		return weird_local(buf[0:4], no())
 	}

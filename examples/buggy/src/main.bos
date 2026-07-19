@@ -4,8 +4,8 @@ import "io"
 import "fmt"
 import "src/subpkg"
 
-type strerr struct{ err byte[] } {
-	message(e *strerr) byte[] {
+type strerr struct{ err []byte } {
+	message(e *strerr) []byte {
 		return e.err
 	}
 	destroy(e owned *strerr) {
@@ -18,14 +18,14 @@ fn do_a_thing() owned built_error {
 }
 
 fn blowstack() {
-	var x i64[1024]
+	var x [1024]i64
 
 	for(var i i64 := 0; i < 100; i = i + 1) {
 		x[i] = i
 	}
 }
 
-fn main(args byte[][]) {	
+fn main(args [][]byte) {	
 	e := do_a_thing()
 	fmt.str(&io.STDOUT, e.message())
 	e.destroy()

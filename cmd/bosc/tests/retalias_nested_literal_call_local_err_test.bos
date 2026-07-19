@@ -3,12 +3,12 @@ package main
 // A struct-typed field of a returned literal sourced from a CALL
 // (recordStructLiteralFieldFacts' Funcall arm): a local flowing into the
 // nested struct's borrowed field through the call must reject.
-type B struct { buf byte[] }
+type B struct { buf []byte }
 type Outer struct { inner B }
-fn mk(s byte[]) B { return B{buf: s} }
-fn outer2(p byte[]) Outer { return Outer{inner: mk(p[:])} }
+fn mk(s []byte) B { return B{buf: s} }
+fn outer2(p []byte) Outer { return Outer{inner: mk(p[:])} }
 fn caller() Outer {
-	var loc byte[16]
+	var loc [16]byte
 	return outer2(loc[:])
 }
 fn main() i64 { return 0 }

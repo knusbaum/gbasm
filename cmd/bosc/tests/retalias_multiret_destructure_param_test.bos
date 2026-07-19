@@ -4,16 +4,16 @@ import "string"
 
 // B2 positive twin: a param borrowed through a destructured slot records
 // ([[0]]) and the view is usable within the param's lifetime.
-fn mkslice(s byte[]) byte[], i64 {
+fn mkslice(s []byte) []byte, i64 {
 	return s[0:4], 7
 }
-fn take(s byte[]) byte[] {
-	v byte[], _ i64 := mkslice(s)
+fn take(s []byte) []byte {
+	v []byte, _ i64 := mkslice(s)
 	return v
 }
 fn main() i64 {
-	data byte[] := "abcdef"
-	r byte[] := take(data)
+	data []byte := "abcdef"
+	r []byte := take(data)
 	string.puts(r)
 	string.puts("\n")
 	return 0

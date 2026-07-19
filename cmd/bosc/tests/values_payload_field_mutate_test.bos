@@ -4,7 +4,7 @@ import "string"
 
 // Phase 3: mutate a payload field in a narrowed case (mutable scrutinee).
 type file_info values {
-	FILE_INFO{ fd i64, path byte[] }
+	FILE_INFO{ fd i64, path []byte }
 	CLOSED
 }
 

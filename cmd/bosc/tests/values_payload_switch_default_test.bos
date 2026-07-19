@@ -3,8 +3,8 @@ package main
 import "string"
 
 type file_info values {
-	FILE_INFO{ fd i64, path byte[] }
-	SOCKET{ fd i64, addr byte[] }
+	FILE_INFO{ fd i64, path []byte }
+	SOCKET{ fd i64, addr []byte }
 	CLOSED
 }
 

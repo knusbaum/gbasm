@@ -5,7 +5,7 @@ package main
 // call, not a normal borrowed parameter, and the positional
 // param-index→argument mapping breaks down for the packed args. v1 rejects
 // a returned alias of a variadic parameter outright (never recorded).
-fn first(args ...any) any[] {
+fn first(args ...any) []any {
 	return args[0:1]
 }
 

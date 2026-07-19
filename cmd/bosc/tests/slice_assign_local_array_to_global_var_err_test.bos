@@ -8,10 +8,10 @@ package main
 //
 // Currently accepted (compiles cleanly). Should be rejected.
 
-var g_slice mut byte[]
+var g_slice []mut byte
 
 fn bad() {
-	var local byte[64]
+	var local [64]byte
 	g_slice = local[:]
 }
 

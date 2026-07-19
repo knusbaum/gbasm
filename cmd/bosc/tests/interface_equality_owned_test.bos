@@ -8,12 +8,12 @@ import "string"
 // comparison.
 
 interface labeled {
-	label(v *self) byte[]
+	label(v *self) []byte
 	destroy(v owned *self)
 }
 
 type code i64 {
-	label(_ *code) byte[] {
+	label(_ *code) []byte {
 		return "code"
 	}
 	destroy(c owned *code) {
@@ -25,7 +25,7 @@ fn make_one() owned labeled {
 	return new(code(1))
 }
 
-fn say(name byte[], ok bool) {
+fn say(name []byte, ok bool) {
 	string.puts(name)
 	if (ok) {
 		string.puts(" yes\n")

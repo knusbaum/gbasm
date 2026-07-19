@@ -1,13 +1,13 @@
 package main
 
 interface labeled {
-	label(v self) byte[]
+	label(v self) []byte
 }
 
 type code values {
 	OK
 } {
-	label(_ code) byte[] {
+	label(_ code) []byte {
 		return "code"
 	}
 }

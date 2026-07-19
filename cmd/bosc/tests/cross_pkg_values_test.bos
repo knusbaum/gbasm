@@ -9,13 +9,13 @@ fn main() {
 	var e errors.io_error := errors.io_error.NOT_FOUND
 	string.puti(i64(e))
 	string.puts(" ")
-	string.puts(byte[](e))
+	string.puts([]byte(e))
 	string.puts("\n")
 
 	e = errors.io_error.PERMISSION_DENIED
 	string.puti(i64(e))
 	string.puts(" ")
-	string.puts(byte[](e))
+	string.puts([]byte(e))
 	string.puts("\n")
 
 	// Method dispatch on the imported values type.

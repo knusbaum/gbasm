@@ -6,7 +6,7 @@ type leaf struct {
 
 type box struct {
 	val i64
-	child owned *?owned mut leaf
+	child owned ?*owned mut leaf
 }
 
 fn touch(b *mut box) {
@@ -14,7 +14,7 @@ fn touch(b *mut box) {
 }
 
 fn destroy(b owned *owned mut box) {
-	var child owned *?owned mut leaf := b.child
+	var child owned ?*owned mut leaf := b.child
 	touch(b)
 	free(b)
 	if(child) {

@@ -3,7 +3,7 @@ import "string"
 
 // greeter has a greet method; barer does not.
 type greeter i64 {
-	greet(_ *self) byte[] {
+	greet(_ *self) []byte {
 		return "hi"
 	}
 }
@@ -14,7 +14,7 @@ type barer i64 {
 }
 
 interface speaker {
-	greet(s *self) byte[]
+	greet(s *self) []byte
 }
 
 fn main() i64 {

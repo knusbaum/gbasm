@@ -1,7 +1,7 @@
 package main
 
 fn main() {
-	p owned *?mut i64 := alloc(i64)
+	p owned ?*mut i64 := alloc(i64)
 	if (!p) {
 		return 0
 	} else {

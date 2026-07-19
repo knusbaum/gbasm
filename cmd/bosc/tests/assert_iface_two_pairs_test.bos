@@ -5,20 +5,20 @@ import "string"
 // succeed and dispatch through their own method, exercising two distinct itabs
 // chained on the single typedesc cache for `worker`.
 type worker i64 {
-	greet(_ *self) byte[] {
+	greet(_ *self) []byte {
 		return "hi"
 	}
-	farewell(_ *self) byte[] {
+	farewell(_ *self) []byte {
 		return "bye"
 	}
 }
 
 interface speaker {
-	greet(s *self) byte[]
+	greet(s *self) []byte
 }
 
 interface closer {
-	farewell(c *self) byte[]
+	farewell(c *self) []byte
 }
 
 fn main() i64 {

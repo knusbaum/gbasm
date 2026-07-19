@@ -7,7 +7,7 @@ type color values {
 	GREEN
 	BLUE
 } {
-	name(c color) byte[] {
+	name(c color) []byte {
 		if (c == color.RED) {
 			return "red"
 		}

@@ -8,8 +8,8 @@ package main
 // rejection is incidental: a type-comparison invariant catches it before
 // any escape analysis runs.
 
-fn bad() byte[] {
-	var local byte[64]
+fn bad() []byte {
+	var local [64]byte
 	return local[:]
 }
 

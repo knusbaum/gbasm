@@ -1,6 +1,6 @@
 package main
 
-fn maybe_free(p owned *?mut i64) {
+fn maybe_free(p owned ?*mut i64) {
 	free(p)
 }
 

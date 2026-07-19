@@ -5,7 +5,7 @@ import "fmt"
 
 type node struct {
 	val i64
-	next owned *?owned mut node
+	next owned ?*owned mut node
 }
 
 fn list_new(val i64) owned *owned mut node {
@@ -24,7 +24,7 @@ fn list_append(l *mut node, val i64) {
 }
 
 fn list_print(l *node) {
-	var curr *?node := l
+	var curr ?*node := l
 	fmt.str(&io.STDOUT, "[")
 	for(; curr != nil; curr = curr?.next) {
 		cur *node := curr?
@@ -38,7 +38,7 @@ fn list_print(l *node) {
 
 fn list_destroy(l owned *owned mut node) {
 	var curr owned *owned mut node := l
-	var next owned *?owned mut node
+	var next owned ?*owned mut node
 	for(;;) {
 		next = curr.next
 		free(curr)
@@ -50,7 +50,7 @@ fn list_destroy(l owned *owned mut node) {
 	}
 }
 
-fn main(_ byte[][]) {
+fn main(_ [][]byte) {
 	lst owned *owned mut node := list_new(10)
 	list_append(lst, 20)
 	list_append(lst, 30)

@@ -5,7 +5,7 @@ import "fmt"
 // Regression: consuming a *nullable* owned field leaves nil — the aggregate
 // stays consistent and may still be passed to a function.
 type bag struct {
-	item owned *?mut i64
+	item owned ?*mut i64
 }
 
 fn count(b *bag) i64 {
@@ -17,7 +17,7 @@ fn count(b *bag) i64 {
 
 fn main() {
 	var b owned bag := bag{item: alloc(i64)}
-	item owned *?mut i64 := b.item
+	item owned ?*mut i64 := b.item
 	if (item) {
 		free(item)
 	}

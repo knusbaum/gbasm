@@ -3,7 +3,7 @@ import "fmt"
 type S struct { a i64 }
 
 fn main() {
-	var a S[2]
+	var a [2]S
 	s1 := a[:]
 	s2 := a[:]
 	if (s1 == s2) { fmt.print("x\n") }

@@ -15,7 +15,7 @@ type state struct {
 // index instead of a sub-slice keeps the function escape-clean — Boson
 // can't yet express "the returned slice's lifetime equals the input's"
 // without lifetime annotations.
-fn skip(bs byte[]) i64 {
+fn skip(bs []byte) i64 {
 	var i i64
 	for (i = 0; i < len(bs); i = i+1) {
 		if ((bs[i] >= '0') && (bs[i] <= '9')) {
@@ -30,14 +30,14 @@ fn skip(bs byte[]) i64 {
 // leftover with `bs[s.remainingOffset:]`). Storing a borrowed sub-slice
 // of bs into a slice field of *out would be rejected by the
 // borrowed-pointer-target escape rule; the index dodges that entirely.
-fn readRow(var bs mut byte[], out *mut state) {
+fn readRow(var bs []mut byte, out *mut state) {
 	origLen i64 := len(bs)
-	var onea byte[10]
-	var twoa byte[10]
+	var onea [10]byte
+	var twoa [10]byte
 
-	var onebs mut byte[]
+	var onebs []mut byte
 	onebs = onea[:]
-	var twobs mut byte[]
+	var twobs []mut byte
 	twobs = twoa[:]
 
 	// scan forward to the next number
@@ -110,7 +110,7 @@ fn readRow(var bs mut byte[], out *mut state) {
 	}
 }
 
-fn dumpbs(bs byte[]) {
+fn dumpbs(bs []byte) {
 	var i i64
 	for (i = 0; i < len(bs); i = i + 1) {
 		string.putc(bs[i])
@@ -118,7 +118,7 @@ fn dumpbs(bs byte[]) {
 	string.puts("\n")
 }
 
-fn dumpns(ns i64[]) {
+fn dumpns(ns []i64) {
 	var i i64
 	for (i = 0; i < len(ns); i = i + 1) {
 		string.puti(ns[i])
@@ -127,7 +127,7 @@ fn dumpns(ns i64[]) {
 	string.puts("\n")
 }
 
-fn qsort(ns mut i64[]) {
+fn qsort(ns []mut i64) {
 	if (len(ns) <= 0) {
 		return 0
 	}
@@ -145,7 +145,7 @@ fn qsort(ns mut i64[]) {
 	}
 }
 
-fn partition(ns mut i64[]) i64 {
+fn partition(ns []mut i64) i64 {
 	var pivot i64
 	var i i64
 	pivot = ns[len(ns) - 1]	
@@ -178,13 +178,13 @@ fn main() i64 {
 		string.puts("\n")
 		return 1
 	}
-	var left i64[1000]
-	var right i64[1000]
+	var left [1000]i64
+	var right [1000]i64
 	var row i64
 	row = 0
 	
-	var buf byte[28]
-	var bs mut byte[]
+	var buf [28]byte
+	var bs []mut byte
 	bs = buf[:]
 	var remaining i64
 	remaining = 0
@@ -248,7 +248,7 @@ fn main() i64 {
 	string.puts("\n")
 }
 
-fn similarity(left i64[], right i64[]) i64 {
+fn similarity(left []i64, right []i64) i64 {
 	var i i64
 	var j i64
 	var sim i64
@@ -279,7 +279,7 @@ type nret struct {
 	err bool
 }
 
-fn atoi(s byte[]) nret {
+fn atoi(s []byte) nret {
 	var l i64
 	l = len(s)
 	var i i64

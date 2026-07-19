@@ -6,7 +6,7 @@ import "string"
 // variant; narrowing disambiguates.
 type msg values {
 	INT{ tag i64, val i64 }
-	TEXT{ val byte[] }
+	TEXT{ val []byte }
 }
 
 fn show(m msg) {

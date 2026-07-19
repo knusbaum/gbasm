@@ -9,7 +9,7 @@ fn main() {
 	string.putc(b)
 	string.puts("\n")
 
-	var s byte[]
+	var s []byte
 	s = "Hello, World!"
 	string.putc(s[0])
 	string.puts("\n")

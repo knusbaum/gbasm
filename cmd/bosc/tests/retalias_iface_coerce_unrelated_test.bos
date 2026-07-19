@@ -7,10 +7,10 @@ import "string"
 // (which checks only required methods) allows the coercion — `peek` is
 // reachable only via assertion, which the runtime gate covers.
 type Sink struct {
-	buf mut byte[]
+	buf []mut byte
 	pos i64
 } {
-	write(s *mut Sink, data byte[]) i64, ?error {
+	write(s *mut Sink, data []byte) i64, ?error {
 		var i i64 := 0
 		for (; i < len(data); i = i + 1) {
 			s.buf[s.pos] = data[i]
@@ -18,7 +18,7 @@ type Sink struct {
 		}
 		return len(data), nil
 	}
-	peek(s *Sink) byte[] {
+	peek(s *Sink) []byte {
 		return s.buf[0:s.pos]
 	}
 }

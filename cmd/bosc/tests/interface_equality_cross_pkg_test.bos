@@ -3,7 +3,7 @@ package main
 import "errors"
 import "string"
 
-fn say(name byte[], ok bool) {
+fn say(name []byte, ok bool) {
 	string.puts(name)
 	if (ok) {
 		string.puts(" yes\n")

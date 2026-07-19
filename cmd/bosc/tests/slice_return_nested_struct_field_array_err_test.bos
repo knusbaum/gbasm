@@ -6,13 +6,13 @@ package main
 // a pointer.
 
 type Inner struct {
-	buf byte[8]
+	buf [8]byte
 }
 type Outer struct {
 	inner Inner
 }
 
-fn bad() byte[] {
+fn bad() []byte {
 	var o Outer
 	return o.inner.buf[:]
 }

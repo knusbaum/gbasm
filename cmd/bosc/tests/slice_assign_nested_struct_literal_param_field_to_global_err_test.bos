@@ -5,7 +5,7 @@ package main
 // flat shape `g = B{buf: s}` must also see through Outer{inner: B{buf: s}}.
 
 type B struct {
-	buf byte[]
+	buf []byte
 }
 type Outer struct {
 	inner B
@@ -13,7 +13,7 @@ type Outer struct {
 
 var g Outer
 
-fn store(s byte[]) {
+fn store(s []byte) {
 	g = Outer{inner: B{buf: s}}
 }
 

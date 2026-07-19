@@ -1,20 +1,20 @@
 package main
 import "string"
 
-// B1 regression: coercing a pointer-to-slice source (&s, where s is byte[])
+// B1 regression: coercing a pointer-to-slice source (&s, where s is []byte)
 // into an interface used to crash the linker because the vtable's typedesc
 // symbol was built from the empty composite-type name. The base type is now
 // resolved via shapeBaseName(srct) ("byte"), so the coercion links and runs.
 //
-// Note on assertion: &s has type *(byte[]) (a *mut pointer to a slice). The
-// surface syntax `*byte[]` parses as (*byte)[] — a SLICE of byte-pointers, a
-// genuinely different type — so asserting &s back to `*byte[]` correctly
+// Note on assertion: &s has type *([]byte) (a *mut pointer to a slice). The
+// surface syntax `[]*byte` parses as (*byte)[] — a SLICE of byte-pointers, a
+// genuinely different type — so asserting &s back to `[]*byte` correctly
 // fails the shape check. That distinction is what the second line pins.
 fn main() i64 {
-	var s byte[] := "hi"
+	var s []byte := "hi"
 	b any := &s
 	string.puts("coerced ")
-	_ *byte[], ok bool := b.(*byte[])
+	_ []*byte, ok bool := b.([]*byte)
 	if (ok) { string.puti(1) } else { string.puti(0) }
 	string.putc(10)
 	return 0

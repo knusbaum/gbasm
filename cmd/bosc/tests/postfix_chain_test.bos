@@ -17,8 +17,8 @@ type point struct { x i64 }       // 8 bytes — triggers the small-struct path
 type line struct { a point }     // 8 bytes — single-field struct of struct
 
 type phrases struct {
-	greeting byte[16]
-	farewell byte[16]
+	greeting [16]byte
+	farewell [16]byte
 }
 
 var ph phrases := phrases{
@@ -36,7 +36,7 @@ fn main() {
 	string.putc('\n')
 
 	// Field-then-slice on a global struct.
-	s byte[] := ph.farewell[0:7]
+	s []byte := ph.farewell[0:7]
 	string.puts(s)
 	string.putc('\n')
 

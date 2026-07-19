@@ -5,10 +5,10 @@ type leaf struct {
 }
 
 type box struct {
-	child owned *?owned mut leaf
+	child owned ?*owned mut leaf
 }
 
-fn consume_leaf(l owned *?owned mut leaf) {
+fn consume_leaf(l owned ?*owned mut leaf) {
 	if(l) {
 		free(l)
 	}

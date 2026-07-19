@@ -5,7 +5,7 @@ import "string"
 // Phase 2: construct payload variants and dispatch on them with a variant
 // switch (no field access yet — that's the next step).
 type file_info values {
-	FILE_INFO{ fd i64, path byte[] }
+	FILE_INFO{ fd i64, path []byte }
 	CLOSED
 }
 

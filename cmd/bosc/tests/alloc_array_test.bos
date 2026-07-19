@@ -7,8 +7,8 @@ import "string"
 // with no copy. The result type is nameable with the parenthesized pointer-to-
 // array form. free releases it.
 fn main() {
-	arr owned *mut (byte[16]) := alloc(byte[16])
-	s mut byte[] := (*arr)[:]
+	arr owned *mut ([16]byte) := alloc([16]byte)
+	s []mut byte := (*arr)[:]
 	string.puti(len(s))          // 16
 	string.putc(10)
 	s[0] = 72                    // 'H'

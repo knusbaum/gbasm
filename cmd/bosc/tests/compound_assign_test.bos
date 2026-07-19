@@ -29,7 +29,7 @@ fn main() {
 	fmt.print("%v\n", a == b) // true
 
 	// Lvalue targets: an indexed element and a struct field.
-	var arr i64[3] := [1, 2, 3]
+	var arr [3]i64 := [1, 2, 3]
 	arr[1] *= 10
 	fmt.print("%d\n", arr[1]) // 20
 	var s box := {n: 4}

@@ -15,13 +15,13 @@ type tag struct {
 	c i8
 	d i8
 } {
-	name(_ tag) byte[] {
+	name(_ tag) []byte {
 		return "tag"
 	}
 }
 
 interface shape {
-	name(s self) byte[]
+	name(s self) []byte
 }
 
 fn show(s shape) {

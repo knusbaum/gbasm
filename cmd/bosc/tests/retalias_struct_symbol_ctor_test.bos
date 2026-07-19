@@ -10,22 +10,22 @@ import "string"
 // during inference. new_builder must infer ReturnAliases=[[0]]; the caller's
 // borrowed view into its own buffer must be live so the writes are visible.
 type Builder struct {
-	buf mut byte[]
+	buf []mut byte
 	pos i64
 } {
-	append(b *mut Builder, s byte[]) {
+	append(b *mut Builder, s []byte) {
 		var i i64 := 0
 		for (; i < len(s); i = i + 1) {
 			b.buf[b.pos] = s[i]
 			b.pos = b.pos + 1
 		}
 	}
-	bytes(b *Builder) byte[] {
+	bytes(b *Builder) []byte {
 		return b.buf[0:b.pos]
 	}
 }
 
-fn new_builder(buf mut byte[]) Builder {
+fn new_builder(buf []mut byte) Builder {
 	var b Builder
 	b.buf = buf
 	b.pos = 0
@@ -33,7 +33,7 @@ fn new_builder(buf mut byte[]) Builder {
 }
 
 fn main() i64 {
-	var storage byte[32]
+	var storage [32]byte
 	var b Builder := new_builder(storage[:])
 	b.append("wx")
 	b.append("yz")

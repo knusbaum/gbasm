@@ -8,7 +8,7 @@ type T struct {
 	a i64
 }
 
-fn show(label byte[], v T) {
+fn show(label []byte, v T) {
 	string.puts(label)
 	string.puti(v.a)
 	string.puts("\n")

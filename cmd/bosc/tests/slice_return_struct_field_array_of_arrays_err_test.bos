@@ -5,10 +5,10 @@ package main
 // storage and neither crosses a pointer.
 
 type B struct {
-	bufs byte[8][1]
+	bufs [1][8]byte
 }
 
-fn bad() byte[] {
+fn bad() []byte {
 	var b B
 	return b.bufs[0][:]
 }

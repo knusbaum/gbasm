@@ -5,7 +5,7 @@ import "string"
 fn main() {
 	var x i64
 	p *mut i64 := &x
-	var q *?mut i64 := p
+	var q ?*mut i64 := p
 	q = nil
 	if (q != nil) {
 		string.puts("not nil\n")

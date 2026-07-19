@@ -8,7 +8,7 @@ import "visibility"
 // check has to recognize Dot{ImportedPkg, member} as a global target
 // without trying to type-check the package name as a variable.
 
-fn store(s byte[]) {
+fn store(s []byte) {
 	visibility.pub_slice = s
 }
 

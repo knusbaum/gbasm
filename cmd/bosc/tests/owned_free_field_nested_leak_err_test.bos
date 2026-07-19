@@ -1,7 +1,7 @@
 package main
 
 type node struct {
-	next owned *?owned mut node
+	next owned ?*owned mut node
 }
 
 fn destroy(n owned *owned mut node) {

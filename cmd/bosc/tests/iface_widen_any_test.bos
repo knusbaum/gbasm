@@ -5,10 +5,10 @@ import "string"
 // the empty interface (zero methods ⊆ everything) without an explicit
 // assertion. The widened `any` still carries W's concrete typedesc, so a
 // later a.(Byter) (non-declaring) is blocked while a.(viewer) succeeds.
-interface viewer { bytes(self *self) byte[] from(self) }
-interface Byter { bytes(self *self) byte[] }
-type W struct { buf byte[] } {
-	bytes(w *W) byte[] { return w.buf }
+interface viewer { bytes(self *self) []byte from(self) }
+interface Byter { bytes(self *self) []byte }
+type W struct { buf []byte } {
+	bytes(w *W) []byte { return w.buf }
 }
 
 fn main() i64 {
@@ -24,7 +24,7 @@ fn main() i64 {
 	string.putc(10)
 	v2 ?viewer := a.(viewer)
 	if (v2 != nil) {
-		r byte[] := v2.bytes()
+		r []byte := v2.bytes()
 		string.puts(r)
 	} else {
 		string.puts("rejected")

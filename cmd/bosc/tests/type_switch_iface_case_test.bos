@@ -2,13 +2,13 @@ package main
 import "string"
 
 type widget i64 {
-	render(_ *self) byte[] {
+	render(_ *self) []byte {
 		return "widget"
 	}
 }
 
 interface renderer {
-	render(r *self) byte[]
+	render(r *self) []byte
 }
 
 fn classify(a any) i64 {

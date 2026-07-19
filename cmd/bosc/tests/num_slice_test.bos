@@ -2,7 +2,7 @@ package main
 
 import "string"
 
-fn sumslice(ns i64[]) i64 {
+fn sumslice(ns []i64) i64 {
 	var i i64
 	var s i64
 	s = 0
@@ -13,14 +13,14 @@ fn sumslice(ns i64[]) i64 {
 }
 
 fn main() {
-	var arr i64[5]
+	var arr [5]i64
 	arr[0] = 10
 	arr[1] = 20
 	arr[2] = 30
 	arr[3] = 40
 	arr[4] = 50
 
-	var ns i64[]
+	var ns []i64
 	ns = arr[:]
 	string.puti(len(ns))
 	string.puts("\n")

@@ -6,9 +6,9 @@ package main
 // the local escaped uncaught. The fix unions the escape-restricted taint
 // (most-restrictive: a local from either branch surfaces), so the return
 // of the merged binding is rejected exactly as a direct local-slice return.
-fn f(a byte[], cond bool) byte[] {
-	var loc byte[16]
-	var t byte[] := a
+fn f(a []byte, cond bool) []byte {
+	var loc [16]byte
+	var t []byte := a
 	if (cond) {
 		t = loc[0:8]
 	}

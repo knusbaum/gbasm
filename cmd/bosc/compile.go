@@ -1779,7 +1779,12 @@ func lvalueIsWritable(c *Context, a AST) (bool, string) {
 		}
 		if baseType.IsSlice() {
 			if baseType.MutMask&(1<<1) == 0 {
-				return false, fmt.Sprintf("Cannot write element through non-mut slice of type %s; declare the slice as mut %s", baseType, baseType)
+				// Suggest the element-mutable slice `[]mut T` (mut bumped to the
+				// element bit), not `mut []T` — that's a mutable binding (var),
+				// which does not make elements writable.
+				suggested := baseType
+				suggested.MutMask |= 1 << 1
+				return false, fmt.Sprintf("Cannot write element through non-mut slice of type %s; declare the slice as %s", baseType, suggested)
 			}
 			return true, ""
 		}

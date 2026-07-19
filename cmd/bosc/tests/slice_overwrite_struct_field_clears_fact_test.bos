@@ -8,13 +8,13 @@ import "string"
 // on a struct whose `buf` field was overwritten to its zero value.
 
 type Inner struct {
-	buf byte[]
+	buf []byte
 }
 type Outer struct {
 	inner Inner
 }
 
-fn ok(s byte[]) Outer {
+fn ok(s []byte) Outer {
 	var o Outer
 	o.inner.buf = s
 	clean Inner
@@ -23,7 +23,7 @@ fn ok(s byte[]) Outer {
 }
 
 fn main() {
-	var arr byte[8]
+	var arr [8]byte
 	r Outer := ok(arr[:])
 	string.puti(len(r.inner.buf))
 	string.puts("\n")

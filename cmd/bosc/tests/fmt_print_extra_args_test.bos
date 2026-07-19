@@ -11,7 +11,7 @@ import "string"
 // on the surplus tail. The stringer returns a static .rodata slice, not a
 // borrow of its receiver, so the type coerces to `any` for the vararg shape.
 type word struct { tag i64 } {
-	string(_ *word) byte[] { return "tail" }
+	string(_ *word) []byte { return "tail" }
 }
 
 fn main() i64 {

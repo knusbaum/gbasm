@@ -5,12 +5,12 @@ package main
 // a LOCAL array into wrap and returns the result — the local reaches a
 // returned slot *through the call*, and must be rejected in danger's body.
 // This is what the call-expansion in alias_set catches.
-fn wrap(b byte[]) byte[] {
+fn wrap(b []byte) []byte {
 	return b[0:1]
 }
 
-fn danger(s byte[]) byte[] {
-	var l byte[16]
+fn danger(s []byte) []byte {
+	var l [16]byte
 	return wrap(l[0:8])
 }
 

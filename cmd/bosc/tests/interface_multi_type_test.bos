@@ -3,26 +3,26 @@ package main
 import "string"
 
 type dog i64 {
-	speak(_ *dog) byte[] {
+	speak(_ *dog) []byte {
 		return "woof"
 	}
-	name(_ *dog) byte[] {
+	name(_ *dog) []byte {
 		return "dog"
 	}
 }
 
 type cat i64 {
-	speak(_ *cat) byte[] {
+	speak(_ *cat) []byte {
 		return "meow"
 	}
-	name(_ *cat) byte[] {
+	name(_ *cat) []byte {
 		return "cat"
 	}
 }
 
 interface Animal {
-	speak(a *self) byte[]
-	name(a *self) byte[]
+	speak(a *self) []byte
+	name(a *self) []byte
 }
 
 fn greet(a Animal) void {

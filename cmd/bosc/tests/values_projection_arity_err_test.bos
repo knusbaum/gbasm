@@ -1,6 +1,6 @@
 package main
 
-type io_error values (i64, byte[]) {
+type io_error values (i64, []byte) {
 	NOT_FOUND: 404, "not found"
 	PERMISSION_DENIED: 403
 }

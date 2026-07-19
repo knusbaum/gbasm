@@ -13,7 +13,7 @@ fn consume(v owned i64) {
 	dispose(v)
 }
 
-fn main(args byte[][]) {
+fn main(args [][]byte) {
 	var f owned foo := foo{x: 10}
 	var i i64 := 0
 	for (i = 0; i < 3; i = i + 1) {

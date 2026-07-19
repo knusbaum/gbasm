@@ -2,6 +2,6 @@ package main
 
 // Block form requires a `bytes "..."` line; a block with only relocs
 // has nothing to write into the data section. Reject cleanly.
-var slice byte[16] {
+var slice [16]byte {
 	reloc 0 something 0
 }

@@ -8,14 +8,14 @@ package main
 // returned slot through the call, and the call-expansion in alias_set must
 // reject it. Before the fix the Assignment path under-recorded f's alias
 // (empty set), and evil compiled — a dangling slice into a dead frame.
-fn f(a byte[]) byte[] {
-	var t byte[]
+fn f(a []byte) []byte {
+	var t []byte
 	t = a[0:1]
 	return t
 }
 
-fn evil(a byte[]) byte[] {
-	var loc byte[16]
+fn evil(a []byte) []byte {
+	var loc [16]byte
 	return f(loc[:])
 }
 

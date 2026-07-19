@@ -8,11 +8,11 @@ import "string"
 // viewer's declared mask.
 //   - v.(Byter) where Byter declares NO borrow: BLOCKED (impl {self} ⊄ ∅).
 //   - v.(viewer2) where viewer2 declares from(self): SUCCEEDS and renders.
-interface viewer { bytes(self *self) byte[] from(self) }
-interface viewer2 { bytes(self *self) byte[] from(self) }
-interface Byter { bytes(self *self) byte[] }
-type W struct { buf byte[] } {
-	bytes(w *W) byte[] { return w.buf }
+interface viewer { bytes(self *self) []byte from(self) }
+interface viewer2 { bytes(self *self) []byte from(self) }
+interface Byter { bytes(self *self) []byte }
+type W struct { buf []byte } {
+	bytes(w *W) []byte { return w.buf }
 }
 
 fn main() i64 {
@@ -27,7 +27,7 @@ fn main() i64 {
 	string.putc(10)
 	v2 ?viewer2 := v.(viewer2)
 	if (v2 != nil) {
-		r byte[] := v2.bytes()
+		r []byte := v2.bytes()
 		string.puts(r)
 	} else {
 		string.puts("rejected")

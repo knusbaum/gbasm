@@ -6,7 +6,7 @@ type S9 struct { a i64
  b byte }
 type S16 struct { a i64
  b i64 }
-type AS16 struct { arr S16[2] }
+type AS16 struct { arr [2]S16 }
 fn main() {
 	var w := AS16{}
 	w.arr[0].a = 5

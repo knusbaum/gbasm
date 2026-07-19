@@ -9,7 +9,7 @@ var counter i64
 var answer i64 := 42
 var bigU i32 := 65535
 var label byte := 'Z'
-var buf byte[8]
+var buf [8]byte
 
 fn main() {
 	// Uninitialized globals are zero.

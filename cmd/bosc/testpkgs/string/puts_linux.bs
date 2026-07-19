@@ -7,9 +7,9 @@ package string
 // Arch/ABI 	arg1 	arg2 	arg3 	arg4 	arg5 	arg6 	arg7 	Notes
 // x86-64		rdi 	rsi 	rdx 	r10 	r8 		r9 		-
 
-// puts(s byte[]) void — print a byte slice to stdout.
+// puts(s []byte) void — print a byte slice to stdout.
 pub function puts
-	type fn(byte[]) void
+	type fn([]byte) void
 	prologue
 
 	mov rsi [rdi]

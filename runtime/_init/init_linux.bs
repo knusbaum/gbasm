@@ -11,7 +11,7 @@ var nilassert string "Fatal: nullable pointer assertion failed\n\0"
 //   [rsp+8+8*argc]     = NULL (argv terminator)
 //   [rsp+...]          = envp..., auxv..., strings
 //
-// We build a Boson-style byte[][] from argv: an outer 16-byte slice header
+// We build a Boson-style [][]byte from argv: an outer 16-byte slice header
 // {data, len} where data points to a tightly-packed array of argc 16-byte
 // inner slice headers {ptr, len}. Both the inner array and the outer
 // header are placed on _start's stack; since _start never returns (it
@@ -19,7 +19,7 @@ var nilassert string "Fatal: nullable pointer assertion failed\n\0"
 // process lifetime.
 //
 // rdi is set to point at the outer header before we call main.main, so a
-// Boson main declared as `fn main(args byte[][])` receives argv in args.
+// Boson main declared as `fn main(args [][]byte)` receives argv in args.
 // A main declared as `fn main()` simply ignores rdi.
 pub function start
 	// Preserve the original argc/argv block address in a callee-saved reg.

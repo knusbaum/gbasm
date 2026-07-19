@@ -1,15 +1,15 @@
 package main
 
 interface left_iface {
-	label(v self) byte[]
+	label(v self) []byte
 }
 
 interface right_iface {
-	label(v self) byte[]
+	label(v self) []byte
 }
 
 type good i64 {
-	label(_ good) byte[] {
+	label(_ good) []byte {
 		return "good"
 	}
 }

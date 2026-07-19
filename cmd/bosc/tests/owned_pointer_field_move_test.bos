@@ -1,13 +1,13 @@
 package main
 
 type box struct {
-	next owned *?mut i64
+	next owned ?*mut i64
 }
 
 fn main() {
 	p owned *mut i64 := alloc(i64)
 	b owned box := box{next: p}
-	next owned *?mut i64 := b.next
+	next owned ?*mut i64 := b.next
 	free(next)
 	dispose(b)
 }

@@ -4,7 +4,7 @@ type node struct {
 	val i64
 }
 
-var saved *?node
+var saved ?*node
 
 fn bad(n *node) {
 	saved = n

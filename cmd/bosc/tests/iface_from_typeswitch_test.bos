@@ -5,10 +5,10 @@ import "string"
 // does NOT match a non-declaring interface case (Byter), but matches a
 // declaring one (viewer). Pins that the gate governs the type-switch path,
 // not only the x.(K) assertion form.
-interface Byter { bytes(self *self) byte[] }
-interface viewer { bytes(self *self) byte[] from(self) }
-type W struct { buf byte[] } {
-	bytes(w *W) byte[] { return w.buf }
+interface Byter { bytes(self *self) []byte }
+interface viewer { bytes(self *self) []byte from(self) }
+type W struct { buf []byte } {
+	bytes(w *W) []byte { return w.buf }
 }
 
 fn main() i64 {

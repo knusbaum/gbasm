@@ -581,9 +581,11 @@ func arrayWrap(e ASTType, n int) ASTType {
 		ArraySize: n,
 		MutMask:   e.MutMask,
 		OwnedMask: e.OwnedMask,
-		NilMask:   e.NilMask,
+		// NilMask stays on the element: an array is never nullable, so a
+		// nullable-pointer element (`[N]?*T`) keeps its own nullability. Only
+		// the owned/mut value-collapse moves onto the shared array level.
 	}
-	e.MutMask, e.OwnedMask, e.NilMask = 0, 0, 0
+	e.MutMask, e.OwnedMask = 0, 0
 	arr.Element = &e
 	return arr
 }
@@ -667,6 +669,25 @@ func (p *Parser) parseValue() *Node {
 	// is what's called when we need a new value, not when we're chaining
 	// off an existing one.
 	if p.current().t == tok_lsquare {
+		// Distinguish a slice-type CAST `[]T(e)` from an array literal
+		// `[e1, e2, ...]`. Empty leading brackets `[]` are never an array
+		// literal (those always have elements), so `[]T(...)` is the prefix
+		// spelling of the old `T[](e)` projection cast.
+		lb := p.current()
+		p.advance()
+		emptyBrackets := p.current().t == tok_rsquare
+		p.pushback(lb) // restore the '['
+		if emptyBrackets {
+			tnNode := p.parseTypeName()
+			p.expect(tok_lparen)
+			args := p.parseArgs()
+			p.expect(tok_rparen)
+			// The cast is keyed by its canonical prefix type string, which
+			// TypeByName resolves back through parseTypeString.
+			castType := (*tnNode.prebuilt).String()
+			v := &Node{t: n_funcall, p: tnNode.p, sval: castType, args: args}
+			return p.parsePostfix(v)
+		}
 		v := p.parseArrayLiteral()
 		return p.parsePostfix(v)
 	}

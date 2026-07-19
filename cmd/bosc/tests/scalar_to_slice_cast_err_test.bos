@@ -2,5 +2,5 @@ package main
 
 fn main() {
 	var n i64 := 42
-	var b byte[] := byte[](n)
+	var b []byte := []byte(n)
 }

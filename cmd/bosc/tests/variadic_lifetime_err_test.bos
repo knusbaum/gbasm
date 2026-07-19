@@ -1,6 +1,6 @@
 package main
 
-var g i64[]
+var g []i64
 
 fn keep(args ...i64) {
 	g = args

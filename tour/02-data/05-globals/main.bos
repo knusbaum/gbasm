@@ -3,7 +3,7 @@ package main
 import "fmt"
 
 base i64 := 100
-var counts i64[3] := [5, 10, 15]
+var counts [3]i64 := [5, 10, 15]
 
 fn main() {
 	var total i64 := base

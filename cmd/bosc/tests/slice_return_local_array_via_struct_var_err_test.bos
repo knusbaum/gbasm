@@ -13,12 +13,12 @@ package main
 // Currently accepted (compiles cleanly). Should be rejected.
 
 type B struct {
-	buf mut byte[]
+	buf []mut byte
 	pos i64
 }
 
 fn bad() B {
-	var local byte[64]
+	var local [64]byte
 	var h B := B{buf: local[:], pos: 0}
 	return h
 }

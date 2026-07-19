@@ -6,9 +6,9 @@ import "string"
 // the iface_desc now carries that declared mask, so assert_to's ⊆ check
 // (impl {0} ⊆ declared {0}) admits the itab. Without the declared mask the
 // assertion would wrongly fail (declared ∅).
-interface viewer { bytes(self *self) byte[] from(self) }
-type W struct { buf byte[] } {
-	bytes(w *W) byte[] { return w.buf }
+interface viewer { bytes(self *self) []byte from(self) }
+type W struct { buf []byte } {
+	bytes(w *W) []byte { return w.buf }
 }
 
 fn main() i64 {
@@ -16,7 +16,7 @@ fn main() i64 {
 	a any := &w
 	v ?viewer := a.(viewer)
 	if (v != nil) {
-		r byte[] := v.bytes()
+		r []byte := v.bytes()
 		string.puts(r)
 	} else {
 		string.puts("REJECTED")

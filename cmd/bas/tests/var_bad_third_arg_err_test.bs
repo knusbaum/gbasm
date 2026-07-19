@@ -2,4 +2,4 @@ package main
 
 // Third argument must be either a "..." string literal or an integer
 // byte-count. A bare identifier is neither — should error cleanly.
-var bad byte[1] something
+var bad [1]byte something

@@ -1,13 +1,13 @@
 package main
 
 type myint i64 {
-	describe(_ *myint) byte[] {
+	describe(_ *myint) []byte {
 		return "myint"
 	}
 }
 
 interface Describer {
-	describe(d *self) byte[]
+	describe(d *self) []byte
 }
 
 fn take(x owned myint) {
@@ -18,5 +18,5 @@ fn main() {
 	var x owned myint := 5
 	var d Describer := &x
 	take(x)
-	var s byte[] := d.describe()
+	var s []byte := d.describe()
 }

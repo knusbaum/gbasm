@@ -6,7 +6,7 @@ type thingy i64 {
 	hello() {
 		string.puts("hello, thingy\n")
 	}
-	greet(name byte[]) {
+	greet(name []byte) {
 		string.puts("greetings, ")
 		string.puts(name)
 		string.puts("\n")

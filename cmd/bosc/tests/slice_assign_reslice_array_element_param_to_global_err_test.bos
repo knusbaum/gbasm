@@ -5,10 +5,10 @@ package main
 // re-slice both have to flow the borrow through arr's element-fact
 // bucket, so the global write is caught.
 
-var g byte[]
+var g []byte
 
-fn bad(s byte[]) {
-	var arr byte[][1]
+fn bad(s []byte) {
+	var arr [1][]byte
 	arr[0] = s
 	g = arr[0][:]
 }

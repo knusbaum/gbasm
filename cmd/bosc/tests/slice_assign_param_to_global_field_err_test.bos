@@ -5,12 +5,12 @@ package main
 // receiving slot outlives the parameter's lifetime.
 
 type B struct {
-	buf mut byte[]
+	buf []mut byte
 }
 
 var g B
 
-fn store(s byte[]) {
+fn store(s []byte) {
 	g.buf = s
 }
 

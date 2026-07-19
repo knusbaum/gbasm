@@ -3,14 +3,14 @@ package main
 type leaf struct { val i64 }
 type box struct {
 	val i64
-	child owned *?owned mut leaf
+	child owned ?*owned mut leaf
 }
 
 fn touch(p *mut i64) { *p = 1 }
 
 fn main() {
 	b owned box := box{val: 1, child: nil}
-	c owned *?owned mut leaf := b.child
+	c owned ?*owned mut leaf := b.child
 	var local i64 := 5
 	cond bool
 	if (cond) {

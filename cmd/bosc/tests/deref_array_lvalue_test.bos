@@ -8,11 +8,11 @@ import "string"
 // assignment site, not the deref. `(*p)[:]` used to panic the compiler
 // ("Array copying not implemented").
 fn main() {
-	var buf byte[8]
+	var buf [8]byte
 	p := &buf
 
 	// (*p)[:] slices through the deref with no copy: writes alias buf both ways.
-	s mut byte[] := (*p)[:]
+	s []mut byte := (*p)[:]
 	string.puti(len(s))          // 8
 	string.putc(10)
 	s[0] = 72                    // 'H' through the slice
@@ -29,7 +29,7 @@ fn main() {
 	string.putc(10)
 
 	// var copy: *p as an rvalue makes an INDEPENDENT array copy.
-	var c2 byte[8] := *p
+	var c2 [8]byte := *p
 	c2[0] = 63                   // '?' — must NOT touch buf
 	string.puts(buf[0:1])        // still "H"
 	string.putc(10)

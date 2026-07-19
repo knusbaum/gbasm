@@ -5,13 +5,13 @@ package main
 // local-array source — same site, same gate, different origin kind.
 
 type B struct {
-	buf byte[]
+	buf []byte
 }
 
 var g B
 
 fn store() {
-	var local byte[8]
+	var local [8]byte
 	g = B{buf: local[:]}
 }
 

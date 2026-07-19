@@ -7,7 +7,7 @@ type nret struct {
 	err bool
 }
 
-fn atoi(s byte[]) nret {
+fn atoi(s []byte) nret {
 	var l i64
 	l = len(s)
 	var i i64

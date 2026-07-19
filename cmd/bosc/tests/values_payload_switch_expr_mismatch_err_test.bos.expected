@@ -1,2 +1,2 @@
 Compiling tests/values_payload_switch_expr_mismatch_err_test.bos
-Fatal: Expected type byte[] but compiler produced i64
+Fatal: Expected type []byte but compiler produced i64

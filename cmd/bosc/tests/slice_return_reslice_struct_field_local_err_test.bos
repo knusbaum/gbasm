@@ -5,11 +5,11 @@ package main
 // provenance.
 
 type B struct {
-	buf byte[]
+	buf []byte
 }
 
-fn bad() byte[] {
-	var local byte[8]
+fn bad() []byte {
+	var local [8]byte
 	var b B
 	b.buf = local[:]
 	return b.buf[:]

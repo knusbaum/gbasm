@@ -10,7 +10,7 @@ interface Error {
 	destroy(e owned *self)
 }
 
-fn main(args byte[][]) {
+fn main(args [][]byte) {
 	var m myError := 1
 	var e Error := &m
 	e.destroy()

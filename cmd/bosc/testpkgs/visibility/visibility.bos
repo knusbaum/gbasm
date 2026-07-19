@@ -16,7 +16,7 @@ var hidden_var i64 := 2
 
 // pub_slice is a public slice variable used by slice-escape tests that
 // route a borrowed source into a cross-package global destination.
-pub var pub_slice byte[]
+pub var pub_slice []byte
 
 hidden_const i64 := 3
 

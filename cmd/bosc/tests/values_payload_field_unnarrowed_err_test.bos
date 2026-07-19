@@ -3,7 +3,7 @@ package main
 import "string"
 
 type file_info values {
-	FILE_INFO{ fd i64, path byte[] }
+	FILE_INFO{ fd i64, path []byte }
 	CLOSED
 }
 

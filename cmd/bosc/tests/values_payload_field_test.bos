@@ -4,7 +4,7 @@ import "string"
 
 // Phase 2b: read payload fields inside a narrowed switch case.
 type file_info values {
-	FILE_INFO{ fd i64, path byte[] }
+	FILE_INFO{ fd i64, path []byte }
 	CLOSED
 }
 

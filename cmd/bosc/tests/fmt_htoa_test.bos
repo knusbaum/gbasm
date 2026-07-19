@@ -6,8 +6,8 @@ import "string"
 // sub-slice of the caller buffer. Covers zero, the 9/a boundary, max u64,
 // truncation, and n_hex_digits.
 fn show(n u64) i64 {
-	var buf byte[32]
-	s byte[] := fmt.htoa(buf[:], n)
+	var buf [32]byte
+	s []byte := fmt.htoa(buf[:], n)
 	string.puts(s)
 	string.puts(" (")
 	string.puti(fmt.n_hex_digits(n))
@@ -20,16 +20,16 @@ fn main() i64 {
 	show(u64(255))
 	show(u64(4096))
 	show(u64(18446744073709551615))   // max u64 -> ffffffffffffffff
-	var small byte[2]
-	s1 byte[] := fmt.htoa(small[:], u64(65535))   // ffff, truncated to ff
+	var small [2]byte
+	s1 []byte := fmt.htoa(small[:], u64(65535))   // ffff, truncated to ff
 	string.puts(s1)
 	string.puts(" trunc=")
 	string.puti(len(s1))
 	string.putc(10)
 	// Wider truncation: 0xdeadbeef (8 hex digits) into a 3-byte buffer keeps
 	// the leading "dea" (len 3).
-	var small3 byte[3]
-	s2 byte[] := fmt.htoa(small3[:], u64(3735928559))   // 0xdeadbeef -> dea
+	var small3 [3]byte
+	s2 []byte := fmt.htoa(small3[:], u64(3735928559))   // 0xdeadbeef -> dea
 	string.puts(s2)
 	string.puts(" trunc=")
 	string.puti(len(s2))

@@ -2,7 +2,7 @@ package main
 import "fmt"
 // Casting an array-element value.
 fn main() {
-	a i64[3] := [256, 257, 258]
+	a [3]i64 := [256, 257, 258]
 	e i32 := i32(a[1])
 	fmt.print("%d\n", i64(e))
 }

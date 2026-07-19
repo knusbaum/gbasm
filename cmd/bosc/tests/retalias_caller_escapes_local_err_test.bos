@@ -4,12 +4,12 @@ package main
 // returns the result. tail's result inherits the local origin; the return
 // is rejected at the caller's return — the lifetime evidence sits in the
 // caller's frame.
-fn tail(s byte[]) byte[] {
+fn tail(s []byte) []byte {
 	return s[1:len(s)]
 }
 
-fn oops() byte[] {
-	var local byte[16]
+fn oops() []byte {
+	var local [16]byte
 	return tail(local[0:8])
 }
 

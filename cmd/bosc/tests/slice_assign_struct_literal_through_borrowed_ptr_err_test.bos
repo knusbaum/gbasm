@@ -6,15 +6,15 @@ package main
 // recursive form of the borrowed-pointer-field-store rule.
 
 type B struct {
-	buf byte[]
+	buf []byte
 }
 
-fn fill(out *mut B, s byte[]) {
+fn fill(out *mut B, s []byte) {
 	*out = B{buf: s}
 }
 
 fn main() {
 	var b B
-	var local byte[8]
+	var local [8]byte
 	fill(&b, local[:])
 }

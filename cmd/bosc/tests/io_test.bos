@@ -19,10 +19,10 @@ fn main() i64 {
 	}
 
 	// create a buffer to hold file contents
-	var buf byte[100]
+	var buf [100]byte
 
 	// create a slice to refer to the buffer.
-	var bs mut byte[]
+	var bs []mut byte
 	bs = buf[:]
 
 	var n i64

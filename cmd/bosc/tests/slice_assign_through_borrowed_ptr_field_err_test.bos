@@ -7,16 +7,16 @@ package main
 // borrowed-pointer return, just one indirection deeper.
 
 type B struct {
-	buf byte[]
+	buf []byte
 }
 
 var g B
 
-fn fill(out *mut B, s byte[]) {
+fn fill(out *mut B, s []byte) {
 	out.buf = s
 }
 
 fn main() {
-	var local byte[8]
+	var local [8]byte
 	fill(&g, local[:])
 }

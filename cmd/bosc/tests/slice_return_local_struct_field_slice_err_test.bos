@@ -5,10 +5,10 @@ package main
 // though the slice expression is not rooted at a bare Symbol.
 
 type B struct {
-	buf byte[8]
+	buf [8]byte
 }
 
-fn bad() byte[] {
+fn bad() []byte {
 	var b B
 	return b.buf[:]
 }

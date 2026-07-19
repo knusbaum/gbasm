@@ -8,11 +8,11 @@ import "string"
 // method body reads RDI as the value (its declared shape).
 
 interface error_ptr {
-	message(e *self) byte[]
+	message(e *self) []byte
 }
 
 type my_err i64 {
-	message(_ my_err) byte[] {
+	message(_ my_err) []byte {
 		return "value-receiver method via pointer-shape interface"
 	}
 }

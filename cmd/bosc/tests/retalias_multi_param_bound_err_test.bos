@@ -9,15 +9,15 @@ package main
 // so it falls back to the escape-restricted reject. This test pins that
 // rejection so a future change that accidentally lets the bound form through
 // without proper multi-origin tracking is caught.
-fn pick(a byte[], b byte[], use_a bool) byte[] {
+fn pick(a []byte, b []byte, use_a bool) []byte {
 	if (use_a) {
 		return a
 	}
 	return b
 }
 
-fn use(x byte[], y byte[], first bool) byte[] {
-	t byte[] := pick(x, y, first)
+fn use(x []byte, y []byte, first bool) []byte {
+	t []byte := pick(x, y, first)
 	return t
 }
 
