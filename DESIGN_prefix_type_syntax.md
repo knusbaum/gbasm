@@ -372,10 +372,19 @@ Land it as one logical unit; intermediate red states are fine, the tip is green.
 
 - The parser must **reject** a leading `mut` from source while the printer **may
   emit** it (read-only renderings). These don't collide on the `.bo` round-trip
-  provided binding mutability stays a separate flag (`Binding.IsConst`/`isVar`,
-  not a `MutMask` bit), so serialized type strings carry no outer mut for the
-  shared parser to choke on. Confirm during implementation.
+  because binding mutability is a **separate flag**, not a `MutMask` bit, so
+  serialized type strings carry no outer mut. Verified: locals/params use
+  `Binding.IsConst`/`isVar`; globals use `IsConst` too (immutable global is
+  `g T := …`, mutable is `var g T := …`, enforced in-package). The `.bo` `Var`
+  record (`ofile.go`) has `VType` but **no** mutability field.
 - Split the combined `*?` token (`tok_maybe_ptr`) into `*` + `?`.
+
+**Orthogonal, noted for completeness:** a global's mutability *is* observable
+cross-package (can I write `otherpkg.g`?), but it is **not** carried in the
+`.bo` today — `TODO(cross-pkg-const)` at `compile.go:1754`, so imported globals
+are currently treated as writable. The fix is a separate `Var.IsConst` boolean
+field threaded through import, **not** a leading `mut` in `VType`. Independent
+of this change; can land before/during/after.
 
 ---
 
