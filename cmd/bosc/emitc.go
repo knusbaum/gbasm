@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 )
 
@@ -34,7 +35,8 @@ type cUnit struct {
 	needStdio   bool
 	needStdbool bool
 	needStdlib  bool
-	needOob     bool // the boson_oob bounds-trap helper is used
+	needOob     bool                // the boson_oob bounds-trap helper is used
+	sliceElems  map[string]ASTType  // slice type name -> element type (used types only)
 }
 
 // cEmitter is per-function state: the parameters/locals in scope, plus the
@@ -50,21 +52,19 @@ type cEmitter struct {
 // headers that were actually used. Errors carry a source position and are
 // reported via fatalCtx, matching the .bs path.
 func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
-	u := &cUnit{c: c}
-	var fwd, bodies, protos, defs bytes.Buffer
-	// Struct forward typedefs first (so fields and signatures can reference any
-	// struct, including recursive and mutual references), then the bodies.
+	u := &cUnit{c: c, sliceElems: map[string]ASTType{}}
+	var structFwd, structBodies, protos, defs bytes.Buffer
+	// Body passes fill the buffers and, as a side effect of `ctype`, register
+	// every slice type actually used into u.sliceElems.
 	for _, a := range asts {
 		sd, ok := a.(*StructDecl)
 		if !ok {
 			continue
 		}
-		if err := emitCStruct(&fwd, &bodies, u, sd); err != nil {
+		if err := emitCStruct(&structFwd, &structBodies, u, sd); err != nil {
 			fatalCtx("Fatal: %v", err)
 		}
 	}
-	// Function forward declarations — Boson permits calling a function before
-	// its definition, but C needs a prior declaration — then the definitions.
 	for _, a := range asts {
 		if err := emitCProto(&protos, u, a); err != nil {
 			fatalCtx("Fatal: %v", err)
@@ -75,6 +75,7 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 			fatalCtx("Fatal: %v", err)
 		}
 	}
+
 	fmt.Fprintf(of, "#include <stdint.h>\n")
 	if u.needStdbool {
 		fmt.Fprintf(of, "#include <stdbool.h>\n")
@@ -92,11 +93,33 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 		fmt.Fprintf(of, "\texit(1);\n")
 		fmt.Fprintf(of, "}\n\n")
 	}
-	if fwd.Len() > 0 {
-		io.Copy(of, &fwd)
+
+	// Forward typedefs — structs, then slices (each slice field is a pointer,
+	// so a forward declaration of its element suffices).
+	sliceNames := make([]string, 0, len(u.sliceElems))
+	for name := range u.sliceElems {
+		sliceNames = append(sliceNames, name)
+	}
+	sort.Strings(sliceNames)
+	if structFwd.Len() > 0 || len(sliceNames) > 0 {
+		io.Copy(of, &structFwd)
+		for _, name := range sliceNames {
+			fmt.Fprintf(of, "typedef struct %s %s;\n", name, name)
+		}
 		fmt.Fprintf(of, "\n")
 	}
-	io.Copy(of, &bodies)
+	// Slice bodies.
+	if len(sliceNames) > 0 {
+		em := &cEmitter{u: u}
+		for _, name := range sliceNames {
+			ptrT := u.sliceElems[name]
+			ptrT.Indirection++
+			fmt.Fprintf(of, "struct %s { %s; int64_t len; };\n", name, em.cDecl(ptrT, "ptr"))
+		}
+		fmt.Fprintf(of, "\n")
+	}
+
+	io.Copy(of, &structBodies)
 	if protos.Len() > 0 {
 		io.Copy(of, &protos)
 		fmt.Fprintf(of, "\n")
@@ -320,6 +343,9 @@ func (em *cEmitter) stmt(w io.Writer, a AST, ind int) {
 			fmt.Fprintf(w, "%s%s;\n", tab, em.cDecl(t, cIdent(n.Name)))
 		}
 	case *Assignment:
+		if at := em.u.c.ResolveUnderlying(em.inferType(n.Target)); at.IsArray() {
+			cUnsupported(posOf(n.Target), "whole-array assignment (needs memcpy)")
+		}
 		em.hoistGuards(w, n.Target, ind)
 		em.hoistGuards(w, n.Val, ind)
 		fmt.Fprintf(w, "%s%s = %s;\n", tab, em.expr(n.Target), em.expr(n.Val))
@@ -496,6 +522,12 @@ func (em *cEmitter) inferType(a AST) ASTType {
 			elem := em.inferType(n.Elements[0])
 			return ASTType{ArraySize: len(n.Elements), Element: &elem}
 		}
+	case *SliceOp:
+		bt := em.u.c.ResolveUnderlying(em.inferType(n.Val))
+		if bt.Element != nil {
+			elem := *bt.Element
+			return ASTType{Element: &elem}
+		}
 	case *Funcall:
 		// The callee's return type does not depend on argument types, so this
 		// resolves through the Context even when arguments are locals.
@@ -548,6 +580,8 @@ func (em *cEmitter) expr(a AST) string {
 		// not a general C expression.
 		cUnsupported(n.p, "array literal outside an initializer")
 		return ""
+	case *SliceOp:
+		return em.sliceOp(n)
 	default:
 		cUnsupported(posOf(a), fmt.Sprintf("expression %T", a))
 		return ""
@@ -606,6 +640,9 @@ func (em *cEmitter) call(f *Funcall) string {
 		return em.runtimeCall(f, pkg, f.FName())
 	}
 	name := f.FName()
+	if name == "len" && len(f.Args) == 1 {
+		return em.lenBuiltin(f.Args[0])
+	}
 	// A type name applied to one argument is a cast, not a call.
 	if len(f.Args) == 1 && em.isTypeName(name) {
 		return "(" + em.ctypeName(name) + ")(" + em.expr(f.Args[0]) + ")"
@@ -638,14 +675,91 @@ func (em *cEmitter) ctypeName(name string) string {
 	return em.ctype(ASTType{Name: name})
 }
 
+// lenBuiltin lowers len(x): a slice's stored length, or a fixed array's size.
+func (em *cEmitter) lenBuiltin(a AST) string {
+	t := em.u.c.ResolveUnderlying(em.inferType(a))
+	if t.IsSlice() {
+		return em.postfixBase(a) + ".len"
+	}
+	if t.IsArray() {
+		return fmt.Sprintf("%d", t.ArraySize)
+	}
+	cUnsupported(posOf(a), "len of a non-array, non-slice")
+	return ""
+}
+
+// sliceOp lowers x[lo:hi] to a slice compound literal. The pointer is element-
+// typed, so the arithmetic is plain (ptr + lo); an array base decays to its
+// element pointer. Bounds are checked by emitSliceCheck (hoisted).
+func (em *cEmitter) sliceOp(n *SliceOp) string {
+	bt := em.u.c.ResolveUnderlying(em.inferType(n.Val))
+	if bt.Element == nil {
+		cUnsupported(posOf(n.Val), "slice of a non-array, non-slice")
+	}
+	elem := *bt.Element
+	name := em.ctype(ASTType{Element: &elem}) // registers the slice type; returns its name
+	base := em.postfixBase(n.Val)
+	ptr := base
+	if bt.IsSlice() {
+		ptr = base + ".ptr"
+	}
+	lo := ""
+	if n.Lower != nil {
+		lo = em.expr(n.Lower)
+	}
+	hi := ""
+	switch {
+	case n.Upper != nil:
+		hi = em.expr(n.Upper)
+	case bt.IsSlice():
+		hi = base + ".len"
+	default:
+		hi = fmt.Sprintf("%d", bt.ArraySize)
+	}
+	if lo != "" {
+		ptr += " + " + lo
+		return "(" + name + "){ " + ptr + ", " + hi + " - " + lo + " }"
+	}
+	return "(" + name + "){ " + ptr + ", " + hi + " }"
+}
+
+func (em *cEmitter) emitSliceCheck(w io.Writer, n *SliceOp, ind int) {
+	bt := em.u.c.ResolveUnderlying(em.inferType(n.Val))
+	base := em.postfixBase(n.Val)
+	baselen := fmt.Sprintf("%d", bt.ArraySize)
+	if bt.IsSlice() {
+		baselen = base + ".len"
+	}
+	if n.Upper != nil {
+		if containsFuncall(n.Upper) {
+			cUnsupported(posOf(n.Upper), "a side-effecting slice bound")
+		}
+		hi := em.expr(n.Upper)
+		fmt.Fprintf(w, "%sif ((uint64_t)(%s) > (uint64_t)(%s)) boson_oob(%s, %s);\n", cTab(ind), hi, baselen, hi, baselen)
+		em.u.needOob = true
+	}
+	if n.Lower != nil {
+		if containsFuncall(n.Lower) {
+			cUnsupported(posOf(n.Lower), "a side-effecting slice bound")
+		}
+		lo := em.expr(n.Lower)
+		hi := baselen
+		if n.Upper != nil {
+			hi = em.expr(n.Upper)
+		}
+		fmt.Fprintf(w, "%sif ((uint64_t)(%s) > (uint64_t)(%s)) boson_oob(%s, %s);\n", cTab(ind), lo, hi, lo, hi)
+		em.u.needOob = true
+	}
+}
+
 // runtimeCall maps a recognized runtime output primitive to its idiomatic libc
 // equivalent. The print helpers write raw bytes / a value with no added
 // newline, matching the Boson semantics.
 func (em *cEmitter) runtimeCall(f *Funcall, pkg, name string) string {
 	switch pkg + "." + name {
 	case "string.puts":
-		// puts([]byte). Phase 1 handles a string-literal argument (the common
-		// case) via fputs; general byte-slice output waits on slices.
+		// puts([]byte): a string literal via fputs, or a runtime byte slice via
+		// fwrite of its bytes.
 		if len(f.Args) == 1 {
 			if lit, ok := f.Args[0].(*Literal); ok {
 				if s, ok := lit.Val.(string); ok {
@@ -653,8 +767,10 @@ func (em *cEmitter) runtimeCall(f *Funcall, pkg, name string) string {
 					return "fputs(" + cStringLit(s) + ", stdout)"
 				}
 			}
+			em.u.needStdio = true
+			base := em.postfixBase(f.Args[0])
+			return "fwrite(" + base + ".ptr, 1, " + base + ".len, stdout)"
 		}
-		cUnsupported(f.p, "string.puts of a non-literal byte slice")
 	case "string.puti":
 		if len(f.Args) == 1 {
 			em.u.needStdio = true
@@ -704,7 +820,11 @@ func (em *cEmitter) literal(l *Literal) string {
 	case uint64:
 		return fmt.Sprintf("%d", v)
 	case string:
-		return cStringLit(v)
+		// A Boson string literal is a []byte value, so it lowers to a slice
+		// literal over the (read-only) C string. (string.puts of a literal
+		// still uses fputs directly — that path checks for a *Literal first.)
+		name := em.ctype(byteSliceASTType())
+		return "(" + name + "){ (uint8_t *)" + cStringLit(v) + ", " + fmt.Sprintf("%d", len(v)) + " }"
 	case bool:
 		em.u.needStdbool = true
 		if v {
@@ -733,6 +853,14 @@ func (em *cEmitter) ctype(t ASTType) string {
 			return inner + "*"
 		}
 		return inner + " *"
+	}
+	// Slice: []T -> a per-element-type struct, registered lazily and emitted
+	// once at the top of the unit. Access stays clean (s.ptr[i]).
+	if rt.IsSlice() {
+		em.ctype(*rt.Element) // ensure the element's own types (e.g. nested slices) register
+		name := "slice_" + cTypeTag(em, *rt.Element)
+		em.u.sliceElems[name] = *rt.Element
+		return name
 	}
 	if rt.Element == nil && rt.AnonFields == nil {
 		switch rt.Name {
@@ -768,12 +896,33 @@ func (em *cEmitter) ctype(t ASTType) string {
 
 func cStructName(name string) string { return cIdent(name) }
 
+// cTypeTag builds an identifier fragment naming a type, used to name slice
+// types deterministically from their element (slice_int64_t, slice_Point,
+// slice_p_Point for []*Point, slice_slice_uint8_t for [][]byte).
+func cTypeTag(em *cEmitter, t ASTType) string {
+	rt := em.u.c.ResolveUnderlying(t)
+	if rt.Indirection > 0 {
+		elem := rt
+		elem.Indirection--
+		return "p_" + cTypeTag(em, elem)
+	}
+	if rt.IsSlice() {
+		return "slice_" + cTypeTag(em, *rt.Element)
+	}
+	if rt.IsArray() {
+		return fmt.Sprintf("arr%d_", rt.ArraySize) + cTypeTag(em, *rt.Element)
+	}
+	return em.ctype(rt) // scalar or struct: a valid identifier already
+}
+
 // cDecl renders a declaration "<type> <name>", attaching a pointer's `*` to the
 // name (`int64_t *x`) and an array's `[N]` after it (`int64_t a[3]`) as a human
 // would.
 func (em *cEmitter) cDecl(t ASTType, name string) string {
 	rt := em.u.c.ResolveUnderlying(t)
-	if rt.Element != nil && rt.ArraySize > 0 {
+	// A real array (not a pointer-to-array, whose C syntax is `T (*p)[N]` and
+	// which we don't yet emit — that falls through to ctype -> unsupported).
+	if rt.Element != nil && rt.ArraySize > 0 && rt.Indirection == 0 {
 		if elem := em.u.c.ResolveUnderlying(*rt.Element); elem.Element != nil && elem.ArraySize > 0 {
 			cUnsupported(rt.p, "multidimensional array")
 		}
@@ -963,6 +1112,11 @@ func (em *cEmitter) hoistGuards(w io.Writer, a AST, ind int) {
 		em.hoistGuards(w, n.Val, ind)
 		em.hoistGuards(w, n.NAST, ind)
 		em.emitBoundsCheck(w, n, ind)
+	case *SliceOp:
+		em.hoistGuards(w, n.Val, ind)
+		em.hoistGuards(w, n.Lower, ind)
+		em.hoistGuards(w, n.Upper, ind)
+		em.emitSliceCheck(w, n, ind)
 	}
 }
 
@@ -995,7 +1149,7 @@ func (em *cEmitter) emitBoundsCheck(w io.Writer, n *Index, ind int) {
 // for-loop conditions/steps, where a hoisted check would run at the wrong time).
 func hasIndex(a AST) bool {
 	switch n := a.(type) {
-	case *Index:
+	case *Index, *SliceOp:
 		return true
 	case *Op2:
 		return hasIndex(n.First) || hasIndex(n.Second)

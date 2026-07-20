@@ -1,0 +1,10 @@
+package main
+import "string"
+fn firstn(s []byte, n i64) []byte {
+	return s[0:n]
+}
+fn main() {
+	src []byte := "hello world"
+	string.puts(firstn(src, 5))
+	string.putc(10)
+}
