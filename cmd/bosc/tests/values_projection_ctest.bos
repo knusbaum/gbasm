@@ -1,0 +1,41 @@
+package main
+
+import "string"
+
+// Values projection equivalence classes for the C backend: a values type
+// carrying a compile-time constant table per projection, read by a cast.
+//   - a scalar (i64) projection,
+//   - a []byte (slice) projection on the same type,
+//   - a struct-valued projection on another type.
+
+type status values (i64, []byte) {
+	OK:        0, "ok"
+	NOT_FOUND: 404, "not found"
+	BUSY:      503, "busy"
+}
+
+type pt struct {
+	x i64
+	y i64
+}
+
+type corner values (pt) {
+	ORIGIN: pt{x: 0, y: 0}
+	FAR:    pt{x: 9, y: 9}
+}
+
+fn main() i64 {
+	s status := status.NOT_FOUND
+	string.puti(i64(s))       // 404
+	string.puts(" ")
+	string.puts([]byte(s))    // not found
+	string.putc(10)
+
+	c corner := corner.FAR
+	p pt := pt(c)
+	string.puti(p.x)          // 9
+	string.puts(",")
+	string.puti(p.y)          // 9
+	string.putc(10)
+	return 0
+}

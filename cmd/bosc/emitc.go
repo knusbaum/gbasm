@@ -80,6 +80,18 @@ type cEmitter struct {
 // headers that were actually used. Errors carry a source position and are
 // reported via fatalCtx, matching the .bs path.
 func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
+	// Backstop: the lazy interface/values/vtable emission below is not wrapped
+	// per-declaration, so convert any cUnsupported panic it raises into the same
+	// fatalCtx report (a clean "not yet supported" SKIP) the per-decl passes use.
+	defer func() {
+		if r := recover(); r != nil {
+			if ie, ok := r.(*interpreterError); ok {
+				fatalCtx("Fatal: %v", ie)
+				return
+			}
+			panic(r)
+		}
+	}()
 	u := &cUnit{c: c, sliceElems: map[string]ASTType{},
 		ifaces: map[string]*InterfaceDecl{}, vtables: map[string]cVtable{},
 		valuesUsed: map[string]*ValuesDecl{}}
@@ -120,7 +132,7 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 	// vtable-struct + interface-struct; vtableInsts holds the static per-(type,
 	// iface) method tables (which reference the method prototypes, so they are
 	// placed after protos and before definitions).
-	var ifaceFwd, ifaceBodies, vtableInsts bytes.Buffer
+	var ifaceFwd, ifaceBodies, vtableInsts, valuesTables bytes.Buffer
 	ifaceNames := sortedKeys(u.ifaces)
 	for _, name := range ifaceNames {
 		emitCIfaceType(&ifaceFwd, &ifaceBodies, u, u.ifaces[name])
@@ -130,8 +142,10 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 	}
 	// Values (ADT) types, built after the body passes so any slice type named
 	// only in a payload field registers before the slice typedefs below.
+	// Projection tables go to valuesTables (emitted after globals: a projected
+	// value may reference a file-scope global).
 	for _, name := range sortedKeys(u.valuesUsed) {
-		emitCValuesType(&ifaceFwd, &ifaceBodies, u, u.valuesUsed[name])
+		emitCValuesType(&ifaceFwd, &ifaceBodies, &valuesTables, u, u.valuesUsed[name])
 	}
 
 	fmt.Fprintf(of, "#include <stdint.h>\n")
@@ -197,6 +211,10 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 	}
 	if globals.Len() > 0 {
 		io.Copy(of, &globals)
+		fmt.Fprintf(of, "\n")
+	}
+	if valuesTables.Len() > 0 {
+		io.Copy(of, &valuesTables)
 		fmt.Fprintf(of, "\n")
 	}
 	if protos.Len() > 0 {
@@ -329,6 +347,11 @@ func emitCVtableInst(w io.Writer, u *cUnit, name string, vt cVtable) {
 
 func cValuesName(name string) string { return cIdent(name) }
 
+// cProjTable is the C name of a values type's i-th projection table.
+func cProjTable(typeName string, idx int) string {
+	return fmt.Sprintf("%s_proj%d", cIdent(typeName), idx)
+}
+
 // cValuesTag is the C name of a values variant's tag constant (type_CASE).
 func cValuesTag(typeName, caseName string) string {
 	return cIdent(typeName) + "_" + cIdent(caseName)
@@ -338,7 +361,7 @@ func cValuesTag(typeName, caseName string) string {
 // types need only their tag constants (the value itself is a plain int64_t);
 // a payload-bearing type additionally gets a tagged-union struct
 // `{ int64_t tag; union { <per-payload-variant struct> } u; }`.
-func emitCValuesType(fwd, bodies io.Writer, u *cUnit, vd *ValuesDecl) {
+func emitCValuesType(fwd, bodies, tables io.Writer, u *cUnit, vd *ValuesDecl) {
 	if strings.Contains(vd.Name, ".") {
 		cUnsupported(vd.p, fmt.Sprintf("cross-package values type %q", vd.Name))
 	}
@@ -351,6 +374,24 @@ func emitCValuesType(fwd, bodies io.Writer, u *cUnit, vd *ValuesDecl) {
 		fmt.Fprintf(bodies, " %s = %d", cValuesTag(vd.Name, vc.Name), vc.Tag)
 	}
 	fmt.Fprintf(bodies, " };\n")
+	// Projection tables: one `static const` array per projection, indexed by
+	// tag (designated `[TAG] = value` initializers, so declaration order is
+	// irrelevant). A cast `ProjType(e)` becomes a load from the matching table.
+	if len(vd.Projections) > 0 {
+		// Tables go to their own buffer (emitted after file-scope globals),
+		// since a projected value may reference a global (e.g. `&someVar`).
+		em := &cEmitter{u: u, locals: map[string]ASTType{}}
+		for i, pt := range vd.Projections {
+			fmt.Fprintf(tables, "static const %s[] = {\n", em.cDecl(pt, cProjTable(vd.Name, i)))
+			for _, vc := range vd.Cases {
+				if i < len(vc.Expr) {
+					fmt.Fprintf(tables, "\t[%s] = %s,\n", cValuesTag(vd.Name, vc.Name), em.exprInto(vc.Expr[i], pt))
+				}
+			}
+			fmt.Fprintf(tables, "};\n")
+		}
+		return // projection types are never payload-bearing
+	}
 	if !vd.IsPayloadBearing() {
 		return
 	}
@@ -1315,15 +1356,18 @@ func (em *cEmitter) call(f *Funcall) string {
 		ct := em.ctype(em.inferType(f.Args[0]))
 		return "(" + ct + " *)memcpy(malloc(sizeof(" + ct + ")), &" + em.unaryOperand(f.Args[0]) + ", sizeof(" + ct + "))"
 	}
-	// A type name applied to one argument is a cast, not a call.
-	if len(f.Args) == 1 && em.isTypeName(name) {
-		// A cast whose source is a projection-bearing values type is a lookup in
-		// that type's constant projection table, not a value reinterpretation.
-		// Projection tables are deferred.
+	// A cast `ProjType(e)` off a projection-bearing values type is a load from
+	// that type's constant projection table, not a value reinterpretation.
+	if len(f.Args) == 1 {
 		srcT := em.u.c.ResolveUnderlying(em.inferType(f.Args[0]))
 		if vd, ok := em.u.c.ValuesDeclForName(srcT.Name); ok && len(vd.Projections) > 0 {
-			cUnsupported(f.p, "projection cast (values projection table)")
+			if s, ok := em.projectionCast(vd, name, f.Args[0]); ok {
+				return s
+			}
 		}
+	}
+	// A type name applied to one argument is a cast, not a call.
+	if len(f.Args) == 1 && em.isTypeName(name) {
 		return "(" + em.ctypeName(name) + ")(" + em.expr(f.Args[0]) + ")"
 	}
 	// Only a genuine user function becomes a C call. Builtins (new, free, len,
@@ -1440,6 +1484,19 @@ func cIfaceName(name string) string { return cIdent(name) }
 
 func cVtableName(typeName, ifaceName string) string {
 	return cIdent(typeName) + "_" + cIdent(ifaceName) + "_vtable"
+}
+
+// projectionCast lowers `ProjType(e)` to a load from the values type's
+// projection table matching ProjType: <type>_proj<i>[<tag of e>]. Returns false
+// if the target names no projection (then it isn't a projection cast).
+func (em *cEmitter) projectionCast(vd *ValuesDecl, targetName string, arg AST) (string, bool) {
+	for i, pt := range vd.Projections {
+		if pt.String() == targetName {
+			em.u.valuesUsed[vd.Name] = vd
+			return cProjTable(vd.Name, i) + "[" + em.expr(arg) + "]", true
+		}
+	}
+	return "", false
 }
 
 // isTypeName reports whether name denotes a type (so `name(x)` is a cast).
@@ -1706,6 +1763,11 @@ func (em *cEmitter) ctype(t ASTType) string {
 		name := "slice_" + cTypeTag(em, *rt.Element)
 		em.u.sliceElems[name] = *rt.Element
 		return name
+	}
+	// A function-pointer type (FuncSig) has no Element/AnonFields and an empty
+	// Name, so guard it before the scalar switch treats "" as void.
+	if rt.FuncSig != nil {
+		cUnsupported(t.p, fmt.Sprintf("function-pointer type %q", t.String()))
 	}
 	if rt.Element == nil && rt.AnonFields == nil {
 		switch rt.Name {
