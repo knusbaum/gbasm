@@ -10,11 +10,15 @@ design (see the docs convention in CLAUDE.md § Documentation and design docs).
 ## Language
 
 ### Floating-point types
-No floats yet (`f32` / `f64`). The lexer already accepts decimal-point
-syntax but **truncates** the fractional part. Needs: the types, literal
-support, codegen (SSE), casts to/from integers, and print verbs (`%f`).
-The integers tour lesson currently has to say "there are no
-floating-point types yet" — revisit it when this lands.
+**Promoted to a design:
+[`docs/proposed/PROPOSAL_floating_point.md`](docs/proposed/PROPOSAL_floating_point.md).**
+`f32`/`f64`, literals, SSE codegen, int↔float casts, the System V float ABI, and
+`%f`. The survey found the cost is *not* the front end: `bas` has no register-class
+concept at all (`Registers.Get` selects purely by bit width, and the `.bs` `local`
+directive carries only a width), so teaching the assembler about XMM is the
+critical path. The instruction database and object format already suffice.
+The integers tour lesson currently has to say "there are no floating-point types
+yet" — revisit it when this lands.
 
 ---
 
@@ -31,6 +35,16 @@ C backend.
 ---
 
 ## Tooling
+
+### `bas`: an unknown register name silently becomes an external symbol
+`bas`'s operand-resolution chain falls through to `isIdentifier` →
+`&gbasm.Var{Name: ...}` (`cmd/bas/main.go:1459`, `:1528`), so a register name the
+assembler doesn't know — `xmm0`, or simply a typo like `rxa` — is not rejected.
+It becomes an unresolved *external symbol* with a RIP-relative relocation, and
+the mistake surfaces much later as a baffling link error (or worse, resolves
+against a real symbol). Register-shaped identifiers should be rejected at parse
+time with "no such register". Found while surveying for float support; fixing it
+is independent of that work.
 
 ### Code formatter (`go fmt`-style)
 A canonical, opinionated formatter for `.bos` source — no config, one
