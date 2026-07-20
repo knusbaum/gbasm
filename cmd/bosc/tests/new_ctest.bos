@@ -1,0 +1,9 @@
+package main
+import "string"
+type node struct { val i64 }
+fn main() {
+	n owned *mut node := new(node{val: 42})
+	string.puti(n.val)
+	string.putc(10)
+	free(n)
+}

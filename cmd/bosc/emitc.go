@@ -36,6 +36,7 @@ type cUnit struct {
 	needStdbool bool
 	needStdlib  bool
 	needStddef  bool
+	needString  bool               // <string.h> (memcpy) is used
 	needOob     bool               // the boson_oob bounds-trap helper is used
 	needNil     bool               // the boson_nil_assert helper is used
 	sliceElems  map[string]ASTType // slice type name -> element type (used types only)
@@ -95,6 +96,9 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 	}
 	if u.needStdlib || u.needOob || u.needNil {
 		fmt.Fprintf(of, "#include <stdlib.h>\n")
+	}
+	if u.needString {
+		fmt.Fprintf(of, "#include <string.h>\n")
 	}
 	if u.needStddef && !(u.needStdlib || u.needOob || u.needStdio || u.needNil) {
 		fmt.Fprintf(of, "#include <stddef.h>\n")
@@ -177,7 +181,7 @@ func emitCGlobal(w io.Writer, u *cUnit, v *VarDecl) (err error) {
 	case nil:
 		fmt.Fprintf(w, "%s%s;\n", linkage, em.cDecl(t, cIdent(v.Name)))
 	default:
-		fmt.Fprintf(w, "%s%s = %s;\n", linkage, em.cDecl(t, cIdent(v.Name)), em.expr(v.Init))
+		fmt.Fprintf(w, "%s%s = %s;\n", linkage, em.cDecl(t, cIdent(v.Name)), em.exprInto(v.Init, t))
 	}
 	return nil
 }
@@ -345,6 +349,13 @@ func emitCFunc(w io.Writer, u *cUnit, f *FuncDecl) {
 // module marks its internal helpers. (Package-prefixed naming for cross-package
 // linkage arrives with cross-package calls.)
 func (em *cEmitter) cFuncHead(f *FuncDecl, isEntry bool) (linkage, head string) {
+	// A user function whose name matches a C standard library function we may
+	// pull in (stdio/stdlib/string) would clash with that declaration. Defer
+	// rather than emit a conflicting definition. (Proper fix: package-prefixed
+	// or otherwise disambiguated names, with the cross-package naming pass.)
+	if !isEntry && cLibcNames[cIdent(f.Name)] {
+		cUnsupported(f.p, fmt.Sprintf("function name %q collides with a C standard library function", f.Name))
+	}
 	params := make([]string, 0, len(f.Args))
 	for _, arg := range f.Args {
 		// A C array parameter decays to a pointer (pass-by-reference), which
@@ -386,7 +397,12 @@ func (em *cEmitter) stmt(w io.Writer, a AST, ind int) {
 	case *VarDecl:
 		t := em.declType(n.Type, n.Init)
 		em.locals[n.Name] = t
-		if al, ok := n.Init.(*ArrayLiteral); ok {
+		if at := em.u.c.ResolveUnderlying(t); at.IsArray() && !isArrayInitLiteral(n.Init) {
+			cUnsupported(posOf(n), "copying an array value in an initializer (needs memcpy)")
+		}
+		if nf, ok := isNewCall(n.Init); ok {
+			em.emitNewInto(w, ind, t, cIdent(n.Name), true, nf)
+		} else if al, ok := n.Init.(*ArrayLiteral); ok {
 			parts := make([]string, len(al.Elements))
 			for i, e := range al.Elements {
 				em.hoistGuards(w, e, ind)
@@ -395,7 +411,7 @@ func (em *cEmitter) stmt(w io.Writer, a AST, ind int) {
 			fmt.Fprintf(w, "%s%s = {%s};\n", tab, em.cDecl(t, cIdent(n.Name)), strings.Join(parts, ", "))
 		} else if n.Init != nil {
 			em.hoistGuards(w, n.Init, ind)
-			fmt.Fprintf(w, "%s%s = %s;\n", tab, em.cDecl(t, cIdent(n.Name)), em.expr(n.Init))
+			fmt.Fprintf(w, "%s%s = %s;\n", tab, em.cDecl(t, cIdent(n.Name)), em.exprInto(n.Init, t))
 		} else {
 			fmt.Fprintf(w, "%s%s;\n", tab, em.cDecl(t, cIdent(n.Name)))
 		}
@@ -404,8 +420,12 @@ func (em *cEmitter) stmt(w io.Writer, a AST, ind int) {
 			cUnsupported(posOf(n.Target), "whole-array assignment (needs memcpy)")
 		}
 		em.hoistGuards(w, n.Target, ind)
-		em.hoistGuards(w, n.Val, ind)
-		fmt.Fprintf(w, "%s%s = %s;\n", tab, em.expr(n.Target), em.expr(n.Val))
+		if nf, ok := isNewCall(n.Val); ok {
+			em.emitNewInto(w, ind, em.inferType(n.Target), em.expr(n.Target), false, nf)
+		} else {
+			em.hoistGuards(w, n.Val, ind)
+			fmt.Fprintf(w, "%s%s = %s;\n", tab, em.expr(n.Target), em.expr(n.Val))
+		}
 	case *IfStmt:
 		em.hoistGuards(w, n.Cond, ind)
 		em.ifStmt(w, n, ind, true)
@@ -647,6 +667,11 @@ func (em *cEmitter) expr(a AST) string {
 		return ""
 	case *SliceOp:
 		return em.sliceOp(n)
+	case *Alloc:
+		// alloc(T): zero-initialized allocation (the mmap heap zeroes).
+		em.u.needStdlib = true
+		ct := em.ctype(n.Type)
+		return "(" + ct + " *)calloc(1, sizeof(" + ct + "))"
 	default:
 		cUnsupported(posOf(a), fmt.Sprintf("expression %T", a))
 		return ""
@@ -681,11 +706,37 @@ func (em *cEmitter) structLit(s *StructLiteral) string {
 	if len(s.Fields) == 0 {
 		return "(" + name + "){0}"
 	}
+	decl, _ := structDeclForType(em.u.c, em.u.c.ResolveUnderlying(s.Type))
 	parts := make([]string, 0, len(s.Fields))
 	for _, f := range s.Fields {
-		parts = append(parts, "."+cIdent(f.Name)+" = "+em.expr(f.Val))
+		parts = append(parts, "."+cIdent(f.Name)+" = "+em.exprInto(f.Val, em.fieldType(decl, f.Name)))
 	}
 	return "(" + name + "){ " + strings.Join(parts, ", ") + " }"
+}
+
+func (em *cEmitter) fieldType(decl *StructDecl, name string) ASTType {
+	if decl != nil {
+		for _, f := range decl.Fields {
+			if f.Name == name {
+				return f.Type
+			}
+		}
+	}
+	return ASTType{}
+}
+
+// exprInto emits an expression targeting a known destination type. Its one job
+// today: a string literal assigned to a [N]byte array stays a C string literal
+// (uint8_t a[N] = "hi"), rather than a slice literal.
+func (em *cEmitter) exprInto(a AST, dest ASTType) string {
+	if lit, ok := a.(*Literal); ok {
+		if s, ok := lit.Val.(string); ok {
+			if rt := em.u.c.ResolveUnderlying(dest); rt.IsArray() {
+				return cStringLit(s)
+			}
+		}
+	}
+	return em.expr(a)
 }
 
 // unaryOperand renders the operand of a unary operator, parenthesizing a
@@ -711,6 +762,15 @@ func (em *cEmitter) call(f *Funcall) string {
 	if name == "free" && len(f.Args) == 1 {
 		em.u.needStdlib = true
 		return "free(" + em.expr(f.Args[0]) + ")"
+	}
+	if name == "new" && len(f.Args) == 1 {
+		// Nested new(expr): allocate and copy inline, one expression, no helper.
+		// (In a var-init/assign position, VarDecl/Assignment emit the cleaner
+		// two-line malloc + assignment instead.)
+		em.u.needStdlib = true
+		em.u.needString = true
+		ct := em.ctype(em.inferType(f.Args[0]))
+		return "(" + ct + " *)memcpy(malloc(sizeof(" + ct + ")), &" + em.unaryOperand(f.Args[0]) + ", sizeof(" + ct + "))"
 	}
 	// A type name applied to one argument is a cast, not a call.
 	if len(f.Args) == 1 && em.isTypeName(name) {
@@ -742,6 +802,53 @@ func (em *cEmitter) isTypeName(name string) bool {
 
 func (em *cEmitter) ctypeName(name string) string {
 	return em.ctype(ASTType{Name: name})
+}
+
+// isArrayInitLiteral reports whether an initializer is one C can use for an
+// array (a brace `{…}` array literal or a string literal), vs. a general array
+// value (which C cannot copy in an initializer — that needs memcpy).
+func isArrayInitLiteral(a AST) bool {
+	if a == nil {
+		return true
+	}
+	if _, ok := a.(*ArrayLiteral); ok {
+		return true
+	}
+	if lit, ok := a.(*Literal); ok {
+		if _, ok := lit.Val.(string); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// isNewCall reports whether a is a `new(expr)` builtin call.
+func isNewCall(a AST) (*Funcall, bool) {
+	if f, ok := a.(*Funcall); ok && f.PkgName() == "" && f.FName() == "new" && len(f.Args) == 1 {
+		return f, true
+	}
+	return nil, false
+}
+
+// emitNewInto emits the natural inline form of new(expr) into a pointer target:
+//
+//	[T *]target = malloc(sizeof(T));
+//	*target = <expr>;
+//
+// `ptrType` is the target's pointer type; `declare` prefixes it (a var decl vs
+// an assignment).
+func (em *cEmitter) emitNewInto(w io.Writer, ind int, ptrType ASTType, target string, declare bool, nf *Funcall) {
+	em.u.needStdlib = true
+	pt := em.u.c.ResolveUnderlying(ptrType)
+	pt.Indirection--
+	ct := em.ctype(pt)
+	lhs := target
+	if declare {
+		lhs = em.cDecl(ptrType, target)
+	}
+	fmt.Fprintf(w, "%s%s = malloc(sizeof(%s));\n", cTab(ind), lhs, ct)
+	em.hoistGuards(w, nf.Args[0], ind)
+	fmt.Fprintf(w, "%s*%s = %s;\n", cTab(ind), target, em.expr(nf.Args[0]))
 }
 
 // lenBuiltin lowers len(x): a slice's stored length, or a fixed array's size.
@@ -887,6 +994,8 @@ func (em *cEmitter) operand(a AST, parentPrec int, isRight bool) string {
 func (em *cEmitter) literal(l *Literal) string {
 	switch v := l.Val.(type) {
 	case uint64:
+		return fmt.Sprintf("%d", v)
+	case byte:
 		return fmt.Sprintf("%d", v)
 	case string:
 		// A Boson string literal is a []byte value, so it lowers to a slice
@@ -1128,6 +1237,17 @@ func cStringLit(s string) string {
 	}
 	b.WriteByte('"')
 	return b.String()
+}
+
+// cLibcNames are C standard library function names that could be declared by a
+// header the emitter includes; a user function sharing one is deferred.
+var cLibcNames = map[string]bool{
+	"printf": true, "fprintf": true, "puts": true, "fputs": true, "putchar": true,
+	"fputc": true, "fwrite": true, "fread": true, "malloc": true, "calloc": true,
+	"realloc": true, "free": true, "memcpy": true, "memset": true, "memmove": true,
+	"strlen": true, "strcmp": true, "strcpy": true, "atoi": true, "atol": true,
+	"abs": true, "labs": true, "exit": true, "abort": true, "qsort": true,
+	"getchar": true, "main": true,
 }
 
 var cKeywords = map[string]bool{
