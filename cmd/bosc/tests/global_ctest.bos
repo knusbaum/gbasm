@@ -1,0 +1,12 @@
+package main
+import "string"
+var counter i64 := 100
+fn bump() {
+	counter = counter + 1
+}
+fn main() {
+	bump()
+	bump()
+	string.puti(counter)
+	string.putc(10)
+}

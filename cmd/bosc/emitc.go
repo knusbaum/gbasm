@@ -35,8 +35,10 @@ type cUnit struct {
 	needStdio   bool
 	needStdbool bool
 	needStdlib  bool
-	needOob     bool                // the boson_oob bounds-trap helper is used
-	sliceElems  map[string]ASTType  // slice type name -> element type (used types only)
+	needStddef  bool
+	needOob     bool               // the boson_oob bounds-trap helper is used
+	needNil     bool               // the boson_nil_assert helper is used
+	sliceElems  map[string]ASTType // slice type name -> element type (used types only)
 }
 
 // cEmitter is per-function state: the parameters/locals in scope, plus the
@@ -53,7 +55,7 @@ type cEmitter struct {
 // reported via fatalCtx, matching the .bs path.
 func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 	u := &cUnit{c: c, sliceElems: map[string]ASTType{}}
-	var structFwd, structBodies, protos, defs bytes.Buffer
+	var structFwd, structBodies, globals, protos, defs bytes.Buffer
 	// Body passes fill the buffers and, as a side effect of `ctype`, register
 	// every slice type actually used into u.sliceElems.
 	for _, a := range asts {
@@ -63,6 +65,14 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 		}
 		if err := emitCStruct(&structFwd, &structBodies, u, sd); err != nil {
 			fatalCtx("Fatal: %v", err)
+		}
+	}
+	// File-scope variables become C globals, emitted before functions.
+	for _, a := range asts {
+		if v, ok := a.(*VarDecl); ok {
+			if err := emitCGlobal(&globals, u, v); err != nil {
+				fatalCtx("Fatal: %v", err)
+			}
 		}
 	}
 	for _, a := range asts {
@@ -80,16 +90,25 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 	if u.needStdbool {
 		fmt.Fprintf(of, "#include <stdbool.h>\n")
 	}
-	if u.needStdio || u.needOob {
+	if u.needStdio || u.needOob || u.needNil {
 		fmt.Fprintf(of, "#include <stdio.h>\n")
 	}
-	if u.needStdlib || u.needOob {
+	if u.needStdlib || u.needOob || u.needNil {
 		fmt.Fprintf(of, "#include <stdlib.h>\n")
+	}
+	if u.needStddef && !(u.needStdlib || u.needOob || u.needStdio || u.needNil) {
+		fmt.Fprintf(of, "#include <stddef.h>\n")
 	}
 	fmt.Fprintf(of, "\n")
 	if u.needOob {
 		fmt.Fprintf(of, "static void boson_oob(int64_t i, int64_t n) {\n")
 		fmt.Fprintf(of, "\tprintf(\"Fatal: Index Out Of Bounds: index[%%lld] for object with length: %%lld\\n\", (long long)i, (long long)n);\n")
+		fmt.Fprintf(of, "\texit(1);\n")
+		fmt.Fprintf(of, "}\n\n")
+	}
+	if u.needNil {
+		fmt.Fprintf(of, "static void boson_nil_assert(void) {\n")
+		fmt.Fprintf(of, "\tprintf(\"Fatal: nullable pointer assertion failed\\n\");\n")
 		fmt.Fprintf(of, "\texit(1);\n")
 		fmt.Fprintf(of, "}\n\n")
 	}
@@ -120,11 +139,47 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 	}
 
 	io.Copy(of, &structBodies)
+	if globals.Len() > 0 {
+		io.Copy(of, &globals)
+		fmt.Fprintf(of, "\n")
+	}
 	if protos.Len() > 0 {
 		io.Copy(of, &protos)
 		fmt.Fprintf(of, "\n")
 	}
 	io.Copy(of, &defs)
+}
+
+// emitCGlobal emits a file-scope variable as a C global (static unless pub).
+func emitCGlobal(w io.Writer, u *cUnit, v *VarDecl) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if ie, ok := r.(*interpreterError); ok {
+				err = ie
+				return
+			}
+			panic(r)
+		}
+	}()
+	em := &cEmitter{u: u, locals: map[string]ASTType{}}
+	t := em.declType(v.Type, v.Init)
+	linkage := "static "
+	if v.IsPub {
+		linkage = ""
+	}
+	switch init := v.Init.(type) {
+	case *ArrayLiteral:
+		parts := make([]string, len(init.Elements))
+		for i, e := range init.Elements {
+			parts[i] = em.expr(e)
+		}
+		fmt.Fprintf(w, "%s%s = {%s};\n", linkage, em.cDecl(t, cIdent(v.Name)), strings.Join(parts, ", "))
+	case nil:
+		fmt.Fprintf(w, "%s%s;\n", linkage, em.cDecl(t, cIdent(v.Name)))
+	default:
+		fmt.Fprintf(w, "%s%s = %s;\n", linkage, em.cDecl(t, cIdent(v.Name)), em.expr(v.Init))
+	}
+	return nil
 }
 
 // emitCStruct writes a struct body definition. Its forward typedef is emitted
@@ -250,6 +305,8 @@ func emitCDecl(w io.Writer, u *cUnit, a AST) (err error) {
 		emitCFunc(w, u, n)
 	case *StructDecl:
 		// Emitted in emitCFile's struct pass (forward typedef + body).
+	case *VarDecl:
+		// Emitted in emitCFile's globals pass.
 	default:
 		cUnsupported(posOf(a), fmt.Sprintf("top-level declaration %T", a))
 	}
@@ -373,6 +430,9 @@ func (em *cEmitter) stmt(w io.Writer, a AST, ind int) {
 		fmt.Fprintf(w, "%sbreak;\n", tab)
 	case *Continue:
 		fmt.Fprintf(w, "%scontinue;\n", tab)
+	case *Dispose:
+		// Compile-time only — dispose discharges the ownership obligation in
+		// the type system and has no runtime effect, so it emits nothing.
 	case *Block:
 		em.block(w, n, ind)
 		fmt.Fprintf(w, "\n")
@@ -475,6 +535,11 @@ func (em *cEmitter) inferType(a AST) ASTType {
 		if t, ok := em.locals[n.Name]; ok {
 			return t
 		}
+		if em.u.c.IsImportedPackage(n.Name) {
+			cUnsupported(posOf(n), fmt.Sprintf("reference to imported package %q (cross-package access)", n.Name))
+		}
+		// A file-scope global (or other Context-resolvable name).
+		return em.u.c.ResolveUnderlying(n.ASTType(em.u.c))
 	case *Op2:
 		switch n.Type {
 		case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_booland, n_boolor:
@@ -643,6 +708,10 @@ func (em *cEmitter) call(f *Funcall) string {
 	if name == "len" && len(f.Args) == 1 {
 		return em.lenBuiltin(f.Args[0])
 	}
+	if name == "free" && len(f.Args) == 1 {
+		em.u.needStdlib = true
+		return "free(" + em.expr(f.Args[0]) + ")"
+	}
 	// A type name applied to one argument is a cast, not a call.
 	if len(f.Args) == 1 && em.isTypeName(name) {
 		return "(" + em.ctypeName(name) + ")(" + em.expr(f.Args[0]) + ")"
@@ -731,7 +800,7 @@ func (em *cEmitter) emitSliceCheck(w io.Writer, n *SliceOp, ind int) {
 		baselen = base + ".len"
 	}
 	if n.Upper != nil {
-		if containsFuncall(n.Upper) {
+		if exprHasCall(n.Upper) {
 			cUnsupported(posOf(n.Upper), "a side-effecting slice bound")
 		}
 		hi := em.expr(n.Upper)
@@ -739,7 +808,7 @@ func (em *cEmitter) emitSliceCheck(w io.Writer, n *SliceOp, ind int) {
 		em.u.needOob = true
 	}
 	if n.Lower != nil {
-		if containsFuncall(n.Lower) {
+		if exprHasCall(n.Lower) {
 			cUnsupported(posOf(n.Lower), "a side-effecting slice bound")
 		}
 		lo := em.expr(n.Lower)
@@ -831,6 +900,9 @@ func (em *cEmitter) literal(l *Literal) string {
 			return "true"
 		}
 		return "false"
+	case nil:
+		em.u.needStddef = true
+		return "NULL"
 	default:
 		cUnsupported(l.p, fmt.Sprintf("literal of type %T", l.Val))
 		return ""
@@ -1104,6 +1176,11 @@ func (em *cEmitter) hoistGuards(w io.Writer, a AST, ind int) {
 		em.hoistGuards(w, n.Val, ind)
 	case *NonNullAssert:
 		em.hoistGuards(w, n.Val, ind)
+		if !exprHasCall(n.Val) {
+			fmt.Fprintf(w, "%sif ((%s) == NULL) boson_nil_assert();\n", cTab(ind), em.expr(n.Val))
+			em.u.needNil = true
+			em.u.needStddef = true
+		}
 	case *StructLiteral:
 		for _, f := range n.Fields {
 			em.hoistGuards(w, f.Val, ind)
@@ -1127,7 +1204,7 @@ func (em *cEmitter) emitBoundsCheck(w io.Writer, n *Index, ind int) {
 	if n.NAST == nil && bt.IsArray() {
 		return
 	}
-	if n.NAST != nil && containsFuncall(n.NAST) {
+	if n.NAST != nil && exprHasCall(n.NAST) {
 		cUnsupported(posOf(n.NAST), "a side-effecting index expression")
 	}
 	idx := em.indexExpr(n)
@@ -1143,6 +1220,47 @@ func (em *cEmitter) emitBoundsCheck(w io.Writer, n *Index, ind int) {
 	fmt.Fprintf(w, "%sif ((uint64_t)(%s) >= (uint64_t)(%s)) boson_oob(%s, %s);\n",
 		cTab(ind), idx, length, idx, length)
 	em.u.needOob = true
+}
+
+// exprHasCall reports whether an expression contains a function call — used to
+// avoid double-evaluating a hoisted sub-expression. Unlike compile.go's
+// containsFuncall it handles every emittable node and never panics.
+func exprHasCall(a AST) bool {
+	switch n := a.(type) {
+	case nil:
+		return false
+	case *Funcall:
+		return true
+	case *Op2:
+		return exprHasCall(n.First) || exprHasCall(n.Second)
+	case *Dot:
+		return exprHasCall(n.Val)
+	case *Deref:
+		return exprHasCall(n.Val)
+	case *Not:
+		return exprHasCall(n.Val)
+	case *BitNot:
+		return exprHasCall(n.Val)
+	case *NonNullAssert:
+		return exprHasCall(n.Val)
+	case *Index:
+		return exprHasCall(n.Val) || exprHasCall(n.NAST)
+	case *SliceOp:
+		return exprHasCall(n.Val) || exprHasCall(n.Lower) || exprHasCall(n.Upper)
+	case *StructLiteral:
+		for _, f := range n.Fields {
+			if exprHasCall(f.Val) {
+				return true
+			}
+		}
+	case *ArrayLiteral:
+		for _, e := range n.Elements {
+			if exprHasCall(e) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // hasIndex reports whether an expression contains any indexing (used to defer
