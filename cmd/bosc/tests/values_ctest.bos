@@ -1,0 +1,41 @@
+package main
+
+import "string"
+
+// ADT (values) equivalence classes for the C backend:
+//   - a bare enum (plain i64 tag) with == / != comparison,
+//   - a payload-bearing type (tagged-union struct) with mixed payload and
+//     bare variants,
+//   - a variant switch with a default,
+//   - payload field access narrowed by the matched case.
+
+type state values {
+	IDLE
+	RUNNING
+	DONE
+}
+
+type msg values {
+	TEXT{ body []byte }
+	CODE{ n i64 }
+	QUIT
+}
+
+fn describe(m msg) {
+	switch m {
+		case TEXT { string.puts("text:"); string.puts(m.body); string.putc(10) }
+		case CODE { string.puts("code:"); string.puti(m.n); string.putc(10) }
+		default   { string.puts("quit\n") }
+	}
+}
+
+fn main() i64 {
+	s state := state.RUNNING
+	if (s == state.RUNNING) { string.puts("running\n") }
+	if (s != state.IDLE) { string.puts("not idle\n") }
+
+	describe(msg.TEXT{ body: "hi" })
+	describe(msg.CODE{ n: 42 })
+	describe(msg.QUIT)
+	return 0
+}

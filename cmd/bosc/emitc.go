@@ -42,6 +42,7 @@ type cUnit struct {
 	sliceElems  map[string]ASTType // slice type name -> element type (used types only)
 	ifaces      map[string]*InterfaceDecl // interface name -> decl (used interfaces only)
 	vtables     map[string]cVtable        // vtable global name -> spec (one per (type,iface))
+	valuesUsed  map[string]*ValuesDecl    // values type name -> decl (used values types only)
 }
 
 // cVtable is a static per-(concrete type, interface) method table to be emitted:
@@ -67,6 +68,11 @@ type cEmitter struct {
 	// the temp for such a node so the base runs exactly once.
 	temps     map[AST]string
 	tempCount int
+
+	// narrowed maps a switch scrutinee's name to the payload variant it is
+	// narrowed to within the current case body, so a field read on it routes
+	// through the tagged union's variant member (x.fd -> x.u.CASE.fd).
+	narrowed map[string]*ValuesCase
 }
 
 // emitCFile writes a complete C translation unit for one source file. The body
@@ -75,7 +81,8 @@ type cEmitter struct {
 // reported via fatalCtx, matching the .bs path.
 func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 	u := &cUnit{c: c, sliceElems: map[string]ASTType{},
-		ifaces: map[string]*InterfaceDecl{}, vtables: map[string]cVtable{}}
+		ifaces: map[string]*InterfaceDecl{}, vtables: map[string]cVtable{},
+		valuesUsed: map[string]*ValuesDecl{}}
 	var structFwd, structBodies, globals, protos, defs bytes.Buffer
 	// Body passes fill the buffers and, as a side effect of `ctype`, register
 	// every slice type actually used into u.sliceElems.
@@ -120,6 +127,11 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 	}
 	for _, name := range sortedKeys(u.vtables) {
 		emitCVtableInst(&vtableInsts, u, name, u.vtables[name])
+	}
+	// Values (ADT) types, built after the body passes so any slice type named
+	// only in a payload field registers before the slice typedefs below.
+	for _, name := range sortedKeys(u.valuesUsed) {
+		emitCValuesType(&ifaceFwd, &ifaceBodies, u, u.valuesUsed[name])
 	}
 
 	fmt.Fprintf(of, "#include <stdint.h>\n")
@@ -315,6 +327,50 @@ func emitCVtableInst(w io.Writer, u *cUnit, name string, vt cVtable) {
 	fmt.Fprintf(w, "};\n")
 }
 
+func cValuesName(name string) string { return cIdent(name) }
+
+// cValuesTag is the C name of a values variant's tag constant (type_CASE).
+func cValuesTag(typeName, caseName string) string {
+	return cIdent(typeName) + "_" + cIdent(caseName)
+}
+
+// emitCValuesType writes a used values (ADT) type. Bare enums / projection-only
+// types need only their tag constants (the value itself is a plain int64_t);
+// a payload-bearing type additionally gets a tagged-union struct
+// `{ int64_t tag; union { <per-payload-variant struct> } u; }`.
+func emitCValuesType(fwd, bodies io.Writer, u *cUnit, vd *ValuesDecl) {
+	if strings.Contains(vd.Name, ".") {
+		cUnsupported(vd.p, fmt.Sprintf("cross-package values type %q", vd.Name))
+	}
+	// Tag-name constants for every variant (used by construction and switch).
+	fmt.Fprintf(bodies, "enum {")
+	for i, vc := range vd.Cases {
+		if i > 0 {
+			fmt.Fprintf(bodies, ",")
+		}
+		fmt.Fprintf(bodies, " %s = %d", cValuesTag(vd.Name, vc.Name), vc.Tag)
+	}
+	fmt.Fprintf(bodies, " };\n")
+	if !vd.IsPayloadBearing() {
+		return
+	}
+	name := cValuesName(vd.Name)
+	em := &cEmitter{u: u, locals: map[string]ASTType{}}
+	fmt.Fprintf(fwd, "typedef struct %s %s;\n", name, name)
+	fmt.Fprintf(bodies, "struct %s {\n\tint64_t tag;\n\tunion {\n", name)
+	for _, vc := range vd.Cases {
+		if len(vc.Payload) == 0 {
+			continue
+		}
+		fmt.Fprintf(bodies, "\t\tstruct {\n")
+		for _, f := range vc.Payload {
+			fmt.Fprintf(bodies, "\t\t\t%s;\n", em.cDecl(f.Type, cIdent(f.Name)))
+		}
+		fmt.Fprintf(bodies, "\t\t} %s;\n", cIdent(vc.Name))
+	}
+	fmt.Fprintf(bodies, "\t} u;\n};\n\n")
+}
+
 // emitCProto writes a forward declaration for a function so it can be called
 // before its definition. main is the entry point and needs none; variadics and
 // non-functions are left to the definition pass to handle or reject.
@@ -350,6 +406,10 @@ func emitCProto(w io.Writer, u *cUnit, a AST) (err error) {
 			for _, m := range ms {
 				emitCMethodProto(w, u, n.TName, m)
 			}
+		}
+	case *ValuesDecl:
+		for _, m := range n.Methods {
+			emitCMethodProto(w, u, n.Name, m)
 		}
 	}
 	return nil
@@ -438,6 +498,12 @@ func emitCDecl(w io.Writer, u *cUnit, a AST) (err error) {
 	case *InterfaceDecl:
 		// The C structs are emitted lazily from u.ifaces for interfaces that are
 		// actually used (named in a type, coerced to, or dispatched on).
+	case *ValuesDecl:
+		// Tag constants + tagged-union struct are emitted lazily from
+		// u.valuesUsed. Value methods, if any, are emitted here.
+		for _, m := range n.Methods {
+			emitCMethod(w, u, n.Name, m)
+		}
 	default:
 		cUnsupported(posOf(a), fmt.Sprintf("top-level declaration %T", a))
 	}
@@ -455,7 +521,7 @@ func emitCFunc(w io.Writer, u *cUnit, f *FuncDecl) {
 		cUnsupported(f.p, "main with parameters (argv)")
 	}
 
-	em := &cEmitter{u: u, locals: make(map[string]ASTType, len(f.Args)), retType: f.Return, temps: map[AST]string{}}
+	em := &cEmitter{u: u, locals: make(map[string]ASTType, len(f.Args)), retType: f.Return, temps: map[AST]string{}, narrowed: map[string]*ValuesCase{}}
 	linkage, head := em.cFuncHead(f, isEntry)
 	fmt.Fprintf(w, "%s%s {\n", linkage, head)
 	if f.Body != nil {
@@ -596,7 +662,7 @@ func emitCMethod(w io.Writer, u *cUnit, typeName string, m *FuncDecl) {
 	if len(m.Args) == 0 {
 		cUnsupported(m.p, "static method (no receiver)")
 	}
-	em := &cEmitter{u: u, locals: make(map[string]ASTType, len(m.Args)), retType: m.Return, temps: map[AST]string{}}
+	em := &cEmitter{u: u, locals: make(map[string]ASTType, len(m.Args)), retType: m.Return, temps: map[AST]string{}, narrowed: map[string]*ValuesCase{}}
 	linkage, head, prefix := em.cMethodHead(typeName, m)
 	fmt.Fprintf(w, "%s%s {\n", linkage, head)
 	fmt.Fprint(w, prefix)
@@ -685,9 +751,72 @@ func (em *cEmitter) stmt(w io.Writer, a AST, ind int) {
 	case *Block:
 		em.block(w, n, ind)
 		fmt.Fprintf(w, "\n")
+	case *VariantSwitch:
+		em.variantSwitch(w, n, ind)
 	default:
 		cUnsupported(posOf(a), fmt.Sprintf("statement %T", a))
 	}
+}
+
+// variantSwitch lowers an ADT switch to a C `switch` on the tag. For a
+// payload-bearing scrutinee it switches on `scrut.tag` and narrows the
+// scrutinee to each case's variant so payload field reads in the body route
+// through the union; for a bare enum it switches on the i64 value directly.
+func (em *cEmitter) variantSwitch(w io.Writer, n *VariantSwitch, ind int) {
+	st := em.u.c.ResolveUnderlying(em.inferType(n.Scrutinee))
+	vd, ok := em.u.c.ValuesDeclForName(st.Name)
+	if !ok {
+		cUnsupported(posOf(n), "switch on a non-values type")
+	}
+	em.u.valuesUsed[vd.Name] = vd
+	em.hoistGuards(w, n.Scrutinee, ind)
+	tab := cTab(ind)
+	tagExpr := em.expr(n.Scrutinee)
+	if vd.IsPayloadBearing() {
+		tagExpr = em.postfixBase(n.Scrutinee) + ".tag"
+	}
+	scrutName := ""
+	if sym, ok := n.Scrutinee.(*Symbol); ok {
+		scrutName = sym.Name
+	}
+	fmt.Fprintf(w, "%sswitch (%s) {\n", tab, tagExpr)
+	for _, vcase := range n.Cases {
+		vc := valuesCaseByName(vd, vcase.Name)
+		fmt.Fprintf(w, "%scase %s: {\n", cTab(ind+1), cValuesTag(vd.Name, vcase.Name))
+		if scrutName != "" && vc != nil && len(vc.Payload) > 0 {
+			em.narrowed[scrutName] = vc
+		}
+		em.caseBody(w, vcase.Body, ind+2)
+		delete(em.narrowed, scrutName)
+		fmt.Fprintf(w, "%sbreak;\n%s}\n", cTab(ind+2), cTab(ind+1))
+	}
+	if n.Default != nil {
+		fmt.Fprintf(w, "%sdefault: {\n", cTab(ind+1))
+		em.caseBody(w, n.Default, ind+2)
+		fmt.Fprintf(w, "%sbreak;\n%s}\n", cTab(ind+2), cTab(ind+1))
+	}
+	fmt.Fprintf(w, "%s}\n", tab)
+}
+
+// caseBody emits a switch case's body (a block or single statement) at the
+// given indent, without its own braces (the case already opened one).
+func (em *cEmitter) caseBody(w io.Writer, body AST, ind int) {
+	if b, ok := body.(*Block); ok {
+		for _, s := range b.Body {
+			em.stmt(w, s, ind)
+		}
+	} else if body != nil {
+		em.stmt(w, body, ind)
+	}
+}
+
+func valuesCaseByName(vd *ValuesDecl, name string) *ValuesCase {
+	for i := range vd.Cases {
+		if vd.Cases[i].Name == name {
+			return &vd.Cases[i]
+		}
+	}
+	return nil
 }
 
 func cTab(n int) string { return strings.Repeat("\t", n) }
@@ -821,6 +950,20 @@ func (em *cEmitter) inferType(a AST) ASTType {
 	case *BitNot:
 		return em.inferType(n.Val)
 	case *Dot:
+		// Bare values-variant reference (Type.CASE): its type is the values type.
+		if sym, ok := n.Val.(*Symbol); ok {
+			if _, isLocal := em.locals[sym.Name]; !isLocal {
+				if vd, _, ok := valuesCaseFromName(em.u.c, sym.Name+"."+n.Member); ok {
+					return ASTType{Name: vd.Name}
+				}
+			}
+			// Payload field read on a narrowed scrutinee.
+			if vc, ok := em.narrowed[sym.Name]; ok {
+				if ft := em.payloadFieldType(vc, n.Member); ft.Name != "" || ft.Element != nil {
+					return ft
+				}
+			}
+		}
 		bt := em.u.c.ResolveUnderlying(em.inferType(n.Val))
 		if decl, ok := structDeclForType(em.u.c, bt); ok {
 			for _, f := range decl.Fields {
@@ -845,6 +988,11 @@ func (em *cEmitter) inferType(a AST) ASTType {
 	case *NonNullAssert:
 		return em.inferType(n.Val)
 	case *StructLiteral:
+		// A payload-variant literal's type is the values type, not the dotted
+		// case name it parsed with.
+		if vd, _, ok := valuesCaseFromName(em.u.c, n.Type.Name); ok {
+			return ASTType{Name: vd.Name}
+		}
 		return n.Type
 	case *Index:
 		bt := em.u.c.ResolveUnderlying(em.inferType(n.Val))
@@ -923,6 +1071,9 @@ func (em *cEmitter) expr(a AST) string {
 	case *BitNot:
 		return "~" + em.unaryOperand(n.Val)
 	case *Dot:
+		if s, ok := em.valuesCaseRef(n); ok {
+			return s
+		}
 		return em.dot(n)
 	case *StructLiteral:
 		return em.structLit(n)
@@ -964,9 +1115,43 @@ func (em *cEmitter) expr(a AST) string {
 	}
 }
 
+// valuesCaseRef handles a bare values-variant reference `Type.CASE` (a Dot):
+// for a bare enum / projection type it is the i64 tag constant; for a
+// payload-bearing type a payload-less variant (e.g. CLOSED) is a struct with
+// only its tag set. Returns false when the Dot is ordinary field access.
+func (em *cEmitter) valuesCaseRef(d *Dot) (string, bool) {
+	sym, ok := d.Val.(*Symbol)
+	if !ok {
+		return "", false
+	}
+	if _, isLocal := em.locals[sym.Name]; isLocal {
+		return "", false // a value named like a type: ordinary field access
+	}
+	vd, vc, ok := valuesCaseFromName(em.u.c, sym.Name+"."+d.Member)
+	if !ok {
+		return "", false
+	}
+	em.u.valuesUsed[vd.Name] = vd
+	if !vd.IsPayloadBearing() {
+		return cValuesTag(vd.Name, vc.Name), true
+	}
+	return "(" + cValuesName(vd.Name) + "){ .tag = " + cValuesTag(vd.Name, vc.Name) + " }", true
+}
+
 // dot emits field access, auto-dereferencing a pointer base with `->` exactly
 // as Boson's `.` does.
 func (em *cEmitter) dot(d *Dot) string {
+	// A payload field read on a switch-narrowed scrutinee routes through the
+	// tagged union's variant member.
+	if sym, ok := d.Val.(*Symbol); ok {
+		if vc, ok := em.narrowed[sym.Name]; ok {
+			for _, f := range vc.Payload {
+				if f.Name == d.Member {
+					return cIdent(sym.Name) + ".u." + cIdent(vc.Name) + "." + cIdent(d.Member)
+				}
+			}
+		}
+	}
 	sep := "."
 	if em.u.c.ResolveUnderlying(em.inferType(d.Val)).Indirection > 0 {
 		sep = "->"
@@ -988,6 +1173,11 @@ func (em *cEmitter) postfixBase(a AST) string {
 // structLit emits a struct literal as a C compound literal with designated
 // initializers — readable and order-independent.
 func (em *cEmitter) structLit(s *StructLiteral) string {
+	// A payload-variant construction `Type.CASE{ ... }` parses as a struct
+	// literal with a dotted type name; emit it as the tagged-union literal.
+	if vd, vc, ok := valuesCaseFromName(em.u.c, s.Type.Name); ok {
+		return em.valuesLit(vd, vc, s.Fields)
+	}
 	name := em.ctype(s.Type)
 	if len(s.Fields) == 0 {
 		return "(" + name + "){0}"
@@ -998,6 +1188,30 @@ func (em *cEmitter) structLit(s *StructLiteral) string {
 		parts = append(parts, "."+cIdent(f.Name)+" = "+em.exprInto(f.Val, em.fieldType(decl, f.Name)))
 	}
 	return "(" + name + "){ " + strings.Join(parts, ", ") + " }"
+}
+
+// valuesLit emits a payload-variant value as a tagged-union compound literal:
+// (Type){ .tag = Type_CASE, .u.CASE = { .field = ... } }.
+func (em *cEmitter) valuesLit(vd *ValuesDecl, vc *ValuesCase, fields []StructField) string {
+	em.u.valuesUsed[vd.Name] = vd
+	parts := []string{".tag = " + cValuesTag(vd.Name, vc.Name)}
+	if len(fields) > 0 {
+		fp := make([]string, 0, len(fields))
+		for _, f := range fields {
+			fp = append(fp, "."+cIdent(f.Name)+" = "+em.exprInto(f.Val, em.payloadFieldType(vc, f.Name)))
+		}
+		parts = append(parts, ".u."+cIdent(vc.Name)+" = { "+strings.Join(fp, ", ")+" }")
+	}
+	return "(" + cValuesName(vd.Name) + "){ " + strings.Join(parts, ", ") + " }"
+}
+
+func (em *cEmitter) payloadFieldType(vc *ValuesCase, name string) ASTType {
+	for _, f := range vc.Payload {
+		if f.Name == name {
+			return f.Type
+		}
+	}
+	return ASTType{}
 }
 
 func (em *cEmitter) fieldType(decl *StructDecl, name string) ASTType {
@@ -1096,6 +1310,13 @@ func (em *cEmitter) call(f *Funcall) string {
 	}
 	// A type name applied to one argument is a cast, not a call.
 	if len(f.Args) == 1 && em.isTypeName(name) {
+		// A cast whose source is a projection-bearing values type is a lookup in
+		// that type's constant projection table, not a value reinterpretation.
+		// Projection tables are deferred.
+		srcT := em.u.c.ResolveUnderlying(em.inferType(f.Args[0]))
+		if vd, ok := em.u.c.ValuesDeclForName(srcT.Name); ok && len(vd.Projections) > 0 {
+			cUnsupported(f.p, "projection cast (values projection table)")
+		}
 		return "(" + em.ctypeName(name) + ")(" + em.expr(f.Args[0]) + ")"
 	}
 	// Only a genuine user function becomes a C call. Builtins (new, free, len,
@@ -1502,6 +1723,18 @@ func (em *cEmitter) ctype(t ASTType) string {
 			return "uint32_t"
 		case "u64":
 			return "uint64_t"
+		}
+		// A values (ADT) type: a payload-bearing one is a tagged union struct;
+		// a bare enum / projection-only one is just its i64 tag.
+		if vd, ok := em.u.c.ValuesDeclForName(rt.Name); ok {
+			if strings.Contains(rt.Name, ".") {
+				cUnsupported(t.p, fmt.Sprintf("cross-package values type %q", rt.Name))
+			}
+			em.u.valuesUsed[rt.Name] = vd
+			if vd.IsPayloadBearing() {
+				return cValuesName(rt.Name)
+			}
+			return "int64_t"
 		}
 		// An interface type is the fat-pointer struct { self, vtable }.
 		if id, ok := em.u.c.InterfaceForName(rt.Name); ok {
