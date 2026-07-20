@@ -2,6 +2,19 @@
 
 ## History
 
+- 2026-07-20 — **Semantic boundary found and recorded.** Interface-to-interface
+  assertion (`x.(I)`) cannot be canonical C: Boson's satisfaction relation
+  includes two *directional* ownership gates (receiver-shape weakening, borrow
+  subset) that must be evaluated at runtime. Decided **pay-for-what-you-use**
+  (option 3) and tabled the implementation; see
+  [`DESIGN_c_target_semantic_boundary.md`](DESIGN_c_target_semantic_boundary.md).
+  Everything else — including `any`, concrete assertions, and type switches —
+  remains canonical C.
+- 2026-07-20 — Shipped **methods**, **interfaces** (coercion + vtable dispatch),
+  **ADTs** (tagged unions, variant switch, narrowed payload access), and
+  **values projections**. Settled the `void *self` receiver idiom (kernel/COM
+  style) over GObject-style function-pointer casts (UB) and over per-method
+  thunks. Corpus: PASS 132 → 163, FAIL 0 throughout.
 - 2026-07-19 — Oracle refined to a **re-derived gate that ratchets checks
   upstream**: run `emitC` first, then the `Compile` gate; a gate rejection of a
   program `emitC` emitted marks a check that lives only in `compile.go`, which is
@@ -194,6 +207,15 @@ COM; fully well-formed) — we take the latter to honor the no-UB rule: methods
 take `void *self` and reconstruct the typed receiver as their first line
 (`FD *fd = self;`), so the vtable slot's type *is* the method's type — no cast,
 no thunk. (Thunks, the C++-compiler pattern, were rejected as un-idiomatic.)
+
+**Where interfaces stop being canonical C.** Coercion and dispatch (above) are
+ordinary C. *Interface-to-interface assertion* (`x.(I)`) is not, and is the one
+operation in the language that isn't: deciding whether an unknown concrete type
+satisfies `I` requires Boson's *directional* ownership gates (receiver-shape
+weakening, borrow subset) at runtime. Decided **pay-for-what-you-use** and
+tabled — the analysis, the rejected alternatives, and the agreed
+`{data, itab*}` / `itab{type_desc*, fns}` representation are recorded in
+[`DESIGN_c_target_semantic_boundary.md`](DESIGN_c_target_semantic_boundary.md).
 
 ---
 
