@@ -2,6 +2,9 @@
 
 ## History
 
+- 2026-07-19 — Noted that the C transpiler's oracle (gate run *after* `emitC`)
+  is the dynamic discovery mechanism for this worklist — every gate rejection of
+  an `emitC`-emitted program is a leaked check to hoist.
 - 2026-07-19 — Initial audit. Census of every user-facing error site in
   `cmd/bosc/compile.go` + `globals.go`, classified **semantic** vs **lowering**
   vs **ambiguous**, to size how much language-semantics checking has leaked into
@@ -54,6 +57,33 @@ unsoundness in `.bs` lowering is faithfully inherited — see the slice-bounds h
 found and fixed this session, `0cca0ac`). The end state is proper segregation:
 hoist the leaked semantic checks into the front end, and the oracle becomes
 vestigial. **This audit is the worklist for that hoist.**
+
+The oracle also *discovers* this worklist dynamically. By running the gate
+**after** `emitC` (which does no semantic checking of its own), any program that
+`ToAST` accepted and `emitC` emitted but the gate rejects is, by construction, a
+check that lives *only* in `compile.go`. Each such case is triaged: a language
+semantic is hoisted into `ToAST`/the checker (so both backends inherit it and the
+gate stops seeing it); a genuine `.bs`-backend limitation is left as accepted
+over-strictness. The check is never duplicated into `emitC`. So the C transpiler's
+gate is the ratchet that turns this static census into a steadily-shrinking
+backlog. See the oracle section of
+[`../proposed/PROPOSAL_c_transpiler.md`](../proposed/PROPOSAL_c_transpiler.md).
+
+**First ratchet run (2026-07-19).** *(Measured on the `c-transpiler` branch,
+where `emitC` and the gate live; the branch is tabled, but the worklist below is
+about `compile.go` and stands on its own.)* Running the 313 `_err_test.bos` programs
+through the C path (front end → emitC → gate): **14** caught by the front end
+(`ToAST`/parse — already segregated), **27** caught only by the gate (leaked into
+`compile.go` — concrete hoist candidates), **272** unclassifiable yet (emitC
+feature gap, before the gate), and — crucially — **0 escaped** (every invalid
+program is caught by *something*, so the C backend is sound). The 27 cluster as:
+operand/assignment/init **type** checks ("operator + requires integer operands",
+"Cannot initialize i64 with value of type bool", "mismatched number types"),
+**literal-range** ("Integer literal 128 does not fit in type i8", decidable at
+`ToAST`), **mutability** ("Cannot assign to immutable binding", ×5 tests / one
+check), **discard-read**, and **ownership** ("owned binding … out of scope
+without being consumed" — flow-sensitive, so the checker rather than `ToAST`).
+The 27 is a lower bound: the 272 SKIPs re-classify as emitC coverage grows.
 
 ---
 
