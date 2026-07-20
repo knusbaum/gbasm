@@ -40,14 +40,25 @@ type cUnit struct {
 	needOob     bool               // the boson_oob bounds-trap helper is used
 	needNil     bool               // the boson_nil_assert helper is used
 	sliceElems  map[string]ASTType // slice type name -> element type (used types only)
+	ifaces      map[string]*InterfaceDecl // interface name -> decl (used interfaces only)
+	vtables     map[string]cVtable        // vtable global name -> spec (one per (type,iface))
+}
+
+// cVtable is a static per-(concrete type, interface) method table to be emitted:
+// its slots point at the concrete type's methods. Registered lazily at each
+// concrete->interface coercion site, exactly like slice types.
+type cVtable struct {
+	typeName string
+	iface    *InterfaceDecl
 }
 
 // cEmitter is per-function state: the parameters/locals in scope, plus the
 // enclosing unit. Locals are tracked here rather than in the Context (whose
 // function-scope bindings are not established on the C path).
 type cEmitter struct {
-	u      *cUnit
-	locals map[string]ASTType
+	u       *cUnit
+	locals  map[string]ASTType
+	retType ASTType // the enclosing function/method's return type (for return coercion)
 }
 
 // emitCFile writes a complete C translation unit for one source file. The body
@@ -55,7 +66,8 @@ type cEmitter struct {
 // headers that were actually used. Errors carry a source position and are
 // reported via fatalCtx, matching the .bs path.
 func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
-	u := &cUnit{c: c, sliceElems: map[string]ASTType{}}
+	u := &cUnit{c: c, sliceElems: map[string]ASTType{},
+		ifaces: map[string]*InterfaceDecl{}, vtables: map[string]cVtable{}}
 	var structFwd, structBodies, globals, protos, defs bytes.Buffer
 	// Body passes fill the buffers and, as a side effect of `ctype`, register
 	// every slice type actually used into u.sliceElems.
@@ -85,6 +97,21 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 		if err := emitCDecl(&defs, u, a); err != nil {
 			fatalCtx("Fatal: %v", err)
 		}
+	}
+
+	// Interface support, built after the body passes so any slice types named
+	// only in an interface's method signatures or a vtable register before the
+	// slice typedefs below are written. ifaceBodies holds each used interface's
+	// vtable-struct + interface-struct; vtableInsts holds the static per-(type,
+	// iface) method tables (which reference the method prototypes, so they are
+	// placed after protos and before definitions).
+	var ifaceFwd, ifaceBodies, vtableInsts bytes.Buffer
+	ifaceNames := sortedKeys(u.ifaces)
+	for _, name := range ifaceNames {
+		emitCIfaceType(&ifaceFwd, &ifaceBodies, u, u.ifaces[name])
+	}
+	for _, name := range sortedKeys(u.vtables) {
+		emitCVtableInst(&vtableInsts, u, name, u.vtables[name])
 	}
 
 	fmt.Fprintf(of, "#include <stdint.h>\n")
@@ -124,8 +151,9 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 		sliceNames = append(sliceNames, name)
 	}
 	sort.Strings(sliceNames)
-	if structFwd.Len() > 0 || len(sliceNames) > 0 {
+	if structFwd.Len() > 0 || ifaceFwd.Len() > 0 || len(sliceNames) > 0 {
 		io.Copy(of, &structFwd)
+		io.Copy(of, &ifaceFwd)
 		for _, name := range sliceNames {
 			fmt.Fprintf(of, "typedef struct %s %s;\n", name, name)
 		}
@@ -143,6 +171,10 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 	}
 
 	io.Copy(of, &structBodies)
+	if ifaceBodies.Len() > 0 {
+		io.Copy(of, &ifaceBodies)
+		fmt.Fprintf(of, "\n")
+	}
 	if globals.Len() > 0 {
 		io.Copy(of, &globals)
 		fmt.Fprintf(of, "\n")
@@ -151,7 +183,21 @@ func emitCFile(of io.Writer, c *Context, pkgname string, asts []AST) {
 		io.Copy(of, &protos)
 		fmt.Fprintf(of, "\n")
 	}
+	if vtableInsts.Len() > 0 {
+		io.Copy(of, &vtableInsts)
+		fmt.Fprintf(of, "\n")
+	}
 	io.Copy(of, &defs)
+}
+
+// sortedKeys returns a map's keys in sorted order, for deterministic emission.
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // emitCGlobal emits a file-scope variable as a C global (static unless pub).
@@ -213,6 +259,52 @@ func emitCStruct(fwd, bodies io.Writer, u *cUnit, sd *StructDecl) (err error) {
 	}
 	fmt.Fprintf(bodies, "};\n\n")
 	return nil
+}
+
+// emitCIfaceType writes a used interface's C representation: a vtable struct
+// (one function pointer per method, receiver as `void *self` per the
+// pointer-receiver idiom) followed by the interface value struct
+// `{ void *self; const vtable *; }`. The forward typedef goes to fwd so the
+// name is usable regardless of declaration order.
+func emitCIfaceType(fwd, bodies io.Writer, u *cUnit, id *InterfaceDecl) {
+	if strings.Contains(id.Name, ".") {
+		cUnsupported(id.p, fmt.Sprintf("cross-package interface %q", id.Name))
+	}
+	name := cIfaceName(id.Name)
+	em := &cEmitter{u: u, locals: map[string]ASTType{}}
+	fmt.Fprintf(fwd, "typedef struct %s %s;\n", name, name)
+	fmt.Fprintf(bodies, "struct %s_vtable {\n", name)
+	for _, m := range id.Methods {
+		params := []string{"void *self"} // the receiver slot, Params[0] (*self)
+		for _, p := range m.Params[1:] {
+			params = append(params, em.ctype(p.Type))
+		}
+		fmt.Fprintf(bodies, "\t%s (*%s)(%s);\n", em.ctype(m.Return), cIdent(m.Name), strings.Join(params, ", "))
+	}
+	fmt.Fprintf(bodies, "};\n")
+	fmt.Fprintf(bodies, "struct %s {\n\tvoid *self;\n\tconst struct %s_vtable *vtable;\n};\n\n", name, name)
+}
+
+// emitCVtableInst writes a static per-(type, interface) vtable whose slots point
+// directly at the concrete type's methods. Because pointer-receiver methods
+// take `void *self`, each method's C type is exactly the slot's type — no cast,
+// no thunk. A value-receiver method would need a differently-typed slot and is
+// deferred.
+func emitCVtableInst(w io.Writer, u *cUnit, name string, vt cVtable) {
+	for _, m := range vt.iface.Methods {
+		cm, ok := u.c.MethodForType(vt.typeName, m.Name)
+		if !ok {
+			cUnsupported(vt.iface.p, fmt.Sprintf("type %s is missing method %s for interface %s", vt.typeName, m.Name, vt.iface.Name))
+		}
+		if len(cm.Args) == 0 || u.c.ResolveUnderlying(cm.Args[0].Type).Indirection == 0 {
+			cUnsupported(vt.iface.p, fmt.Sprintf("value-receiver method %s.%s in a vtable", vt.typeName, m.Name))
+		}
+	}
+	fmt.Fprintf(w, "static const struct %s_vtable %s = {\n", cIfaceName(vt.iface.Name), name)
+	for _, m := range vt.iface.Methods {
+		fmt.Fprintf(w, "\t.%s = %s,\n", cIdent(m.Name), cMethodName(vt.typeName, m.Name))
+	}
+	fmt.Fprintf(w, "};\n")
 }
 
 // emitCProto writes a forward declaration for a function so it can be called
@@ -335,6 +427,9 @@ func emitCDecl(w io.Writer, u *cUnit, a AST) (err error) {
 		}
 	case *VarDecl:
 		// Emitted in emitCFile's globals pass.
+	case *InterfaceDecl:
+		// The C structs are emitted lazily from u.ifaces for interfaces that are
+		// actually used (named in a type, coerced to, or dispatched on).
 	default:
 		cUnsupported(posOf(a), fmt.Sprintf("top-level declaration %T", a))
 	}
@@ -352,7 +447,7 @@ func emitCFunc(w io.Writer, u *cUnit, f *FuncDecl) {
 		cUnsupported(f.p, "main with parameters (argv)")
 	}
 
-	em := &cEmitter{u: u, locals: make(map[string]ASTType, len(f.Args))}
+	em := &cEmitter{u: u, locals: make(map[string]ASTType, len(f.Args)), retType: f.Return}
 	linkage, head := em.cFuncHead(f, isEntry)
 	fmt.Fprintf(w, "%s%s {\n", linkage, head)
 	if f.Body != nil {
@@ -381,6 +476,7 @@ func (em *cEmitter) cFuncHead(f *FuncDecl, isEntry bool) (linkage, head string) 
 		cUnsupported(f.p, fmt.Sprintf("function name %q collides with a C standard library function", f.Name))
 	}
 	params := make([]string, 0, len(f.Args))
+	blanks := 0
 	for _, arg := range f.Args {
 		// A C array parameter decays to a pointer (pass-by-reference), which
 		// would break Boson's by-value array semantics — defer it rather than
@@ -388,8 +484,7 @@ func (em *cEmitter) cFuncHead(f *FuncDecl, isEntry bool) (linkage, head string) 
 		if at := em.u.c.ResolveUnderlying(arg.Type); at.IsArray() {
 			cUnsupported(arg.p, "array parameter (by-value passing deferred; pass a slice)")
 		}
-		em.locals[arg.Name] = arg.Type
-		params = append(params, em.cDecl(arg.Type, cIdent(arg.Name)))
+		params = append(params, em.cDecl(arg.Type, em.paramName(arg, &blanks)))
 	}
 	sig := "void"
 	if len(params) > 0 {
@@ -421,38 +516,57 @@ func cMethodName(typeName, method string) string {
 // slot with no cast. A *value* receiver is a plain typed parameter.
 func (em *cEmitter) cMethodHead(typeName string, m *FuncDecl) (linkage, head, prefix string) {
 	recv := m.Args[0]
+	blanks := 0
+	recvPtr := em.u.c.ResolveUnderlying(recv.Type).Indirection > 0
+	recvLocal := em.paramName(recv, &blanks)
+	// Compute the non-receiver parameter decls first so the synthetic `void*`
+	// receiver name can be chosen to avoid colliding with any of them.
+	argNames := make([]string, 0, len(m.Args)-1)
+	argDecls := make([]string, 0, len(m.Args)-1)
+	for _, arg := range m.Args[1:] {
+		if at := em.u.c.ResolveUnderlying(arg.Type); at.IsArray() {
+			cUnsupported(arg.p, "array parameter (by-value passing deferred; pass a slice)")
+		}
+		n := em.paramName(arg, &blanks)
+		argNames = append(argNames, n)
+		argDecls = append(argDecls, em.cDecl(arg.Type, n))
+	}
 	params := make([]string, 0, len(m.Args))
-	if em.u.c.ResolveUnderlying(recv.Type).Indirection > 0 {
-		// The void* parameter must not collide with the receiver's own name
-		// (often `self`) nor any later parameter; pick a distinct spelling.
-		taken := map[string]bool{cIdent(recv.Name): true}
-		for _, arg := range m.Args[1:] {
-			taken[cIdent(arg.Name)] = true
+	if recvPtr {
+		taken := map[string]bool{recvLocal: true}
+		for _, n := range argNames {
+			taken[n] = true
 		}
 		self := "self"
 		for taken[self] {
 			self += "_"
 		}
 		params = append(params, "void *"+self)
-		em.locals[recv.Name] = recv.Type
-		prefix = fmt.Sprintf("\t%s = %s;\n", em.cDecl(recv.Type, cIdent(recv.Name)), self)
+		prefix = fmt.Sprintf("\t%s = %s;\n", em.cDecl(recv.Type, recvLocal), self)
 	} else {
-		em.locals[recv.Name] = recv.Type
-		params = append(params, em.cDecl(recv.Type, cIdent(recv.Name)))
+		params = append(params, em.cDecl(recv.Type, recvLocal))
 	}
-	for _, arg := range m.Args[1:] {
-		if at := em.u.c.ResolveUnderlying(arg.Type); at.IsArray() {
-			cUnsupported(arg.p, "array parameter (by-value passing deferred; pass a slice)")
-		}
-		em.locals[arg.Name] = arg.Type
-		params = append(params, em.cDecl(arg.Type, cIdent(arg.Name)))
-	}
+	params = append(params, argDecls...)
 	head = em.ctype(m.Return) + " " + cMethodName(typeName, m.Name) + "(" + strings.Join(params, ", ") + ")"
 	linkage = "static "
 	if m.IsPub {
 		linkage = ""
 	}
 	return linkage, head, prefix
+}
+
+// paramName returns the C identifier for a parameter and registers it in locals
+// for body references. Boson's blank `_` may repeat within a signature (all such
+// params are unused); C requires distinct names, so each `_` becomes a fresh
+// `_<n>` and is not registered.
+func (em *cEmitter) paramName(b Binding, blanks *int) string {
+	if b.Name == "_" {
+		n := fmt.Sprintf("_%d", *blanks)
+		*blanks++
+		return n
+	}
+	em.locals[b.Name] = b.Type
+	return cIdent(b.Name)
 }
 
 // emitCMethodProto writes an instance method's forward declaration. Static
@@ -474,7 +588,7 @@ func emitCMethod(w io.Writer, u *cUnit, typeName string, m *FuncDecl) {
 	if len(m.Args) == 0 {
 		cUnsupported(m.p, "static method (no receiver)")
 	}
-	em := &cEmitter{u: u, locals: make(map[string]ASTType, len(m.Args))}
+	em := &cEmitter{u: u, locals: make(map[string]ASTType, len(m.Args)), retType: m.Return}
 	linkage, head, prefix := em.cMethodHead(typeName, m)
 	fmt.Fprintf(w, "%s%s {\n", linkage, head)
 	fmt.Fprint(w, prefix)
@@ -494,7 +608,7 @@ func (em *cEmitter) stmt(w io.Writer, a AST, ind int) {
 			fmt.Fprintf(w, "%sreturn;\n", tab)
 		} else {
 			em.hoistGuards(w, n.Val, ind)
-			fmt.Fprintf(w, "%sreturn %s;\n", tab, em.expr(n.Val))
+			fmt.Fprintf(w, "%sreturn %s;\n", tab, em.exprInto(n.Val, em.retType))
 		}
 	case *Funcall:
 		em.hoistGuards(w, n, ind)
@@ -531,7 +645,7 @@ func (em *cEmitter) stmt(w io.Writer, a AST, ind int) {
 			em.emitNewInto(w, ind, em.inferType(n.Target), em.expr(n.Target), false, nf)
 		} else {
 			em.hoistGuards(w, n.Val, ind)
-			fmt.Fprintf(w, "%s%s = %s;\n", tab, em.expr(n.Target), em.expr(n.Val))
+			fmt.Fprintf(w, "%s%s = %s;\n", tab, em.expr(n.Target), em.exprInto(n.Val, em.inferType(n.Target)))
 		}
 	case *IfStmt:
 		em.hoistGuards(w, n.Cond, ind)
@@ -856,11 +970,27 @@ func (em *cEmitter) fieldType(decl *StructDecl, name string) ASTType {
 // today: a string literal assigned to a [N]byte array stays a C string literal
 // (uint8_t a[N] = "hi"), rather than a slice literal.
 func (em *cEmitter) exprInto(a AST, dest ASTType) string {
+	rt := em.u.c.ResolveUnderlying(dest)
 	if lit, ok := a.(*Literal); ok {
 		if s, ok := lit.Val.(string); ok {
-			if rt := em.u.c.ResolveUnderlying(dest); rt.IsArray() {
+			if rt.IsArray() {
 				return cStringLit(s)
 			}
+		}
+	}
+	// Concrete -> interface coercion: build the fat pointer.
+	if id, ok := em.u.c.InterfaceForName(rt.Name); ok {
+		st := em.inferType(a)
+		if srcId, srcIsIface := em.u.c.InterfaceForName(em.u.c.ResolveUnderlying(st).Name); srcIsIface {
+			// Interface -> interface. Same interface is a plain copy; widening
+			// to a different (subset) interface needs runtime type info to
+			// rebuild the target vtable for the dynamic concrete type — the
+			// typedesc machinery the C fat pointer omits. Deferred.
+			if srcId.Name != id.Name {
+				cUnsupported(posOf(a), "interface-to-interface widening (needs runtime type info)")
+			}
+		} else {
+			return em.interfaceFatPtr(a, st, id)
 		}
 	}
 	return em.expr(a)
@@ -879,7 +1009,11 @@ func (em *cEmitter) unaryOperand(a AST) string {
 func (em *cEmitter) call(f *Funcall) string {
 	// (expr).method(args): the receiver is an arbitrary expression.
 	if recv := f.ReceiverExpr(); recv != nil {
-		return em.methodCall(f, recv, em.inferType(recv), f.FName())
+		rt := em.inferType(recv)
+		if id, ok := em.u.c.InterfaceForName(em.u.c.ResolveUnderlying(rt).Name); ok {
+			return em.interfaceDispatch(f, recv, id, f.FName())
+		}
+		return em.methodCall(f, recv, rt, f.FName())
 	}
 	if pkg := f.PkgName(); pkg != "" {
 		// pkg is a bare Symbol before `.`: an imported package, or a value
@@ -890,6 +1024,9 @@ func (em *cEmitter) call(f *Funcall) string {
 			return em.runtimeCall(f, pkg, f.FName())
 		}
 		if t, ok := em.locals[pkg]; ok {
+			if id, isIface := em.u.c.InterfaceForName(em.u.c.ResolveUnderlying(t).Name); isIface {
+				return em.interfaceDispatch(f, &Symbol{Name: pkg}, id, f.FName())
+			}
 			return em.methodCall(f, &Symbol{Name: pkg}, t, f.FName())
 		}
 		// A type name (static method) or a global-var receiver: not yet.
@@ -919,10 +1056,14 @@ func (em *cEmitter) call(f *Funcall) string {
 	// Only a genuine user function becomes a C call. Builtins (new, free, len,
 	// …) and anything unrecognized are not yet supported — and must never be
 	// emitted as a bogus C call.
-	if _, ok := em.u.c.FuncDeclForName(name); ok {
+	if decl, ok := em.u.c.FuncDeclForName(name); ok {
 		args := make([]string, 0, len(f.Args))
-		for _, arg := range f.Args {
-			args = append(args, em.expr(arg))
+		for i, arg := range f.Args {
+			if i < len(decl.Args) {
+				args = append(args, em.exprInto(arg, decl.Args[i].Type))
+			} else {
+				args = append(args, em.expr(arg))
+			}
 		}
 		return cIdent(name) + "(" + strings.Join(args, ", ") + ")"
 	}
@@ -962,10 +1103,65 @@ func (em *cEmitter) methodCall(f *Funcall, recv AST, recvType ASTType, method st
 	}
 	args := make([]string, 0, len(f.Args)+1)
 	args = append(args, recvArg)
-	for _, arg := range f.Args {
-		args = append(args, em.expr(arg))
+	for i, arg := range f.Args {
+		if i+1 < len(m.Args) {
+			args = append(args, em.exprInto(arg, m.Args[i+1].Type))
+		} else {
+			args = append(args, em.expr(arg))
+		}
 	}
 	return cMethodName(typeName, method) + "(" + strings.Join(args, ", ") + ")"
+}
+
+// interfaceDispatch emits an interface method call `recv.method(args)` as a
+// vtable dispatch: recv.vtable->method(recv.self, args).
+func (em *cEmitter) interfaceDispatch(f *Funcall, recv AST, id *InterfaceDecl, method string) string {
+	em.u.ifaces[id.Name] = id
+	var sig *InterfaceMethodSig
+	for i := range id.Methods {
+		if id.Methods[i].Name == method {
+			sig = &id.Methods[i]
+			break
+		}
+	}
+	base := em.postfixBase(recv)
+	args := make([]string, 0, len(f.Args)+1)
+	args = append(args, base+".self")
+	for i, arg := range f.Args {
+		if sig != nil && i+1 < len(sig.Params) {
+			args = append(args, em.exprInto(arg, sig.Params[i+1].Type))
+		} else {
+			args = append(args, em.expr(arg))
+		}
+	}
+	return base + ".vtable->" + cIdent(method) + "(" + strings.Join(args, ", ") + ")"
+}
+
+// interfaceFatPtr emits a concrete->interface coercion as the fat-pointer
+// compound literal `(I){ .self = <ptr>, .vtable = &Type_I_vtable }`, registering
+// the vtable. Only pointer-backed coercions (a pointer source) are handled;
+// value-backed interfaces (a value packed into the self word) are deferred.
+func (em *cEmitter) interfaceFatPtr(a AST, srcType ASTType, id *InterfaceDecl) string {
+	rt := em.u.c.ResolveUnderlying(srcType)
+	if rt.Indirection == 0 {
+		cUnsupported(posOf(a), "value-backed interface (coercing a non-pointer to an interface)")
+	}
+	typeName := rt.Name
+	if strings.Contains(typeName, ".") || strings.Contains(id.Name, ".") {
+		cUnsupported(posOf(a), "cross-package interface coercion")
+	}
+	em.u.ifaces[id.Name] = id
+	vt := cVtableName(typeName, id.Name)
+	if _, ok := em.u.vtables[vt]; !ok {
+		em.u.vtables[vt] = cVtable{typeName: typeName, iface: id}
+	}
+	return "(" + cIfaceName(id.Name) + "){ .self = " + em.expr(a) + ", .vtable = &" + vt + " }"
+}
+
+func cIfaceName(name string) string { return cIdent(name) }
+
+func cVtableName(typeName, ifaceName string) string {
+	return cIdent(typeName) + "_" + cIdent(ifaceName) + "_vtable"
 }
 
 // isTypeName reports whether name denotes a type (so `name(x)` is a cast).
@@ -1244,6 +1440,14 @@ func (em *cEmitter) ctype(t ASTType) string {
 			return "uint32_t"
 		case "u64":
 			return "uint64_t"
+		}
+		// An interface type is the fat-pointer struct { self, vtable }.
+		if id, ok := em.u.c.InterfaceForName(rt.Name); ok {
+			if strings.Contains(rt.Name, ".") {
+				cUnsupported(t.p, fmt.Sprintf("cross-package interface type %q", rt.Name))
+			}
+			em.u.ifaces[rt.Name] = id
+			return cIfaceName(rt.Name)
 		}
 		if _, ok := structDeclForType(em.u.c, rt); ok {
 			// A cross-package struct type resolves to a qualified name

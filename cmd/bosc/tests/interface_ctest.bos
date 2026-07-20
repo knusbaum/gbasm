@@ -1,0 +1,58 @@
+package main
+
+import "string"
+
+// Interface dispatch equivalence classes for the C backend:
+//   - two concrete types implementing one interface (vtable per type),
+//   - coercion at a var-decl (&concrete -> interface),
+//   - coercion at a call argument,
+//   - dispatch through the interface value (it.vtable->m(it.self, ...)),
+//   - a method taking a non-receiver argument, dispatched via the interface.
+
+interface Shape {
+	area(s *self) i64
+	scaled(s *self, by i64) i64
+}
+
+type Square struct {
+	side i64
+} {
+	area(s *Square) i64 {
+		return s.side * s.side
+	}
+	scaled(s *Square, by i64) i64 {
+		return (s.side * s.side) * by
+	}
+}
+
+type Rect struct {
+	w i64
+	h i64
+} {
+	area(r *Rect) i64 {
+		return r.w * r.h
+	}
+	scaled(r *Rect, by i64) i64 {
+		return (r.w * r.h) * by
+	}
+}
+
+fn report(sh Shape) {
+	string.puti(sh.area())
+	string.putc(32)
+	string.puti(sh.scaled(3))
+	string.putc(10)
+}
+
+fn main() i64 {
+	var sq Square := Square{side: 4}
+	var rc Rect := Rect{w: 3, h: 5}
+
+	s Shape := &sq           // coercion at var-decl
+	string.puti(s.area())    // dispatch: 16
+	string.putc(10)
+
+	report(&sq)              // coercion at call arg: 16 48
+	report(&rc)              // 15 45
+	return 0
+}
