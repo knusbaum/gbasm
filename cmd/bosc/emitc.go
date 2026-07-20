@@ -783,11 +783,18 @@ func (em *cEmitter) variantSwitch(w io.Writer, n *VariantSwitch, ind int) {
 	for _, vcase := range n.Cases {
 		vc := valuesCaseByName(vd, vcase.Name)
 		fmt.Fprintf(w, "%scase %s: {\n", cTab(ind+1), cValuesTag(vd.Name, vcase.Name))
+		// Save and restore any outer narrowing of this name, so a nested switch
+		// on the same scrutinee doesn't clear the enclosing case's narrowing.
+		prev, had := em.narrowed[scrutName]
 		if scrutName != "" && vc != nil && len(vc.Payload) > 0 {
 			em.narrowed[scrutName] = vc
 		}
 		em.caseBody(w, vcase.Body, ind+2)
-		delete(em.narrowed, scrutName)
+		if had {
+			em.narrowed[scrutName] = prev
+		} else {
+			delete(em.narrowed, scrutName)
+		}
 		fmt.Fprintf(w, "%sbreak;\n%s}\n", cTab(ind+2), cTab(ind+1))
 	}
 	if n.Default != nil {
