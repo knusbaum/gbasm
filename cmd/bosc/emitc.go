@@ -413,7 +413,9 @@ func (em *cEmitter) stmt(w io.Writer, a AST, ind int) {
 			em.hoistGuards(w, n.Init, ind)
 			fmt.Fprintf(w, "%s%s = %s;\n", tab, em.cDecl(t, cIdent(n.Name)), em.exprInto(n.Init, t))
 		} else {
-			fmt.Fprintf(w, "%s%s;\n", tab, em.cDecl(t, cIdent(n.Name)))
+			// No initializer: Boson gives it the zero value; C would leave a
+			// local uninitialized, so emit the zero explicitly.
+			fmt.Fprintf(w, "%s%s = %s;\n", tab, em.cDecl(t, cIdent(n.Name)), em.zeroValue(t))
 		}
 	case *Assignment:
 		if at := em.u.c.ResolveUnderlying(em.inferType(n.Target)); at.IsArray() {
@@ -526,6 +528,26 @@ func (em *cEmitter) forClause(a AST) string {
 		cUnsupported(posOf(a), fmt.Sprintf("for-clause %T", a))
 		return ""
 	}
+}
+
+// zeroValue is the C zero initializer for a type — Boson gives an
+// uninitialized `var` its zero value, and C zero-inits globals but not locals.
+func (em *cEmitter) zeroValue(t ASTType) string {
+	rt := em.u.c.ResolveUnderlying(t)
+	if rt.Indirection > 0 {
+		em.u.needStddef = true
+		return "NULL"
+	}
+	if rt.Element == nil && rt.AnonFields == nil {
+		switch rt.Name {
+		case "bool":
+			em.u.needStdbool = true
+			return "false"
+		case "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "byte":
+			return "0"
+		}
+	}
+	return "{0}" // struct, array, slice
 }
 
 // declType resolves a binding's C-relevant type: its written type, or — for a

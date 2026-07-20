@@ -55,8 +55,12 @@ for t in tests/*_test.bos; do
 		else
 			fail=$((fail + 1)); echo "OUTPUT $t" >> "$work/fails"
 		fi
-	else
+	elif [ "$ec" = "$exp" ]; then
+		# No .expected — a compile-and-run smoke test; still require a clean
+		# exit so a segfault in the emitted C is not silently counted as PASS.
 		pass=$((pass + 1))
+	else
+		fail=$((fail + 1)); echo "RUNTIME $t (exit $ec, want $exp)" >> "$work/fails"
 	fi
 done
 
