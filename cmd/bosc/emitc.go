@@ -59,6 +59,14 @@ type cEmitter struct {
 	u       *cUnit
 	locals  map[string]ASTType
 	retType ASTType // the enclosing function/method's return type (for return coercion)
+
+	// temps maps an expression node to a temporary that holds its (once-
+	// evaluated) value. Populated by the guard-hoisting pass for a
+	// side-effecting base that a single statement reads more than once (a
+	// slice's .ptr and .len, a dispatch's .self and .vtable); expr() returns
+	// the temp for such a node so the base runs exactly once.
+	temps     map[AST]string
+	tempCount int
 }
 
 // emitCFile writes a complete C translation unit for one source file. The body
@@ -447,7 +455,7 @@ func emitCFunc(w io.Writer, u *cUnit, f *FuncDecl) {
 		cUnsupported(f.p, "main with parameters (argv)")
 	}
 
-	em := &cEmitter{u: u, locals: make(map[string]ASTType, len(f.Args)), retType: f.Return}
+	em := &cEmitter{u: u, locals: make(map[string]ASTType, len(f.Args)), retType: f.Return, temps: map[AST]string{}}
 	linkage, head := em.cFuncHead(f, isEntry)
 	fmt.Fprintf(w, "%s%s {\n", linkage, head)
 	if f.Body != nil {
@@ -588,7 +596,7 @@ func emitCMethod(w io.Writer, u *cUnit, typeName string, m *FuncDecl) {
 	if len(m.Args) == 0 {
 		cUnsupported(m.p, "static method (no receiver)")
 	}
-	em := &cEmitter{u: u, locals: make(map[string]ASTType, len(m.Args)), retType: m.Return}
+	em := &cEmitter{u: u, locals: make(map[string]ASTType, len(m.Args)), retType: m.Return, temps: map[AST]string{}}
 	linkage, head, prefix := em.cMethodHead(typeName, m)
 	fmt.Fprintf(w, "%s%s {\n", linkage, head)
 	fmt.Fprint(w, prefix)
@@ -855,6 +863,11 @@ func (em *cEmitter) inferType(a AST) ASTType {
 			return ASTType{Element: &elem}
 		}
 	case *Funcall:
+		// A method / interface-dispatch call must resolve through the method
+		// table — Funcall.ASTType only knows plain and package-qualified calls.
+		if rt, ok := em.funcallReturnType(n); ok {
+			return em.u.c.ResolveUnderlying(rt)
+		}
 		// The callee's return type does not depend on argument types, so this
 		// resolves through the Context even when arguments are locals.
 		return em.u.c.ResolveUnderlying(n.ASTType(em.u.c))
@@ -863,7 +876,39 @@ func (em *cEmitter) inferType(a AST) ASTType {
 	return ASTType{}
 }
 
+// funcallReturnType resolves the return type of a method or interface-dispatch
+// call (recv.method(...)), which Funcall.ASTType cannot. Returns false for a
+// plain or package-qualified call, which the caller resolves via ASTType.
+func (em *cEmitter) funcallReturnType(f *Funcall) (ASTType, bool) {
+	lookup := func(t ASTType) (ASTType, bool) {
+		rt := em.u.c.ResolveUnderlying(t)
+		if id, ok := em.u.c.InterfaceForName(rt.Name); ok {
+			for _, m := range id.Methods {
+				if m.Name == f.FName() {
+					return m.Return, true
+				}
+			}
+		}
+		if m, ok := em.u.c.MethodForType(rt.Name, f.FName()); ok {
+			return m.Return, true
+		}
+		return ASTType{}, false
+	}
+	if recv := f.ReceiverExpr(); recv != nil {
+		return lookup(em.inferType(recv))
+	}
+	if pkg := f.PkgName(); pkg != "" {
+		if t, ok := em.locals[pkg]; ok {
+			return lookup(t)
+		}
+	}
+	return ASTType{}, false
+}
+
 func (em *cEmitter) expr(a AST) string {
+	if t, ok := em.temps[a]; ok {
+		return t
+	}
 	switch n := a.(type) {
 	case *Literal:
 		return em.literal(n)
@@ -1124,6 +1169,11 @@ func (em *cEmitter) interfaceDispatch(f *Funcall, recv AST, id *InterfaceDecl, m
 			break
 		}
 	}
+	// The receiver is read twice (.self and .vtable); a side-effecting receiver
+	// would then run twice. Defer rather than double-evaluate.
+	if exprHasCall(recv) {
+		cUnsupported(f.p, "dispatch on a side-effecting interface expression (double-evaluated)")
+	}
 	base := em.postfixBase(recv)
 	args := make([]string, 0, len(f.Args)+1)
 	args = append(args, base+".self")
@@ -1246,6 +1296,12 @@ func (em *cEmitter) sliceOp(n *SliceOp) string {
 	if bt.Element == nil {
 		cUnsupported(posOf(n.Val), "slice of a non-array, non-slice")
 	}
+	// A slice base is read twice here (ptr and, for the default upper bound,
+	// len) and again in the hoisted bounds check; a side-effecting base is
+	// bound to a temp by the guard pass. If somehow unbound, defer.
+	if bt.IsSlice() && exprHasCall(n.Val) && !em.bound(n.Val) {
+		cUnsupported(posOf(n.Val), "slicing a side-effecting slice expression (double-evaluated)")
+	}
 	elem := *bt.Element
 	name := em.ctype(ASTType{Element: &elem}) // registers the slice type; returns its name
 	base := em.postfixBase(n.Val)
@@ -1318,6 +1374,12 @@ func (em *cEmitter) runtimeCall(f *Funcall, pkg, name string) string {
 				}
 			}
 			em.u.needStdio = true
+			// The slice base is read twice (.ptr and .len); a side-effecting
+			// base is bound to a temp by the guard pass so it runs once. If it
+			// somehow was not bound, defer rather than double-evaluate.
+			if exprHasCall(f.Args[0]) && !em.bound(f.Args[0]) {
+				cUnsupported(posOf(f.Args[0]), "a side-effecting slice argument to puts (double-evaluated)")
+			}
 			base := em.postfixBase(f.Args[0])
 			return "fwrite(" + base + ".ptr, 1, " + base + ".len, stdout)"
 		}
@@ -1674,6 +1736,11 @@ func (em *cEmitter) hoistGuards(w io.Writer, a AST, ind int) {
 		for _, arg := range n.Args {
 			em.hoistGuards(w, arg, ind)
 		}
+		// string.puts(sliceExpr) reads the slice twice (.ptr and .len); if the
+		// argument has a side effect, bind it once so it runs a single time.
+		if n.PkgName() == "string" && n.FName() == "puts" && len(n.Args) == 1 {
+			em.maybeBindBase(w, n.Args[0], ind)
+		}
 	case *Dot:
 		em.hoistGuards(w, n.Val, ind)
 	case *Deref:
@@ -1696,12 +1763,53 @@ func (em *cEmitter) hoistGuards(w io.Writer, a AST, ind int) {
 	case *Index:
 		em.hoistGuards(w, n.Val, ind)
 		em.hoistGuards(w, n.NAST, ind)
+		em.maybeBindBase(w, n.Val, ind)
 		em.emitBoundsCheck(w, n, ind)
 	case *SliceOp:
 		em.hoistGuards(w, n.Val, ind)
 		em.hoistGuards(w, n.Lower, ind)
 		em.hoistGuards(w, n.Upper, ind)
+		em.maybeBindBase(w, n.Val, ind)
 		em.emitSliceCheck(w, n, ind)
+	}
+}
+
+// bindTemp emits `T __ctN = <a>;` ahead of the current statement and records
+// the temp for node a, so every later read of a (via expr) uses the temp and a
+// runs exactly once. No-op if a is already bound.
+func (em *cEmitter) bindTemp(w io.Writer, ind int, a AST, t ASTType) {
+	if em.temps == nil {
+		return
+	}
+	if _, ok := em.temps[a]; ok {
+		return
+	}
+	name := fmt.Sprintf("__ct%d", em.tempCount)
+	em.tempCount++
+	// Render the value BEFORE recording the temp, or expr(a) would return the
+	// not-yet-initialized temp for its own initializer.
+	val := em.expr(a)
+	fmt.Fprintf(w, "%s%s = %s;\n", cTab(ind), em.cDecl(t, name), val)
+	em.temps[a] = name
+}
+
+// bound reports whether a node has a hoisted temp standing in for it.
+func (em *cEmitter) bound(a AST) bool {
+	_, ok := em.temps[a]
+	return ok
+}
+
+// maybeBindBase binds a slice-typed base to a temp when it has a side effect
+// (a call), since such a base is read more than once per statement (.ptr/.len,
+// plus a hoisted bounds check). Scalars and side-effect-free bases are left
+// inline.
+func (em *cEmitter) maybeBindBase(w io.Writer, a AST, ind int) {
+	if !exprHasCall(a) {
+		return
+	}
+	rt := em.u.c.ResolveUnderlying(em.inferType(a))
+	if rt.IsSlice() {
+		em.bindTemp(w, ind, a, em.inferType(a))
 	}
 }
 
@@ -1714,6 +1822,12 @@ func (em *cEmitter) emitBoundsCheck(w io.Writer, n *Index, ind int) {
 	}
 	if n.NAST != nil && exprHasCall(n.NAST) {
 		cUnsupported(posOf(n.NAST), "a side-effecting index expression")
+	}
+	// A slice base is read in this hoisted check (.len) and again in the access
+	// (.ptr[i]); a side-effecting base is bound to a temp by the guard pass. If
+	// somehow unbound, defer.
+	if bt.IsSlice() && exprHasCall(n.Val) && !em.bound(n.Val) {
+		cUnsupported(posOf(n.Val), "indexing a side-effecting slice expression (double-evaluated)")
 	}
 	idx := em.indexExpr(n)
 	var length string

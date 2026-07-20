@@ -1,0 +1,28 @@
+package main
+
+import "string"
+
+// Regression guard for the double-evaluation hazard: `string.puts` reads a
+// slice's .ptr and .len, so a side-effecting slice-returning call passed to it
+// must be evaluated exactly once. `next` bumps a global each call; if the C
+// backend double-evaluated the argument, `calls` would print 2, not 1.
+
+var calls i64 := 0
+
+type Src struct {
+	data []byte
+} {
+	next(s *mut Src) []byte {
+		calls = calls + 1
+		return s.data
+	}
+}
+
+fn main() i64 {
+	var s Src := Src{data: "hi"}
+	string.puts(s.next())
+	string.putc(10)
+	string.puti(calls)     // 1 — a single evaluation
+	string.putc(10)
+	return 0
+}
