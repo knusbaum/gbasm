@@ -4859,6 +4859,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 
 		fmt.Fprintf(of, "\tlabel %s\n", labend)
 		return nullspot
+	case *For:
+		// ToAST keeps the loop's high-level shape; flattening it to a Loop
+		// (+ init/cond/step) is this backend's lowering, done here.
+		return compileTop(of, c, lowerForToLoop(ast), dest)
 	case *Loop:
 		snapBeforeLoop := c.FlowSnapshot()
 
@@ -5373,7 +5377,7 @@ func containsFuncall(a AST) bool {
 		return false
 	case *Symbol:
 		return false
-	case *Loop:
+	case *Loop, *For:
 		// Statement form; should not appear in expression contexts, but
 		// listed explicitly so the fallthrough panic stays informative
 		// for genuinely new node kinds.

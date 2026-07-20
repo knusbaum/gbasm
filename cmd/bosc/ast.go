@@ -4464,13 +4464,17 @@ func (n *Node) toASTTop(c *Context) AST {
 			step = n.args[2].toASTTop(NewContext())
 		}
 		body := n.args[3].toASTTop(NewContext())
-		return lowerForToLoop(&For{
+		// Keep the high-level For node. Lowering it to a Loop is a *codegen*
+		// concern, so compileTop does it (via lowerForToLoop); pre-lowering here
+		// would discard the loop's structure during AST construction, where
+		// nothing needs it flattened.
+		return &For{
 			Init: init,
 			Cond: cond,
 			Step: step,
 			Body: body,
 			p:    n.p,
-		})
+		}
 	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_add, n_sub, n_mul, n_div, n_booland, n_boolor, n_bitand, n_bitor, n_mod, n_xor, n_shl, n_shr:
 		return &Op2{
 			Type:   n.t,
