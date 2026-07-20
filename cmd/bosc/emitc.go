@@ -228,16 +228,30 @@ func emitCProto(w io.Writer, u *cUnit, a AST) (err error) {
 			panic(r)
 		}
 	}()
-	f, ok := a.(*FuncDecl)
-	if !ok || f.Variadic {
-		return nil
+	switch n := a.(type) {
+	case *FuncDecl:
+		if n.Variadic {
+			return nil
+		}
+		if u.c.Pkgname() == "main" && n.Name == "main" {
+			return nil
+		}
+		em := &cEmitter{u: u, locals: map[string]ASTType{}}
+		linkage, head := em.cFuncHead(n, false)
+		fmt.Fprintf(w, "%s%s;\n", linkage, head)
+	case *TypeWithMethodsDecl:
+		for _, m := range n.Methods {
+			emitCMethodProto(w, u, n.Name, m)
+		}
+	case *StructDecl:
+		// A struct with a method block lowers to a bare StructDecl; its methods
+		// live in the context's type-method table.
+		if ms, ok := u.c.TypeMethodsFor(n.TName); ok {
+			for _, m := range ms {
+				emitCMethodProto(w, u, n.TName, m)
+			}
+		}
 	}
-	if u.c.Pkgname() == "main" && f.Name == "main" {
-		return nil
-	}
-	em := &cEmitter{u: u, locals: map[string]ASTType{}}
-	linkage, head := em.cFuncHead(f, false)
-	fmt.Fprintf(w, "%s%s;\n", linkage, head)
 	return nil
 }
 
@@ -307,8 +321,18 @@ func emitCDecl(w io.Writer, u *cUnit, a AST) (err error) {
 	switch n := a.(type) {
 	case *FuncDecl:
 		emitCFunc(w, u, n)
+	case *TypeWithMethodsDecl:
+		for _, m := range n.Methods {
+			emitCMethod(w, u, n.Name, m)
+		}
 	case *StructDecl:
-		// Emitted in emitCFile's struct pass (forward typedef + body).
+		// The struct body is emitted in emitCFile's struct pass; its methods
+		// (registered in the context) are emitted here.
+		if ms, ok := u.c.TypeMethodsFor(n.TName); ok {
+			for _, m := range ms {
+				emitCMethod(w, u, n.TName, m)
+			}
+		}
 	case *VarDecl:
 		// Emitted in emitCFile's globals pass.
 	default:
@@ -379,6 +403,87 @@ func (em *cEmitter) cFuncHead(f *FuncDecl, isEntry bool) (linkage, head string) 
 		return "", head
 	}
 	return "static ", head
+}
+
+// cMethodName is a type's method as a C function name: TypeName_method. This is
+// the recognizable C convention for "methods" on a struct (see e.g. the way C
+// libraries prefix operations with their type). Static methods (no receiver)
+// share the scheme.
+func cMethodName(typeName, method string) string {
+	return cIdent(typeName) + "_" + cIdent(method)
+}
+
+// cMethodHead builds the linkage, declarator, and receiver-reconstruction
+// prefix for an instance method. Following the kernel/COM idiom (see
+// PROPOSAL_c_transpiler.md), a *pointer* receiver becomes a `void *self`
+// parameter with the typed receiver reconstructed as the method's first line
+// (`FD *fd = self;`) — so the method's own type matches the interface vtable
+// slot with no cast. A *value* receiver is a plain typed parameter.
+func (em *cEmitter) cMethodHead(typeName string, m *FuncDecl) (linkage, head, prefix string) {
+	recv := m.Args[0]
+	params := make([]string, 0, len(m.Args))
+	if em.u.c.ResolveUnderlying(recv.Type).Indirection > 0 {
+		// The void* parameter must not collide with the receiver's own name
+		// (often `self`) nor any later parameter; pick a distinct spelling.
+		taken := map[string]bool{cIdent(recv.Name): true}
+		for _, arg := range m.Args[1:] {
+			taken[cIdent(arg.Name)] = true
+		}
+		self := "self"
+		for taken[self] {
+			self += "_"
+		}
+		params = append(params, "void *"+self)
+		em.locals[recv.Name] = recv.Type
+		prefix = fmt.Sprintf("\t%s = %s;\n", em.cDecl(recv.Type, cIdent(recv.Name)), self)
+	} else {
+		em.locals[recv.Name] = recv.Type
+		params = append(params, em.cDecl(recv.Type, cIdent(recv.Name)))
+	}
+	for _, arg := range m.Args[1:] {
+		if at := em.u.c.ResolveUnderlying(arg.Type); at.IsArray() {
+			cUnsupported(arg.p, "array parameter (by-value passing deferred; pass a slice)")
+		}
+		em.locals[arg.Name] = arg.Type
+		params = append(params, em.cDecl(arg.Type, cIdent(arg.Name)))
+	}
+	head = em.ctype(m.Return) + " " + cMethodName(typeName, m.Name) + "(" + strings.Join(params, ", ") + ")"
+	linkage = "static "
+	if m.IsPub {
+		linkage = ""
+	}
+	return linkage, head, prefix
+}
+
+// emitCMethodProto writes an instance method's forward declaration. Static
+// methods (no receiver) and variadics are deferred.
+func emitCMethodProto(w io.Writer, u *cUnit, typeName string, m *FuncDecl) {
+	if m.Variadic || len(m.Args) == 0 {
+		return
+	}
+	em := &cEmitter{u: u, locals: map[string]ASTType{}}
+	linkage, head, _ := em.cMethodHead(typeName, m)
+	fmt.Fprintf(w, "%s%s;\n", linkage, head)
+}
+
+// emitCMethod writes an instance method as a C function TypeName_method(...).
+func emitCMethod(w io.Writer, u *cUnit, typeName string, m *FuncDecl) {
+	if m.Variadic {
+		cUnsupported(m.p, "variadic method")
+	}
+	if len(m.Args) == 0 {
+		cUnsupported(m.p, "static method (no receiver)")
+	}
+	em := &cEmitter{u: u, locals: make(map[string]ASTType, len(m.Args))}
+	linkage, head, prefix := em.cMethodHead(typeName, m)
+	fmt.Fprintf(w, "%s%s {\n", linkage, head)
+	fmt.Fprint(w, prefix)
+	if m.Body != nil {
+		for _, s := range m.Body.Body {
+			em.stmt(w, s, 1)
+		}
+	}
+	fmt.Fprintf(w, "}\n\n")
 }
 
 func (em *cEmitter) stmt(w io.Writer, a AST, ind int) {
@@ -772,10 +877,23 @@ func (em *cEmitter) unaryOperand(a AST) string {
 }
 
 func (em *cEmitter) call(f *Funcall) string {
+	// (expr).method(args): the receiver is an arbitrary expression.
+	if recv := f.ReceiverExpr(); recv != nil {
+		return em.methodCall(f, recv, em.inferType(recv), f.FName())
+	}
 	if pkg := f.PkgName(); pkg != "" {
-		// Qualified call. Phase 1 maps the runtime output primitives to libc
-		// (what a C author writes); general cross-package calls come later.
-		return em.runtimeCall(f, pkg, f.FName())
+		// pkg is a bare Symbol before `.`: an imported package, or a value
+		// variable whose method is being called (v.method(args)).
+		if em.u.c.IsImportedPackage(pkg) {
+			// Qualified call. Phase 1 maps the runtime output primitives to libc
+			// (what a C author writes); general cross-package calls come later.
+			return em.runtimeCall(f, pkg, f.FName())
+		}
+		if t, ok := em.locals[pkg]; ok {
+			return em.methodCall(f, &Symbol{Name: pkg}, t, f.FName())
+		}
+		// A type name (static method) or a global-var receiver: not yet.
+		cUnsupported(f.p, fmt.Sprintf("call to %s.%s (static method or package-qualified)", pkg, f.FName()))
 	}
 	name := f.FName()
 	if name == "len" && len(f.Args) == 1 {
@@ -810,6 +928,44 @@ func (em *cEmitter) call(f *Funcall) string {
 	}
 	cUnsupported(f.p, fmt.Sprintf("call to %q (builtin, cast, or unresolved)", name))
 	return ""
+}
+
+// methodCall emits a concrete method call `recv.method(args)` as a direct call
+// to the type's method function, TypeName_method(<recv>, args). The receiver is
+// adapted to the method's declared shape: a pointer receiver takes the address
+// of a value source (or the pointer as-is); a value receiver takes the value
+// (dereferencing a pointer source).
+func (em *cEmitter) methodCall(f *Funcall, recv AST, recvType ASTType, method string) string {
+	typeName := recvType.Name
+	// A cross-package receiver type (pkg.Type) needs cross-package name
+	// qualification, which the C backend doesn't do yet.
+	if strings.Contains(typeName, ".") {
+		cUnsupported(f.p, fmt.Sprintf("cross-package method %s.%s", typeName, method))
+	}
+	m, ok := em.u.c.MethodForType(typeName, method)
+	if !ok {
+		cUnsupported(f.p, fmt.Sprintf("method %q on type %s", method, typeName))
+	}
+	if len(m.Args) == 0 {
+		cUnsupported(f.p, fmt.Sprintf("static method %s.%s (no receiver)", typeName, method))
+	}
+	recvIsPtr := em.u.c.ResolveUnderlying(recvType).Indirection > 0
+	wantPtr := em.u.c.ResolveUnderlying(m.Args[0].Type).Indirection > 0
+	var recvArg string
+	switch {
+	case wantPtr && !recvIsPtr:
+		recvArg = "&" + em.unaryOperand(recv)
+	case !wantPtr && recvIsPtr:
+		recvArg = "*" + em.unaryOperand(recv)
+	default:
+		recvArg = em.expr(recv)
+	}
+	args := make([]string, 0, len(f.Args)+1)
+	args = append(args, recvArg)
+	for _, arg := range f.Args {
+		args = append(args, em.expr(arg))
+	}
+	return cMethodName(typeName, method) + "(" + strings.Join(args, ", ") + ")"
 }
 
 // isTypeName reports whether name denotes a type (so `name(x)` is a cast).
@@ -1090,6 +1246,12 @@ func (em *cEmitter) ctype(t ASTType) string {
 			return "uint64_t"
 		}
 		if _, ok := structDeclForType(em.u.c, rt); ok {
+			// A cross-package struct type resolves to a qualified name
+			// (pkg.Type), which is not a valid C identifier. Cross-package
+			// support (name qualification, shared type emission) comes later.
+			if strings.Contains(rt.Name, ".") {
+				cUnsupported(t.p, fmt.Sprintf("cross-package struct type %q", rt.Name))
+			}
 			return cStructName(rt.Name)
 		}
 	}

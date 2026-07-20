@@ -185,6 +185,16 @@ Two representations were considered, both idiomatic C, different scaling:
 **Decided: vtable-pointer** (idiomatic *and* efficient — the recognizable C
 polymorphism idiom, constant-size values, scales to any method count).
 
+**self bridging (decided: `void *self`, the kernel/COM idiom).** The interface's
+`self` is `void *` (one type for all implementors) but each method has a
+concrete receiver. Of the real C patterns — function-pointer casts (GObject; the
+cleanest signature but technically UB, flagged by `-fsanitize=function`) vs. a
+common pointer cast inside the method (Linux `file_operations` + `private_data`,
+COM; fully well-formed) — we take the latter to honor the no-UB rule: methods
+take `void *self` and reconstruct the typed receiver as their first line
+(`FD *fd = self;`), so the vtable slot's type *is* the method's type — no cast,
+no thunk. (Thunks, the C++-compiler pattern, were rejected as un-idiomatic.)
+
 ---
 
 ## Architecture

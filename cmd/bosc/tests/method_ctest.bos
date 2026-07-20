@@ -1,0 +1,39 @@
+package main
+
+import "string"
+
+// Concrete method dispatch equivalence classes for the C backend:
+//   - struct type with a *mut receiver (mutates through the pointer),
+//   - struct type with a value receiver (reads a copy),
+//   - a scalar-underlying named type with a pointer receiver.
+// Calls are made on value variables, so pointer receivers take `&v`.
+
+type Counter struct {
+	n i64
+} {
+	inc(c *mut Counter) {
+		c.n = c.n + 1
+	}
+	get(c Counter) i64 {
+		return c.n
+	}
+}
+
+type Celsius i64 {
+	scaled(c *Celsius, by i64) i64 {
+		return i64(*c) * by
+	}
+}
+
+fn main() {
+	var c Counter := Counter{n: 0}
+	c.inc()
+	c.inc()
+	c.inc()
+	string.puti(c.get())   // 3
+	string.putc(10)
+
+	var t Celsius := 21
+	string.puti(t.scaled(2)) // 42
+	string.putc(10)
+}
