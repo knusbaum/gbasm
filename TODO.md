@@ -79,6 +79,16 @@ ownership/move/escape bulk is flow-sensitive → checker, not `ToAST`; do the
 type-only families (name resolution, arity, cast legality, struct-literal shape)
 first.
 
+### Odd-sized small structs can't be passed by value
+A by-value struct of 3, 5, 6, or 7 bytes is rejected with "passing a N-byte value
+by value is not supported; use a pointer or a 1/2/4/8-byte layout"
+(`packSmallMemBackedArg`, `cmd/bosc/compile.go:5658`). Sizes 1/2/4/8 pack into a
+register and anything over 8 bytes is passed by address, so only these in-between
+sizes fail — e.g. `struct{ a i8; b i16 }`. Simplest fix is to route a ≤8-byte
+aggregate whose size isn't 1/2/4/8 to the existing by-address path rather than
+the packing path (widening the load instead would read past the allocation).
+Found while surveying for float support; independent of it.
+
 ### Constant negative index should be a compile-time error
 `nums[-1]` is decidable at compile time but only *runtime*-traps today, while
 `nums[3]` (positive constant OOB) is already a compile-time error. The runtime

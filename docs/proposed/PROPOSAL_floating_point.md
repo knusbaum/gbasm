@@ -2,6 +2,12 @@
 
 ## History
 
+- 2026-07-20 — **Aggregate ABI settled** (former Open Question #7): class is a
+  property of *raw scalars only* — aggregates are passed by pointer (>8B) or as
+  opaque bits in a GPR (≤8B), exactly as today, and a float inside an aggregate
+  never acquires an SSE class. Removes SysV's per-eightbyte classification from
+  scope entirely. Corrects an earlier misreading of `packSmallMemBackedArg`
+  (large aggregates are passed by address, not rejected).
 - 2026-07-20 — **Register allocation settled: parallel allocators per register
   file, over extracted shared frame state** (resolves the former Open Question
   #1). Rejected parameterizing the single allocator with a class. Added the
@@ -427,20 +433,57 @@ At the `.bs` level direct registers cover this (`movq rax, xmm0`), but `bosc`'s
 cross-class case. This is a distinct operation from a same-class move — not a
 size or a class on one value, but a pair of classes.
 
-### Aggregates and multi-return — needs a decision
+### Aggregates (decided: class is a property of raw scalars only)
 
-SysV classifies **per eightbyte**, not per value: `{f64,f64}` returns in
-XMM0:XMM1, `{i64,f64}` in RAX:XMM0, and the same applies to small structs passed
-by value. Boson's multi-return uses RAX:RDX today (`DESIGN.md` §Calling
-Convention: "RAX (primary), RDX (secondary)").
+**The rule: an aggregate is passed by pointer; a raw scalar is passed in a
+register of its class.**
 
-This is the gnarliest corner of the ABI work, and it deserves an explicit choice
-rather than defaulting to "follow SysV." Boson is self-contained — raw syscalls,
-no libc, no C interop — so strict conformance only matters for future FFI and the
-(tabled) C backend. A simpler self-consistent rule (e.g. **any float-containing
-aggregate returns via memory**) is far less machinery and costs nothing today.
-Either way it should be a documented, deliberate divergence rather than an
-accident. See *Open questions #7*.
+The aggregate half is already how Boson works. A memory-backed aggregate larger
+than 8 bytes is passed **by address** — the caller copies and the callee
+dereferences (`compile.go:5620`) — and one of 8 bytes or less is packed as
+**opaque bits into a GPR** (`packSmallMemBackedArg`, `:5617`). Floats change
+neither. A float *inside* an aggregate is just bits; it never acquires an SSE
+class.
+
+So the class decision happens in exactly one place — for a raw scalar, from its
+own type: `f32`/`f64` → SSE (XMM0–7 for args, XMM0 for returns), everything else
+→ INTEGER. **No per-eightbyte classification, no merge rule, no register pairs.**
+
+#### What we are deliberately not implementing
+
+SysV classifies aggregates **per eightbyte** — 8-byte chunks split by *offset*,
+not by field:
+
+1. Larger than 16 bytes (or containing unaligned fields) → MEMORY: on the stack,
+   returned via a hidden pointer.
+2. Otherwise each eightbyte is classified from the fields occupying it — SSE only
+   if **every** field in that chunk is floating-point; **INTEGER wins any mix**.
+3. Eightbytes are assigned walking in order to *independent* cursors: INTEGER to
+   RDI/RSI/RDX/RCX/R8/R9, SSE to XMM0–7 (returns: RAX/RDX and XMM0/XMM1).
+4. All-or-nothing — if the registers for *all* the eightbytes aren't free, the
+   whole aggregate goes to the stack.
+
+| Aggregate | SysV | Boson (ours) |
+|---|---|---|
+| `{f64,f64}` (16B) | XMM0, XMM1 | by pointer |
+| `{i64,f64}` (16B) | RDI, XMM0 | by pointer |
+| `{f32,f32}` (8B) | XMM0 (both packed low) | one GPR (opaque bits) |
+| `{f32,i32}` (8B) | **one GPR** — mixed eightbyte merges to INTEGER | one GPR |
+| `{f64,f64,f64}` (24B) | stack (MEMORY) | by pointer |
+
+The `{f32,i32}` row is the trap: it *contains* a float but travels in an integer
+register, so a naive "contains a float → XMM" rule silently mismatches. Adopting
+classification means adopting the merge rule too, or being wrong.
+
+This divergence is **pre-existing and independent of floats** — Boson already
+declines to pass any aggregate in a register pair. Packing aggregates into
+registers is a wanted future optimization; when it lands it will need the full
+classification (merge rule included) to be correct. Floats neither require it nor
+make it harder.
+
+`DESIGN.md` §Calling Convention's "System V AMD64 exactly" is therefore already
+inaccurate for aggregates, before floats enter the picture, and should be
+qualified.
 
 ---
 
@@ -602,9 +645,5 @@ not exist for SSE today.
 6. **`%f` default precision and syntax.** Fixed 6 like C, and do we support
    `%.3f` width/precision syntax in the first cut? `fmt`'s directive parser has no
    width/precision handling today.
-7. **Aggregate / multi-return classification.** Follow SysV's per-eightbyte rule
-   (`{i64,f64}` → RAX:XMM0), or adopt a simpler self-consistent rule such as
-   "any float-containing aggregate goes via memory"? Boson has no C interop
-   today, so the simpler rule costs nothing now but is a documented divergence
-   from the "System V exactly" claim. Recommend the simpler rule for the first
-   cut, revisited if/when FFI lands.
+*(The former #7, aggregate/multi-return classification, is settled — see
+"Aggregates" under ABI: class is a property of raw scalars only.)*
