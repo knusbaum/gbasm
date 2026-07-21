@@ -1,0 +1,196 @@
+package main
+
+import "string"
+import "_halloc"
+
+// The small-object path: size classes, per-class span lists, bump allocation,
+// the intrusive free list, and the zeroing contract.
+//
+// Zeroing gets the most attention because it is the contract most likely to
+// break silently. alloc(T) in the language is gated on the type being
+// zero-initializable and relies on the allocator honoring it; the old
+// one-mmap-per-allocation heap got it free from MAP_ANONYMOUS, and a recycling
+// allocator does not.
+
+fn line(n i64) {
+	string.puti(n)
+	string.putc('\n')
+}
+
+// dirty writes a recognizable pattern over n bytes so a later allocation
+// handing back the same storage un-zeroed is visible rather than plausible.
+fn dirty(p *mut byte, n i64) {
+	a := uintptr(p)
+	var i i64 := 0
+	for (; i < n; i = i + 8) {
+		*unsafe_cast(*mut i64, a+uintptr(i)) = 0 - 1
+	}
+}
+
+// count_nonzero returns how many of the first n bytes are not zero.
+fn count_nonzero(p *mut byte, n i64) i64 {
+	a := uintptr(p)
+	var bad i64 := 0
+	var i i64 := 0
+	for (; i < n; i = i + 8) {
+		v := *unsafe_cast(*mut i64, a+uintptr(i))
+		if (v != 0) {
+			bad = bad + 1
+		}
+	}
+	return bad
+}
+
+// Two contracts this file deliberately does NOT cover, because they are not
+// yet reachable rather than untested. Both become live with the release policy,
+// and belong in that task's test:
+//
+//   - Zeroing of the bump region when a span's `clean` flag is 0. A span's
+//     bump region is only dirty if the span was used, returned to its chunk,
+//     and re-taken -- and spans are not returned to chunks yet. Mutating the
+//     clean check away passes here for that reason.
+//
+//   - The `used` count. It is maintained but nothing reads it for a decision
+//     until a span emptying triggers its return. Removing the decrement passes
+//     here; the bounded-growth check below holds because blocks are recycled
+//     through free lists, not because used-counting works.
+
+fn main() {
+	// --- Alignment across every class ---------------------------------------
+	// 16-byte alignment is a guarantee, and it holds by construction: objects
+	// start at span_base with no header, and class sizes are multiples of 16.
+	var bad i64 := 0
+	var sz i64 := 1
+	for (; sz <= 32768; sz = sz * 2) {
+		p := _halloc.alloc(sz)
+		if (uintptr(p) & uintptr(15) != uintptr(0)) {
+			bad = bad + 1
+		}
+		_halloc.free(p)
+	}
+	line(bad)
+
+	// --- Fresh memory is zero ------------------------------------------------
+	a := _halloc.alloc(64)
+	line(count_nonzero(a, 64))
+
+	// --- Recycled memory is zero --------------------------------------------
+	// The block goes back on the free list dirty. The next allocation of that
+	// class must hand it back cleared.
+	dirty(a, 64)
+	_halloc.free(a)
+	b := _halloc.alloc(64)
+	line(count_nonzero(b, 64))
+
+	// The recycled block should be the one just freed -- that is what makes
+	// the check above meaningful rather than accidentally testing fresh
+	// storage.
+	if (uintptr(a) == uintptr(b)) { line(1) } else { line(0) }
+	_halloc.free(b)
+
+	// --- Dirty bump region --------------------------------------------------
+	// Fill a span, dirty every block, free them all, then re-allocate. Blocks
+	// now come from the free list, and the span's clean flag is off, so both
+	// paths must zero.
+	var held [64]uintptr
+	var i i64 := 0
+	for (; i < 64; i = i + 1) {
+		q := _halloc.alloc(1024)
+		dirty(q, 1024)
+		held[i] = uintptr(q)
+	}
+	i = 0
+	for (; i < 64; i = i + 1) {
+		_halloc.free(unsafe_cast(*mut byte, held[i]))
+	}
+	var dirtyseen i64 := 0
+	i = 0
+	for (; i < 64; i = i + 1) {
+		q := _halloc.alloc(1024)
+		dirtyseen = dirtyseen + count_nonzero(q, 1024)
+		held[i] = uintptr(q)
+	}
+	line(dirtyseen)
+	i = 0
+	for (; i < 64; i = i + 1) {
+		_halloc.free(unsafe_cast(*mut byte, held[i]))
+	}
+
+	// --- Distinct blocks -----------------------------------------------------
+	// Two live allocations of the same class must not overlap. Writing a
+	// distinct value through each and reading both back catches an aliasing
+	// bug that address comparison alone would miss.
+	x := _halloc.alloc(32)
+	y := _halloc.alloc(32)
+	*unsafe_cast(*mut i64, uintptr(x)) = 111
+	*unsafe_cast(*mut i64, uintptr(y)) = 222
+	vx := *unsafe_cast(*mut i64, uintptr(x))
+	vy := *unsafe_cast(*mut i64, uintptr(y))
+	line(vx + vy)
+	_halloc.free(x)
+	_halloc.free(y)
+
+	// --- Class boundaries ----------------------------------------------------
+	// A request one byte over a class edge must land in the NEXT class, so the
+	// block really is 32 bytes.
+	//
+	// Checking this by writing 32 bytes and reading them back proves nothing:
+	// an undersized block just overwrites its neighbour and the readback still
+	// succeeds. Allocate a second block and verify it stays zero -- that is
+	// what distinguishes "big enough" from "quietly overlapping".
+	c1 := _halloc.alloc(17)
+	c2 := _halloc.alloc(17)
+	dirty(c1, 32)
+	line(count_nonzero(c2, 32))
+	_halloc.free(c1)
+	_halloc.free(c2)
+
+	// Same check at the smallest class edge: a 16-byte request must not be
+	// rounded down to something smaller.
+	d1 := _halloc.alloc(16)
+	d2 := _halloc.alloc(16)
+	dirty(d1, 16)
+	line(count_nonzero(d2, 16))
+	_halloc.free(d1)
+	_halloc.free(d2)
+
+	// --- Span exhaustion and reuse -------------------------------------------
+	// 32KB is the largest class: two per 64KB span, so this crosses several
+	// spans and forces the class list to grow and drain.
+	var big [8]uintptr
+	i = 0
+	for (; i < 8; i = i + 1) {
+		big[i] = uintptr(_halloc.alloc(32768))
+	}
+	var overlap i64 := 0
+	i = 0
+	for (; i < 8; i = i + 1) {
+		var j i64 := i + 1
+		for (; j < 8; j = j + 1) {
+			if (big[i] == big[j]) {
+				overlap = overlap + 1
+			}
+		}
+	}
+	line(overlap)
+	i = 0
+	for (; i < 8; i = i + 1) {
+		_halloc.free(unsafe_cast(*mut byte, big[i]))
+	}
+
+	// --- Nothing above CLASS_MAX yet -----------------------------------------
+	// The large and huge tiers are the next task; until then an oversized
+	// request must fail cleanly rather than return something unusable.
+	if (uintptr(_halloc.alloc(32769)) == uintptr(0)) { line(1) } else { line(0) }
+
+	// --- Bounded growth ------------------------------------------------------
+	// An alloc/free loop must not grow the heap. This is the assertion no
+	// amount of checking returned values can make.
+	before := _halloc.chunk_count()
+	var k i64 := 0
+	for (; k < 5000; k = k + 1) {
+		r := _halloc.alloc(128)
+		_halloc.free(r)
+	}
+	line(_halloc.chunk_count() - before)
+}

@@ -62,6 +62,14 @@ MAX_RESERVES i64 := 64
 // 256 chunk bits per reserve, packed into i64 words.
 RES_WORDS i64 := 4
 
+// Size classes are powers of two from CLASS_MIN to CLASS_MAX. Every one of
+// them divides SPAN_SIZE exactly, so a span tiles with no waste -- which is
+// only true because span descriptors live in chunk metadata rather than in the
+// span itself.
+CLASS_MIN i64 := 16
+CLASS_MAX i64 := 32768
+NUM_CLASSES i64 := 12
+
 // Span descriptor states.
 SPAN_FREE i64 := 0
 SPAN_SMALL i64 := 1
@@ -419,6 +427,216 @@ fn span_alloc(n i64) uintptr {
 		return uintptr(0)
 	}
 	return span_take(base, i, n)
+}
+
+// ---------------------------------------------------------------------------
+// Small objects
+// ---------------------------------------------------------------------------
+
+// Head of each class's list of spans that still have room. A span leaves the
+// list when it fills and rejoins when a free makes room, so the head is almost
+// always immediately usable.
+var class_head [12]uintptr
+
+// class_of returns the size class index for a request. The caller must already
+// have established size <= CLASS_MAX.
+fn class_of(size i64) i64 {
+	var s i64 := CLASS_MIN
+	var c i64 := 0
+	for (; s < size; c = c + 1) {
+		s = s * 2
+	}
+	return c
+}
+
+// class_size returns the block size of class c.
+fn class_size(c i64) i64 {
+	return CLASS_MIN << c
+}
+
+// desc_of returns the descriptor for the span containing p, or 0 if p is not
+// inside a live chunk.
+fn desc_of(p uintptr) *mut span_desc {
+	base := chunk_of(p)
+	if (base == uintptr(0)) {
+		return unsafe_cast(*mut span_desc, uintptr(0))
+	}
+	return desc(base, span_index(p))
+}
+
+// zero_bytes clears n bytes at p. Every class size is a multiple of 16, so
+// eight-byte stores always land exactly.
+fn zero_bytes(p uintptr, n i64) {
+	var i i64 := 0
+	for (; i < n; i = i + 8) {
+		*unsafe_cast(*mut i64, p+uintptr(i)) = 0
+	}
+}
+
+// span_has_room reports whether a span can serve another object without
+// growing: either a freed block is waiting, or the bump cursor has not reached
+// the end.
+fn span_has_room(sb uintptr, d *mut span_desc, sz i64) i64 {
+	if (d.free_head != uintptr(0)) {
+		return 1
+	}
+	if (d.bump+uintptr(sz) <= sb+uintptr(SPAN_SIZE)) {
+		return 1
+	}
+	return 0
+}
+
+// class_push adds a span to the head of its class's list.
+fn class_push(c i64, sb uintptr) {
+	d := desc_of(sb)
+	d.prev = uintptr(0)
+	d.next = class_head[c]
+	if (class_head[c] != uintptr(0)) {
+		// Bound to a local because a field cannot be assigned through a
+		// function-call result.
+		hd := desc_of(class_head[c])
+		hd.prev = sb
+	}
+	class_head[c] = sb
+}
+
+// class_unlink removes a span from its class's list.
+fn class_unlink(c i64, sb uintptr) {
+	d := desc_of(sb)
+	if (d.prev != uintptr(0)) {
+		pd := desc_of(d.prev)
+		pd.next = d.next
+	} else {
+		class_head[c] = d.next
+	}
+	if (d.next != uintptr(0)) {
+		nd := desc_of(d.next)
+		nd.prev = d.prev
+	}
+	d.next = uintptr(0)
+	d.prev = uintptr(0)
+}
+
+// span_new_for_class claims a fresh span and prepares it to serve class c.
+fn span_new_for_class(c i64) uintptr {
+	sb := span_alloc(1)
+	if (sb == uintptr(0)) {
+		return uintptr(0)
+	}
+	d := desc_of(sb)
+	// span_alloc marks a run LARGE_HEAD; a small span overrides that.
+	d.state = SPAN_SMALL
+	d.class = c
+	d.free_head = uintptr(0)
+	d.bump = sb
+	d.used = 0
+	class_push(c, sb)
+	return sb
+}
+
+// alloc_small serves a request of at most CLASS_MAX bytes.
+//
+// Order matters for the zeroing contract: a block off the free list held user
+// data and must be cleared, while a block from the bump region has never been
+// handed out, so it needs clearing only if the span's pages were dirty to begin
+// with.
+fn alloc_small(size i64) uintptr {
+	c := class_of(size)
+	sz := class_size(c)
+
+	var sb uintptr := class_head[c]
+	for (; sb != uintptr(0); ) {
+		d := desc_of(sb)
+		if (span_has_room(sb, d, sz) == 1) {
+			return take_from_span(d, sz)
+		}
+		// Full: drop it from the list. It rejoins when a free makes room.
+		nxt := d.next
+		class_unlink(c, sb)
+		sb = nxt
+	}
+
+	sb = span_new_for_class(c)
+	if (sb == uintptr(0)) {
+		return uintptr(0)
+	}
+	return take_from_span(desc_of(sb), sz)
+}
+
+// take_from_span hands out one block from a span that has room.
+fn take_from_span(d *mut span_desc, sz i64) uintptr {
+	d.used = d.used + 1
+
+	if (d.free_head != uintptr(0)) {
+		p := d.free_head
+		// The free list is intrusive: a freed block stores the next link in
+		// its own first eight bytes, which is why CLASS_MIN must be >= 8.
+		d.free_head = *unsafe_cast(*mut uintptr, p)
+		zero_bytes(p, sz)
+		return p
+	}
+
+	p := d.bump
+	d.bump = d.bump + uintptr(sz)
+	if (d.clean == 0) {
+		zero_bytes(p, sz)
+	}
+	return p
+}
+
+// free_small returns a block to its span.
+fn free_small(p uintptr, sb uintptr, d *mut span_desc) {
+	sz := class_size(d.class)
+	was_full := 1 - span_has_room(sb, d, sz)
+
+	*unsafe_cast(*mut uintptr, p) = d.free_head
+	d.free_head = p
+	// used is maintained here but not yet consulted: a span emptying does not
+	// return it to its chunk until the release policy lands.
+	d.used = d.used - 1
+	// The span now holds data, so its bump region can no longer be assumed
+	// zero even if the pages started clean.
+	d.clean = 0
+
+	if (was_full == 1) {
+		class_push(d.class, sb)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Public interface
+// ---------------------------------------------------------------------------
+
+// alloc returns a pointer to size zeroed bytes, 16-byte aligned, or 0.
+//
+// Zeroed is a contract, not a convenience: alloc(T) in the language is gated on
+// the type being zero-initializable and relies on it.
+pub fn alloc(size i64) *mut byte {
+	if (size <= 0) {
+		return unsafe_cast(*mut byte, uintptr(0))
+	}
+	if (size <= CLASS_MAX) {
+		return unsafe_cast(*mut byte, alloc_small(size))
+	}
+	// Large and huge tiers are not implemented yet.
+	return unsafe_cast(*mut byte, uintptr(0))
+}
+
+// free releases a pointer returned by alloc. Freeing 0 is a no-op.
+pub fn free(p *mut byte) {
+	a := uintptr(p)
+	if (a == uintptr(0)) {
+		return
+	}
+	sb := span_base(a)
+	d := desc_of(a)
+	if (uintptr(d) == uintptr(0)) {
+		// Not from any live chunk: a huge allocation, once that tier exists.
+		return
+	}
+	if (d.state == SPAN_SMALL) {
+		free_small(a, sb, d)
+	}
 }
 
 // ---------------------------------------------------------------------------
