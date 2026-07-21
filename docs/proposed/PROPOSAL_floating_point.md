@@ -2,6 +2,13 @@
 
 ## History
 
+- 2026-07-20 — **Stage 0 landed** (`78fa09f`): `Frame` extracted from `Rallocs`
+  in `function.go`. Pure refactor, no float content, full suite green (766
+  integration tests + go tests). The stack-frame cursor, spill-slot free list,
+  and local symbol table now live in one per-function `Frame` shared by pointer,
+  so a second register file cannot double-allocate the frame. Implementation of
+  the remaining stages continues; the doc stays in `docs/proposed/` until the
+  feature ships whole.
 - 2026-07-20 — **Float `==` reversed to allowed (full IEEE).** A survey of C,
   C++, Go, Rust, Zig, Java and Python found no mainstream language bans it;
   their guardrails are predicates, opt-in lints, a standard approximate
