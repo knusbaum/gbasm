@@ -2,6 +2,17 @@
 
 ## History
 
+- 2026-07-20 — **Float `==` reversed to allowed (full IEEE).** A survey of C,
+  C++, Go, Rust, Zig, Java and Python found no mainstream language bans it;
+  their guardrails are predicates, opt-in lints, a standard approximate
+  comparison, or (Rust) excluding floats from total-order contexts via traits —
+  a middle ground unavailable to us without a trait system. Banning would also
+  have pushed legitimate exact comparisons through `bits()`, which is worse for
+  `x == 0.0` since `bits(+0.0) != bits(-0.0)`. Cost is two extra ops plus a
+  parity test for equality only; orderings stay free via the swapped-operand
+  `seta`/`setae` form. `is_zero` is no longer owed, `is_nan` becomes a
+  convenience, and `bits` remains as an `ftoa` primitive. Approximate comparison
+  drops to deferred library work.
 - 2026-07-20 — **Remaining language-surface questions settled.** Class tag: the
   float type name *replaces* the size operand (`local y f64`), carrying allocator
   and instruction width in one architecture-neutral token. `<floatlit>` is a Go
@@ -269,58 +280,114 @@ be emitted even by accident.
 This is a defined-evaluation-semantics rule and belongs in `DESIGN.md`
 §Expressions when it lands, alongside the integer-overflow-wraps rule.
 
-### Comparisons (decided: `==` and `!=` are rejected on floats)
+### Comparisons (decided: full IEEE, including `==`)
 
-**Ordering (`< <= > >=`) is valid; equality is not.** `a == b` and `a != b` on
-`f32`/`f64` are a compile-time error. Equality of computed floats is a footgun
-with no correct universal answer, and a strictness-first language should make the
-user say what they actually mean. The diagnostic must be a *teaching* error that
-names the alternatives, since no mainstream language does this and it will
-surprise people arriving from C or Go.
+`==`, `!=`, and the four orderings are all valid on `f32`/`f64`, with IEEE
+semantics.
 
-Ordering keeps IEEE semantics: all four relational operators are **false** when
-either operand is NaN.
+*An earlier draft rejected `==`.* A survey of prior art reversed it: **no
+mainstream language bans equality on floats.** C, C++, Go, Rust, Zig, Java, and
+Python all allow it with IEEE semantics; their guardrails come in four kinds:
 
-#### What the ban obliges us to provide
+1. **Predicates only** — C (`isnan`/`isinf`/`fpclassify`), Go (`math.IsNaN`),
+   Zig, Java.
+2. **Encode the partiality in the type system** — Rust gives `f64`
+   `PartialEq`/`PartialOrd` but *not* `Eq`/`Ord`, so floats are excluded from
+   contexts that assume a **total** order (sorting, hash keys) without the
+   operator being taken away.
+3. **Opt-in lints** — GCC `-Wfloat-equal`, Clippy `float_cmp`; neither on by
+   default.
+4. **A standard approximate comparison** — only Python (`math.isclose`, PEP 485)
+   and Zig (`approxEqAbs` / `approxEqRel`).
 
-Removing `==` takes away three things people legitimately use, so the
-replacements are not optional:
+Rust's is the most principled, but it needs a trait system to attach the
+distinction to. Boson has none — and no maps or sort where a total order would be
+assumed — so that middle ground isn't available to us. That left the two
+extremes: ban (unprecedented, and it forces legitimate exact comparisons through
+`bits()`, which is *worse* for the common `x == 0.0` case, since
+`bits(+0.0) != bits(-0.0)`), or allow. **We allow.**
 
-| Lost idiom | Replacement |
-|---|---|
-| `x != x` (the NaN test) | `is_nan(x)` |
-| `x == 0.0` | `is_zero(x)` — and it handles `-0.0` correctly, which `== 0.0` obscures |
-| exact identity (tests, serialization) | `bits(x)` — the IEEE pattern as `u32`/`u64` |
+Java is the cautionary tale for what not to do: it ships *two disagreeing*
+equalities — primitive `==` is IEEE, while boxed `Double.equals` compares bit
+patterns, so `NaN.equals(NaN)` is **true** and `0.0.equals(-0.0)` is **false**.
+One equality, consistently applied, beats either choice made twice.
 
-`bits(x)` is not an escape hatch invented for this: **`ftoa` needs it anyway**,
-since float→decimal is integer arithmetic over the bit pattern. Comparing `bits`
-is also more honest than `==` — it distinguishes `+0.0` from `-0.0` and says
-plainly that it means "same bits," not "numerically equal."
+#### Semantics to document in DESIGN.md
 
-Approximate comparison is still open — see *Open questions*.
+- **Equality is not reflexive.** `x == x` is **false** when `x` is NaN. This
+  breaks an assumption that holds for every other Boson type.
+- **`+0.0 == -0.0` is true**, despite differing bit patterns. (`bits(x)`
+  distinguishes them when that matters.)
+- **Ordering is partial.** All four relations are **false** when either operand
+  is NaN — there is a fourth outcome, *unordered*, beyond less/equal/greater.
+- **Therefore `!(a < b)` is not `a >= b`.** With a NaN both are false. Any future
+  optimizer must never rewrite one into the other (this is one of the things
+  `-ffast-math` breaks). It is also why a float comparator is unsafe as a sort
+  predicate — answering "false" in both directions violates what sort algorithms
+  assume.
 
-#### The ban simplifies codegen
+#### Lowering
 
-Dropping equality removes the parity (`PF`) handling entirely, and the remaining
-orderings need none either if operands are ordered deliberately. `UCOMISD` sets
-CF=ZF=PF=1 when unordered, so `setb`/`setbe` would wrongly report *true* for NaN
-— but `seta`/`setae` report *false*, because they require CF=0. Swapping the
-compare operands turns every ordering into the NaN-safe form:
+`UCOMISD`/`UCOMISS` report all four outcomes in three flags, with **PF as the
+"unordered" flag**:
 
-| Boson | Emitted | NaN result |
-|---|---|---|
-| `a < b`  | `ucomisd b, a; seta`  | false ✓ |
-| `a <= b` | `ucomisd b, a; setae` | false ✓ |
-| `a > b`  | `ucomisd a, b; seta`  | false ✓ |
-| `a >= b` | `ucomisd a, b; setae` | false ✓ |
+| Outcome | ZF | PF | CF |
+|---|---|---|---|
+| unordered (NaN) | 1 | **1** | 1 |
+| `a < b` | 0 | 0 | 1 |
+| `a == b` | 1 | 0 | 0 |
+| `a > b` | 0 | 0 | 0 |
 
-Same trick in the branch form with `ja`/`jae`. So this is still a third
-comparison lowering — the two current paths are integer-shaped, the value form
-(`compile.go:6665-6712`) emitting `cmp` + `setl`/`setb` keyed off
-`ASTType.Signed` and the branch form `jumpOp` (`:5662-5701`) emitting
-`cmp` + `jl`/`jle` — but it is a *simple* one, with no parity dance and no
-equality case. NaN behavior is silent when wrong, so it still needs dedicated
-tests.
+Flags land the way an *unsigned* integer compare would (CF/ZF, never SF/OF), so
+float comparisons use the above/below condition codes, not the signed ones. On
+the unordered row the "below" forms answer **true** (wrong for us) while the
+"above" forms answer **false** (what we want). So express every ordering with
+`seta`/`setae`, choosing operand order to suit — no parity test, no extra
+instruction:
+
+| Boson | Rewritten | Emitted | NaN |
+|---|---|---|---|
+| `a < b`  | `b > a`  | `ucomisd b, a ; seta`  | false ✓ |
+| `a <= b` | `b >= a` | `ucomisd b, a ; setae` | false ✓ |
+| `a > b`  | —        | `ucomisd a, b ; seta`  | false ✓ |
+| `a >= b` | —        | `ucomisd a, b ; setae` | false ✓ |
+
+**Equality cannot use that trick.** `==` needs ZF=1, but *unordered also sets
+ZF=1*, and swapping operands doesn't separate them (equality is symmetric). It
+must test PF explicitly — two extra ops:
+
+```
+; a == b   →  ZF=1 AND PF=0        ; a != b   →  ZF=0 OR PF=1
+ucomisd  a, b                      ucomisd  a, b
+sete     r1                        setne    r1
+setnp    r2                        setp     r2
+and      r1, r2                    or       r1, r2
+```
+
+In branch position, equality needs two conditional jumps rather than one:
+
+```
+; if (a == b) goto L               ; if (a != b) goto L
+ucomisd a, b                       ucomisd a, b
+jp      .skip                      jp      L      ; unordered ⇒ not-equal is true
+je      L                          jne     L
+.skip:
+```
+
+#### Implementation hazard: `bas` does not model EFLAGS
+
+The allocator may insert flag-clobbering instructions (spill reloads,
+zero-extensions) between a compare and its dependent `setcc`/`jcc` — this
+**already bit the `&&`/`||` codegen**, where a reload's `xor` wiped the flags a
+`setne` needed (see CLAUDE.md § *bas does not model EFLAGS*).
+
+The equality sequence is three flag-dependent instructions needing two scratch
+registers — exactly the shape most likely to provoke a spill mid-sequence, and
+the failure is silent, appearing only on NaN inputs. **Lower float equality by
+branch materialization** — jump to terminal paths that write the result with
+`mov <dest>, <imm>` — which is the same fix already applied to `&&`/`||` rather
+than a new pattern. The orderings, being a single `setcc` adjacent to their
+compare, are not exposed to this.
 
 ### Casts
 
@@ -771,16 +838,16 @@ not exist for SSE today.
 
 ## Open questions
 
-Only one remains genuinely open.
+**None blocking.** Every design question raised has been settled; what remains is
+deferrable library work.
 
-1. **The shape of approximate float comparison.** With `==` rejected, users need
-   some way to ask "close enough." Options: explicit absolute tolerance
-   (`approx(a, b, tol)`), relative tolerance, or ULP distance
-   (`within_ulps(a, b, n)` — most principled, hardest to explain). A *default*
-   tolerance is tempting and should probably be resisted: a default is a hidden
-   wrong answer for somebody's magnitudes. Leaning toward an explicit-tolerance
-   function with no default, but the naming, and whether the primary form is
-   relative or absolute, are undecided.
+*Deferred (not a prerequisite):* the shape of **approximate comparison**. With
+IEEE `==` allowed this is a library nicety rather than a language obligation, and
+can land later in a math package. Recommend Zig's model — separate
+`approx_eq_abs(a, b, tol)` and `approx_eq_rel(a, b, tol)`, tolerance always
+explicit, **no default**. Python's `math.isclose` shows why a default is risky:
+its `abs_tol=0.0` silently fails when comparing against zero, since relative
+tolerance is meaningless there, and PEP 485 has to document the workaround.
 
 ### Settled during design
 
@@ -790,7 +857,7 @@ Only one remains genuinely open.
 | Class-tag surface syntax | The float type name **replaces** the size: `local y f64` | *The class tag on directives* |
 | `f32` evaluation precision | Computes in `f32`; widening is explicit and exact | *Evaluation precision* |
 | `<floatlit>` representation | Go `float64`; the decimal→f64→f32 double-rounding case is a known, accepted limitation | *Literals and `<floatlit>`* |
-| Float `==` | Rejected; ordering retained; `is_nan`/`is_zero`/`bits` provided instead | *Comparisons* |
+| Float `==` | **Allowed**, full IEEE — no mainstream language bans it, and Rust's type-system middle ground needs traits we lack | *Comparisons* |
 | Aggregate ABI | Class is a property of raw scalars only; aggregates go by pointer | *Aggregates* |
 | `%f` / `%v` | `%f` fixed-6; `ftoa` takes `prec` from day one; `%v` trims trailing zeros keeping `.0`; width/precision syntax deferred to a general `fmt` feature | *Verb design* |
 | Milestones | Stage boundaries are commit points, not ship gates — nothing ships until it all does | *Implementation plan* |
