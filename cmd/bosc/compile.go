@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/knusbaum/gbasm/cmd/bosc/flow"
@@ -111,21 +113,58 @@ func requireFloatCodegenSupport(c *Context, t ASTType, what string) {
 	})
 }
 
+// localSizeOperand returns the size operand of a `local` directive for t.
+// For an integer-class scalar that is a bit width; for a float it is the type
+// name itself, which tells bas both which register file to allocate from and
+// which instruction width to use (movss vs movsd). See the .bs class tag in
+// the floating-point proposal.
+func localSizeOperand(c *Context, t ASTType) string {
+	if isFloatType(c, t) {
+		return c.ResolveUnderlying(t).Name
+	}
+	return strconv.Itoa(t.Size(c) * 8)
+}
+
+// floatMovOp returns the SSE scalar move for t's width.
+func floatMovOp(c *Context, t ASTType) string {
+	if c.ResolveUnderlying(t).Name == "f32" {
+		return "movss"
+	}
+	return "movsd"
+}
+
+// emitFloatConstant materializes the float value v into dest. x86-64 has no
+// `mov xmm, imm`, so the bit pattern goes into a general-purpose register and
+// crosses to the SSE file with MOVQ. An f32 destination narrows through
+// float32, the same rounding an explicit cast performs, so a compile-time
+// constant and the equivalent runtime value agree bit for bit.
+func emitFloatConstant(of io.Writer, c *Context, dest spot, v float64) {
+	var bits uint64
+	if c.ResolveUnderlying(dest.t).Name == "f32" {
+		bits = uint64(math.Float32bits(float32(v)))
+	} else {
+		bits = math.Float64bits(v)
+	}
+	tmp := newSpot(of, c, c.Temp(), numASTType())
+	fmt.Fprintf(of, "\tmov %s %d\n", tmp.ref, bits)
+	fmt.Fprintf(of, "\tmovq %s %s\n", dest.ref, tmp.ref)
+	tmp.free(of)
+}
+
 func newSpot(of io.Writer, c *Context, ref string, t ASTType) spot {
-	requireFloatCodegenSupport(c, t, "a local")
 	sz := t.Size(c)
 	memBacked := typeIsMemoryBacked(c, t)
 	s := spot{ref: ref, t: t, nameIsAddress: memBacked}
 	if memBacked {
 		fmt.Fprintf(of, "\tbytes %s %d\n", ref, sz)
 	} else {
-		fmt.Fprintf(of, "\tlocal %s %d\n", ref, sz*8)
+		fmt.Fprintf(of, "\tlocal %s %s\n", ref, localSizeOperand(c, t))
 	}
 	return s
 }
 
 func newSpotWithReg(of io.Writer, c *Context, ref string, t ASTType, reg string) spot {
-	requireFloatCodegenSupport(c, t, "a local")
+	requireFloatCodegenSupport(c, t, "a register-pinned local")
 	sz := t.Size(c)
 	memBacked := typeIsMemoryBacked(c, t)
 	s := spot{ref: ref, t: t, nameIsAddress: memBacked}
@@ -2686,8 +2725,21 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 		return
 	}
 	if dest.t.SameRepr(src.t) {
+		// Same representation, but the two register files need different move
+		// instructions. A float moved with a plain `mov` would be routed
+		// through a general-purpose register.
+		if isFloatType(c, dest.t) {
+			fmt.Fprintf(of, "\t%s %s %s\n", floatMovOp(c, dest.t), dest.ref, src.ref)
+			return
+		}
 		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, src.ref)
 		return
+	}
+	// A float and a non-float never have the same representation, so anything
+	// reaching here with exactly one float side is a conversion that should
+	// have gone through compileCast.
+	if isFloatType(c, dest.t) != isFloatType(c, src.t) {
+		panic(fmt.Sprintf("internal compiler error: cannot move %s into %s; a float/integer conversion needs an explicit cast", src.t, dest.t))
 	}
 	depoint := dest.t
 	depoint.Indirection--
@@ -3057,6 +3109,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				// integer type the context demands.
 				return
 			}
+			if expect.Same(floatlitASTType()) {
+				// Likewise for float literals, into whatever float type the
+				// context demands.
+				return
+			}
 			if expect.Name == "<nil>" {
 				// nil expressions are compiled into whatever nullable pointer
 				// type the context demands.
@@ -3092,10 +3149,39 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), numASTType())
 		}
+		if isFloatType(c, dest.t) {
+			// An untyped integer literal in a float destination becomes that
+			// float type. There is no `mov xmm, imm`, and the value needs
+			// converting rather than reinterpreting, so route it through the
+			// float-constant path.
+			f, _ := new(big.Float).SetInt(val).Float64()
+			emitFloatConstant(of, c, dest, f)
+			return dest
+		}
 		if !litFitsIn(val, c.ResolveUnderlying(dest.t)) {
 			CompileErrorF(a, "Integer literal %s does not fit in type %s", val.String(), dest.t.Name)
 		}
 		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, val.String())
+		return dest
+	}
+
+	// A floating-point constant expression, likewise emitted as an immediate —
+	// except x86-64 has no `mov xmm, imm`, so the bit pattern is materialized
+	// in a general-purpose register and moved across the register files with
+	// MOVQ.
+	if a.ASTType(c).Same(floatlitASTType()) {
+		lit, ok := a.(*Literal)
+		if !ok {
+			CompileErrorF(a, "floating-point constant folding is not implemented yet: only a bare literal is supported")
+		}
+		v, _ := lit.Val.(float64)
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), ASTType{Name: "f64", p: a.Pos()})
+		}
+		if !isFloatType(c, dest.t) {
+			CompileErrorF(a, "Float literal %v cannot be used as type %s", v, dest.t.Name)
+		}
+		emitFloatConstant(of, c, dest, v)
 		return dest
 	}
 
@@ -3425,7 +3511,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				return nullspot
 			}
 			// Ownership promotion check, unless source is an integer literal.
-			if !srct.Same(intlitASTType()) && srct.Name != "<nil>" {
+			if !srct.Same(intlitASTType()) && !srct.Same(floatlitASTType()) && srct.Name != "<nil>" {
 				gained := dstt.OwnedMask &^ srct.OwnedMask
 				if gained != 0 {
 					if _, ok := ast.Init.(*OwnedPromotion); !ok {
@@ -3440,7 +3526,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			// Compile the initializer. Same-type / intlit go directly into s;
 			// coerced cases go via a temp.
-			if srct.Same(dstt) || srct.Same(intlitASTType()) || srct.Name == "<nil>" {
+			if srct.Same(dstt) || srct.Same(intlitASTType()) || srct.Same(floatlitASTType()) || srct.Name == "<nil>" {
 				val := compileTop(of, c, ast.Init, s)
 				if !val.same(&s) {
 					move(of, c, s, val)
@@ -4628,7 +4714,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		{
 			dsttmp := dstt
 			srctmp := ast.Val.ASTType(c)
-			if !srctmp.Same(intlitASTType()) && srctmp.Name != "<nil>" {
+			if !srctmp.Same(intlitASTType()) && !srctmp.Same(floatlitASTType()) && srctmp.Name != "<nil>" {
 				gained := dsttmp.OwnedMask &^ srctmp.OwnedMask
 				if gained != 0 {
 					if _, ok := ast.Val.(*OwnedPromotion); !ok {
@@ -5183,6 +5269,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		if valType.Same(intlitASTType()) {
 			valType = numASTType()
+		}
+		if valType.Same(floatlitASTType()) {
+			valType = ASTType{Name: "f64", p: a.Pos()}
 		}
 		// A bare `return nil` has type <nil>; adopt the function's return type
 		// (a nullable pointer, validated by the coerceType check above) so the
@@ -6019,6 +6108,21 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 		return compileProjectionCast(of, c, src, srcType, projIdx, vd.Projections[projIdx], dest)
 	}
 
+	// Float literal: emit the constant directly in the destination's type.
+	// `f32(2.5)` narrows here exactly as an assignment would.
+	if srcType.Same(floatlitASTType()) {
+		lit, ok := src.(*Literal)
+		if !ok {
+			CompileErrorF(src, "floating-point constant folding is not implemented yet: only a bare literal is supported")
+		}
+		if !isFloatType(c, c.ResolveUnderlying(destType)) {
+			CompileErrorF(src, "Cannot cast float literal to %s", destType)
+		}
+		v, _ := lit.Val.(float64)
+		emitFloatConstant(of, c, dest, v)
+		return dest
+	}
+
 	// Integer literal: compile directly into the destination type.
 	if srcType.Same(intlitASTType()) {
 		val, ok := EvalConst(c, src)
@@ -6093,6 +6197,68 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 
 	// Compile the source value.
 	srcSpot := compileTop(of, c, src, nullspot)
+
+	// Float conversions. These must be handled before the size-based dispatch
+	// below, which assumes both sides are integers in general-purpose
+	// registers: for the same size it copies bits, which would reinterpret an
+	// i64 as an f64 rather than converting it, and for differing sizes it
+	// sign- or zero-extends, which is meaningless between representations.
+	srcIsFloat := isFloatType(c, srcUnderlying)
+	dstIsFloat := isFloatType(c, dstUnderlying)
+	if srcIsFloat || dstIsFloat {
+		switch {
+		case srcIsFloat && dstIsFloat:
+			// f32 <-> f64. Widening is exact; narrowing rounds.
+			if srcUnderlying.Name == dstUnderlying.Name {
+				fmt.Fprintf(of, "\t%s %s %s\n", floatMovOp(c, dstUnderlying), dest.ref, srcSpot.ref)
+			} else if dstUnderlying.Name == "f64" {
+				fmt.Fprintf(of, "\tcvtss2sd %s %s\n", dest.ref, srcSpot.ref)
+			} else {
+				fmt.Fprintf(of, "\tcvtsd2ss %s %s\n", dest.ref, srcSpot.ref)
+			}
+		case dstIsFloat:
+			// integer -> float. CVTSI2SD/SS take a 32- or 64-bit GPR source,
+			// so a narrower integer is widened into a full register first,
+			// respecting its signedness.
+			srcRef := srcSpot.ref
+			if srcSize < 4 {
+				tmp := newSpot(of, c, c.Temp(), numASTType())
+				if srcUnderlying.Signed {
+					fmt.Fprintf(of, "\tmovsx %s %s\n", tmp.ref, srcSpot.ref)
+				} else {
+					fmt.Fprintf(of, "\tmovzx %s %s\n", tmp.ref, srcSpot.ref)
+				}
+				srcRef = tmp.ref
+				defer tmp.free(of)
+			}
+			if dstUnderlying.Name == "f32" {
+				fmt.Fprintf(of, "\tcvtsi2ss %s %s\n", dest.ref, srcRef)
+			} else {
+				fmt.Fprintf(of, "\tcvtsi2sd %s %s\n", dest.ref, srcRef)
+			}
+		default:
+			// float -> integer. CVTT* truncates toward zero, which is the
+			// same rule integer division already follows.
+			destRef := dest.ref
+			var narrow *spot
+			if dstSize < 4 {
+				tmp := newSpot(of, c, c.Temp(), numASTType())
+				destRef = tmp.ref
+				narrow = &tmp
+			}
+			if srcUnderlying.Name == "f32" {
+				fmt.Fprintf(of, "\tcvttss2si %s %s\n", destRef, srcSpot.ref)
+			} else {
+				fmt.Fprintf(of, "\tcvttsd2si %s %s\n", destRef, srcSpot.ref)
+			}
+			if narrow != nil {
+				fmt.Fprintf(of, "\tmov %s %s:%d\n", dest.ref, narrow.ref, dstSize*8)
+				narrow.free(of)
+			}
+		}
+		srcSpot.free(of)
+		return dest
+	}
 
 	switch {
 	case srcSize == dstSize:
@@ -7237,6 +7403,16 @@ func desugarVariadicCall(of io.Writer, c *Context, a AST, ast *Funcall, decl *Fu
 			argt := arg.ASTType(c)
 			// An untyped integer literal has no concrete size; materialize it
 			// as i64 (the default integer type) before coercing.
+			if argt.Same(floatlitASTType()) {
+				lit := newSpot(of, c, c.Temp(), ASTType{Name: "f64", p: arg.Pos()})
+				lv := compileTop(of, c, arg, lit)
+				if !lv.same(&lit) {
+					move(of, c, lit, lv)
+					lv.free(of)
+				}
+				argt = lit.t
+				arg = &PreboundSpot{S: lit}
+			}
 			if argt.Same(intlitASTType()) {
 				lit := newSpot(of, c, c.Temp(), numASTType())
 				lv := compileTop(of, c, arg, lit)

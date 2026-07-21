@@ -1,0 +1,42 @@
+package main
+
+import "string"
+
+// The first end-to-end float program: materialize a constant into an SSE
+// register, move it, and convert between the register files. Values are
+// printed as integers because float formatting does not exist yet.
+
+fn main() {
+	// Literal into an f64 local, then truncate toward zero.
+	a f64 := 3.9
+	string.puti(i64(a))
+	string.putc(0x0A)
+
+	// Truncation goes toward zero on both signs, matching integer division.
+	b f64 := -3.9
+	string.puti(i64(b))
+	string.putc(0x0A)
+
+	// Integer to float and back.
+	n i64 := 42
+	c f64 := f64(n)
+	string.puti(i64(c))
+	string.putc(0x0A)
+
+	// f32 holds the value too, and widens to f64 exactly.
+	d f32 := 2.5
+	e f64 := f64(d)
+	string.puti(i64(e))
+	string.putc(0x0A)
+
+	// A float local copied to another float local (exercises movsd).
+	f f64 := 7.25
+	g f64 := f
+	string.puti(i64(g))
+	string.putc(0x0A)
+
+	// An untyped integer literal in a float destination becomes that float.
+	h f64 := 9
+	string.puti(i64(h))
+	string.putc(0x0A)
+}

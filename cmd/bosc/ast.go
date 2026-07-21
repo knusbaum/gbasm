@@ -4548,10 +4548,22 @@ func (n *Node) toASTTop(c *Context) AST {
 			Second: n.args[1].toASTTop(NewContext()),
 		}
 	case n_neg:
+		inner := n.args[0].toASTTop(NewContext())
+		// Fold negation into a float literal rather than desugaring to
+		// `0 - x`. Subtraction from zero is not negation in IEEE — it turns
+		// -0.0 into +0.0 — and the untyped `0` has no meaning in an SSE
+		// register. Folding is also what the constant-evaluation rule
+		// requires: the literal is the value, already in the destination's
+		// type.
+		if lit, ok := inner.(*Literal); ok {
+			if f, isFloat := lit.Val.(float64); isFloat {
+				return &Literal{Val: -f, p: n.p}
+			}
+		}
 		return &Op2{
 			Type:   n_sub,
 			First:  &Literal{Val: uint64(0)},
-			Second: n.args[0].toASTTop(NewContext()),
+			Second: inner,
 		}
 	case n_bitnot:
 		return &BitNot{Val: n.args[0].toASTTop(NewContext()), p: n.p}
