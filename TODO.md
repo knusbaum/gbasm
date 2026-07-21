@@ -256,6 +256,19 @@ forward-reference now sitting in the Functions lesson.
 
 ---
 
+## Runtime
+
+### Replace the bootstrap allocator
+`runtime/_heap/heap_linux.bs` is one mmap per allocation and one munmap per
+free. Design settled in
+[`docs/proposed/PROPOSAL_allocator.md`](docs/proposed/PROPOSAL_allocator.md):
+span-metadata (no per-object header), three tiers, 4MB chunks / 64KB spans,
+power-of-two classes to 32KB, three-level release policy. To be written in
+Boson against the raw-memory primitives. No compiler change needed --
+`_heap.free(p)` keeps its signature.
+
+---
+
 ## Distribution / Packaging
 
 ### Installable distribution for users
