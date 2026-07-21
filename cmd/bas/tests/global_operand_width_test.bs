@@ -1,0 +1,79 @@
+package main
+
+// A one-operand instruction (idiv) against a memory global must be encoded at
+// the global's declared width, not the narrowest available form.
+//
+// The encoder's operand matcher used to accept a `*Var` for a memory slot of
+// ANY width, so `idiv <global>` took F6 /7 -- IDIV r/m8 -- and divided by the
+// value's low byte. For a divisor whose low byte is 0 that is a divide by zero
+// and the program dies with SIGFPE; otherwise it is a silently wrong answer.
+// The fix reads the size bas already has: a global is declared `var name type
+// N`, N is the byte count, so the operand carries its own width.
+//
+// Both divisors below have a zero low byte on purpose. Under the old encoding
+// the 8-byte case divided by 0 (SIGFPE) and the 4-byte case likewise, so a
+// regression crashes here rather than printing a wrong number.
+
+// DIV8 = 256 as a little-endian i64: low byte 0, so a byte divide traps.
+var DIV8 i64 {
+	bytes "\x00\x01\x00\x00\x00\x00\x00\x00"
+}
+
+// DIV4 = 256 as a little-endian i32.
+var DIV4 i32 {
+	bytes "\x00\x01\x00\x00"
+}
+
+// divq: 64-bit divide by an 8-byte global. Must encode REX.W F7 /7.
+function divq
+	argi n 0
+	prologue
+	local r 64
+	mov r n
+	mov rax r
+	cqo
+	idiv DIV8
+	mov r rax
+	epilogue
+	mov rax r
+	ret
+
+// divd: 32-bit divide by a 4-byte global. Must encode F7 /7 with no REX.W,
+// exercising the m32 slot rather than m64.
+function divd
+	argi n 0
+	prologue
+	local r 64
+	mov eax n:32
+	cdq
+	idiv DIV4
+	// The quotient is in eax; writing eax already zero-extended rax.
+	mov r rax
+	epilogue
+	mov rax r
+	ret
+
+function main
+	prologue
+
+	acquire rdi
+	mov rdi 200000
+	call divq
+	mov rdi rax
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+
+	acquire rdi
+	mov rdi 100000
+	call divd
+	mov rdi rax
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+
+	epilogue
+	xor rax rax
+	ret

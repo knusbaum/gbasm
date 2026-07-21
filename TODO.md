@@ -107,35 +107,26 @@ other lvalue gets, which is not free.
 
 Do the diagnostic first regardless.
 
-### Encoder ignores a global's size, picking the narrowest operand width
+### A one-operand op on an unsized (cross-package) global picks the narrowest width
 
-A `*Var` operand matches every memory-width slot in the encoder's operand
-matcher (`encoder.go`, the `case "mN":` arms): the `*Var` branch returns
-`true, N` unconditionally instead of checking the var's size. So for a
-one-operand form like `idiv <global>` the encoder takes whichever width it
-tries first -- the byte form -- and a 64-bit divide by a global becomes
-`IDIV r/m8` against the value's low byte. For a divisor whose low byte is 0
-(e.g. 65536) that is SIGFPE; otherwise it is a silently wrong answer. Same root
-cause as the `mov [mem] imm` narrowing already noted in CLAUDE.md.
+Mostly closed. The encoder now reads the size bas already has -- a global is
+declared `var name type N` with N the byte count, stored as `len(Var.Val)` --
+so a same-package `idiv <global>` encodes at the global's width instead of the
+narrowest form (`varMatchesWidth`, `encoder.go`). The bosc-side workaround is
+removed.
 
-The size is already available and needs no new syntax. A global is emitted as
-`var name type N`, where N is the byte count, and bas stores N zero bytes, so
-`len(Var.Val)` is the width. bas does NOT need to understand the type string
-(`i64`, `*mut node`) -- that is compiler information it correctly ignores --
-and it does NOT need extern declarations: the size travels with every `var`.
+What remains is the case the size does *not* travel to: a **cross-package**
+global reference has no local declaration, so its `Val` is empty and the width
+is unknown at the reference site. The matcher falls back to matching any width
+there, which is correct for a two-operand form (the register operand fixes the
+width) but leaves a one-operand form -- `idiv sys.SOME_GLOBAL` -- ambiguous,
+where it would again take the byte encoding.
 
-Fix: in each `mN` arm, make the `*Var` branch return `len(v.Val)*8 == N`
-rather than `true`, mirroring the `*Ralloc` arm one line up which already
-checks `mo.size`. That rejects a wrongly-sized global and forces the correct
-encoding. Also check the ModR/M side at `encoder.go:564`, which hardcodes
-`Size: 64` for a `*Var` -- fine for 8-byte globals, wrong for a `byte`/`u16`
-global used in a sized op.
-
-Closes the whole width-narrowing class at the encoder, not one instruction.
-bosc currently works around it for mul/div/mod by materializing an
-address-named operand into a register (`93f235c`); once the encoder is fixed
-that workaround is belt-and-suspenders and could be removed, though it is
-harmless to leave.
+Not reached today: nothing does one-operand arithmetic against an imported
+global. It is the genuine case for importing a symbol's size across packages
+(the `.bo` has it), i.e. the closest thing to a real need for an extern-like
+mechanism -- distinct from the type string, which bas must never parse. File it
+here rather than build it speculatively.
 
 ### Code formatter (`go fmt`-style)
 A canonical, opinionated formatter for `.bos` source — no config, one

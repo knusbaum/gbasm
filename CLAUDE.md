@@ -417,6 +417,18 @@ either use the `qword[…]` form or route through a register. The
 compiler routes through registers; the assembler accepts the sized
 form.
 
+The related **operand form is fixed for globals**: a one-operand
+instruction against a memory global (`idiv <global>`) used to take
+the narrowest opcode too, because the operand matcher accepted a
+`*Var` for any width — a 64-bit divide by an 8-byte global became a
+byte divide by its low byte (SIGFPE when that byte is 0). The
+encoder now reads the size bas already has (a global is declared
+`var name type N`; `N` is the byte count, stored as `len(Var.Val)`)
+and matches only that width. A **cross-package** global still has no
+local size, so it falls back to any-width — harmless for two-operand
+forms, still latent for a one-operand op on an imported global
+(none exist yet; see TODO).
+
 #### Auto-semicolon insertion gotchas
 
 The lexer emits `;` after newlines whose preceding token can end a

@@ -745,6 +745,29 @@ func (o *Op) ConvertRalloc(a *Ralloc) interface{} {
 	panic(fmt.Sprintf("CANNOT CONVERT RALLOC FOR: %v", o.TN))
 }
 
+// varMatchesWidth reports whether a var operand may be used in a memory slot of
+// n bits.
+//
+// A global is declared `var name type N` where N is the byte count, and bas
+// stores N bytes in Val -- so the size travels with the operand and the
+// encoder never has to understand the (compiler-owned) type string. When that
+// size is known, the var matches only its own width, which forces the correct
+// encoding for one-operand forms like `idiv <global>` that would otherwise
+// take the narrowest opcode.
+//
+// A CROSS-PACKAGE reference has no local declaration, so its Val is empty and
+// the size is unknown here. In that case fall back to matching any width, which
+// is the historical behavior: for a two-operand form the other operand fixes
+// the width, so nothing is lost. A one-operand form on a cross-package global
+// remains ambiguous -- that is the case that would need an imported size (see
+// TODO), and it is not reached today.
+func varMatchesWidth(v *Var, n int) bool {
+	if len(v.Val) == 0 {
+		return true
+	}
+	return len(v.Val)*8 == n
+}
+
 func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 	if o.Implicit {
 		return false, 0
@@ -935,6 +958,9 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 			return mo.Base.Width() == 64, 64
 		}
 		if _, ok := op.(*Var); ok {
+			// "m" is width-agnostic (lea and other address-taking forms): the
+			// operand is the var's address, so its byte size is irrelevant and
+			// a var of any size matches.
 			return true, 64
 		}
 	case "m8":
@@ -956,8 +982,8 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 		if mo, ok := op.(IndirectBaseIndexScale); ok {
 			return mo.Base.Width() == 64, 8
 		}
-		if _, ok := op.(*Var); ok {
-			return true, 8
+		if v, ok := op.(*Var); ok {
+			return varMatchesWidth(v, 8), 8
 		}
 	case "m16":
 		if mo, ok := op.(*Ralloc); ok {
@@ -978,8 +1004,8 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 		if mo, ok := op.(IndirectBaseIndexScale); ok {
 			return mo.Base.Width() == 64, 16
 		}
-		if _, ok := op.(*Var); ok {
-			return true, 16
+		if v, ok := op.(*Var); ok {
+			return varMatchesWidth(v, 16), 16
 		}
 	//case "m16{k}{z}":
 	case "m32":
@@ -1001,8 +1027,8 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 		if mo, ok := op.(IndirectBaseIndexScale); ok {
 			return mo.Base.Width() == 64, 32
 		}
-		if _, ok := op.(*Var); ok {
-			return true, 32
+		if v, ok := op.(*Var); ok {
+			return varMatchesWidth(v, 32), 32
 		}
 	//case "m32{k}":
 	//case "m32{k}{z}":
@@ -1025,8 +1051,8 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 		if mo, ok := op.(IndirectBaseIndexScale); ok {
 			return mo.Base.Width() == 64, 64
 		}
-		if _, ok := op.(*Var); ok {
-			return true, 64
+		if v, ok := op.(*Var); ok {
+			return varMatchesWidth(v, 64), 64
 		}
 	//case "m64{k}":
 	//case "m64{k}{z}":
