@@ -118,6 +118,7 @@ Every linked program pulls in some subset of these.
 | `_heap`    | `heap_linux.bs` | `_heap.alloc(i64) *mut byte` and `_heap.free(*mut byte)`. One mmap mapping per allocation; small size header; `free` calls munmap. Minimal, no pooling. |
 | `_io_sys`  | `io_sys_linux.bs` | Raw Linux file-IO syscall wrappers: `_io_sys.read/write/open/close`. The low-level primitives that `io` is built on; end-user code should prefer `io`'s typed FD API. |
 | `string`   | `string.bs`, `puts_linux.bs` | String formatting and stdout output: `puts`, `puti`, `putb`, `putc`, `lenb`, `lenn`, `lenbb`, `exit`. Internal: `strlen`, `itoa`, `uitoa`, `ucountdigits`. File-IO syscalls live in `_io_sys`; the `io` package wraps them with a typed FD. |
+| `_iface`   | `iface.bos` | Runtime support for interface-to-interface assertion: `assert_to` plus the typedesc/iface_desc method matcher and the lazy per-typedesc itab cache. Not a source-level import — the compiler emits a bare `call _iface.assert_to`. Written in Boson against the raw-memory primitives (`uintptr`, `unsafe_cast`); the record layouts are struct declarations, so the compiler computes the offsets. |
 | `io`       | `io.bos` | Typed file IO: `type FD i64` with `read`/`write`/`close` methods, `fn open(path, flags, mode) owned FD`, and `STDIN`/`STDOUT`/`STDERR` globals. Wraps the raw `_io_sys` syscalls. |
 | `pair`     | `pair.bos` | A tiny exported struct used only by the cross-package-struct tests under `cmd/bosc/tests/`. Exists so the import path for Boson-source packages is exercised end-to-end. |
 

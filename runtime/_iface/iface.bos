@@ -14,6 +14,8 @@
 // two.
 package _iface
 
+import "_heap"
+
 // typedesc head, as emitted by bosc's typeinfo.go. The method table follows
 // immediately (offset 40), one td_method per entry.
 //
@@ -52,6 +54,24 @@ type ifd_head struct {
 	name_len     i64
 	method_count i64
 }
+
+// A heap-allocated itab: the resolved method table for one (source type,
+// target interface, shape) triple.
+//
+// The first three fields are cache bookkeeping. The rest is the *vtable
+// region*, which starts at offset 24 and is what assert_to hands back -- so
+// vt_typedesc and vt_shape are vtable slots 0 and 1, and the resolved method
+// pointers follow at slot 2+, placed by decl_idx.
+type itab struct {
+	next        uintptr
+	iface_desc  uintptr
+	shape       i64
+	vt_typedesc uintptr
+	vt_shape    i64
+}
+
+// Byte offset from an itab's base to its vtable region.
+var VT_OFF i64 := 24
 
 // One entry in an iface_desc's method table. 64 bytes.
 //
@@ -195,4 +215,104 @@ fn lookup_method(src_ti uintptr, req_addr uintptr, dst_desc uintptr, want_recv i
 		mp = mp + uintptr(size_of(td_method))
 	}
 	return uintptr(0)
+}
+
+// expected_receiver_shape derives the source value's receiver *capability*
+// from its shape word: 0 = value, 1 = *self, 2 = *mut self, 255 = none.
+//
+// This mirrors shape.go's expectedReceiverShape exactly. The two must agree,
+// or a coercion the compiler accepts would fail at runtime (or worse, the
+// reverse) -- so a change to either is a change to both.
+fn expected_receiver_shape(shape i64) i64 {
+	depth := shape & 15
+	// An empty constructor stack is a bare value.
+	if (depth == 0) {
+		return 0
+	}
+	// Deeper than one level has no compatible receiver.
+	if (depth != 1) {
+		return 255
+	}
+	kind := (shape >> 4) & 7
+	// shapeKindPtr (1) / shapeKindNullPtr (6) -> *self
+	if (kind == 1) {
+		return 1
+	}
+	if (kind == 6) {
+		return 1
+	}
+	// shapeKindMutPtr (2) / shapeKindNullMut (7) -> *mut self
+	if (kind == 2) {
+		return 2
+	}
+	if (kind == 7) {
+		return 2
+	}
+	return 255
+}
+
+// assert_to is the runtime helper for interface-to-interface type assertion.
+// It is NOT a Boson-visible function: the compiler emits a direct
+// `call _iface.assert_to` and reads the result.
+//
+// Returns a pointer to the itab's vtable region on success, 0 on failure.
+// There is no separate ok flag -- a zero vtable is exactly the null sentinel
+// the caller's nullable interface type already tests.
+//
+// src_data is carried through by the caller and unused here; it is part of the
+// signature so the call site can marshal the whole fat pointer uniformly.
+pub fn assert_to(src_ti uintptr, src_shape i64, src_data i64, dst_desc uintptr) uintptr {
+	_ := src_data
+
+	// The cache head lives in a separate writable slot rather than in the
+	// typedesc, because typedescs are emitted read-only.
+	cache_slot := unsafe_cast(*td_head, src_ti).cache_ref
+
+	// 1. Cache walk, keyed by (iface_desc, shape).
+	var cur uintptr := *unsafe_cast(*uintptr, cache_slot)
+	for (; cur != uintptr(0); ) {
+		hit := unsafe_cast(*itab, cur)
+		if (hit.iface_desc == dst_desc) {
+			if (hit.shape == src_shape) {
+				return cur + uintptr(VT_OFF)
+			}
+		}
+		cur = hit.next
+	}
+
+	// 2. Miss: build an itab. header(24) + (method_count+2)*8.
+	want_recv := expected_receiver_shape(src_shape)
+	mcount := unsafe_cast(*ifd_head, dst_desc).method_count
+	block := _heap.alloc((mcount + 2) * 8 + VT_OFF)
+	base := uintptr(block)
+
+	it := unsafe_cast(*mut itab, base)
+	it.iface_desc = dst_desc
+	it.shape = src_shape
+	it.vt_typedesc = src_ti
+	it.vt_shape = src_shape
+
+	// 3. Resolve each required method into vtable[decl_idx+2].
+	var req uintptr := dst_desc + uintptr(size_of(ifd_head))
+	var remaining i64 := mcount
+	for (; remaining != 0; remaining = remaining - 1) {
+		fn_ptr := lookup_method(src_ti, req, dst_desc, want_recv)
+		if (fn_ptr == uintptr(0)) {
+			// A miss is not cached: free the partial itab and fail. Caching
+			// failures would be a behavior change, not an optimization -- see
+			// the negative-caching item in TODO.md.
+			_heap.free(block)
+			return uintptr(0)
+		}
+		decl_idx := unsafe_cast(*ifd_method, req).decl_idx
+		slot := base + uintptr((decl_idx + 2) * 8 + VT_OFF)
+		*unsafe_cast(*mut uintptr, slot) = fn_ptr
+
+		req = req + uintptr(size_of(ifd_method))
+	}
+
+	// 4. Link into the cache, newest first.
+	it.next = *unsafe_cast(*uintptr, cache_slot)
+	*unsafe_cast(*mut uintptr, cache_slot) = base
+	return base + uintptr(VT_OFF)
 }

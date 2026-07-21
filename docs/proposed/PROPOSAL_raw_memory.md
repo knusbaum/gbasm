@@ -2,6 +2,17 @@
 
 ## History
 
+- 2026-07-21 — All four primitives implemented (`30d15b7`, `2bca6ae`,
+  `552c005`) and `_iface` ported to Boson (`8c7c59f`, and the `assert_to` half
+  after it), retiring `iface_linux.bs`. Doc stays in `docs/proposed/` because
+  the allocator — the actual goal — is not built yet. Corrections from the
+  work: unary `~` already existed (see below), and the `_iface` port went
+  memeq+lookup_method together rather than innermost-first, because
+  `lookup_method` held caller-saved `r9` across its `memeq` calls without
+  saving it. Two unrelated pre-existing bugs surfaced en route: storing a
+  global through a pointer (`f33d2fb`) and a local shadowing a register name
+  in `[name]` position (filed in TODO.md).
+
 - 2026-07-21 — Added the `_iface` migration as the staged first exercise, ahead
   of `_heap`; recorded the `rdx` side-channel cleanup it depends on.
 - 2026-07-21 — Proposed. Surface settled at four primitives; alignment and the

@@ -52,12 +52,11 @@ file io_sys.bo : bas $RUNTIME/_io_sys/io_sys_linux.bs {
 # The _iface runtime helper backs interface-to-interface type assertions.
 # Always linked (reachability drops it when unused).
 #
-# The package is half Boson (method matching) and half assembly (the itab
-# cache walk), so both halves are compiled and handed to bas together -- one
-# .bo per package, the same shape boson.mmk's build_package produces.
-file iface.importcfg : builtin.bo {
+# The package is now entirely Boson; iface_linux.bs is gone.
+file iface.importcfg : builtin.bo heap.bo {
     cat > iface.importcfg <<EOF
 builtin=builtin.bo
+_heap=heap.bo
 EOF
 }
 
@@ -65,8 +64,8 @@ file iface.bs : bosc iface.importcfg $RUNTIME/_iface/iface.bos {
     ./bosc -importcfg=iface.importcfg -o iface.bs $RUNTIME/_iface/iface.bos >/dev/null 2>&1
 }
 
-file iface.bo : bas iface.bs $RUNTIME/_iface/iface_linux.bs {
-    ./bas -o iface.bo iface.bs $RUNTIME/_iface/iface_linux.bs >/dev/null 2>&1
+file iface.bo : bas iface.bs {
+    ./bas -o iface.bo iface.bs >/dev/null 2>&1
 }
 
 # Compile the Boson-source `builtin` package. It imports nothing, so it

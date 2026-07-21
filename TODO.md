@@ -203,7 +203,7 @@ than fix it speculatively.
 
 ### Negative caching for failed interface assertions
 `_iface.assert_to` caches successful itabs per `(iface_desc, shape)` but
-deliberately does not cache *failures* (`iface_linux.bs:156-158`,
+deliberately does not cache *failures* (`runtime/_iface/iface.bos`,
 `DESIGN.md:1968`). A repeatedly-failing `x.(I)` therefore re-derives the
 receiver shape, allocates an itab, walks the whole typedesc method table doing
 hash *and* byte-equal name/sig compares, fails, and frees — every iteration,
