@@ -1,0 +1,198 @@
+// Package _iface is the runtime support for interface-to-interface type
+// assertion. It is not a source-level import: the compiler emits a bare
+// `call _iface.assert_to` and reads the result.
+//
+// The method-matching half lives here in Boson; process-entry-shaped glue and
+// the itab cache walk remain in iface_linux.bs. This half was assembly only
+// because the language could not express walking a typedesc table -- offset
+// arithmetic over untyped memory -- which the raw-memory primitives
+// (uintptr / unsafe_cast, see docs/proposed/PROPOSAL_raw_memory.md) now allow.
+//
+// The payoff is that the record layouts below are declared once, as structs,
+// and the compiler computes the offsets. Previously they existed only as a
+// comment above hand-written `[rdx+48]` operands, with nothing connecting the
+// two.
+package _iface
+
+// typedesc head, as emitted by bosc's typeinfo.go. The method table follows
+// immediately (offset 40), one td_method per entry.
+//
+// name_off/name_len and every *_off below are byte offsets relative to the
+// typedesc's own base address, not absolute pointers, so a typedesc is
+// position-independent.
+type td_head struct {
+	name_off     i64
+	name_len     i64
+	size         i64
+	cache_ref    uintptr
+	method_count i64
+}
+
+// One entry in a typedesc's method table. 72 bytes.
+//
+// mask_off is the method's *inferred* per-slot borrow descriptor: 0 means
+// "borrows nothing", otherwise it points at a [slot_count][mask...] blob
+// relative to the typedesc base.
+type td_method struct {
+	name_off   i64
+	name_len   i64
+	sig_off    i64
+	sig_len    i64
+	name_hash  i64
+	sig_hash   i64
+	recv_shape i64
+	fn_ptr     uintptr
+	mask_off   i64
+}
+
+// iface_desc head. Its method table follows at offset 24, one ifd_method per
+// entry.
+type ifd_head struct {
+	name_off     i64
+	name_len     i64
+	method_count i64
+}
+
+// One entry in an iface_desc's method table. 64 bytes.
+//
+// decl_idx is the method's slot in the target interface's vtable; mask_off is
+// the *declared* borrow set (from `from(...)`), relative to the iface_desc
+// base.
+type ifd_method struct {
+	name_off  i64
+	name_len  i64
+	sig_off   i64
+	sig_len   i64
+	name_hash i64
+	sig_hash  i64
+	decl_idx  i64
+	mask_off  i64
+}
+
+// memeq compares two byte ranges for equality, returning 1 or 0.
+//
+// Ranges are given as raw addresses because both sides are interior pointers
+// into a typedesc or iface_desc blob -- text that is addressed by offset from
+// a record base, not held as a slice.
+//
+// Coverage note: the length check below is not exercised by the test suite,
+// and cannot be without a deliberate hash collision. Every call site filters
+// on the name or signature hash first, so two ranges reaching memeq with
+// different lengths would have had to collide. It is kept as the defensive
+// half of "hashes filter, text decides" -- the same reason the original
+// assembly carried it -- but a mutation to it does not fail any test.
+fn memeq(a uintptr, alen i64, b uintptr, blen i64) i64 {
+	if (alen != blen) {
+		return 0
+	}
+	var i i64 := 0
+	for (; i < alen; i = i + 1) {
+		x := *unsafe_cast(*byte, a + uintptr(i))
+		y := *unsafe_cast(*byte, b + uintptr(i))
+		if (x != y) {
+			return 0
+		}
+	}
+	return 1
+}
+
+// receiver_satisfies reports whether a method whose receiver shape is `have`
+// can serve an expectation of `want`.
+//
+// Value matches value and *self matches a *self expectation, but a *mut self
+// expectation accepts BOTH *self and *mut self methods -- the legal *mut -> *
+// weakening. The asymmetry is deliberate and mirrors the compile-time
+// coercion filter, so the static and runtime matchers agree.
+fn receiver_satisfies(have i64, want i64) i64 {
+	if (want == 2) {
+		if (have == 1) {
+			return 1
+		}
+		if (have == 2) {
+			return 1
+		}
+		return 0
+	}
+	if (have == want) {
+		return 1
+	}
+	return 0
+}
+
+// borrow_ok applies the ⊆ gate: the matched method's *inferred* per-slot
+// borrow set must be a subset of the required method's *declared* set.
+// Otherwise the assertion would launder a borrow to an under-declaring
+// interface.
+//
+// Both blobs are [slot_count][mask...], one u64 bitmask per return slot, with
+// bit p meaning "slot may borrow param p". The per-slot test is
+// (impl & decl) == impl.
+fn borrow_ok(td uintptr, impl_off i64, ifd uintptr, decl_off i64) i64 {
+	// mask_off 0 means the implementation borrows nothing, which is a subset
+	// of every declared set.
+	if (impl_off == 0) {
+		return 1
+	}
+	// A borrowing implementation against an interface that declares no borrow
+	// set at all is exactly the laundering this gate exists to stop.
+	if (decl_off == 0) {
+		return 0
+	}
+
+	var ip uintptr := td + uintptr(impl_off)
+	var dp uintptr := ifd + uintptr(decl_off)
+	var slots i64 := *unsafe_cast(*i64, ip)
+	ip = ip + uintptr(8)
+	dp = dp + uintptr(8)
+
+	for (; slots != 0; slots = slots - 1) {
+		impl := *unsafe_cast(*i64, ip)
+		decl := *unsafe_cast(*i64, dp)
+		if ((decl & impl) != impl) {
+			return 0
+		}
+		ip = ip + uintptr(8)
+		dp = dp + uintptr(8)
+	}
+	return 1
+}
+
+// lookup_method finds the typedesc method matching one required interface
+// method, returning its fn_ptr, or 0 if there is no match.
+//
+// Matching is two-axis and ordered cheapest-first: name and signature hashes,
+// then the receiver-shape rule, then byte-equal name and signature text (the
+// hashes are a filter, not the decision), then the borrow gate.
+fn lookup_method(src_ti uintptr, req_addr uintptr, dst_desc uintptr, want_recv i64) uintptr {
+	req := unsafe_cast(*ifd_method, req_addr)
+
+	var remaining i64 := unsafe_cast(*td_head, src_ti).method_count
+	var mp uintptr := src_ti + uintptr(size_of(td_head))
+
+	for (; remaining != 0; remaining = remaining - 1) {
+		m := unsafe_cast(*td_method, mp)
+
+		if (m.name_hash == req.name_hash) {
+			if (m.sig_hash == req.sig_hash) {
+				if (receiver_satisfies(m.recv_shape, want_recv) == 1) {
+					if (memeq(src_ti + uintptr(m.name_off), m.name_len,
+						dst_desc + uintptr(req.name_off), req.name_len) == 1) {
+						if (memeq(src_ti + uintptr(m.sig_off), m.sig_len,
+							dst_desc + uintptr(req.sig_off), req.sig_len) == 1) {
+							if (borrow_ok(src_ti, m.mask_off, dst_desc, req.mask_off) == 1) {
+								return m.fn_ptr
+							}
+							// A borrow-gate failure rejects the whole
+							// assertion rather than continuing the scan: the
+							// method matched, it is simply not lawful to use.
+							return uintptr(0)
+						}
+					}
+				}
+			}
+		}
+
+		mp = mp + uintptr(size_of(td_method))
+	}
+	return uintptr(0)
+}

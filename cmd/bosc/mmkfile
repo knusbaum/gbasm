@@ -51,8 +51,22 @@ file io_sys.bo : bas $RUNTIME/_io_sys/io_sys_linux.bs {
 
 # The _iface runtime helper backs interface-to-interface type assertions.
 # Always linked (reachability drops it when unused).
-file iface.bo : bas $RUNTIME/_iface/iface_linux.bs {
-    ./bas -o iface.bo $RUNTIME/_iface/iface_linux.bs >/dev/null 2>&1
+#
+# The package is half Boson (method matching) and half assembly (the itab
+# cache walk), so both halves are compiled and handed to bas together -- one
+# .bo per package, the same shape boson.mmk's build_package produces.
+file iface.importcfg : builtin.bo {
+    cat > iface.importcfg <<EOF
+builtin=builtin.bo
+EOF
+}
+
+file iface.bs : bosc iface.importcfg $RUNTIME/_iface/iface.bos {
+    ./bosc -importcfg=iface.importcfg -o iface.bs $RUNTIME/_iface/iface.bos >/dev/null 2>&1
+}
+
+file iface.bo : bas iface.bs $RUNTIME/_iface/iface_linux.bs {
+    ./bas -o iface.bo iface.bs $RUNTIME/_iface/iface_linux.bs >/dev/null 2>&1
 }
 
 # Compile the Boson-source `builtin` package. It imports nothing, so it
@@ -227,7 +241,7 @@ EOF
 
 clean : {
     rm -f tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout *.importcfg
-    rm -f bosc bas bld string.bo init.bo heap.bo iface.bo builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo errors.bo errors.bs visibility.bo visibility.bs geom.bo geom.bs ifaces.bo ifaces.bs fmt.bo fmt.bs fmt.importcfg test.importcfg retalias_pkg.bo retalias_pkg.bs retalias_pkg.importcfg
+    rm -f bosc bas bld string.bo init.bo heap.bo iface.bo iface.bs iface.importcfg builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo errors.bo errors.bs visibility.bo visibility.bs geom.bo geom.bs ifaces.bo ifaces.bs fmt.bo fmt.bs fmt.importcfg test.importcfg retalias_pkg.bo retalias_pkg.bs retalias_pkg.importcfg
 }
 
 go_tests {
