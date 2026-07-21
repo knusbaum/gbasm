@@ -1032,10 +1032,13 @@ guards through codegen.
   way: an untyped float literal defaults to `f64` (mirroring `<intlit>` →
   `i64`); `<floatlit>` coerces only into a float destination; `+ - * /` accept
   floats while the bitwise operators, `%`, the shifts and `~` do not.
-- [ ] **Stack-passed float arguments** (a 9th float parameter) return a
-  directed "not supported yet" from `Function.ArgFloat` rather than being
-  spilled to the stack. Integer arguments past the 6th are supported, so this
-  is an asymmetry, not a wholesale gap.
+- [x] **Stack-passed float arguments — not a float gap.** An earlier draft of
+  this list claimed floats past the eighth were an *asymmetry* because integers
+  past the sixth spilled to the stack. That was wrong: `bosc` rejects a seventh
+  integer argument too ("more than 6 integer arguments are not supported").
+  Neither class spills, both report a clean positioned error at its own
+  register count, and general stack-passed arguments are a pre-existing `bosc`
+  limitation filed in `TODO.md`. Nothing float-specific is owed here.
 
 **Closed:**
 

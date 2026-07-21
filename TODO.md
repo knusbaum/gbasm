@@ -69,6 +69,18 @@ ownership/move/escape bulk is flow-sensitive → checker, not `ToAST`; do the
 type-only families (name resolution, arity, cast legality, struct-literal shape)
 first.
 
+### Arguments beyond the register count aren't passed on the stack
+`bosc` rejects a call with more than 6 integer or more than 8 floating-point
+arguments ("more than 6 integer arguments are not supported"), rather than
+spilling the excess to the stack as System V specifies. The limits are exactly
+the register counts of each class, so this is one missing capability, not two.
+The assembler side already has `Function.StackArg`, and `compileFunctionBody`
+already receives stack arguments via `ArgI` for index > 5 — what is missing is
+the *caller* side: `setupArgs`/`argRegisters` in `cmd/bosc/compile.go` have no
+path to push arguments beyond the register list, and `Function.ArgFloat`
+likewise refuses SSE index >= 8. Found while completing floating-point support;
+independent of it, and affects integers first.
+
 ### Odd-sized small structs can't be passed by value
 A by-value struct of 3, 5, 6, or 7 bytes is rejected with "passing a N-byte value
 by value is not supported; use a pointer or a 1/2/4/8-byte layout"
