@@ -6223,19 +6223,51 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 	// Float literal: emit the constant directly in the destination's type.
 	// `f32(2.5)` narrows here exactly as an assignment would.
 	if srcType.Same(floatlitASTType()) {
-		if !isFloatType(c, c.ResolveUnderlying(destType)) {
-			CompileErrorF(src, "Cannot cast a floating-point constant to %s", destType)
-		}
-		v, ok := evalFloatConst(c, src, c.ResolveUnderlying(destType).Name == "f32")
+		underlying := c.ResolveUnderlying(destType)
+		isFloatDst := isFloatType(c, underlying)
+		v, ok := evalFloatConst(c, src, isFloatDst && underlying.Name == "f32")
 		if !ok {
 			CompileErrorF(src, "Could not evaluate floating-point constant expression at compile time")
 		}
-		emitFloatConstant(of, c, dest, v)
+		if isFloatDst {
+			emitFloatConstant(of, c, dest, v)
+			return dest
+		}
+		// Casting a floating-point constant to an integer truncates toward
+		// zero, the same rule the runtime conversion follows, so `i64(3.9)`
+		// and `i64(x)` with x = 3.9 agree.
+		if !isIntegerType(c, underlying) {
+			CompileErrorF(src, "Cannot cast a floating-point constant to %s", destType)
+		}
+		if v != v {
+			CompileErrorF(src, "Cannot cast NaN to %s", destType)
+		}
+		bf := big.NewFloat(v)
+		if bf.IsInf() {
+			CompileErrorF(src, "Cannot cast an infinity to %s", destType)
+		}
+		ival, _ := bf.Int(nil)
+		if !litFitsIn(ival, underlying) {
+			CompileErrorF(src, "Literal %s does not fit in type %s", ival, destType)
+		}
+		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, ival.String())
 		return dest
 	}
 
 	// Integer literal: compile directly into the destination type.
 	if srcType.Same(intlitASTType()) {
+		// Casting an untyped integer expression to a float converts in that
+		// float type — `f64(7)` is 7.0, and `f64(1/2)` is 0.5. Routing it
+		// through the integer path would consult litFitsIn, which knows only
+		// integer ranges and would reject every value.
+		if isFloatType(c, c.ResolveUnderlying(destType)) {
+			v, ok := evalFloatConst(c, src, c.ResolveUnderlying(destType).Name == "f32")
+			if !ok {
+				CompileErrorF(src, "Could not evaluate constant expression at compile time")
+			}
+			emitFloatConstant(of, c, dest, v)
+			return dest
+		}
 		val, ok := EvalConst(c, src)
 		if !ok {
 			CompileErrorF(src, "Could not evaluate integer literal at compile time")

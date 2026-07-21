@@ -1,0 +1,30 @@
+package main
+
+import "string"
+
+// Casting a constant across the int/float boundary converts the value, and
+// agrees with the runtime conversion of the same value.
+
+fn main() {
+	// Untyped integer expression into a float: the arithmetic happens in the
+	// float type, so this is 0.5 rather than integer 0 converted.
+	a f64 := f64(1) / 2.0
+	b f64 := f64(1 / 2)
+	string.puti(i64(a * 100.0))     // 50
+	string.putc(0x0A)
+	string.puti(i64(b * 100.0))     // 50
+	string.putc(0x0A)
+
+	// Float constant to integer truncates toward zero, on both signs, and
+	// matches the runtime conversion of the same value.
+	x f64 := 3.9
+	y f64 := -3.9
+	string.puti(i64(3.9))           // 3
+	string.putc(0x0A)
+	string.puti(i64(x))             // 3
+	string.putc(0x0A)
+	string.puti(i64(0.0 - 3.9))     // -3
+	string.putc(0x0A)
+	string.puti(i64(y))             // -3
+	string.putc(0x0A)
+}

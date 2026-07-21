@@ -2,3 +2,8 @@
 -1 as i64 = -1, as u64 = 18446744073709551615
 byte A has value 65
 neg > 0 is false
+half = 0.500000, or 0.5
+f64(7) / 2.0 = 3.5
+i64(3.9) = 3, i64(-3.9) = -3
+in f32: 0.0, in f64: 1.0
+nan == nan is false, nan != nan is true

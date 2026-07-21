@@ -19,4 +19,24 @@ fn main() {
 	// a bool comes from a comparison
 	positive bool := neg > 0
 	fmt.print("neg > 0 is %v\n", positive)
+
+	// a literal with a decimal point is a float
+	half f64 := 0.5
+	fmt.print("half = %f, or %v\n", half, half)
+
+	// int <-> float casts convert the value; i64() truncates toward zero
+	fmt.print("f64(7) / 2.0 = %v\n", f64(7) / 2.0)
+	fmt.print("i64(3.9) = %d, i64(-3.9) = %d\n", i64(3.9), i64(0.0 - 3.9))
+
+	// an f32 computes in f32: 1.0 is far below the ulp of 1e8, so it
+	// vanishes. The same values in f64 keep it.
+	a32 f32 := 100000000.0
+	b32 f32 := 1.0
+	a64 f64 := 100000000.0
+	b64 f64 := 1.0
+	fmt.print("in f32: %v, in f64: %v\n", a32 + b32 - a32, a64 + b64 - a64)
+
+	// NaN is unordered against everything, including itself
+	nan f64 := 0.0 / 0.0
+	fmt.print("nan == nan is %v, nan != nan is %v\n", nan == nan, nan != nan)
 }

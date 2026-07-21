@@ -9,19 +9,6 @@ design (see the docs convention in CLAUDE.md § Documentation and design docs).
 
 ## Language
 
-### Floating-point types
-**Promoted to a design:
-[`docs/proposed/PROPOSAL_floating_point.md`](docs/proposed/PROPOSAL_floating_point.md).**
-`f32`/`f64`, literals, SSE codegen, int↔float casts, the System V float ABI, and
-`%f`. The survey found the cost is *not* the front end: `bas` has no register-class
-concept at all (`Registers.Get` selects purely by bit width, and the `.bs` `local`
-directive carries only a width), so teaching the assembler about XMM is the
-critical path. The instruction database and object format already suffice.
-The integers tour lesson currently has to say "there are no floating-point types
-yet" — revisit it when this lands.
-
----
-
 ### Checked-arithmetic intrinsics
 Integer overflow wraps by default (defined two's-complement, both signs — see
 DESIGN.md §Expressions). That is cheap and keeps numeric loops vectorizable, but

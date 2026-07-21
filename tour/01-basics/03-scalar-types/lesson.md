@@ -12,14 +12,15 @@ and unsigned forms at four widths — the number is the bit width:
 `i64` is the everyday integer, and a plain integer literal (such as `100`) 
 defaults to `i64`. In a context that expects a different type — a `u64`,
 a `byte`, an `i32` — the literal takes that type instead, as long as its
-value fits. Two more built-ins complete the set:
+value fits. Three more built-ins complete the set:
 
 - `byte` — a one-byte unsigned integer. Character literals like `'A'` are
   just their byte value.
 - `bool` — a truth value, written `true` or `false`. A `bool` is also
   produced by a comparison (`<`, `==`, `!=`, and so on).
-
-That is the whole set — there are no floating-point types yet.
+- `f32` and `f64` — IEEE-754 floating point, single and double precision.
+  A literal with a decimal point or an exponent (`3.5`, `1e-3`) is a float,
+  and defaults to `f64`.
 
 Literals can be written in decimal, hex (`0x0F`), octal (`0o17`), or binary
 (`0b1111`), and the two bitwise operators `&` and `|` work as you'd expect.
@@ -28,7 +29,28 @@ A **cast** is written like a call: `u64(x)` reinterprets a value as another
 type. Between integer types it reinterprets the bits — which is why the
 same `-1`, read as an unsigned `u64`, prints as a huge number.
 
+A cast between an integer and a float is different: it **converts** the
+value rather than reinterpreting the bits, because the two are stored in
+completely different formats. `i64(x)` on a float truncates toward zero,
+the same rule integer division follows.
+
+Floats are the one place where the type you write changes the arithmetic
+itself. **An `f32` computes in `f32`** — intermediate results are never
+quietly widened to `f64` and narrowed back. That means a value too small to
+matter at `f32` precision really does vanish, exactly as it would at run
+time on the hardware. If you want more headroom, say so with a cast.
+
+Arithmetic works as expected, but the bitwise operators, `%`, and the
+shifts are integer-only — they have no meaning on a floating-point value.
+
+Comparison follows IEEE, which has a fourth outcome besides less, equal and
+greater: **unordered**. A `NaN` — "not a number", produced by things like
+`0.0 / 0.0` — compares as unordered against everything, so every ordered
+comparison against it is false, and it is not even equal to itself. The
+standard way to test for one is `x != x`.
+
 Each print verb names a *rendering*, and the value's own type does the rest
 — so `%d` prints any integer in decimal (an `i64` signed, a `u64`
-unsigned), `%x` prints one in hex, `%c` prints it as a character, and `%v`
-prints whatever is natural for the type.
+unsigned), `%x` prints one in hex, `%c` prints it as a character, `%f`
+prints a float with six decimals, and `%v` prints whatever is natural for
+the type.
