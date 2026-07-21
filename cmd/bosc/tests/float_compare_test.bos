@@ -1,0 +1,55 @@
+package main
+
+import "string"
+
+fn yn(b bool) {
+	if (b) { string.puts("y\n") } else { string.puts("n\n") }
+}
+
+fn main() {
+	a f64 := 1.0
+	b f64 := 2.0
+
+	yn(a < b)    // y
+	yn(b < a)    // n
+	yn(a <= a)   // y
+	yn(b > a)    // y
+	yn(a >= a)   // y
+	yn(a == a)   // y
+	yn(a == b)   // n
+	yn(a != b)   // y
+
+	// Signed zero: -0.0 == 0.0 is true in IEEE, though the bit patterns
+	// differ. A bitwise comparison would get this wrong.
+	z f64 := 0.0
+	nz f64 := -0.0
+	yn(z == nz)  // y
+	yn(z != nz)  // n
+
+	// NaN, built as 0.0/0.0 so no NaN literal syntax is needed. Every
+	// ordered comparison is false, equality is false, and inequality is
+	// true — including against itself, which is the standard NaN test.
+	nan f64 := 0.0 / 0.0
+	yn(nan < a)   // n
+	yn(nan <= a)  // n
+	yn(nan > a)   // n
+	yn(nan >= a)  // n
+	yn(nan == nan)// n
+	yn(nan != nan)// y
+	yn(a < nan)   // n
+	yn(a > nan)   // n
+
+	// Infinities order normally.
+	inf f64 := 1.0 / 0.0
+	ninf f64 := -1.0 / 0.0
+	yn(inf > b)     // y
+	yn(ninf < b)    // y
+	yn(inf == inf)  // y
+	yn(inf != ninf) // y
+
+	// f32 comparisons use ucomiss.
+	c f32 := 1.5
+	d f32 := 2.5
+	yn(c < d)    // y
+	yn(c == c)   // y
+}

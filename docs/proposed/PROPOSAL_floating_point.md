@@ -1038,14 +1038,17 @@ guards through codegen.
 - [ ] **Argument directives have no class tag.** Stage 2 gave `local` the
   `f32`/`f64` size operand; `argi` and friends still take a bit width only.
   Needed by Stage 5 along with the two-cursor System V classification.
-- [ ] **Destination-typed `EvalConst` folding** (`float32`/`float64` per the
+- [x] **Destination-typed `EvalConst` folding** — done (`evalFloatConst`). (`float32`/`float64` per the
   destination; integers keep `big.Int`). Moved to Stage 4: `EvalConst` is
   consulted from `compileTop` (`compile.go:3063`), the *function-local* path, so
   it is unreachable until float locals compile. Note the file-scope path is
   separate and folds only negation — `a i64 := 1 / 2` as a global already fails
   with "initializer is not a compile-time constant", for integers too. That is a
   pre-existing limitation, not a float gap, and is out of scope here.
-- [ ] **Constant-folding invariant test.** For a set of expressions, compute each
+- [x] **Constant-folding invariant test** — done
+  (`cmd/bosc/tests/float_const_fold_test.bos`). It immediately caught a real
+  bug: `x f64 := 1 / 2` was folding the integer division first and converting
+  the result, giving 0.0 instead of 0.5. For a set of expressions, compute each
   as constants *and* at runtime from variables holding the same values, and
   assert bit-identical results. This is the executable form of the
   evaluation-precision rule and the test that distinguishes destination-typed

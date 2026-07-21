@@ -1,0 +1,53 @@
+package main
+
+import "string"
+
+// The evaluation-precision invariant, stated executably: an expression means
+// the same thing whether its operands are literals folded at compile time or
+// variables computed at run time. Each case computes both ways and compares.
+//
+// This is the test that distinguishes destination-typed folding from
+// exact-rational folding. Under rationals, 0.1 + 0.2 folds to the f64 nearest
+// 0.3 (0.29999999999999999) while the runtime sum is 0.30000000000000004, and
+// the first case below would print "differ".
+
+// Float parameters are not supported yet (they need the System V SSE
+// argument classification), so each comparison is written inline.
+
+fn main() {
+	// The classic case: neither 0.1 nor 0.2 is exact in binary, and their
+	// rounded sum is not the nearest double to 0.3.
+	x1 f64 := 0.1 + 0.2
+	a f64 := 0.1
+	b f64 := 0.2
+	if (x1 == a + b) { string.puts("same\n") } else { string.puts("differ\n") }
+
+	// Division that does not terminate in binary.
+	x2 f64 := 1.0 / 3.0
+	c f64 := 1.0
+	d f64 := 3.0
+	if (x2 == c / d) { string.puts("same\n") } else { string.puts("differ\n") }
+
+	// Multi-step, where a rational fold would stay exact throughout and
+	// round only at the end.
+	x3 f64 := 1.0 / 3.0 * 3.0
+	if (x3 == c / d * d) { string.puts("same\n") } else { string.puts("differ\n") }
+
+	// An untyped integer literal becomes the float type before dividing,
+	// so this is 0.5 rather than integer 0.
+	x4 f64 := 1 / 2
+	e f64 := 1.0
+	f f64 := 2.0
+	if (x4 == e / f) { string.puts("same\n") } else { string.puts("differ\n") }
+
+	// f32 folds in f32, not in f64 and then narrowed.
+	y1 f32 := 0.1 + 0.2
+	g f32 := 0.1
+	h f32 := 0.2
+	if (y1 == g + h) { string.puts("same\n") } else { string.puts("differ\n") }
+
+	y2 f32 := 1.0 / 3.0
+	i f32 := 1.0
+	j f32 := 3.0
+	if (y2 == i / j) { string.puts("same\n") } else { string.puts("differ\n") }
+}

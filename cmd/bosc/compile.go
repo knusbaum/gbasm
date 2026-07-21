@@ -133,6 +133,61 @@ func floatMovOp(c *Context, t ASTType) string {
 	return "movsd"
 }
 
+// evalFloatConst folds a constant expression of untyped literals in the
+// destination's exact type — float32 when narrow is set, float64 otherwise.
+//
+// This is the compile-time half of the evaluation-precision rule: the declared
+// type is the type it computes in, at compile time as at run time, so folding
+// is unobservable. Folding in exact rationals would be more accurate but would
+// make `x f64 := 0.1 + 0.2` differ from the runtime `a + b`, which is the same
+// failure mode the rule rejects for f32 intermediates. See the floating-point
+// proposal's "Evaluation precision".
+//
+// Rounding each step through float32 is exact: binary64 carries more than
+// twice binary32's mantissa, so a single f32 operation evaluated in double and
+// then rounded is identical to evaluating it in float32 directly.
+//
+// Division by zero is not an error here, unlike its integer counterpart —
+// under IEEE it yields an infinity or a NaN, which is what the hardware would
+// produce for the same expression at run time.
+func evalFloatConst(c *Context, a AST, narrow bool) (float64, bool) {
+	round := func(f float64) float64 {
+		if narrow {
+			return float64(float32(f))
+		}
+		return f
+	}
+	switch ast := a.(type) {
+	case *Literal:
+		switch v := ast.Val.(type) {
+		case float64:
+			return round(v), true
+		case uint64:
+			// An untyped integer literal becomes the float type first; the
+			// arithmetic then happens in it.
+			return round(float64(v)), true
+		}
+		return 0, false
+	case *Op2:
+		fv, fok := evalFloatConst(c, ast.First, narrow)
+		sv, sok := evalFloatConst(c, ast.Second, narrow)
+		if !fok || !sok {
+			return 0, false
+		}
+		switch ast.Type {
+		case n_add:
+			return round(fv + sv), true
+		case n_sub:
+			return round(fv - sv), true
+		case n_mul:
+			return round(fv * sv), true
+		case n_div:
+			return round(fv / sv), true
+		}
+	}
+	return 0, false
+}
+
 // emitFloatConstant materializes the float value v into dest. x86-64 has no
 // `mov xmm, imm`, so the bit pattern goes into a general-purpose register and
 // crosses to the SSE file with MOVQ. An f32 destination narrows through
@@ -3142,21 +3197,26 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	// Integer literal expressions are evaluated at compile time and emitted
 	// as a single immediate mov into whatever concrete type the context provides.
 	if a.ASTType(c).Same(intlitASTType()) {
+		// An all-untyped-integer expression in a float destination acquires
+		// that float type, and the arithmetic then happens *in it* — so
+		// `x f64 := 1 / 2` is 0.5, not the integer 0 converted to 0.0.
+		// Folding the integer division first and converting the result would
+		// make the constant form disagree with the runtime one, which is
+		// exactly what the evaluation-precision invariant forbids.
+		if !dest.empty() && isFloatType(c, dest.t) {
+			v, ok := evalFloatConst(c, a, c.ResolveUnderlying(dest.t).Name == "f32")
+			if !ok {
+				CompileErrorF(a, "Could not evaluate constant expression at compile time")
+			}
+			emitFloatConstant(of, c, dest, v)
+			return dest
+		}
 		val, ok := EvalConst(c, a)
 		if !ok {
 			CompileErrorF(a, "Could not evaluate integer literal expression at compile time")
 		}
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), numASTType())
-		}
-		if isFloatType(c, dest.t) {
-			// An untyped integer literal in a float destination becomes that
-			// float type. There is no `mov xmm, imm`, and the value needs
-			// converting rather than reinterpreting, so route it through the
-			// float-constant path.
-			f, _ := new(big.Float).SetInt(val).Float64()
-			emitFloatConstant(of, c, dest, f)
-			return dest
 		}
 		if !litFitsIn(val, c.ResolveUnderlying(dest.t)) {
 			CompileErrorF(a, "Integer literal %s does not fit in type %s", val.String(), dest.t.Name)
@@ -3170,16 +3230,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	// in a general-purpose register and moved across the register files with
 	// MOVQ.
 	if a.ASTType(c).Same(floatlitASTType()) {
-		lit, ok := a.(*Literal)
-		if !ok {
-			CompileErrorF(a, "floating-point constant folding is not implemented yet: only a bare literal is supported")
-		}
-		v, _ := lit.Val.(float64)
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), ASTType{Name: "f64", p: a.Pos()})
 		}
 		if !isFloatType(c, dest.t) {
-			CompileErrorF(a, "Float literal %v cannot be used as type %s", v, dest.t.Name)
+			CompileErrorF(a, "A floating-point constant cannot be used as type %s", dest.t.Name)
+		}
+		v, ok := evalFloatConst(c, a, c.ResolveUnderlying(dest.t).Name == "f32")
+		if !ok {
+			CompileErrorF(a, "Could not evaluate floating-point constant expression at compile time")
 		}
 		emitFloatConstant(of, c, dest, v)
 		return dest
@@ -6111,14 +6170,13 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 	// Float literal: emit the constant directly in the destination's type.
 	// `f32(2.5)` narrows here exactly as an assignment would.
 	if srcType.Same(floatlitASTType()) {
-		lit, ok := src.(*Literal)
-		if !ok {
-			CompileErrorF(src, "floating-point constant folding is not implemented yet: only a bare literal is supported")
-		}
 		if !isFloatType(c, c.ResolveUnderlying(destType)) {
-			CompileErrorF(src, "Cannot cast float literal to %s", destType)
+			CompileErrorF(src, "Cannot cast a floating-point constant to %s", destType)
 		}
-		v, _ := lit.Val.(float64)
+		v, ok := evalFloatConst(c, src, c.ResolveUnderlying(destType).Name == "f32")
+		if !ok {
+			CompileErrorF(src, "Could not evaluate floating-point constant expression at compile time")
+		}
 		emitFloatConstant(of, c, dest, v)
 		return dest
 	}
@@ -6357,12 +6415,16 @@ func checkValuesComparisonCompat(c *Context, o *Op2, isOrdering bool) {
 }
 
 func resolveOperandType(ft, st ASTType) ASTType {
-	intlit := intlitASTType()
-	if !ft.Same(intlit) {
+	if !isPendingLit(ft) {
 		return ft
 	}
-	if !st.Same(intlit) {
+	if !isPendingLit(st) {
 		return st
+	}
+	// Both operands are pending literals, so nothing concrete constrains
+	// them: default by kind, with a float literal dominating an integer one.
+	if ft.Same(floatlitASTType()) || st.Same(floatlitASTType()) {
+		return ASTType{Name: "f64"}
 	}
 	return numASTType()
 }
@@ -6566,7 +6628,99 @@ func floatArithOp(c *Context, o *Op2) (string, bool) {
 	return "", false
 }
 
+// emitFloatCompare lowers a comparison whose operands are floats.
+//
+// IEEE comparison has four outcomes, not three: besides less/equal/greater a
+// pair can be *unordered*, which is what happens when either operand is NaN.
+// Every ordered comparison must be false when unordered, and `x != x` must be
+// true for NaN. UCOMIS* reports unordered by setting ZF, PF and CF together.
+//
+// The orderings get this for free by comparing with the operands swapped and
+// testing the unsigned above/above-or-equal conditions: `seta` requires
+// CF = 0 and ZF = 0, and `setae` requires CF = 0, both of which the unordered
+// result fails. So no explicit NaN test is needed.
+//
+// Equality is the only case that costs extra, because ZF is set both when the
+// operands are equal and when they are unordered. PF distinguishes the two, so
+// equality is `sete AND setnp` and inequality is `setne OR setp` — two extra
+// instructions, on equality only.
+//
+// This also gives -0.0 == 0.0 the correct answer (true), which a bitwise
+// comparison would get wrong.
+func emitFloatCompare(of io.Writer, c *Context, o *Op2, ft ASTType, first, second spot, dest spot) spot {
+	cmp := "ucomisd"
+	if c.ResolveUnderlying(ft).Name == "f32" {
+		cmp = "ucomiss"
+	}
+	if dest.empty() {
+		dest = newSpot(of, c, c.Temp(), boolASTType())
+	}
+	// Keep each flag producer adjacent to its consumers: bas does not model
+	// EFLAGS and may schedule a spill reload in between (see CLAUDE.md). The
+	// reload path is flag-safe, but adjacency is the contract.
+	switch o.Type {
+	case n_lt:
+		fmt.Fprintf(of, "\t%s %s %s\n", cmp, second.ref, first.ref)
+		fmt.Fprintf(of, "\tseta %s\n", dest.ref)
+	case n_le:
+		fmt.Fprintf(of, "\t%s %s %s\n", cmp, second.ref, first.ref)
+		fmt.Fprintf(of, "\tsetae %s\n", dest.ref)
+	case n_gt:
+		fmt.Fprintf(of, "\t%s %s %s\n", cmp, first.ref, second.ref)
+		fmt.Fprintf(of, "\tseta %s\n", dest.ref)
+	case n_ge:
+		fmt.Fprintf(of, "\t%s %s %s\n", cmp, first.ref, second.ref)
+		fmt.Fprintf(of, "\tsetae %s\n", dest.ref)
+	case n_deq:
+		ord := newSpot(of, c, c.Temp(), boolASTType())
+		fmt.Fprintf(of, "\t%s %s %s\n", cmp, first.ref, second.ref)
+		fmt.Fprintf(of, "\tsetnp %s\n", ord.ref)
+		fmt.Fprintf(of, "\tsete %s\n", dest.ref)
+		fmt.Fprintf(of, "\tand %s %s\n", dest.ref, ord.ref)
+		ord.free(of)
+	case n_neq:
+		unord := newSpot(of, c, c.Temp(), boolASTType())
+		fmt.Fprintf(of, "\t%s %s %s\n", cmp, first.ref, second.ref)
+		fmt.Fprintf(of, "\tsetp %s\n", unord.ref)
+		fmt.Fprintf(of, "\tsetne %s\n", dest.ref)
+		fmt.Fprintf(of, "\tor %s %s\n", dest.ref, unord.ref)
+		unord.free(of)
+	default:
+		CompileErrorF(o.First, "internal compiler error: %s is not a float comparison", opSym(o.Type))
+	}
+	return dest
+}
+
+// floatCompareOperandType reports the operand type of a float comparison.
+func floatCompareOperandType(c *Context, o *Op2) (ASTType, bool) {
+	switch o.Type {
+	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq:
+	default:
+		return ASTType{}, false
+	}
+	ft := resolveOperandType(o.First.ASTType(c), o.Second.ASTType(c))
+	if !isFloatType(c, ft) {
+		return ASTType{}, false
+	}
+	return ft, true
+}
+
 func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
+	if ft, ok := floatCompareOperandType(c, o); ok {
+		fst := newSpot(of, c, c.Temp(), ft)
+		first := compileTop(of, c, o.First, fst)
+		var second spot
+		if o.Second.ASTType(c).Same(ft) {
+			second = compileTop(of, c, o.Second, nullspot)
+		} else {
+			snd := newSpot(of, c, c.Temp(), ft)
+			second = compileTop(of, c, o.Second, snd)
+		}
+		dest = emitFloatCompare(of, c, o, ft, first, second, dest)
+		first.free(of)
+		second.free(of)
+		return dest
+	}
 	if op, ok := floatArithOp(c, o); ok {
 		t := o.ASTType(c)
 		fst := newSpot(of, c, c.Temp(), t)
