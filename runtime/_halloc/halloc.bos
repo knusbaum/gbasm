@@ -70,6 +70,13 @@ CLASS_MIN i64 := 16
 CLASS_MAX i64 := 32768
 NUM_CLASSES i64 := 12
 
+// A huge allocation carries a header, unlike every other tier: it lives
+// outside any reserve, so there is no descriptor to consult and the size has
+// to travel with the block. Sixteen bytes keeps the returned pointer
+// 16-aligned given a page-aligned mapping.
+HUGE_MAGIC i64 := 0x48554745
+PAGE_SIZE i64 := 4096
+
 // Span descriptor states.
 SPAN_FREE i64 := 0
 SPAN_SMALL i64 := 1
@@ -604,6 +611,89 @@ fn free_small(p uintptr, sb uintptr, d *mut span_desc) {
 }
 
 // ---------------------------------------------------------------------------
+// Large and huge objects
+// ---------------------------------------------------------------------------
+
+// huge_hdr precedes a huge allocation. The magic is a corruption check, not a
+// security measure: it catches a pointer that was never ours, or a double free
+// that has already unmapped the header.
+type huge_hdr struct {
+	magic i64
+	total i64
+}
+
+// chunk_capacity is the largest request a chunk can serve, and therefore the
+// boundary between the large and huge tiers.
+fn chunk_capacity() i64 {
+	return (SPANS_PER_CHUNK - METADATA_SPANS) * SPAN_SIZE
+}
+
+// alloc_large serves a request too big for a size class from a run of
+// contiguous spans. The result is SPAN_SIZE-aligned and carries no header --
+// the span descriptor already records that the run is large and how long it is.
+fn alloc_large(size i64) uintptr {
+	n := (size + SPAN_SIZE - 1) / SPAN_SIZE
+	p := span_alloc(n)
+	if (p == uintptr(0)) {
+		return uintptr(0)
+	}
+
+	// Zero per span rather than for the whole run: a run is assembled from
+	// whichever spans happened to be free, so some may be untouched pages
+	// while others were written and released.
+	base := chunk_of(p)
+	i := span_index(p)
+	var k i64 := 0
+	for (; k < n; k = k + 1) {
+		d := desc(base, i+k)
+		if (d.clean == 0) {
+			zero_bytes(span_addr(base, i+k), SPAN_SIZE)
+			d.clean = 1
+		}
+	}
+	return p
+}
+
+// free_large returns a run of spans to its chunk.
+fn free_large(base uintptr, i i64, d *mut span_desc) {
+	span_give(base, i, d.runlen)
+}
+
+// alloc_huge maps a request larger than a chunk can hold. mmap pages are
+// zero-filled, so the zeroing contract needs nothing extra here.
+fn alloc_huge(size i64) uintptr {
+	hdr := i64(size_of(huge_hdr))
+	total := (size + hdr + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1)
+	base := sys.map_anon(total)
+	if (base == uintptr(0)) {
+		return uintptr(0)
+	}
+	h := unsafe_cast(*mut huge_hdr, base)
+	h.magic = HUGE_MAGIC
+	h.total = total
+	return base + uintptr(hdr)
+}
+
+// free_huge unmaps a huge allocation.
+//
+// Huge blocks are released to the kernel immediately, with no cache. If a
+// workload turns out to churn them the same hysteresis argument that shapes
+// the chunk policy applies here too, but that is a change to make with
+// evidence rather than in advance.
+fn free_huge(p uintptr) {
+	hb := p - uintptr(size_of(huge_hdr))
+	h := unsafe_cast(*mut huge_hdr, hb)
+	if (h.magic != HUGE_MAGIC) {
+		// Not one of ours, or already freed. Doing nothing is the only safe
+		// response: unmapping on a bad guess would take out unrelated memory.
+		return
+	}
+	total := h.total
+	h.magic = 0
+	_ := sys.munmap(hb, total)
+}
+
+// ---------------------------------------------------------------------------
 // Public interface
 // ---------------------------------------------------------------------------
 
@@ -618,8 +708,10 @@ pub fn alloc(size i64) *mut byte {
 	if (size <= CLASS_MAX) {
 		return unsafe_cast(*mut byte, alloc_small(size))
 	}
-	// Large and huge tiers are not implemented yet.
-	return unsafe_cast(*mut byte, uintptr(0))
+	if (size <= chunk_capacity()) {
+		return unsafe_cast(*mut byte, alloc_large(size))
+	}
+	return unsafe_cast(*mut byte, alloc_huge(size))
 }
 
 // free releases a pointer returned by alloc. Freeing 0 is a no-op.
@@ -628,14 +720,21 @@ pub fn free(p *mut byte) {
 	if (a == uintptr(0)) {
 		return
 	}
-	sb := span_base(a)
-	d := desc_of(a)
-	if (uintptr(d) == uintptr(0)) {
-		// Not from any live chunk: a huge allocation, once that tier exists.
+	base := chunk_of(a)
+	if (base == uintptr(0)) {
+		// Outside every reserve, so it is a huge allocation -- the one tier
+		// that lives in its own mapping.
+		free_huge(a)
 		return
 	}
+	i := span_index(a)
+	d := desc(base, i)
 	if (d.state == SPAN_SMALL) {
-		free_small(a, sb, d)
+		free_small(a, span_base(a), d)
+		return
+	}
+	if (d.state == SPAN_LARGE_HEAD) {
+		free_large(base, i, d)
 	}
 }
 

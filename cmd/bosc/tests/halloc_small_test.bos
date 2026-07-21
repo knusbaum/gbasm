@@ -178,10 +178,14 @@ fn main() {
 		_halloc.free(unsafe_cast(*mut byte, big[i]))
 	}
 
-	// --- Nothing above CLASS_MAX yet -----------------------------------------
-	// The large and huge tiers are the next task; until then an oversized
-	// request must fail cleanly rather than return something unusable.
-	if (uintptr(_halloc.alloc(32769)) == uintptr(0)) { line(1) } else { line(0) }
+	// --- One past CLASS_MAX leaves the small path ----------------------------
+	// A request over the largest class is served by the large tier, from a run
+	// of spans rather than a size class, so it comes back SPAN_SIZE-aligned
+	// rather than merely 16-aligned. The large tier's own behaviour is covered
+	// in halloc_large_test; this just pins where the boundary sits.
+	over := _halloc.alloc(32769)
+	if (uintptr(over) & uintptr(65535) == uintptr(0)) { line(1) } else { line(0) }
+	_halloc.free(over)
 
 	// --- Bounded growth ------------------------------------------------------
 	// An alloc/free loop must not grow the heap. This is the assertion no

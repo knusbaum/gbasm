@@ -1,0 +1,58 @@
+package main
+
+import "string"
+
+// Arithmetic whose right operand is a file-scope global.
+//
+// A global's name resolves to memory in .bs, and for a one-operand form like
+// `idiv <sym>` bas has nothing to size the operand from, so it selects the
+// narrowest encoding -- F6 /7, IDIV r/m8. A 64-bit divide silently became a
+// byte divide by the LOW BYTE of the divisor. For 65536 that byte is 0, so the
+// program died with SIGFPE nowhere near the actual bug.
+//
+// The same family as the `mov [mem] imm` narrowing already documented in
+// CLAUDE.md. Found when the allocator computed a span count by dividing by a
+// global SPAN_SIZE.
+//
+// Divisors below are deliberately values whose low byte is zero, since that is
+// what turns the mis-encoding into a crash rather than a wrong answer.
+
+SPAN_SIZE i64 := 65536
+BIG i64 := 4194304
+SMALLISH i64 := 256
+ODD i64 := 1000
+
+USPAN u64 := 65536
+
+fn line(n i64) {
+	string.puti(n)
+	string.putc('\n')
+}
+
+fn main() {
+	// Signed division and modulo by a global.
+	line(200000 / SPAN_SIZE)
+	line(200000 % SPAN_SIZE)
+	line(8388608 / BIG)
+	line(1000000 / SMALLISH)
+	line(1000000 % SMALLISH)
+
+	// A divisor whose low byte is nonzero would have produced a wrong answer
+	// rather than a crash, which is the quieter failure.
+	line(123456 / ODD)
+	line(123456 % ODD)
+
+	// Unsigned division takes the other branch of the codegen.
+	u u64 := 200000
+	line(i64(u / USPAN))
+	line(i64(u % USPAN))
+
+	// Multiplication by a global uses the one-operand form for unsigned, so it
+	// has the same exposure.
+	line(i64(u * 2))
+
+	// The rounding-up idiom the allocator actually needed.
+	line((32769 + SPAN_SIZE - 1) / SPAN_SIZE)
+	line((200000 + SPAN_SIZE - 1) / SPAN_SIZE)
+	line((65536 + SPAN_SIZE - 1) / SPAN_SIZE)
+}

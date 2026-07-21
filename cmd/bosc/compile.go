@@ -6147,6 +6147,31 @@ func raxForType(t ASTType) string {
 	}
 }
 
+// materializeForWidthSensitiveOp copies an address-named operand into a
+// register temp before it is used by an instruction whose operand width bas
+// infers from the operand itself.
+//
+// A file-scope global's name resolves to memory in .bs. For a one-operand
+// form like `idiv <sym>` bas has nothing to size the operand from and selects
+// the NARROWEST encoding -- F6 /7, IDIV r/m8 -- so a 64-bit divide silently
+// becomes a byte divide by the low byte of the value. For a 65536 divisor
+// that low byte is 0, and the program dies with SIGFPE nowhere near the bug.
+// Same family as the `mov [mem] imm` narrowing already documented in
+// CLAUDE.md.
+//
+// A register destination gives bas the width unambiguously, so materializing
+// removes the guess. The literal path already did this incidentally, which is
+// why `x / 65536` worked while `x / SPAN_SIZE` did not.
+func materializeForWidthSensitiveOp(of io.Writer, c *Context, s spot, t ASTType) spot {
+	if !s.nameIsAddress {
+		return s
+	}
+	tmp := newSpot(of, c, c.Temp(), t)
+	move(of, c, tmp, s)
+	s.free(of)
+	return tmp
+}
+
 // mulDivRegs returns the rax/rdx equivalents for a given type size in bits.
 // Used to select the right register pair for mul/div at each integer width.
 func mulDivRegs(bits int) (raxName, rdxName string) {
@@ -7197,6 +7222,7 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 				first.free(of)
 			}
 			second := compileTop(of, c, o.Second, nullspot)
+			second = materializeForWidthSensitiveOp(of, c, second, ot)
 			// Ensure first is in rax; compiling second may have evicted it.
 			// Safe: tmp is a fresh Temp, never volatile.
 			fmt.Fprintf(of, "\tinreg %s %s\n", tmp.ref, raxName)
@@ -7237,6 +7263,7 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 			first.free(of)
 		}
 		second := compileTop(of, c, o.Second, nullspot)
+		second = materializeForWidthSensitiveOp(of, c, second, ot)
 		// Ensure the dividend is in rax before the division instruction.
 		// Compiling the second operand (e.g. a funcall) may have evicted tmp
 		// from rax to its stack slot. inreg reloads it. tmp is always a fresh
@@ -7282,6 +7309,7 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 			first.free(of)
 		}
 		second := compileTop(of, c, o.Second, nullspot)
+		second = materializeForWidthSensitiveOp(of, c, second, ot)
 		fmt.Fprintf(of, "\tinreg %s %s\n", tmp.ref, raxName)
 		rdx := regSpot(of, rdxName)
 		if signed {
