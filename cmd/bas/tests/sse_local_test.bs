@@ -111,6 +111,31 @@ function main
 	forget q
 	forget r
 
+	// --- acquiring an xmm that holds a live float local spills it ---
+	// `held` is allocated (landing on xmm8, first in the pool) and then xmm8
+	// is acquired out from under it. The local must be spilled to its stack
+	// slot and reloaded on next use, not reported as an unknown occupant.
+	// Routing matters here: the occupancy map is shared across register
+	// files, but the record of *which local* is in a register belongs to
+	// that file's allocator, so an Acquire sent to the integer allocator
+	// would see the conflict and then fail to find the local to evict.
+	// 100.0 + 100.0 = 200.0
+	local held f64
+	mov rax 0x4059000000000000
+	movq held rax
+	acquire xmm8
+	mov rax 0
+	movq xmm8 rax
+	release xmm8
+	addsd held held
+	acquire rdi
+	cvtsd2si rdi held
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+	forget held
+
 	epilogue
 	xor rax rax
 	ret

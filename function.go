@@ -1262,3 +1262,18 @@ func (f *Function) Body() ([]byte, error) {
 func (f *Function) NewLocalOfClass(name string, class RegClass, size int) (*Ralloc, error) {
 	return f.allocatorFor(class).NewLocal(name, size)
 }
+
+// Acquire evicts whatever local occupies r and marks it in use. Routed to the
+// allocator that owns r's register file: the occupancy map is shared across
+// files, but the record of *which local* is in a register lives with that
+// file's allocator, so asking the wrong one finds the conflict and then fails
+// to find the local to evict.
+func (f *Function) Acquire(r Register) {
+	f.allocatorFor(r.Class()).Acquire(r)
+}
+
+// EvictReg evicts whatever local occupies r, in r's own register file. It does
+// NOT mark the register in use.
+func (f *Function) EvictReg(r Register) {
+	f.allocatorFor(r.Class()).EvictReg(r)
+}
