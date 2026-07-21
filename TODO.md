@@ -49,11 +49,23 @@ So `p := &x; *p = v` is fine but `sp := &x; *sp = v` is not, which is a
 namespace leak from the assembler into the language. Found while writing the
 global-store-through-pointer regression test.
 
-Fix on either side: have bosc mangle user local names in emitted `.bs`, or have
-bas prefer a declared `local` over a register name when resolving a bracket
-operand. The bosc-side mangle is the more thorough fix (it closes the whole
-class rather than one syntactic position) but changes every `.bs` the compiler
-emits, so it wants its own change.
+**Decided direction, two halves:**
+
+1. **bas rejects a `local` that shadows a register name.** Silently resolving
+   one way in direct position and the other inside brackets is the actual
+   defect; a hand-written `.bs` that declares `local sp` should be an error at
+   the point of declaration, not a miscompile at the point of use. This half is
+   self-contained — but check the runtime `.bs` files first, since any that
+   already use such a name have to be renamed in the same change.
+2. **bosc names locals so the collision cannot arise.** Undecided. Blanket
+   mangling would work but makes the symbol table ugly to read, which matters
+   because inspecting the `.bs` is the primary debugging path for this
+   toolchain. Wants a scheme that stays legible — mangle only on collision, use
+   a character registers can't contain, or scope-qualify. Needs thought before
+   it is written.
+
+Do (1) first: it converts a silent miscompile into a clear error and does not
+depend on settling (2).
 
 ### Code formatter (`go fmt`-style)
 A canonical, opinionated formatter for `.bos` source — no config, one
