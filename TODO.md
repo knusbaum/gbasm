@@ -36,16 +36,6 @@ C backend.
 
 ## Tooling
 
-### `bas`: an unknown register name silently becomes an external symbol
-`bas`'s operand-resolution chain falls through to `isIdentifier` →
-`&gbasm.Var{Name: ...}` (`cmd/bas/main.go:1459`, `:1528`), so a register name the
-assembler doesn't know — `xmm0`, or simply a typo like `rxa` — is not rejected.
-It becomes an unresolved *external symbol* with a RIP-relative relocation, and
-the mistake surfaces much later as a baffling link error (or worse, resolves
-against a real symbol). Register-shaped identifiers should be rejected at parse
-time with "no such register". Found while surveying for float support; fixing it
-is independent of that work.
-
 ### Code formatter (`go fmt`-style)
 A canonical, opinionated formatter for `.bos` source — no config, one
 true layout, like `gofmt`. Would also give the editor integrations
