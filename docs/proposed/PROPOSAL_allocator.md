@@ -2,6 +2,13 @@
 
 ## History
 
+- 2026-07-21 — Chunks are carved from larger reserved regions rather than
+  mmapped individually. Removes the chunk registry, its fixed-size array and
+  its 4GiB ceiling; makes chunk acquisition syscall-free; and reduces the
+  chunk-alignment trim to a once-per-reserve step. RESERVE_SIZE is 1GiB rather
+  than something larger so VSZ stays unremarkable. Recorded the chunk-layer
+  interface boundary, which is what keeps a later move to per-chunk mapping a
+  constant change rather than a rewrite.
 - 2026-07-21 — Moved span descriptors out of the spans into chunk metadata.
   With an in-span header, `2 × 32768` exactly equals `SPAN_SIZE`, so the largest
   class fit one object where it should fit two — half a span wasted, and the
@@ -76,7 +83,8 @@ CHUNK_SIZE  = 4 MiB      // 64 spans; the unit of mmap
 SPAN_SIZE   = 64 KiB     // the unit of sub-allocation
 CLASS_MIN   = 16 bytes   // also the alignment guarantee
 CLASS_MAX   = 32 KiB     // 12 classes: 16,32,64,...,32768
-MAX_CHUNKS  = 1024       // 4 GiB heap ceiling in v1 (see Registry)
+RESERVE_SIZE = 1 GiB     // the unit of mmap; 256 chunks
+MAX_RESERVES = 64        // 64 GiB in-reserve ceiling
 ```
 
 `CHUNK_SIZE` is a starting guess, not a derived value. Too small and large
@@ -108,11 +116,55 @@ not need revisiting when it lands.
 
 ## Layout
 
+### Reserves
+
+Chunks are not mmapped individually. A **reserve** is a large
+`MAP_NORESERVE` region — `RESERVE_SIZE` = 1 GiB — mapped once and carved into
+chunks by arithmetic. Acquiring a chunk is a bitmap bit and an offset: **no
+syscall**.
+
+This is what removes the chunk registry. `chunk_of(p)` is a range check against
+the (typically one or two) reserves followed by an offset division, rather than
+a binary search over a fixed-size array with a heap ceiling attached to it.
+
+`RESERVE_SIZE` is 1 GiB rather than something larger on purpose. A reservation
+costs address space, not memory — a 256 GiB `MAP_NORESERVE` mapping succeeds
+and only touched pages are ever committed — but a multi-gigabyte VSZ in `ps`
+is an operational annoyance even when it is harmless. 1 GiB keeps VSZ
+unremarkable, grows in 1 GiB steps, and lets a fully-empty reserve be released.
+
+**Reserve size is a tuning constant, not an architectural commitment.** The
+design degenerates continuously: at `RESERVE_SIZE == CHUNK_SIZE` it *is*
+map-what-you-need, with every chunk its own mapping. Moving that way later
+means shrinking the constant, raising `MAX_RESERVES`, and upgrading the reserve
+scan from linear to binary search — not restructuring the allocator.
+
+### The chunk-layer boundary
+
+**Nothing above the chunk layer may touch a reserve, a bitmap, or `mmap`.** The
+tiers see exactly:
+
+```
+chunk_of(p uintptr) uintptr        // chunk base containing p, or 0
+chunk_alloc() uintptr              // a fresh chunk, or 0
+chunk_release(base uintptr)        // give one back
+chunk_iter_first() / _next(base)   // iteration, for span searching
+desc(base uintptr, i i64)          // span descriptor
+span_addr(base uintptr, i i64)     // span base address
+```
+
+This boundary is what makes the migration above a constant change. It is also
+exactly the kind of thing that rots silently: a shortcut in the large-object
+path that reads reserve state directly would turn a one-line change into a
+rewrite, and nothing would notice until someone tried.
+
 ### Chunks
 
 A chunk is `CHUNK_SIZE` bytes, **aligned to `CHUNK_SIZE`**. Alignment is load
 bearing: it makes both the chunk base and the span base derivable from any
-interior pointer by masking, with no lookup.
+interior pointer by masking, with no lookup. Because chunks are carved from an
+aligned reserve at multiples of `CHUNK_SIZE`, this now falls out for free —
+the alignment trim happens once per reserve rather than once per chunk.
 
 ```
 chunk_base = p & ~(CHUNK_SIZE - 1)
@@ -220,8 +272,8 @@ alignment anyway.
 
 1. Fast reject: if `p` is outside `[min_chunk_base, max_chunk_base + CHUNK_SIZE)`
    it cannot be in a chunk — go to the huge path.
-2. Look up `p & ~(CHUNK_SIZE-1)` in the chunk registry. A miss means huge:
-   read the header at `p - 16`, check the magic, `munmap`.
+2. `chunk_of(p)` — a range check against each reserve. A miss means huge: read
+   the header at `p - 16`, check the magic, `munmap`.
 3. A hit means in-chunk. Read `span_state[span_index]`:
    - `LARGE_HEAD` → return the whole run to `FREE`.
    - `SMALL` → push `p` onto the span's free list, decrement `used`. If `used`
@@ -231,20 +283,25 @@ alignment anyway.
    touches the freed span's own pages except to write the free-list link. A
    purged span stays purged until it is reused.
 
-### The chunk registry
+### Finding the chunk
 
-`free` must distinguish in-chunk pointers from huge ones, and cannot simply
-mask and dereference — for a huge pointer that address may be unmapped.
+`free` must distinguish in-chunk pointers from huge ones, and cannot simply mask
+and dereference — for a huge pointer that address may be unmapped.
 
-v1 uses a **fixed-size sorted array of chunk bases** (`MAX_CHUNKS` entries,
-8KB of file-scope storage) with binary search, preceded by the range fast
-reject above. Fixed size specifically to avoid the bootstrap problem: the
-registry cannot itself be heap-allocated. The consequence is a 4 GiB ceiling on
-in-chunk heap, which should be recorded in the error path rather than silently
-failing; huge allocations are unaffected.
+Because chunks live inside reserves, this is a range check per reserve followed
+by an offset division:
 
-Replacing this with a growable or hashed structure is a contained change and is
-the obvious first thing to revisit if the ceiling or the lookup cost matters.
+```
+for each reserve r:
+    if r.base <= p < r.base + RESERVE_SIZE:
+        return r.base + ((p - r.base) / CHUNK_SIZE) * CHUNK_SIZE
+return 0     // not ours: huge, or not from this allocator
+```
+
+Typically one or two iterations, since most programs never leave the first
+reserve. A linear scan is right at `MAX_RESERVES` = 64; if `RESERVE_SIZE` is
+ever shrunk far enough that reserves become numerous, this becomes a sorted
+array with a binary search — see the migration note under Reserves.
 
 ---
 
@@ -335,7 +392,8 @@ Targeted tests on top of that:
 ## Deferred
 
 - A cache for huge allocations.
-- A growable or hashed chunk registry (and with it, the 4 GiB ceiling).
+- Shrinking `RESERVE_SIZE` toward `CHUNK_SIZE` if VSZ ever matters more than
+  syscall count, with the reserve scan becoming a binary search.
 - Passing the static size to `free`, which the compiler already knows.
 - Per-thread caches, when threads exist.
 - `realloc`/growth, when the language has a dynamically-sized allocation.
