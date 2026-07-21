@@ -227,6 +227,32 @@ func regSpot(of io.Writer, name string) spot {
 	return spot{ref: name, t: regtype}
 }
 
+// emitIndexOOBTrap emits the call into the bounds-check trap, which takes the
+// offending index in RDI and the limit in RSI and does not return.
+//
+// Both registers go through regSpot rather than being written bare. bas's
+// allocator only knows a register is occupied when a named allocation lives
+// there, so a bare `mov rdi <index>` tells it nothing — and the very next
+// instruction sources a named local for RSI, which the allocator may
+// materialize into RDI, destroying the index. See CLAUDE.md § Things that bite.
+//
+// Callers must emit their compare and branch first: the acquires here can spill
+// an evicted local, and bas does not model EFLAGS. Everything below runs only
+// on the already-failed path.
+func emitIndexOOBTrap(of io.Writer, idxOperand string, zeroExtend bool, maxOperand string) {
+	rdi := regSpot(of, "rdi")
+	rsi := regSpot(of, "rsi")
+	if zeroExtend {
+		fmt.Fprintf(of, "\tmovzx %s %s\n", rdi.ref, idxOperand)
+	} else {
+		fmt.Fprintf(of, "\tmov %s %s\n", rdi.ref, idxOperand)
+	}
+	fmt.Fprintf(of, "\tmov %s %s\n", rsi.ref, maxOperand)
+	fmt.Fprintf(of, "\tcall _init.index_oob\n")
+	rsi.free(of)
+	rdi.free(of)
+}
+
 func (s *spot) free(of io.Writer) {
 	if s.empty() {
 		return
@@ -2999,9 +3025,7 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 				l := c.Label("icheck")
 				fmt.Fprintf(of, "\tcmp %s %d\n", max.ref, ast.N)
 				fmt.Fprintf(of, "\tjg %s\n", l)
-				fmt.Fprintf(of, "\tmov rdi %d\n", ast.N)
-				fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
-				fmt.Fprintf(of, "\tcall _init.index_oob\n")
+				emitIndexOOBTrap(of, fmt.Sprintf("%d", ast.N), false, max.ref)
 				fmt.Fprintf(of, "\tlabel %s\n", l)
 			}
 			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", dest.ref, addr.ref, off)
@@ -3037,13 +3061,7 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		// a wild address. (The narrower-type path movzx-zero-extends above,
 		// so signed and unsigned agree there; only the i64 case leaks.)
 		fmt.Fprintf(of, "\tjb %s\n", l)
-		if index.t.Same(numASTType()) {
-			fmt.Fprintf(of, "\tmov rdi %s\n", index.ref)
-		} else {
-			fmt.Fprintf(of, "\tmovzx rdi %s\n", index.ref)
-		}
-		fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
-		fmt.Fprintf(of, "\tcall _init.index_oob\n")
+		emitIndexOOBTrap(of, index.ref, !index.t.Same(numASTType()), max.ref)
 		fmt.Fprintf(of, "\tlabel %s\n", l)
 		switch scale {
 		case 1, 2, 4, 8:
@@ -3191,7 +3209,9 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 	}
 	if ast.Name == "main" {
 		note(of, "\n\t// default return 0 from main\n")
-		fmt.Fprintf(of, "\tmov rax 0\n")
+		rax := regSpot(of, "rax")
+		fmt.Fprintf(of, "\tmov %s 0\n", rax.ref)
+		rax.free(of)
 	}
 	fmt.Fprintf(of, "\n\tlabel %s\n", retlab)
 	fmt.Fprintf(of, "\tepilogue\n")
@@ -4502,9 +4522,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				l := c.Label("icheck")
 				fmt.Fprintf(of, "\tcmp %s %d\n", max.ref, ast.N)
 				fmt.Fprintf(of, "\tjg %s\n", l)
-				fmt.Fprintf(of, "\tmov rdi %d\n", ast.N)
-				fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
-				fmt.Fprintf(of, "\tcall _init.index_oob\n")
+				emitIndexOOBTrap(of, fmt.Sprintf("%d", ast.N), false, max.ref)
 				fmt.Fprintf(of, "\tlabel %s\n", l)
 			}
 			if typeIsMemoryBacked(c, vt) {
@@ -4554,13 +4572,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// a wild address. (The narrower-type path movzx-zero-extends above,
 		// so signed and unsigned agree there; only the i64 case leaks.)
 		fmt.Fprintf(of, "\tjb %s\n", l)
-		if index.t.Same(numASTType()) {
-			fmt.Fprintf(of, "\tmov rdi %s\n", index.ref)
-		} else {
-			fmt.Fprintf(of, "\tmovzx rdi %s\n", index.ref)
-		}
-		fmt.Fprintf(of, "\tmov rsi %s\n", max.ref)
-		fmt.Fprintf(of, "\tcall _init.index_oob\n")
+		emitIndexOOBTrap(of, index.ref, !index.t.Same(numASTType()), max.ref)
 		fmt.Fprintf(of, "\tlabel %s\n", l)
 
 		scale := vt.Size(c)
@@ -4648,9 +4660,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			hiok := c.Label("slice_hi_ok")
 			fmt.Fprintf(of, "\tcmp %s %s\n", upper.ref, length.ref)
 			fmt.Fprintf(of, "\tjbe %s\n", hiok)
-			fmt.Fprintf(of, "\tmov rdi %s\n", upper.ref)
-			fmt.Fprintf(of, "\tmov rsi %s\n", length.ref)
-			fmt.Fprintf(of, "\tcall _init.index_oob\n")
+			emitIndexOOBTrap(of, upper.ref, false, length.ref)
 			fmt.Fprintf(of, "\tlabel %s\n", hiok)
 		} else {
 			upper = length
@@ -4667,9 +4677,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			look := c.Label("slice_lo_ok")
 			fmt.Fprintf(of, "\tcmp %s %s\n", lower.ref, upper.ref)
 			fmt.Fprintf(of, "\tjbe %s\n", look)
-			fmt.Fprintf(of, "\tmov rdi %s\n", lower.ref)
-			fmt.Fprintf(of, "\tmov rsi %s\n", upper.ref)
-			fmt.Fprintf(of, "\tcall _init.index_oob\n")
+			emitIndexOOBTrap(of, lower.ref, false, upper.ref)
 			fmt.Fprintf(of, "\tlabel %s\n", look)
 			fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", addr.ref, addr.ref, lower.ref, baset.Size(c))
 			fmt.Fprintf(of, "\tsub %s %s\n", upper.ref, lower.ref)
@@ -8726,7 +8734,7 @@ func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTTy
 			// memory to free a different register for the source LEA;
 			// the resulting partial-of-evicted-Ralloc resolves to a
 			// memory operand, and bas can't encode mem-to-mem mov.
-			fmt.Fprintf(of, "\tacquire r10\n")
+			r10 := regSpot(of, "r10")
 			switch valSize {
 			case 1:
 				fmt.Fprintf(of, "\tmovzx r10 byte[%s]\n", val.ref)
@@ -8740,8 +8748,8 @@ func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTTy
 			default:
 				CompileErrorF(errNode, "Cannot convert value of type %s to interface %s: %d-byte values are not supported by the small-struct value-backed path; use a 1/2/4/8-byte layout or a pointer", val.t, dstt.Name, valSize)
 			}
-			fmt.Fprintf(of, "\tmov [%s+0] r10\n", destRef)
-			fmt.Fprintf(of, "\trelease r10\n")
+			fmt.Fprintf(of, "\tmov [%s+0] %s\n", destRef, r10.ref)
+			r10.free(of)
 		} else if isFloatType(c, val.t) {
 			// A float lives in the SSE file, so its bits reach the data slot
 			// through the float store rather than a general-purpose mov. The
@@ -8771,10 +8779,10 @@ func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTTy
 			// value — a `qword[name]` form would instead dereference it.
 			// r10 is grabbed explicitly for the same reason as the
 			// small-struct path above.
-			fmt.Fprintf(of, "\tacquire r10\n")
+			r10 := regSpot(of, "r10")
 			fmt.Fprintf(of, "\tmov r10 %s\n", val.ref)
-			fmt.Fprintf(of, "\tmov [%s+0] r10\n", destRef)
-			fmt.Fprintf(of, "\trelease r10\n")
+			fmt.Fprintf(of, "\tmov [%s+0] %s\n", destRef, r10.ref)
+			r10.free(of)
 		} else {
 			fmt.Fprintf(of, "\tmov [%s+0] %s\n", destRef, val.ref)
 		}

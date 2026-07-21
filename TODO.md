@@ -67,36 +67,28 @@ global-store-through-pointer regression test.
 Do (1) first: it converts a silent miscompile into a clear error and does not
 depend on settling (2).
 
-### Audit bosc codegen for unsecured raw registers
+### Route the remaining acquire/release string pairs through `regSpot`
 
-`syscall6` in `runtime/_sys/sys_linux.bs` hit this and it is documented in
-CLAUDE.md § Things that bite: bas's allocator only knows a register is occupied
-when a **named** allocation lives there. Codegen that writes a raw register and
-then emits an instruction sourcing a named local invites the allocator to
-materialize that local into the very register being held.
+The *unsecured* raw-register bug class is closed: the six bounds-check trap
+sites now go through `emitIndexOOBTrap`, which acquires RDI and RSI via
+`regSpot`, and main's default `mov rax 0` and the two interface-data-slot r10
+blocks are routed the same way.
 
-`regSpot` emits `acquire`, so anything routed through it is safe. But several
-sites write registers with a bare `Fprintf` and no acquire. At least one is a
-real instance of the pattern — the bounds-check trap setup, in four places
-(`compile.go` ~3002, ~3041, ~4505, ~4558):
+What remains is stylistic but worth finishing, since hand-paired strings are
+exactly what `regSpot`/`spot.free` exist to prevent drifting:
 
-```
-mov rdi <index>          // raw write, allocator not told
-mov rsi <max.ref>        // sources a NAMED local -> may materialize into rdi
-call _init.index_oob
-```
+- `emitAssertToCall` (`compile.go` ~8166) and `compileTypeSwitchIfaceCase`
+  (~8611) emit `acquire`/`release` as literal strings for five registers each,
+  released in reverse order. Correct today, but the pairing is manual.
 
-Low blast radius (the trap path only runs when the check already failed, so the
-cost is a wrong index in the panic message rather than a miscompile) but it is
-the same defect, and severity is incidental rather than by design.
+Two sites are deliberately *not* candidates and should stay as they are:
 
-Other unaudited raw writes: `mov rax 0` for main's default return
-(`compile.go` ~3194) and the return-value sign/zero-extension
-(`compile.go` ~5431). Neither looks live-dangerous; both are unverified.
-
-Audit the whole set. Prefer routing through `regSpot`/`spot.free` over
-hand-written acquire/release so the pairing cannot drift. Worth a grep-based
-check in review rather than a one-time sweep, since the failure is silent.
+- `sub rsp` / `add rsp` in the stack-argument path. The prologue marks RSP in
+  use permanently (`rs.Use(R_RSP)`), so acquiring it would panic.
+- The return-value sign/zero-extension (`compile.go` ~5439) writes RAX
+  directly, but the local it extends was just pinned there by `inreg`, so the
+  allocator already knows the register is occupied. Acquiring would evict the
+  very value being extended.
 
 ### Code formatter (`go fmt`-style)
 A canonical, opinionated formatter for `.bos` source — no config, one
