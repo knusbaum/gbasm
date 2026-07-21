@@ -115,27 +115,46 @@ pub function syscall6
 	// restated here where it could silently drift.
 	argi a6 6
 	prologue
-	// Materialize the stack argument FIRST, into a register no syscall
-	// argument occupies yet.
+	// Secure the registers this shuffle writes before writing them.
 	//
-	// bas lowers a memory-sourced `mov <reg> <stackarg>` as a load into a
-	// scratch register followed by a register move, and it chooses the
-	// scratch. It chooses r10 -- which is where the *fourth* syscall argument
-	// has to sit. Written in the obvious order (`mov r9 a6` last), the load
-	// clobbers r10 one instruction before the `syscall`, and mmap silently
-	// receives garbage flags.
+	// bas's allocator tracks which registers are occupied by NAMED
+	// allocations -- locals and declared arguments. A raw `mov r10 r8` writes
+	// the register directly and tells it nothing, so the pool still considers
+	// r10 free. Sourcing the named stack argument `a6` then makes the
+	// allocator materialize it into a register of its own choosing, and it
+	// picks one it believes is free: r10, one instruction before the syscall,
+	// silently replacing mmap's flags with a stack address.
 	//
-	// Doing the load while r10 is still dead makes the scratch choice
-	// irrelevant. r11 is safe to hold it: the syscall clobbers r11, but not
-	// until after this reads it.
-	mov r11 a6
+	// acquire is how a hand-written function tells the allocator otherwise;
+	// bosc emits acquire/release around its own call setup for this reason.
+	// Every other .bs in the runtime is pure raw-register code with no named
+	// allocations, so the allocator is never invoked and the question never
+	// arises -- this is the only function in the tree that mixes the two.
+	//
+	// rcx and r11 are deliberately left unacquired: rcx is dead once a3 moves
+	// to rdx, r11 holds nothing, and the allocator needs something free to
+	// materialize a6 into. Both are syscall-clobbered anyway.
+	acquire rax
+	acquire rdi
+	acquire rsi
+	acquire rdx
+	acquire r10
+	acquire r8
+	acquire r9
 	mov rax rdi
 	mov rdi rsi
 	mov rsi rdx
 	mov rdx rcx
 	mov r10 r8
 	mov r8 r9
-	mov r9 r11
+	mov r9 a6
 	syscall
+	release r9
+	release r8
+	release r10
+	release rdx
+	release rsi
+	release rdi
+	release rax
 	epilogue
 	ret
