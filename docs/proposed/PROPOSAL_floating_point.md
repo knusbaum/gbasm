@@ -2,6 +2,10 @@
 
 ## History
 
+- 2026-07-20 — **Evaluation precision settled** (former Open Question #2):
+  `f32` computes in `f32` via the single-scalar instruction family;
+  intermediates are never silently widened. Widening is explicit
+  (`f64(a)`), exact, and costs one instruction.
 - 2026-07-20 — **Aggregate ABI settled** (former Open Question #7): class is a
   property of *raw scalars only* — aggregates are passed by pointer (>8B) or as
   opaque bits in a GPR (≤8B), exactly as today, and a float inside an aggregate
@@ -194,6 +198,47 @@ over unchanged, so mixed `f64 * i64` remains an error requiring an explicit cast
 integer division by zero traps (`#DE`); float division by zero yields ±Inf
 silently, and `0.0/0.0` yields NaN. Integer overflow wraps (`DESIGN.md`
 §Expressions); float overflow yields ±Inf.
+
+### Evaluation precision (decided: `f32` computes in `f32`)
+
+`f32` arithmetic is evaluated in `f32` using the single-scalar instruction family
+(`addss`, `subss`, `mulss`, `divss`, `ucomiss`); `f64` uses the double-scalar
+family. **Intermediates are never silently widened.**
+
+The type is a promise about precision, not a storage hint. Widening intermediates
+would make results depend on where the compiler chose to round — that is, on
+register allocation and spilling — which is precisely the x87 failure mode that
+SSE exists to have fixed (and that C had to add `FLT_EVAL_METHOD` to describe).
+It also keeps results identical to every other SSE-era language.
+
+The difference is not subtle. With all-`f32` `a = 1e8`, `b = 1.0`, `c = -1e8`:
+
+| | `a + b` | `+ c` | result |
+|---|---|---|---|
+| in `f32` | `1e8` — `1.0` is below the ulp and vanishes | `0` | **`0.0`** |
+| widened to `f64` | `100000001.0` exactly | `1.0` | **`1.0`** |
+
+And for overflow, with `a = b = 1e30`, `a * b / a`: in `f32` the product exceeds
+the ~3.4e38 maximum → `+Inf` → result `+Inf`; with `f64` intermediates the
+product is fine and the result is `1e30`.
+
+**Widening is explicit and cheap.** A user wanting more headroom writes
+`f64(a) * f64(b)`, which lowers to one `cvtss2sd` per operand plus `mulsd` — the
+cost is a single instruction per widened value and it is visible in the source.
+The asymmetry makes this safe: **`f32`→`f64` is exact**, since `f64`'s range and
+mantissa strictly contain `f32`'s; only the deliberate narrowing back rounds.
+
+*Cost to us*: both the `ss` and `sd` variants of every arithmetic, comparison,
+and conversion instruction, rather than `sd` plus conversions. Mechanical —
+`x86_64.xml` carries every form.
+
+*FMA is unavailable regardless.* A fused multiply-add computes `a*b+c` with a
+single rounding — another source of "same source, different answer." FMA is
+VEX-encoded and `parseForm` hard-errors on VEX (`encoder.go:1420`), so it cannot
+be emitted even by accident.
+
+This is a defined-evaluation-semantics rule and belongs in `DESIGN.md`
+§Expressions when it lands, alongside the integer-overflow-wraps rule.
 
 ### Comparisons and NaN
 
@@ -628,9 +673,8 @@ not exist for SSE today.
    (`local x 64 float`), or a separate directive. It should name a general
    register class, not `xmm` — arm64 has its own FP file. Same question for the
    argument directives.
-2. **Does `f32` compute in `f32`, or promote to `f64` and round?** SSE supports
-   both. Go computes `float32` in `float32`. Recommend true `f32` ops (`movss`,
-   `addss`, …) for predictability.
+*(The former #2, `f32` evaluation precision, is settled — see "Evaluation
+precision" under Language design: `f32` computes in `f32`, widening is explicit.)*
 3. **`<floatlit>` precision.** `big.Float` (mirroring `<intlit>`'s `big.Int`) at
    what mantissa width? And is `x f64 := 0.1` required to round-to-nearest-even
    at the assignment, matching what a runtime parse would produce?
