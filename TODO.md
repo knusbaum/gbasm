@@ -56,28 +56,6 @@ ownership/move/escape bulk is flow-sensitive → checker, not `ToAST`; do the
 type-only families (name resolution, arity, cast legality, struct-literal shape)
 first.
 
-### Arguments beyond the register count aren't passed on the stack
-`bosc` rejects a call with more than 6 integer or more than 8 floating-point
-arguments ("more than 6 integer arguments are not supported"), rather than
-spilling the excess to the stack as System V specifies. The limits are exactly
-the register counts of each class, so this is one missing capability, not two.
-The assembler side already has `Function.StackArg`, and `compileFunctionBody`
-already receives stack arguments via `ArgI` for index > 5 — what is missing is
-the *caller* side: `setupArgs`/`argRegisters` in `cmd/bosc/compile.go` have no
-path to push arguments beyond the register list, and `Function.ArgFloat`
-likewise refuses SSE index >= 8. Found while completing floating-point support;
-independent of it, and affects integers first.
-
-### Odd-sized small structs can't be passed by value
-A by-value struct of 3, 5, 6, or 7 bytes is rejected with "passing a N-byte value
-by value is not supported; use a pointer or a 1/2/4/8-byte layout"
-(`packSmallMemBackedArg`, `cmd/bosc/compile.go:5658`). Sizes 1/2/4/8 pack into a
-register and anything over 8 bytes is passed by address, so only these in-between
-sizes fail — e.g. `struct{ a i8; b i16 }`. Simplest fix is to route a ≤8-byte
-aggregate whose size isn't 1/2/4/8 to the existing by-address path rather than
-the packing path (widening the load instead would read past the allocation).
-Found while surveying for float support; independent of it.
-
 ### Constant negative index should be a compile-time error
 `nums[-1]` is decidable at compile time but only *runtime*-traps today, while
 `nums[3]` (positive constant OOB) is already a compile-time error. The runtime
@@ -88,6 +66,78 @@ removes the positive/negative asymmetry. First concrete entry off the audit abov
 ---
 
 ## Runtime / Codegen
+
+### Full System V AMD64 ABI conformance
+
+DESIGN.md §Calling Convention says Boson "follows System V AMD64 exactly". That
+is true for the common cases — the integer and SSE argument registers, the
+callee/caller-saved split, XMM0 returns — but several corners of the spec are
+unimplemented or divergent. They are listed separately below because each can
+land on its own, but they are one body of work: *say what we do, or do what we
+say*. Until then the doc's claim is stronger than the implementation.
+
+**Why it matters beyond tidiness.** The ABI is the boundary with everything not
+written in Boson. Any future C interop — calling libc, being called from C, a
+signal handler, a callback handed to an OS API — needs these corners right, and
+each divergence is invisible until the day something on the other side of the
+boundary exercises it. Conversely, if a corner is deliberately *not* going to be
+implemented, DESIGN.md should say so plainly, the way it already does for
+aggregate register classification.
+
+#### Arguments beyond the register count aren't passed on the stack
+
+`bosc` rejects a call with more than 6 integer or more than 8 floating-point
+arguments ("more than 6 integer arguments are not supported"), rather than
+spilling the excess to the stack as System V specifies. The limits are exactly
+the register counts of each class, so this is one missing capability, not two.
+The assembler side already has `Function.StackArg`, and `compileFunctionBody`
+already receives stack arguments via `ArgI` for index > 5 — what is missing is
+the *caller* side: `setupArgs`/`argRegisters` in `cmd/bosc/compile.go` have no
+path to push arguments beyond the register list, and `Function.ArgFloat`
+likewise refuses SSE index >= 8. Found while completing floating-point support;
+independent of it, and affects integers first. **This is the one users will hit
+first** — a seven-argument function is ordinary code, not a corner case.
+
+#### Odd-sized small structs can't be passed by value
+
+A by-value struct of 3, 5, 6, or 7 bytes is rejected with "passing a N-byte value
+by value is not supported; use a pointer or a 1/2/4/8-byte layout"
+(`packSmallMemBackedArg`, `cmd/bosc/compile.go`). Sizes 1/2/4/8 pack into a
+register and anything over 8 bytes is passed by address, so only these in-between
+sizes fail — e.g. `struct{ a i8; b i16 }`. Simplest fix is to route a ≤8-byte
+aggregate whose size isn't 1/2/4/8 to the existing by-address path rather than
+the packing path (widening the load instead would read past the allocation).
+Found while surveying for float support; independent of it.
+
+#### Aggregates are not classified per eightbyte
+
+System V classifies an aggregate by splitting it into eightbytes and assigning
+each a class, so `struct{ a f64; b f64 }` travels in *two SSE registers* and
+`struct{ a i64; b f64 }` in one integer and one SSE register. Boson instead
+treats class as a property of raw scalars only: an aggregate goes by address
+above 8 bytes, or as opaque bits in an integer register at or below it,
+whatever it contains. This is a **deliberate, documented** scope-out (see
+DESIGN.md §Calling Convention and the floating-point proposal), and it is
+self-consistent for Boson-to-Boson calls. It is listed here because it is
+precisely the divergence that breaks C interop, and the decision should be
+revisited — not silently inherited — when interop is on the table.
+
+#### Aggregate returns need auditing against the MEMORY-class protocol
+
+A >8-byte struct return currently works by handing back an address in RAX.
+System V's MEMORY class instead requires the *caller* to allocate the result
+and pass its address as a hidden first argument in RDI, with the callee
+returning that same pointer in RAX. Whether Boson's mechanism coincides with
+that or merely resembles it has not been checked. Audit it, then either
+conform or document the divergence.
+
+#### Variadic calls do not set AL
+
+System V requires AL to hold the number of vector registers used when calling a
+variadic function. Boson's own variadics do not go through the C convention (a
+`...any` call builds a backing array), so nothing is wrong today — but a call
+*into* a C variadic like `printf` would need this. File it with interop rather
+than fix it speculatively.
 
 ### Read-only `.rodata` hardening
 String constants currently land in the writable `.data` LOAD segment;

@@ -2315,11 +2315,16 @@ A `volatile` local can never be placed in a register. Once marked volatile, `inr
 
 ### Calling Convention
 
-Follows System V AMD64 ABI exactly:
+Follows the System V AMD64 ABI for the cases below. Several corners of the spec
+are unimplemented or deliberately divergent — arguments past the register count,
+odd-sized by-value aggregates, per-eightbyte aggregate classification, and the
+MEMORY-class return protocol. These are inconsequential for Boson-to-Boson calls
+and are exactly what would matter for C interop; they are enumerated in
+[`TODO.md`](TODO.md) § Full System V AMD64 ABI conformance.
 
 - **Integer argument registers (in order):** RDI, RSI, RDX, RCX, R8, R9
 - **Floating-point argument registers (in order):** XMM0–XMM7
-- **Stack arguments:** pushed right-to-left, accessible at positive offsets from RSP after prologue
+- **Stack arguments:** pushed right-to-left, accessible at positive offsets from RSP after prologue. Hand-written `.bs` can receive them (`arg <name> <index>`); `bosc` does not yet *emit* them, so it rejects a call with more than 6 integer or 8 floating-point arguments
 - **Return value:** RAX (primary), RDX (secondary for 128-bit returns); **XMM0** for a floating-point return
 - **Callee-saved:** RBX, RSP, RBP, R12–R15 (preserved across calls; `prologue`/`epilogue` save/restore these)
 - **Caller-saved:** RAX, RCX, RDX, RSI, RDI, R8–R11, **and every XMM register** (may be clobbered by any call)
