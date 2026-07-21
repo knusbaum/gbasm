@@ -59,6 +59,18 @@ RESERVE_SIZE i64 := 1073741824
 CHUNKS_PER_RESERVE i64 := 256
 MAX_RESERVES i64 := 64
 
+// PURGE_WATERMARK is how many dirty free spans a chunk may hold before its
+// pages are returned to the kernel with MADV_DONTNEED. It gates the level-2
+// release: a workload that churns a few spans never crosses it and never
+// syscalls, while a chunk that goes broadly idle drops its RSS.
+PURGE_WATERMARK i64 := 8
+
+// MIN_RESERVES is how many reserves stay mapped even when empty. Keeping the
+// first one avoids munmap/mmap churn for a program that oscillates around the
+// 1GiB boundary; a reserve is unmapped only once every chunk in it is free AND
+// another reserve remains.
+MIN_RESERVES i64 := 1
+
 // 256 chunk bits per reserve, packed into i64 words.
 RES_WORDS i64 := 4
 
@@ -218,7 +230,11 @@ fn chunk_init(base uintptr) {
 	h := unsafe_cast(*mut chunk_hdr, base)
 	h.base = base
 	h.free_spans = SPANS_PER_CHUNK - METADATA_SPANS
-	h.purged = 0
+	// Every free span starts clean -- fresh pages, or zero after the
+	// MADV_DONTNEED that released this chunk -- so all of them count as purged.
+	// purged tracks free spans whose pages are known zero; free_spans - purged
+	// is the dirty-free count the watermark compares against.
+	h.purged = SPANS_PER_CHUNK - METADATA_SPANS
 
 	// Span 0 is metadata and never allocatable; the rest start free and clean.
 	// A chunk carved from a fresh reserve has never been written, and one
@@ -263,26 +279,6 @@ fn chunk_alloc() uintptr {
 	base := res_base[nr]
 	chunk_init(base)
 	return base
-}
-
-// chunk_release returns a chunk to its reserve and drops its physical pages.
-//
-// The address range stays reserved -- MADV_DONTNEED is the "free" mechanism
-// here, not munmap. Reacquiring the chunk costs page faults rather than an
-// mmap, and the pages read back as zero, which is what lets chunk_init mark
-// every span clean.
-fn chunk_release(base uintptr) {
-	r := reserve_of(base)
-	if (r < 0) {
-		return
-	}
-	i := i64((base - res_base[r]) / uintptr(CHUNK_SIZE))
-	if (chunk_bit(r, i) == 0) {
-		return
-	}
-	chunk_bit_clear(r, i)
-	res_free[r] = res_free[r] + 1
-	_ := sys.madvise(base, CHUNK_SIZE, sys.MADV_DONTNEED)
 }
 
 // chunk_first and chunk_next iterate the in-use chunks, so callers that need
@@ -384,6 +380,16 @@ fn span_take(base uintptr, i i64, n i64) uintptr {
 		d.runlen = 0
 	}
 	h.free_spans = h.free_spans - n
+
+	// A span leaving the free set that was clean also leaves the purged set.
+	// Checked head-inclusive across the whole run, since span_take overwrote
+	// the states above but not the clean flags.
+	var j i64 := 0
+	for (; j < n; j = j + 1) {
+		if (desc(base, i+j).clean == 1) {
+			h.purged = h.purged - 1
+		}
+	}
 	return span_addr(base, i)
 }
 
@@ -551,23 +557,23 @@ fn alloc_small(size i64) uintptr {
 	c := class_of(size)
 	sz := class_size(c)
 
+	// Invariant: a span is in its class list exactly when it has room. The
+	// list head therefore always has room, so first fit is the head.
 	var sb uintptr := class_head[c]
-	for (; sb != uintptr(0); ) {
-		d := desc_of(sb)
-		if (span_has_room(sb, d, sz) == 1) {
-			return take_from_span(d, sz)
-		}
-		// Full: drop it from the list. It rejoins when a free makes room.
-		nxt := d.next
-		class_unlink(c, sb)
-		sb = nxt
-	}
-
-	sb = span_new_for_class(c)
 	if (sb == uintptr(0)) {
-		return uintptr(0)
+		sb = span_new_for_class(c)
+		if (sb == uintptr(0)) {
+			return uintptr(0)
+		}
 	}
-	return take_from_span(desc_of(sb), sz)
+	d := desc_of(sb)
+	p := take_from_span(d, sz)
+	// If that filled the span, it must leave the list to preserve the
+	// invariant; free_small re-adds it when a free makes room again.
+	if (span_has_room(sb, d, sz) == 0) {
+		class_unlink(c, sb)
+	}
+	return p
 }
 
 // take_from_span hands out one block from a span that has room.
@@ -598,13 +604,28 @@ fn free_small(p uintptr, sb uintptr, d *mut span_desc) {
 
 	*unsafe_cast(*mut uintptr, p) = d.free_head
 	d.free_head = p
-	// used is maintained here but not yet consulted: a span emptying does not
-	// return it to its chunk until the release policy lands.
 	d.used = d.used - 1
 	// The span now holds data, so its bump region can no longer be assumed
 	// zero even if the pages started clean.
 	d.clean = 0
 
+	// Level 1: a span with no live objects returns to its chunk, no syscall.
+	// It rejoins the chunk's free spans, from which it can be re-taken by any
+	// class or coalesced into a large run.
+	if (d.used == 0) {
+		// The span is in its class list iff it had room before this free
+		// (was_full == 0); remove it only in that case, or the invariant that
+		// the list holds exactly the has-room spans is violated.
+		if (was_full == 0) {
+			class_unlink(d.class, sb)
+		}
+		base := chunk_of(sb)
+		span_give(base, span_index(sb), 1)
+		after_free(base)
+		return
+	}
+
+	// Not empty: this free gave a full span room again, so it rejoins the list.
 	if (was_full == 1) {
 		class_push(d.class, sb)
 	}
@@ -657,6 +678,84 @@ fn alloc_large(size i64) uintptr {
 // free_large returns a run of spans to its chunk.
 fn free_large(base uintptr, i i64, d *mut span_desc) {
 	span_give(base, i, d.runlen)
+	after_free(base)
+}
+
+// after_free runs the level-2 and level-3 release policy once spans have been
+// returned to a chunk. Level 1 (a span rejoining its chunk) already happened
+// in the caller; this decides whether to drop pages or unmap.
+fn after_free(base uintptr) {
+	h := unsafe_cast(*mut chunk_hdr, base)
+	if (h.free_spans == SPANS_PER_CHUNK-METADATA_SPANS) {
+		// Level 3: the whole chunk is free. Return it to its reserve, dropping
+		// its RSS, and unmap the reserve if it too has gone entirely empty.
+		release_chunk(base)
+		return
+	}
+	// Level 2: enough dirty free spans have accumulated to be worth returning
+	// to the kernel. Purge only the dirty ones; the watermark keeps a churning
+	// workload from ever reaching here.
+	if (h.free_spans-h.purged > PURGE_WATERMARK) {
+		purge_chunk(base, h)
+	}
+}
+
+// purge_chunk MADV_DONTNEEDs every dirty free span in the chunk, dropping their
+// physical pages while keeping the address range. The pages read back as zero,
+// so a purged span is marked clean and later handed out without re-zeroing.
+fn purge_chunk(base uintptr, h *mut chunk_hdr) {
+	var i i64 := METADATA_SPANS
+	for (; i < SPANS_PER_CHUNK; i = i + 1) {
+		d := desc(base, i)
+		if (d.state == SPAN_FREE) {
+			if (d.clean == 0) {
+				_ := sys.madvise(span_addr(base, i), SPAN_SIZE, sys.MADV_DONTNEED)
+				d.clean = 1
+			}
+		}
+	}
+	h.purged = h.free_spans
+}
+
+// release_chunk returns a fully-free chunk to its reserve and drops its pages,
+// then unmaps the reserve if every chunk in it is now free and another reserve
+// remains. The chunk's address range stays reserved unless the whole reserve
+// goes; MADV_DONTNEED, not munmap, is the per-chunk free mechanism.
+fn release_chunk(base uintptr) {
+	r := reserve_of(base)
+	if (r < 0) {
+		return
+	}
+	ci := i64((base - res_base[r]) / uintptr(CHUNK_SIZE))
+	if (chunk_bit(r, ci) == 0) {
+		return
+	}
+	chunk_bit_clear(r, ci)
+	res_free[r] = res_free[r] + 1
+	_ := sys.madvise(base, CHUNK_SIZE, sys.MADV_DONTNEED)
+
+	if (res_free[r] == CHUNKS_PER_RESERVE) {
+		if (res_count > MIN_RESERVES) {
+			reserve_release(r)
+		}
+	}
+}
+
+// reserve_release unmaps a fully-free reserve and compacts it out of the
+// reserve arrays. This is the only path that returns address space to the OS,
+// so it is the only thing that lowers the process's VSZ.
+fn reserve_release(r i64) {
+	_ := sys.munmap(res_base[r], RESERVE_SIZE)
+	var k i64 := r
+	for (; k < res_count-1; k = k + 1) {
+		res_base[k] = res_base[k+1]
+		res_free[k] = res_free[k+1]
+		var w i64 := 0
+		for (; w < RES_WORDS; w = w + 1) {
+			res_used[k*RES_WORDS+w] = res_used[(k+1)*RES_WORDS+w]
+		}
+	}
+	res_count = res_count - 1
 }
 
 // alloc_huge maps a request larger than a chunk can hold. mmap pages are
@@ -814,7 +913,7 @@ pub fn chunk_alloc_for_test() uintptr {
 }
 
 pub fn chunk_release_for_test(base uintptr) {
-	chunk_release(base)
+	release_chunk(base)
 }
 
 pub fn chunk_of_for_test(p uintptr) uintptr {
