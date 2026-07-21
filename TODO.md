@@ -67,6 +67,37 @@ global-store-through-pointer regression test.
 Do (1) first: it converts a silent miscompile into a clear error and does not
 depend on settling (2).
 
+### Audit bosc codegen for unsecured raw registers
+
+`syscall6` in `runtime/_sys/sys_linux.bs` hit this and it is documented in
+CLAUDE.md § Things that bite: bas's allocator only knows a register is occupied
+when a **named** allocation lives there. Codegen that writes a raw register and
+then emits an instruction sourcing a named local invites the allocator to
+materialize that local into the very register being held.
+
+`regSpot` emits `acquire`, so anything routed through it is safe. But several
+sites write registers with a bare `Fprintf` and no acquire. At least one is a
+real instance of the pattern — the bounds-check trap setup, in four places
+(`compile.go` ~3002, ~3041, ~4505, ~4558):
+
+```
+mov rdi <index>          // raw write, allocator not told
+mov rsi <max.ref>        // sources a NAMED local -> may materialize into rdi
+call _init.index_oob
+```
+
+Low blast radius (the trap path only runs when the check already failed, so the
+cost is a wrong index in the panic message rather than a miscompile) but it is
+the same defect, and severity is incidental rather than by design.
+
+Other unaudited raw writes: `mov rax 0` for main's default return
+(`compile.go` ~3194) and the return-value sign/zero-extension
+(`compile.go` ~5431). Neither looks live-dangerous; both are unverified.
+
+Audit the whole set. Prefer routing through `regSpot`/`spot.free` over
+hand-written acquire/release so the pairing cannot drift. Worth a grep-based
+check in review rather than a one-time sweep, since the failure is silent.
+
 ### Code formatter (`go fmt`-style)
 A canonical, opinionated formatter for `.bos` source — no config, one
 true layout, like `gofmt`. Would also give the editor integrations
