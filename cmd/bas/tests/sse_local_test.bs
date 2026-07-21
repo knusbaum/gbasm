@@ -1,0 +1,116 @@
+package main
+
+// Exercises the float register allocator: `local <name> f64` / `f32` routes a
+// name to the SSE file, and the allocator spills and reloads it with MOVSD /
+// MOVSS rather than MOV.
+
+function main
+	prologue
+
+	// --- named f64 locals, allocated and used ---
+	// 3.5 + 1.25 = 4.75; * 8.0 = 38.0
+	local a f64
+	local b f64
+	mov rax 0x400C000000000000
+	movq a rax
+	mov rax 0x3FF4000000000000
+	movq b rax
+	addsd a b
+	mov rax 0x4020000000000000
+	local eight f64
+	movq eight rax
+	mulsd a eight
+	acquire rdi
+	cvtsd2si rdi a
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+	forget a
+	forget b
+	forget eight
+
+	// --- a float local survives a call ---
+	// Every XMM register is caller-saved, so `keep` must be spilled across
+	// the call to puti and reloaded afterwards. 6.0 + 6.0 = 12.0.
+	local keep f64
+	mov rax 0x4018000000000000
+	movq keep rax
+	acquire rdi
+	mov rdi 7
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+	addsd keep keep
+	acquire rdi
+	cvtsd2si rdi keep
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+	forget keep
+
+	// --- f32 locals use the 32-bit instruction forms ---
+	// 2.5f + 1.5f = 4.0f, widened to double for printing.
+	local s f32
+	local t f32
+	mov rax 0x40200000
+	movq s rax
+	mov rax 0x3FC00000
+	movq t rax
+	addss s t
+	local w f64
+	cvtss2sd w s
+	acquire rdi
+	cvtsd2si rdi w
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+	forget s
+	forget t
+	forget w
+
+	// --- an explicitly held xmm register is not handed to a float local ---
+	// xmm8 is deliberately the *first* register in the float allocator's
+	// preference order, so the very next float local would land on it if the
+	// reservation were not visible. It is acquired holding 100.0; allocating
+	// and using float locals must not disturb it.
+	//
+	// This is the reason one Registers occupancy map is shared by both
+	// allocators rather than each file having its own: with separate maps the
+	// `acquire` would mark the integer map, the float allocator would consult
+	// the other one, see xmm8 free, and quietly allocate on top of the held
+	// value.
+	acquire xmm8
+	mov rax 0x4059000000000000
+	movq xmm8 rax
+	local p f64
+	local q f64
+	local r f64
+	mov rax 0x3FF0000000000000
+	movq p rax
+	movq q rax
+	movq r rax
+	addsd p q
+	addsd p r
+	acquire rdi
+	cvtsd2si rdi p
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	// xmm8 must still hold 100.0
+	cvtsd2si rdi xmm8
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+	release xmm8
+	forget p
+	forget q
+	forget r
+
+	epilogue
+	xor rax rax
+	ret

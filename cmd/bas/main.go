@@ -1100,12 +1100,15 @@ func main() {
 					fmt.Printf("Fatal: Expect a local declaration to contain a name and bit size, and optionally a register, but have %v\n", lnamesize)
 					os.Exit(1)
 				}
-				size, err := strconv.Atoi(lnamesize[1])
+				// The size operand is an integer bit width (general-purpose
+				// register) or a float type name (SSE register, with the
+				// instruction width it implies).
+				class, size, err := gbasm.ParseSizeSpec(lnamesize[1])
 				if err != nil {
-					fmt.Printf("Expected local size to be an integer, but have: %s\n", lnamesize[1])
+					fmt.Printf("Fatal: local %s: %s\n", lnamesize[0], err)
 					os.Exit(1)
 				}
-				l, err := f.NewLocal(lnamesize[0], size)
+				l, err := f.NewLocalOfClass(lnamesize[0], class, size)
 				if err != nil {
 					fmt.Printf("Fatal: Failed to declare local %s: %s\n", lnamesize[1], err)
 					os.Exit(1)
@@ -1114,6 +1117,11 @@ func main() {
 					reg, err := gbasm.ParseReg(lnamesize[2])
 					if err != nil {
 						fmt.Printf("Fatal: Failed to use register %s: %s\n", lnamesize[2], err)
+						os.Exit(1)
+					}
+					if reg.Class() != class {
+						fmt.Printf("Fatal: local %s is declared %s (%s class) but pinned to %v, which is in the %s register file\n",
+							lnamesize[0], lnamesize[1], class, reg, reg.Class())
 						os.Exit(1)
 					}
 					l.UseRegister(reg)

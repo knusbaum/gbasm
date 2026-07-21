@@ -67,6 +67,12 @@ func (rp *RallocPartial) asOperand() (interface{}, error) {
 // For non-regable types, this is 64-bits (size of a pointer.
 func (r *Ralloc) RegSize() int {
 	if r.inreg {
+		if r.rallocs.class == ClassFloat {
+			// An XMM register is always 128 bits, but the scalar it holds is
+			// 32 or 64. Reporting the register width here would size memory
+			// operands and move instructions wrongly.
+			return r.size
+		}
 		return r.reg.Width()
 	}
 	if r.regable {
@@ -121,7 +127,9 @@ func (r *Ralloc) UseRegister(reg Register) {
 	}
 	r.rallocs.rs.Use(reg)
 
-	if r.regable && r.size != reg.Width() {
+	// XMM has no sub-registers, so a 32- or 64-bit scalar legitimately lives
+	// in a 128-bit register; the width is carried by the instruction instead.
+	if r.regable && r.rallocs.class != ClassFloat && r.size != reg.Width() {
 		panic(fmt.Sprintf("Ralloc %s cannot use register %v. ralloc size: %v, regwidth: %v\n", r.sym, reg, r.size, reg.Width()))
 
 	}
@@ -129,7 +137,7 @@ func (r *Ralloc) UseRegister(reg Register) {
 	if r.inreg {
 		// we're already in a register. MOV the value to the new reg and
 		// free the current one.
-		r.rallocs.f.Instr("MOV", reg, r.reg)
+		r.rallocs.f.Instr(r.rallocs.moveOp(r.RegSize()), reg, r.reg)
 		r.rallocs.rs.Release(r.reg)
 		r.rallocs.removeLRU(r.reg)
 		delete(r.rallocs.regs, r.reg)
@@ -151,7 +159,7 @@ func (r *Ralloc) UseRegister(reg Register) {
 			r.inreg = true
 			return
 		}
-		r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
+		r.rallocs.f.Instr(r.rallocs.moveOp(r.RegSize()), reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
 		r.reg = reg
 		r.rallocs.regs[reg] = r
 		r.rallocs.updateLRU(reg)
@@ -223,8 +231,12 @@ func (r *Ralloc) Register() Register {
 		// across a branch), the setcc read the XOR's flags and produced the
 		// wrong result. MOVZX is flag-safe for 8/16-bit loads; a 32-bit MOV
 		// already zero-extends the upper half; 64-bit is full width.
-		switch r.RegSize() {
-		case 8, 16:
+		switch {
+		case r.rallocs.class == ClassFloat:
+			// No zero-extension concern: the scalar move writes exactly the
+			// low 32/64 bits and SSE moves do not touch EFLAGS.
+			r.rallocs.f.Instr(r.rallocs.moveOp(r.RegSize()), reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
+		case r.RegSize() == 8, r.RegSize() == 16:
 			r.rallocs.f.Instr("MOVZX", reg.fullReg(), Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
 		default:
 			r.rallocs.f.Instr("MOV", reg, Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()})
@@ -245,7 +257,7 @@ func (r *Ralloc) Evict() Register {
 		panic("Already evicted")
 	}
 	if r.regable {
-		r.rallocs.f.Instr("MOV", Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()}, r.reg)
+		r.rallocs.f.Instr(r.rallocs.moveOp(r.RegSize()), Indirect{Reg: R_RBP, Off: r.offset, Size: r.RegSize()}, r.reg)
 		r.inreg = false
 		r.inmem = true
 		r.rallocs.rs.Release(r.reg)
@@ -345,22 +357,40 @@ type Rallocs struct {
 	// sub-registers (SSE) leaves pool8 nil.
 	pool  []Register
 	pool8 []Register
+
+	class       RegClass
+	callerSaved []Register // spilled before every call
 }
 
-func NewRallocs(rs *Registers, f *Function, frame *Frame, pool, pool8 []Register) *Rallocs {
+func NewRallocs(rs *Registers, f *Function, frame *Frame, class RegClass, pool, pool8, callerSaved []Register) *Rallocs {
 	return &Rallocs{
-		regs:  make(map[Register]*Ralloc),
-		rs:    rs,
-		f:     f,
-		frame: frame,
-		pool:  pool,
-		pool8: pool8,
+		regs:        make(map[Register]*Ralloc),
+		rs:          rs,
+		f:           f,
+		frame:       frame,
+		class:       class,
+		pool:        pool,
+		pool8:       pool8,
+		callerSaved: callerSaved,
 	}
 }
 
 // Get finds an unused register of size in this file and marks it in use.
 func (ra *Rallocs) Get(size int) (Register, bool) {
 	return ra.rs.getFrom(ra.pool, ra.pool8, size)
+}
+
+// moveOp names the instruction that moves a `bits`-wide value of this file's
+// class between a register and memory (or between two registers). The integer
+// file uses MOV; SSE has a distinct scalar move per width.
+func (ra *Rallocs) moveOp(bits int) string {
+	if ra.class != ClassFloat {
+		return "MOV"
+	}
+	if bits == 32 {
+		return "MOVSS"
+	}
+	return "MOVSD"
 }
 
 // NewLocal allocates a new local variable of size bits. Locals created with
@@ -695,7 +725,7 @@ func (ra *Rallocs) EvictAll() {
 // call
 func (ra *Rallocs) EvictForCall() {
 	//fmt.Printf("[EVICT FOR CALL]\n")
-	for _, r := range caller_saved {
+	for _, r := range ra.callerSaved {
 		ra.EvictReg(r)
 	}
 }
@@ -809,6 +839,11 @@ type Function struct {
 	a     *Asm
 	rs    *Registers
 	frame *Frame // stack frame + local namespace, shared by every register file
+
+	// FRallocs is the SSE file's allocator. The embedded *Rallocs is the
+	// integer file's, so bare f.NewLocal/f.AllocFor/... stay integer and
+	// existing callers are unaffected.
+	FRallocs *Rallocs
 	*Rallocs
 }
 
@@ -832,9 +867,52 @@ func (o *OFile) NewFunction(srcFile string, srcLine int, name string, args ...*V
 		basePointerOff: (6 * 8), // Determined in Prologue. This is the amount of "stuff" pushed on top of any arguments before the base pointer is established.
 	}
 	f.frame = NewFrame()
-	f.Rallocs = NewRallocs(f.rs, f, f.frame, regs64, regs8)
+	f.Rallocs = NewRallocs(f.rs, f, f.frame, ClassInt, regs64, regs8, caller_saved)
+	f.FRallocs = NewRallocs(f.rs, f, f.frame, ClassFloat, regsXMM, nil, xmm_caller_saved)
 	o.Funcs[name] = f
 	return f, nil
+}
+
+// allocators returns every register file's allocator. Anything that is a
+// property of the *function* rather than of one file — a call, a control-flow
+// merge, discarding all locals — has to drive all of them.
+func (f *Function) allocators() []*Rallocs {
+	return []*Rallocs{f.Rallocs, f.FRallocs}
+}
+
+// allocatorFor returns the allocator that owns a register class.
+func (f *Function) allocatorFor(class RegClass) *Rallocs {
+	if class == ClassFloat {
+		return f.FRallocs
+	}
+	return f.Rallocs
+}
+
+// EvictAll spills every live local in every register file. A label is a
+// control-flow merge point for all of them, not just the integer file.
+func (f *Function) EvictAll() {
+	for _, ra := range f.allocators() {
+		ra.EvictAll()
+	}
+}
+
+// EvictForCall spills the caller-saved registers of every file. System V has
+// no callee-saved XMM registers at all, so a call destroys the entire SSE
+// file and every live float spills at every call.
+func (f *Function) EvictForCall() {
+	for _, ra := range f.allocators() {
+		ra.EvictForCall()
+	}
+}
+
+// ForgetAll discards the locals of every file. The name table is shared, so
+// forgetting from one allocator would already reach the other's names, but
+// routing through both keeps each Ralloc's register bookkeeping with its
+// owning allocator.
+func (f *Function) ForgetAll() {
+	for _, ra := range f.allocators() {
+		ra.ForgetAll()
+	}
 }
 
 // Use marks a register as in-use. It will not be allocated by the register allocator. Returns true
@@ -1177,4 +1255,10 @@ func (f *Function) Body() ([]byte, error) {
 	}
 	//log.Printf("RETURNING BODY LEN: %d", len(f.bodyBs))
 	return f.bodyBs, nil
+}
+
+// NewLocalOfClass allocates a local in the register file named by class.
+// Sizes are in bits, as for NewLocal.
+func (f *Function) NewLocalOfClass(name string, class RegClass, size int) (*Ralloc, error) {
+	return f.allocatorFor(class).NewLocal(name, size)
 }

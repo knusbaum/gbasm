@@ -730,6 +730,12 @@ func (o *Op) ConvertRalloc(a *Ralloc) interface{} {
 			panic(fmt.Sprintf("r8 OOF. Expected %s to be %d wide, but register %v was %d", a.sym, 8, r, r.Width()))
 		}
 		return r
+	case "xmm":
+		r := a.Register()
+		if r.Class() != ClassFloat {
+			panic(fmt.Sprintf("xmm OOF. Expected %s to be in an SSE register, but it is in %v", a.sym, r))
+		}
+		return r
 	case "m64", "m32", "m16", "m8", "m":
 		return a.Indirect()
 	}
@@ -882,6 +888,9 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 		// scalar forms are CMPSD/CMPSS, whose immediate is a comparison
 		// predicate in 0-7, so it does not bite today. A packed form taking a
 		// full-range imm8 (a shuffle mask, say) would need this revisited.
+		if ra, ok := op.(*Ralloc); ok {
+			return !ra.volatile && ra.rallocs.class == ClassFloat, 128
+		}
 		if r, ok := op.(Register); ok {
 			return r.Class() == ClassFloat, 128
 		}

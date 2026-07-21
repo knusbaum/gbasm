@@ -1,0 +1,11 @@
+package main
+
+// A local declared as a float type cannot be pinned to a general-purpose
+// register: the two register files hold values in different formats and
+// nothing moves between them implicitly.
+
+function main
+	prologue
+	local y f64 rax
+	epilogue
+	ret

@@ -133,7 +133,7 @@ func (c RegClass) String() string {
 	if c == ClassFloat {
 		return "float"
 	}
-	return "int"
+	return "integer"
 }
 
 // Class reports which register file r belongs to.
@@ -1135,4 +1135,33 @@ func (r Register) partial(size int) (Register, bool) {
 		panic("No such register")
 	}
 	return 0, false
+}
+
+// ParseSizeSpec parses the size operand of a `local` declaration in .bs.
+//
+// The operand is either an integer bit width, which denotes a general-purpose
+// register, or a float type name, which denotes an SSE register together with
+// the width its instructions operate at:
+//
+//	local x 64      integer, 64-bit — unchanged
+//	local y f64     float register, 64-bit ops (movsd/addsd/…)
+//	local z f32     float register, 32-bit ops (movss/addss/…)
+//
+// One token carries exactly the two facts the assembler needs — which
+// allocator, and which instruction width — with no separate class keyword and
+// no size+class pair. It is also architecture-neutral: another backend would
+// spell it identically and route to its own floating-point file, so nothing
+// about the IR becomes x86-specific.
+func ParseSizeSpec(s string) (RegClass, int, error) {
+	switch strings.ToLower(s) {
+	case "f32":
+		return ClassFloat, 32, nil
+	case "f64":
+		return ClassFloat, 64, nil
+	}
+	bits, err := strconv.Atoi(s)
+	if err != nil {
+		return ClassInt, 0, fmt.Errorf("expected a bit size or a float type (f32, f64), but have: %s", s)
+	}
+	return ClassInt, bits, nil
 }

@@ -100,6 +100,18 @@ var other_regs = []Register{R10, R11}
 // All registers that need to be saved by a caller before calling.
 var caller_saved = []Register{R_RAX, R_RCX, R_RDX, R_RSI, R_RDI, R8, R9, R10, R11}
 
+// The SSE file. System V AMD64 has no callee-saved XMM registers, so there is
+// no preference ordering to express: every one of these is equally cheap to
+// use and equally destroyed by a call. XMM0-7 are the argument registers, so
+// they come last to keep them free for as long as possible.
+var regsXMM = []Register{
+	X_XMM8, X_XMM9, X_XMM10, X_XMM11, X_XMM12, X_XMM13, X_XMM14, X_XMM15,
+	X_XMM0, X_XMM1, X_XMM2, X_XMM3, X_XMM4, X_XMM5, X_XMM6, X_XMM7,
+}
+
+// Every XMM register is caller-saved, so a call spills the entire file.
+var xmm_caller_saved = regsXMM
+
 var regs64_prefer_callee_saved = append(append(callee_saved, other_regs...), func_arg_regs...)
 
 var regs64_prefer_caller_saved = append(append(other_regs, callee_saved...), func_arg_regs...)

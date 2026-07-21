@@ -1,0 +1,2 @@
+Assembling tests/sse_class_mismatch_err_test.bs
+Fatal: local y is declared f64 (float class) but pinned to RAX, which is in the integer register file
