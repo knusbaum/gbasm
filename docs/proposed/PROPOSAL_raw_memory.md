@@ -243,10 +243,8 @@ const ALIGN uintptr = uintptr(align_of(i64))
 var free_head uintptr    // zero-initialized: 0 means empty
 
 // align_up rounds a up to a multiple of to, which must be a power of two.
-// (0 - to) is the two's-complement mask ~(to-1); Boson's defined wrap makes
-// this well-specified on an unsigned type.
 fn align_up(a uintptr, to uintptr) uintptr {
-	return (a + to - uintptr(1)) & (uintptr(0) - to)
+	return (a + to - uintptr(1)) & ~(to - uintptr(1))
 }
 
 pub fn alloc(size i64) *mut byte {
@@ -315,12 +313,20 @@ Three findings that would not have come out of listing idioms separately:
    contract. This is the single most likely way to introduce a subtle,
    wide-blast-radius bug during the port.
 
-2. **Bitwise complement is missing.** `Op2` covers `& | % ^ << >>`
-   (`ast.go:3390-3427`), and `parseUnary` (`parser.go:1274-1289`) handles only
-   `*`, `-`, and `&` — there is no unary `~`. `align_up` is written above as
-   `(0 - to)`, which is well-defined given two's-complement wrap, but a `~`
-   operator would be clearer at every mask site. Worth adding separately — it
-   is a safe, ordinary operator, unrelated to this proposal's unsafe surface.
+2. **Nothing — unary `~` already exists.** An earlier draft of this document
+   claimed it was missing. It is not: `tok_tilde` (`lexer.go:54`, `:905`),
+   `n_bitnot` (`parser.go:50`), handled in `parseUnary` at `parser.go:1291`,
+   desugared to `(0-x)-1`, and documented at `DESIGN.md:149`. So `align_up`
+   should be written the obvious way:
+
+   ```boson
+   fn align_up(a uintptr, to uintptr) uintptr {
+       return (a + to - uintptr(1)) & ~(to - uintptr(1))
+   }
+   ```
+
+   Retained as a finding because it is the one place the sketch corrected a
+   wrong assumption about the language rather than revealing a gap in it.
 
 3. **The pointer→`uintptr` cast needs a carve-out in an existing guard.**
    `compile.go:6299-6302` rejects pointer↔non-pointer casts precisely because
@@ -537,8 +543,6 @@ Recorded so they are not rediscovered, not resolved here:
 - **Atomics** and their alignment story (leaning target-defined; see above).
 - **Raising BABI-0's alignment ceiling to 16** (`TODO.md:83-99`) — independent,
   but `align_of` is what makes the allocator survive the change.
-- **Unary bitwise complement** (`~`) — confirmed absent; a small, safe,
-  independent addition.
 - **Whether `_heap` stays in the C transpiler's hand-written floor.**
   `PROPOSAL_c_transpiler.md:248-250` assumes it does; a Boson `_heap` changes
   that assumption in the transpiler's favor.

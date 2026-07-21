@@ -9,16 +9,6 @@ design (see the docs convention in CLAUDE.md § Documentation and design docs).
 
 ## Language
 
-### Unary bitwise complement (`~`)
-`Op2` covers the binary bitwise operators (`& | % ^ << >>`, `cmd/bosc/ast.go:3390-3427`)
-but `parseUnary` (`cmd/bosc/parser.go:1274-1289`) handles only `*`, `-`, and `&` —
-there is no `~`. Every mask site has to spell the complement as `(0 - x)` (well
-defined given two's-complement wrap, `56f4ad6`) or an explicit XOR. Surfaced
-while writing the allocator sketch in
-[`docs/proposed/PROPOSAL_raw_memory.md`](docs/proposed/PROPOSAL_raw_memory.md),
-where alignment rounding wants it — but it is an ordinary safe operator,
-independent of that proposal.
-
 ### Checked-arithmetic intrinsics
 Integer overflow wraps by default (defined two's-complement, both signs — see
 DESIGN.md §Expressions). That is cheap and keeps numeric loops vectorizable, but
