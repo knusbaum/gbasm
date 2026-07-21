@@ -1,0 +1,194 @@
+# Audit: integer assumptions in codegen (float support)
+
+## History
+
+- 2026-07-20 — Written during Stage 3→4 of
+  [`PROPOSAL_floating_point.md`](../proposed/PROPOSAL_floating_point.md), after
+  two silent miscompiles made it clear the assumptions needed enumerating rather
+  than discovering one at a time.
+
+---
+
+## Why this exists
+
+Boson's type system began with a single type: `num`, a signed 64-bit integer.
+Every later type was added against codegen that already assumed *a scalar is an
+integer in a general-purpose register, and its size tells you everything*. That
+assumption is correct for every type the language has had until now — `i8`…`u64`,
+`byte`, `bool`, and pointers are all integers in a GPR, differing only in width.
+
+Floats break it in a way no previous type did: `f64` and `i64` are the same
+*size* and a different *register file*. So every site that dispatches on size
+alone will do something well-defined and wrong rather than failing.
+
+**The failure mode is silence, not error.** Two instances were found by
+accident before this audit:
+
+- `fn f(a f64, b f64) f64 { return a + b }` compiled clean, emitting
+  `argi a 0 64` — the integer argument registers — and an integer `ADD` on the
+  bits of two doubles.
+- `fn f(_ f64)` did the same through the discarded-parameter path, which the
+  first gate missed.
+
+This document is the inventory. It is a *reference*, not a plan: the plan is the
+proposal's staged implementation. Use this to check that each stage has covered
+what it claims, and to know where to look when a float behaves like an integer.
+
+---
+
+## The root cause, in one line
+
+`spot` — codegen's handle for a value — has no register class. `newSpot` emits
+`local <ref> <size*8>`, and the `.bs` `local` directive interpreted that as a
+general-purpose register until Stage 2 added the `f32`/`f64` size operand.
+Nothing between the type system and the assembler carried the class.
+
+Everything below is downstream of that.
+
+## The highest-leverage single fact
+
+**`f32` and `f64` are `Signed: false`** (`ast.go`, `getBuiltinType`). Codegen
+consults `.Signed` in eleven places to pick between a signed and an unsigned
+instruction. Floats therefore take the *unsigned* arm everywhere by default:
+`div` not `idiv`, `shr` not `sar`, `setb`/`seta` not `setl`/`setg`, `movzx` not
+`movsx`.
+
+Setting `Signed: true` would be equally wrong — it just picks the other integer
+instruction. **The fix is a float guard *before* each `.Signed` branch**, not a
+different value for the flag.
+
+`.Signed` instruction-selection sites: `*Return` 1/2-byte extend; `setupArgs`
+argument extend; `compileCast` (`movsxd`/`movsx`/`movzx`); `doOp2` mul, div and
+mod (`imul`/`mul`, `idiv`+`cqo` / `xor rdx,rdx`+`div`); `doOp2` shift
+(`sar`/`shr`); `doOp2` comparisons ×4 (`setl`/`setle`/`setg`/`setge` vs
+`setb`/`setbe`/`seta`/`setae`); `compileInterfaceMethodCall` argument extend;
+`emitInterfaceFatPtr` narrow-scalar extend.
+
+---
+
+## Inventory by category
+
+Grouped by the kind of wrongness, roughly in the order the stages must address
+them. "Silent" means a float reaching this site produces working code with the
+wrong answer.
+
+### 1. `mov` as the generic value move
+
+`move` is the central mover and emits a bare `mov` for register-to-register,
+same-representation scalar, and store-through-pointer. **Every** float
+assignment, temp copy, return-value pickup and call-result move flows through
+it. Needs `movss`/`movsd`.
+
+Also size-dispatched `mov` sites: `storeScalarToMem` (qword/dword/word/byte);
+array-literal element stores; `*Dot` and variant-field member loads; `*Index`
+element loads; `compileValueIntoAddress` (`new f64(x)`); `compileStructLiteralInto`
+scalar fields; `MultiBind`/`MultiAssign` multi-return destructuring; `*Deref`
+pointer loads; `compileTypeAssert` and `compileTypeCaseBody` payload extraction.
+
+Benign: `spot_memcpy` (a byte blit — correct for float aggregates); variadic
+backing-array chunk copies; `mov <ref> 0` zeroing, which happens to produce
+`+0.0`.
+
+### 2. Arithmetic — `doOp2`
+
+No float branch exists anywhere in `doOp2`. Selection is by size and `.Signed`.
+
+- **`add`/`sub`** — silent; need `addsd`/`addss`, `subsd`/`subss`.
+- **Unary negation** — `-x` is desugared in `ToAST` to `Op2{n_sub, Literal{0}, x}`,
+  so float negation becomes an integer `sub` from an integer immediate `0`. Needs
+  a sign-bit `xorpd`/`xorps`, and the desugar must be special-cased *before* it
+  happens. Note this also gets `-0.0` wrong, since `0 - 0.0` is `+0.0`.
+- **`mul`** — takes the one-operand `mul` via rax/rdx arm (because
+  `Signed == false`). Silent and catastrophic.
+- **`div`** — `xor rdx,rdx` + unsigned `div`. Silent.
+- **`mod`, `&`, `|`, `^`, `~`, `<<`, `>>`** — must be *rejected* for floats, not
+  lowered. The type checker already rejects them (Stage 3 split
+  `isIntegerType`/`isNumericType`), but the codegen paths still exist and would
+  lower a float if reached.
+
+### 3. Comparisons
+
+`doOp2`'s `<`, `<=`, `>`, `>=` emit `cmp` + a `setcc` chosen by `.Signed`, so
+floats get an unsigned `setcc` on an integer `cmp`. `==`/`!=` emit `cmp` +
+`sete`/`setne`, which gets both `-0.0 == 0.0` (must be true) and `NaN == NaN`
+(must be false) wrong.
+
+Needs `ucomisd`/`ucomiss` with the NaN-aware lowering from the proposal.
+
+Note `jumpOp` — a fused `cmp`+`jcc` helper hardcoded to signed integers — **has
+no callers**. It is dead code, but it is the path an optimizer would revive, so
+it needs the same treatment or deletion.
+
+### 4. Register-class decisions made by size alone
+
+`newSpot`/`newSpotWithReg` (`local ref sz*8`); `compileFunctionBody` `argi`
+(three arms: named, discarded, and memory-backed ≤8); `setupArgs` (pin to
+`order[i]` when `Size == PTR_SIZE`, else `inreg …rdi`, else `movsx`/`movzx`);
+`packSmallMemBackedArg` (`switch size {1,2,4,8}`); `*Return` 1/2-byte extend;
+`compileCast` (see below); `doOp2` mul/div/mod via `mulDivRegs(sz*8)`; shift
+count register width; `compileInterfaceMethodCall` (duplicates `setupArgs`'
+logic); `storeScalarToMem`; `emitInterfaceFatPtr`; type-assert payload load and
+store.
+
+Purely-layout uses of `.Size` — struct field offsets, array strides, allocation
+sizes — are correct as-is and are *not* included above. `scalarSize` is used only
+for typedesc emission and already knows `f32`/`f64`.
+
+### 5. Casts — `compileCast`
+
+The final dispatch is entirely size-based with no int-vs-float check, and the
+guard rails above it (ptr↔non-ptr, slice↔scalar, struct↔non-struct) have no
+int↔float case. All three arms are wrong for floats:
+
+| Cast | Current | Needed |
+|---|---|---|
+| `i64` ↔ `f64` | same size → plain `mov` (bit reinterpretation) | `cvtsi2sd` / `cvttsd2si` |
+| `f32` → `f64` | larger dest → `movzx` (`Signed == false`) | `cvtss2sd` |
+| `f64` → `f32` | narrowing → low-bits truncation | `cvtsd2ss` |
+
+The literal fast path is `EvalConst`-based and integer-only, so `f64(3.5)` has no
+route at all.
+
+### 6. Argument passing and returns
+
+- **Argument registers** are a hardcoded `rdi, rsi, rdx, rcx, r8, r9` with no
+  XMM sequence and no separate float counter. An `f64` argument goes in `rdi`.
+  The logic is duplicated in `compileInterfaceMethodCall`.
+- **Return placement** — `raxForType` maps by type name with `default: "rax"`,
+  so `f32` and `f64` both return in `rax` rather than `xmm0`. Four call sites.
+- **Return pickup** at each call site goes through `move`, i.e. category 1 again.
+
+### 7. No route to materialize a float constant
+
+`*Literal` in `compileTop` handles `string`/`uint64`/`byte`/`bool` and panics on
+anything else; `EvalConst` is `*big.Int`-only. There is no `mov xmm, imm` on
+x86-64, so a float constant must come from a GPR via `MOVQ` or from `.rodata`.
+This is a *missing capability*, not a wrong one — it fails loudly.
+
+---
+
+## Current containment
+
+`requireFloatCodegenSupport` refuses float storage at every `newSpot`,
+`newSpotWithReg`, and `argi` arm (including the discarded-parameter arm, which
+the first attempt missed). A float literal in codegen gets a positioned
+diagnostic rather than a bare panic. Untyped float literals default to `f64`,
+mirroring `<intlit>` → `i64`.
+
+**These gates are load-bearing until the corresponding stage lands.** The
+approach for Stage 4 is to *narrow* them incrementally rather than remove them,
+so anything not yet explicitly handled keeps refusing. Their removal is tracked
+in the proposal's gaps-and-debt checklist.
+
+---
+
+## The general lesson
+
+Adding a capability at one layer while another still assumes the old world
+produces **silence, not failure**. The same shape produced the encoder's REX bug
+(`304e8a3`), where wrong bytes ran correctly for years because REX.X is ignored
+without a SIB byte.
+
+At each stage boundary, ask what the next layer down will do with a value it does
+not understand. If the answer is "treat it as an integer", add a refusal before
+moving on.

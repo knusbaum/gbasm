@@ -2947,6 +2947,7 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 			if a.Type.HasOwned() {
 				CompileErrorF(ast, "cannot discard an owned parameter with `_`; an owned parameter must be consumed")
 			}
+			requireFloatCodegenSupport(c, a.Type, "an argument")
 			fmt.Fprintf(of, "\targi __discard_arg_%d %d %d\n", i, i, a.Type.Size(c)*8)
 			continue
 		}
@@ -3329,6 +3330,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			switch inferred.Name {
 			case "<intlit>":
 				inferred = numASTType()
+			case "<floatlit>":
+				// An untyped float literal defaults to f64, mirroring
+				// <intlit> defaulting to i64. f64 is the type that loses
+				// nothing: every f32 value is exactly representable in it,
+				// so an inferred binding never silently narrows.
+				inferred = ASTType{Name: "f64", p: ast.Init.Pos()}
 			case "<nil>":
 				CompileErrorF(a, "var %s: cannot infer type from nil", ast.Name)
 			case "void":
@@ -5317,6 +5324,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// literals can have no indirection and cannot be arrays (yet)
 		if t.Indirection > 0 || t.ArraySize > 0 {
 			panic("NOT IMPLEMENTED (TODO)")
+		}
+		if _, isFloatLit := ast.Val.(float64); isFloatLit {
+			// There is no route to materialize a float constant into a
+			// register yet: EvalConst is *big.Int-only and there is no
+			// `mov xmm, imm` on x86-64. Report it rather than falling
+			// through to the bare NOT IMPLEMENTED panic below.
+			CompileErrorF(ast, "floating-point code generation is not implemented yet: cannot materialize the literal %v", ast.Val)
 		}
 		if ast.Val == nil {
 			if dest.empty() {

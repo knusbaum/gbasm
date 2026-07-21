@@ -1007,8 +1007,18 @@ before moving this doc to `docs/implemented/`. Distinct from *Open questions*
 below, which is about undecided design; everything here is decided and merely
 unbuilt.
 
+**The full inventory of integer assumptions in codegen** — every site that would
+silently treat a float as an integer — is in
+[`AUDIT_float_codegen_assumptions.md`](../reference/AUDIT_float_codegen_assumptions.md).
+Boson's type system began with a single type (`num`, a signed 64-bit integer), so
+those assumptions are pervasive rather than incidental; the audit exists so they
+are enumerated rather than discovered one miscompile at a time.
+
 ### Must be closed before the feature ships
 
+- [ ] **Untyped float literal defaults to `f64`** — done, mirroring `<intlit>` →
+  `i64`. Recorded here because it is a language-surface decision that belongs in
+  `DESIGN.md` when the feature ships.
 - [ ] **`requireFloatCodegenSupport` must be deleted.** `compile.go` currently
   refuses float storage outright. It exists because making the types real
   without codegen produced a *silent miscompile* — `fn f(a f64, b f64) f64
