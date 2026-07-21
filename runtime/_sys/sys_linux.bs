@@ -1,0 +1,141 @@
+package _sys
+
+// Package _sys is the generic Linux syscall floor: seven stubs that let any
+// syscall be issued from Boson, so a new one needs a typed wrapper in the
+// `sys` package rather than a new hand-written assembly file.
+//
+// This replaces the per-syscall pattern (`_io_sys`), where every call needed
+// its own stub. It is the one thing that genuinely cannot be written in Boson:
+// the `syscall` instruction is not expressible, and the register discipline
+// below is not the language's calling convention.
+//
+// Linux x86-64 syscall convention:
+//   number    -> rax
+//   arguments -> rdi, rsi, rdx, r10, r8, r9
+//   return    -> rax (negative errno on failure)
+//   clobbers  -> rcx, r11
+//
+// Note the r10: the *syscall* convention takes its fourth argument there,
+// while the System V *function* convention delivers a fourth argument in rcx.
+// The `syscall` instruction overwrites rcx with the return address, which is
+// exactly why the kernel does not use it. So every stub taking four or more
+// arguments must move rcx into r10 first. Getting this wrong is silent -- the
+// syscall simply sees garbage in one argument slot.
+//
+// Boson callers see (number, args...) and receive raw rax. Errno decoding is
+// the `sys` package's job, not this layer's: a negative return in [-4095, -1]
+// is an error, everything else is a result.
+
+// syscall0(n) -- e.g. getpid, fork
+pub function syscall0
+	type fn(i64) i64
+	prologue
+	mov rax rdi
+	syscall
+	epilogue
+	ret
+
+// syscall1(n, a1) -- e.g. close, exit, brk
+pub function syscall1
+	type fn(i64,i64) i64
+	prologue
+	mov rax rdi
+	mov rdi rsi
+	syscall
+	epilogue
+	ret
+
+// syscall2(n, a1, a2) -- e.g. munmap, fstat
+pub function syscall2
+	type fn(i64,i64,i64) i64
+	prologue
+	mov rax rdi
+	mov rdi rsi
+	mov rsi rdx
+	syscall
+	epilogue
+	ret
+
+// syscall3(n, a1, a2, a3) -- e.g. read, write, open, mprotect
+pub function syscall3
+	type fn(i64,i64,i64,i64) i64
+	prologue
+	mov rax rdi
+	mov rdi rsi
+	mov rsi rdx
+	mov rdx rcx
+	syscall
+	epilogue
+	ret
+
+// syscall4(n, a1, a2, a3, a4) -- e.g. rt_sigaction, wait4
+//
+// The fourth syscall argument arrives in r8 (the function convention's fifth
+// register, since the number consumed rdi) and must land in r10.
+pub function syscall4
+	type fn(i64,i64,i64,i64,i64) i64
+	prologue
+	mov rax rdi
+	mov rdi rsi
+	mov rsi rdx
+	mov rdx rcx
+	mov r10 r8
+	syscall
+	epilogue
+	ret
+
+// syscall5(n, a1, a2, a3, a4, a5) -- e.g. mremap, statx
+//
+// Ordering matters here: r9 is read into r8 only after r8 has been moved to
+// r10, or the fourth argument would be overwritten before it was used.
+pub function syscall5
+	type fn(i64,i64,i64,i64,i64,i64) i64
+	prologue
+	mov rax rdi
+	mov rdi rsi
+	mov rsi rdx
+	mov rdx rcx
+	mov r10 r8
+	mov r8 r9
+	syscall
+	epilogue
+	ret
+
+// syscall6(n, a1, a2, a3, a4, a5, a6) -- e.g. mmap, futex, pselect6
+//
+// Seven parameters, so the last one arrives on the stack rather than in a
+// register: BABI-0 places argument 6 at [rbp+56], above the return address and
+// the six registers the prologue saves. This stub is why stack arguments had to
+// land before the syscall floor could be generic -- mmap is a six-argument
+// syscall, and the number makes seven.
+pub function syscall6
+	type fn(i64,i64,i64,i64,i64,i64,i64) i64
+	// Declared rather than addressed as [rbp+56] so the offset comes from the
+	// same StackArg computation the compiler emits against, instead of being
+	// restated here where it could silently drift.
+	argi a6 6
+	prologue
+	// Materialize the stack argument FIRST, into a register no syscall
+	// argument occupies yet.
+	//
+	// bas lowers a memory-sourced `mov <reg> <stackarg>` as a load into a
+	// scratch register followed by a register move, and it chooses the
+	// scratch. It chooses r10 -- which is where the *fourth* syscall argument
+	// has to sit. Written in the obvious order (`mov r9 a6` last), the load
+	// clobbers r10 one instruction before the `syscall`, and mmap silently
+	// receives garbage flags.
+	//
+	// Doing the load while r10 is still dead makes the scratch choice
+	// irrelevant. r11 is safe to hold it: the syscall clobbers r11, but not
+	// until after this reads it.
+	mov r11 a6
+	mov rax rdi
+	mov rdi rsi
+	mov rsi rdx
+	mov rdx rcx
+	mov r10 r8
+	mov r8 r9
+	mov r9 r11
+	syscall
+	epilogue
+	ret

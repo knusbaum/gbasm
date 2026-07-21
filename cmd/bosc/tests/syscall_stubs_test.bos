@@ -1,0 +1,65 @@
+package main
+
+import "string"
+import "_sys"
+
+// The generic syscall floor: syscall0..syscall6 let any Linux syscall be
+// issued from Boson, so a new one needs a typed Boson wrapper rather than a new
+// hand-written assembly stub.
+//
+// syscall6 is the reason stack arguments had to land first. mmap takes six
+// arguments and the syscall number makes seven, which is one past the six
+// argument registers -- so the last one travels on the stack. This test is the
+// end-to-end proof of that path: a wrong slot, a missed r10 move, or a botched
+// alignment shows up as a failed mmap rather than a subtly wrong number.
+
+// x86-64 Linux syscall numbers.
+var SYS_WRITE i64 := 1
+var SYS_MMAP i64 := 9
+var SYS_MUNMAP i64 := 11
+var SYS_GETPID i64 := 39
+
+// mmap flags.
+var PROT_READ i64 := 1
+var PROT_WRITE i64 := 2
+var MAP_PRIVATE i64 := 2
+var MAP_ANONYMOUS i64 := 32
+
+fn line(n i64) {
+	string.puti(n)
+	string.putc('\n')
+}
+
+fn main() {
+	// syscall0: getpid always succeeds and is always positive.
+	pid := _sys.syscall0(SYS_GETPID)
+	if (pid > 0) { line(1) } else { line(0) }
+
+	// syscall6: mmap(NULL, 4096, READ|WRITE, PRIVATE|ANONYMOUS, -1, 0).
+	// A negative return in [-4095, -1] is an errno.
+	addr := _sys.syscall6(SYS_MMAP, 0, 4096,
+		PROT_READ + PROT_WRITE, MAP_PRIVATE + MAP_ANONYMOUS, -1, 0)
+	if (addr > 0) { line(1) } else { line(0) }
+
+	// The mapping must be usable, which is the real test that every argument
+	// landed in the right slot -- a wrong prot or flags value can still return
+	// a plausible-looking address.
+	p := unsafe_cast(*mut i64, uintptr(addr))
+	*p = 0x1234567
+	line(*p)
+
+	// MAP_ANONYMOUS pages are zero-filled; read a second slot to confirm we
+	// got real anonymous memory rather than something aliased.
+	q := unsafe_cast(*mut i64, uintptr(addr) + uintptr(64))
+	line(*q)
+
+	// The page boundary is what proves the length argument was honored.
+	line(i64(uintptr(addr) & uintptr(4095)))
+
+	// syscall2: munmap. Returns 0 on success.
+	line(_sys.syscall2(SYS_MUNMAP, addr, 4096))
+
+	// syscall3: write to stdout. Returns the byte count.
+	msg := "sys\n"
+	line(_sys.syscall3(SYS_WRITE, 1, i64(uintptr(&msg[0])), 4))
+}
