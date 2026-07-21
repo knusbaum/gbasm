@@ -2,6 +2,22 @@
 
 ## History
 
+- 2026-07-20 — **Constant folding bound to the evaluation-precision rule.**
+  `EvalConst` will fold in the destination's exact type (`float32`/`float64`;
+  integers keep `big.Int`), not in exact rationals. Rational folding is more
+  accurate but makes folding *observable* — `x f64 := 0.1 + 0.2` would differ
+  from the runtime `a + b` — which is the same failure mode already rejected for
+  `f32` intermediates. Deliberate divergence from Go. Also settled: an untyped
+  integer literal coerces into a float destination and the arithmetic follows the
+  acquired type (`flt f64 := 1/2` is `0.5`), while an expression that already has
+  a concrete non-float type does not convert. See *Evaluation precision*.
+- 2026-07-20 — **Stage 3a landed** (`3381e07`): float literals lexed and parsed.
+  `numberset` had been swallowing digits and dots together and truncating the
+  fraction, so `1234.5` lexed as the integer `1234` silently — one such value was
+  pinned in `parser_test.go`. Decided: after digits a `.` always begins a
+  fraction (no selector can follow a numeric literal, and `io.RuneScanner` gives
+  only one rune of pushback), a digit is required on both sides of the point, and
+  exponents are scanned explicitly so `1e10` is one token.
 - 2026-07-20 — **Stage 2 landed** (`45985de`, `4c09696`). Split in two: first a
   behavior-preserving move of register-pool policy out of `Registers` into
   `Rallocs` (`Registers.Get` had been walking `regs8`/`regs64` directly, making
@@ -319,6 +335,68 @@ be emitted even by accident.
 
 This is a defined-evaluation-semantics rule and belongs in `DESIGN.md`
 §Expressions when it lands, alongside the integer-overflow-wraps rule.
+
+#### The rule covers compile-time folding too (decided)
+
+The rule above is not only about runtime instruction selection. Stated in full:
+**the declared type is the type it computes in — at compile time and at run
+time, no exceptions.** Constant folding is therefore *unobservable*: an
+expression means the same thing whether its operands are spelled as literals or
+reached through variables.
+
+`compile.go` already folds constants: an expression whose type is `<intlit>` is
+evaluated by `EvalConst` and emitted as a single immediate "into whatever
+concrete type the context provides" (`compile.go:3063`). `EvalConst` returns a
+`*big.Int` (`compile.go:5737`). Extending that to floats means `EvalConst` takes
+the destination type and folds in **that exact type**:
+
+| Destination | Folds in |
+|---|---|
+| integer | `big.Int` — unchanged; `x i64 := 1/2` still yields `0` |
+| `f32` | Go `float32` |
+| `f64` | Go `float64` |
+
+An untyped integer literal in a float destination becomes that float type
+*first* and the arithmetic then happens in it, so `flt f64 := 1/2` is `0.5`. An
+expression that has already acquired a concrete non-float type does not convert:
+`flt2 f64 := x/2` with `x i64` is rejected, because `2` adopts `i64` from `x`
+and Boson does not convert between number types implicitly. (Verified against
+the current compiler with the analogous integer case, which reports "Cannot
+initialize i32 with value of type i64".)
+
+**The rejected alternative was exact-rational folding** (`big.Rat`, converting
+once at the end). It is more *accurate* — `1/3` into `f64` would be correctly
+rounded rather than rounded twice — but it breaks the invariant. With
+`x f64 := 0.1 + 0.2`, rational folding gives `0.29999999999999999` (exact `0.3`,
+rounded once) while both `f64` folding and the runtime `a + b` give
+`0.30000000000000004`. Those print differently, so the same expression would
+mean two different things depending on whether its operands were literals — the
+identical failure mode this section rejects for `f32` intermediates, one layer
+down and considerably harder to notice.
+
+**This diverges from Go deliberately.** Go's untyped constants are
+arbitrary-precision, so Go really does fold `0.1 + 0.2` to a different value
+than its runtime counterpart; Go trades the invariant for exactness. Having
+already committed to the invariant for `f32`, consistency is worth more here
+than matching Go, and "the declared type is the type it computes in" is the
+easier rule to hold in your head than "constants are exact, variables are not."
+
+Two consequences:
+
+- **Division by zero is not an error in a float destination.** `EvalConst`
+  currently returns not-ok for a zero divisor. Under IEEE `1.0/0.0` is `+Inf`, a
+  legal value and what the runtime produces, so float folding must let it
+  through. Integer folding keeps rejecting it.
+- **Literals still arrive via `float64`.** `<floatlit>` is a Go `float64`, so an
+  `f32` destination rounds twice. That is the double-rounding case already
+  documented under *Literals*, and it is exactly what an explicit runtime cast
+  would do — consistent with the rule rather than an exception to it.
+
+*Test obligation:* the invariant is directly executable. For a set of
+expressions, compute each **as constants** and **at runtime from variables
+holding the same values**, and assert the results are bit-identical. This test
+is what distinguishes the two folding strategies, and it belongs with the
+folding implementation in Stage 3.
 
 ### Comparisons (decided: full IEEE, including `==`)
 
