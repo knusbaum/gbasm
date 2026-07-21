@@ -16,15 +16,10 @@ cmd/bas/bas
 cmd/bas/bld
 cmd/bosc/*.bo
 cmd/bosc/*.importcfg
-cmd/bosc/builtin.bs
-cmd/bosc/io.bs
-cmd/bosc/fmt.bs
-cmd/bosc/errors.bs
-cmd/bosc/geom.bs
-cmd/bosc/ifaces.bs
-cmd/bosc/pair.bs
-cmd/bosc/visibility.bs
-cmd/bosc/retalias_pkg.bs
+# Every .bs bosc emits while building the test-harness packages. A glob rather
+# than a per-package list, which went stale each time a runtime package was
+# added. Test fixtures live in cmd/bosc/tests/ and are not matched.
+cmd/bosc/*.bs
 
 # Build artifacts (mmk writes package .bo files and work dirs under target/)
 /target/
