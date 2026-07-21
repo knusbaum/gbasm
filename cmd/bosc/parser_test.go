@@ -525,14 +525,24 @@ func TestParser(t *testing.T) {
 			}},
 		},
 		{
-			// + binds tighter than <<: 1 + 2 << 3 == (1 + 2) << 3.
+			// << binds tighter than +: 1 + 2 << 3 == 1 + (2 << 3).
+			//
+			// This test previously pinned the opposite, C's ordering, where
+			// shifts sit below +/-. That makes `1 << n + 1` mean `1 << (n+1)`,
+			// and since `1 << k` is overwhelmingly "power of two" the intent is
+			// nearly always `(1 << n) + 1` -- so the result was silently double.
+			// Go moved shifts to the multiplicative level for this reason.
+			//
+			// Unlike the bitwise/comparison fix, this one CAN change the meaning
+			// of code that compiles, since both parses type-check. It was made
+			// deliberately and early, while the blast radius was one test line.
 			in: "1 + 2 << 3",
-			out: &Node{t: n_shl, args: []*Node{
-				&Node{t: n_add, args: []*Node{
-					&Node{t: n_number, ival: 1},
+			out: &Node{t: n_add, args: []*Node{
+				&Node{t: n_number, ival: 1},
+				&Node{t: n_shl, args: []*Node{
 					&Node{t: n_number, ival: 2},
+					&Node{t: n_number, ival: 3},
 				}},
-				&Node{t: n_number, ival: 3},
 			}},
 		},
 		{
@@ -591,9 +601,10 @@ func TestParser(t *testing.T) {
 		{
 			// Bitwise still binds LOOSER than + and shifts, which is where
 			// Boson stops short of Go's table. Go puts `&` at the `*` level
-			// and `|`/`^` at the `+` level, which would silently change this
-			// from a & (b + c) to (a & b) + c -- a real change to programs
-			// that compile today, unlike the comparison fix above.
+			// and `|`/`^` at the `+` level, which would change this from
+			// a & (b + c) to (a & b) + c. Keeping bitwise looser than
+			// arithmetic preserves the intuition that they are the outermost
+			// thing in an expression.
 			in: "a & b + c",
 			out: &Node{t: n_bitand, args: []*Node{
 				&Node{t: n_symbol, sval: "a"},

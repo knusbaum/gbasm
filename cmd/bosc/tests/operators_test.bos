@@ -18,8 +18,8 @@ fn main() {
 	fmt.print("%d\n", u >> 63)                        // 1 (logical, not arithmetic)
 	// bitwise not: ~x == -x-1; ~x ^ x is all ones (-1)
 	fmt.print("%d %d\n", ~a, ~a ^ a)                  // -18 -1
-	// precedence: % with * / ; + tighter than << ; << tighter than == ;
-	// & tighter than ^ tighter than |
-	fmt.print("%v %v\n", 2 + 3 % 2 == 3, 1 + 1 << 2 == 8)        // true true
+	// precedence: % with * / ; << with * / (tighter than +, unlike C) ;
+	// bitwise tighter than == (unlike C) ; & tighter than ^ tighter than |
+	fmt.print("%v %v\n", 2 + 3 % 2 == 3, 1 + 1 << 2 == 5)        // true true
 	fmt.print("%d %d\n", 0xF0 | 0x0F ^ 0xFF, 0xFF & 0x0F ^ 0xF0) // 240 255
 }

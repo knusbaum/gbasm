@@ -41,12 +41,26 @@ fn main() {
 	tf(a & 3 == 0)
 	tf(a & 4 != 0)
 
+	// --- Shifts sit at the multiplicative level ----------------------------
+	// C and Python put shifts BELOW + -, which makes `1 << n + 1` mean
+	// `1 << (n+1)`. Since `1 << k` is overwhelmingly "power of two", the
+	// intent is nearly always `(1 << n) + 1`, so shifts moved up alongside
+	// * / % as in Go.
+	//
+	// (1 << 4) + 1 -> 17.  C and Python give 1 << 5 = 32.
+	line(1 << 4 + 1)
+	// 12 + (10 << 1) -> 32.  C and Python give (12 + 10) << 1 = 44.
+	line(a + b << 1)
+	// (12 >> 2) - 1 -> 2.  C and Python give 12 >> 1 = 6.
+	line(a >> 2 - 1)
+
 	// --- Unchanged: bitwise still binds LOOSER than + and shifts -----------
 	// 12 & (10 + 8) -> 12 & 18 -> 0.  Go would give (12 & 10) + 8 = 16.
 	line(a & b + c)
 	// 12 | (10 - 8) -> 12 | 2 -> 14.  Go would give (12 | 10) - 8 = 6.
 	line(a | b - c)
-	// 12 & (1 << 3) -> 12 & 8 -> 8
+	// 12 & (1 << 3) -> 12 & 8 -> 8. Unchanged: shifts were already tighter
+	// than the bitwise operators, and moving them past +/- did not alter that.
 	line(a & 1 << 3)
 
 	// --- Unchanged: relative order among the bitwise operators -------------

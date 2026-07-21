@@ -187,23 +187,33 @@ Logical: `&&` (and), `||` (or). **Short-circuit**: `a && b` evaluates `b` only w
 | 4 | `\|` |
 | 5 | `^` |
 | 6 | `&` |
-| 7 | `<<` `>>` |
-| 8 | `+` `-` |
-| 9 | `*` `/` `%` |
-| 10 | unary `!` `~` `-` `*` `&` |
+| 7 | `+` `-` |
+| 8 | `*` `/` `%` `<<` `>>` |
+| 9 | unary `!` `~` `-` `*` `&` |
 
 **The bitwise operators bind tighter than comparison**, so `x & MASK == 0` is
 `(x & MASK) == 0` — the idiom means what it looks like. This differs from C,
 which places `&` `^` `|` *outside* comparison; that ordering is a
 widely-acknowledged mistake in C's design and Go corrects it too.
 
-Note that Boson stops there rather than adopting Go's full table, which also
-places `|`/`^` at the `+` level and `&` at the `*` level. Under Boson's
-ordering `a & b + c` is `a & (b + c)`; under Go's it would be `(a & b) + c`.
-Lifting the bitwise operators past comparison alone cannot change the meaning
-of any program that compiles, because bitwise operators reject `bool` operands
-— so every expression the change affects was previously a type error. Adopting
-the rest of Go's table would not have that property.
+**Shifts sit at the multiplicative level**, so `1 << n + 1` is `(1 << n) + 1`.
+C and Python place shifts *below* `+`/`-`, which makes that expression
+`1 << (n + 1)` — and since `1 << k` is overwhelmingly "power of two", the
+result is silently double what was meant. Go moved shifts up for this reason
+and Boson follows.
+
+Boson stops short of Go's remaining difference, which folds `|`/`^` into the
+`+` level and `&` into the `*` level. Under Boson `a & b + c` is `a & (b + c)`;
+under Go it would be `(a & b) + c`. Keeping the bitwise operators looser than
+arithmetic preserves the useful intuition that they are the outermost thing in
+an expression, and Go's unification buys only a shorter table.
+
+The two departures from C differ in cost, which is worth recording. Lifting the
+bitwise operators past comparison could not change any working program: bitwise
+operators reject `bool` operands, so every expression it affects was previously
+a type error. Moving shifts past `+`/`-` *can* silently change meaning, since
+both parses type-check — it was made deliberately and early, while the
+consequences were a single test line.
 
 Bitwise: `&` (AND), `^` (XOR), `|` (OR), `<<`/`>>` (left/right shift), and unary `~` (NOT). Operate on integer types of any width. For `&`/`^`/`|` the operand widths must match (integer literals coerce to the other operand's type); for shifts the count may be any integer width. A right shift on a signed operand is arithmetic (`sar`, sign-preserving); on an unsigned operand it is logical (`shr`, zero-filling). `~x` is the bitwise complement, equal to `-x - 1`.
 

@@ -1351,7 +1351,12 @@ func (p *Parser) parseSubexpr() *Node {
 	// has already chewed through any postfix chain) or a sub-expression
 	// from inside parens (which is fully formed). Either way the dot/
 	// index/slice/call chain has already been applied; here we only
-	// handle mul/div at this precedence level.
+	// handle the multiplicative level.
+	//
+	// Shifts live here, alongside * / %, rather than below +/- as in C and
+	// Python. C's placement makes `1 << n + 1` mean `1 << (n+1)`, and since
+	// `1 << k` is overwhelmingly "power of two", the intent is nearly always
+	// `(1 << n) + 1`. Go moved shifts up for exactly this reason.
 	for {
 		c := p.current()
 		switch c.t {
@@ -1369,6 +1374,16 @@ func (p *Parser) parseSubexpr() *Node {
 			p.advance()
 			v2 := p.parseParens()
 			v = &Node{t: n_mod, p: c.p, args: []*Node{v, v2}}
+			continue
+		case tok_shl:
+			p.advance()
+			v2 := p.parseParens()
+			v = &Node{t: n_shl, p: c.p, args: []*Node{v, v2}}
+			continue
+		case tok_shr:
+			p.advance()
+			v2 := p.parseParens()
+			v = &Node{t: n_shr, p: c.p, args: []*Node{v, v2}}
 			continue
 		}
 		break
@@ -1513,14 +1528,14 @@ func (p *Parser) parseBitXor() *Node {
 }
 
 func (p *Parser) parseBitAnd() *Node {
-	v := p.parseShift()
+	v := p.parseAddSub()
 	for {
 		c := p.current()
 		if c.t != tok_amp {
 			break
 		}
 		p.advance()
-		v2 := p.parseShift()
+		v2 := p.parseAddSub()
 		v = &Node{t: n_bitand, p: c.p, args: []*Node{v, v2}}
 	}
 	return v
@@ -1572,29 +1587,6 @@ func (p *Parser) parseCompare() *Node {
 			p.advance()
 			v2 := p.parseBitOr()
 			v = &Node{t: n_ge, p: c.p, args: []*Node{v, v2}}
-			continue
-		}
-		break
-	}
-	return v
-}
-
-// parseShift sits between comparison (looser) and additive (tighter),
-// matching C: `a + b << c` parses as `(a + b) << c`.
-func (p *Parser) parseShift() *Node {
-	v := p.parseAddSub()
-	for {
-		c := p.current()
-		switch c.t {
-		case tok_shl:
-			p.advance()
-			v2 := p.parseAddSub()
-			v = &Node{t: n_shl, p: c.p, args: []*Node{v, v2}}
-			continue
-		case tok_shr:
-			p.advance()
-			v2 := p.parseAddSub()
-			v = &Node{t: n_shr, p: c.p, args: []*Node{v, v2}}
 			continue
 		}
 		break
