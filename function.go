@@ -176,7 +176,7 @@ func (r *Ralloc) Register() Register {
 		return r.reg
 	}
 	if !r.regable {
-		reg, ok := r.rallocs.rs.Get(64)
+		reg, ok := r.rallocs.Get(64)
 		if !ok {
 			reg, ok = r.rallocs.Evict(64)
 			if !ok {
@@ -195,7 +195,7 @@ func (r *Ralloc) Register() Register {
 		return reg
 		//panic(fmt.Sprintf("Cannot load variable %s into register.", r.sym)) // TODO: Better error handling
 	}
-	reg, ok := r.rallocs.rs.Get(r.size)
+	reg, ok := r.rallocs.Get(r.size)
 	if !ok {
 		if debug {
 			fmt.Printf("\t[Ralloc.Register()]: No available registers for %s (size %d). Evicting some variable.\n", r.sym, r.size)
@@ -325,23 +325,42 @@ func (fr *Frame) returnSpace(size int32, offset int32) {
 	})
 }
 
-// Rallocs is one register file's allocator. Frame state is shared (see Frame);
-// everything here is specific to the set of registers this allocator owns.
+// Rallocs is one register file's allocator. Frame state is shared (see Frame),
+// and so is the Registers occupancy map — that answers "is this physical
+// register taken", which has no notion of class, and sharing it means a
+// reservation made by any allocator (or by an explicit `acquire` in .bs) is
+// visible to all of them. Everything class-specific lives here: which
+// registers this file may hand out and in what preference order, the LRU used
+// to pick an eviction victim, and the set of names currently in registers.
 type Rallocs struct {
 	regs  map[Register]*Ralloc
 	rs    *Registers
 	f     *Function
 	lru   []Register
 	frame *Frame // shared with every other allocator on this function
+
+	// pool is this file's full-width registers in allocation-preference
+	// order; pool8 is its 8-bit sub-registers, which need separate handling
+	// because several of them share one full register. A file without
+	// sub-registers (SSE) leaves pool8 nil.
+	pool  []Register
+	pool8 []Register
 }
 
-func NewRallocs(rs *Registers, f *Function, frame *Frame) *Rallocs {
+func NewRallocs(rs *Registers, f *Function, frame *Frame, pool, pool8 []Register) *Rallocs {
 	return &Rallocs{
 		regs:  make(map[Register]*Ralloc),
 		rs:    rs,
 		f:     f,
 		frame: frame,
+		pool:  pool,
+		pool8: pool8,
 	}
+}
+
+// Get finds an unused register of size in this file and marks it in use.
+func (ra *Rallocs) Get(size int) (Register, bool) {
+	return ra.rs.getFrom(ra.pool, ra.pool8, size)
 }
 
 // NewLocal allocates a new local variable of size bits. Locals created with
@@ -635,7 +654,7 @@ func (ra *Rallocs) Evict(size int) (Register, bool) {
 			ra.regs[reg].Evict()
 			//return reg, true
 			// Can't just return reg, since it might be > size
-			return ra.rs.Get(size)
+			return ra.Get(size)
 		}
 	}
 	return 0, false
@@ -813,7 +832,7 @@ func (o *OFile) NewFunction(srcFile string, srcLine int, name string, args ...*V
 		basePointerOff: (6 * 8), // Determined in Prologue. This is the amount of "stuff" pushed on top of any arguments before the base pointer is established.
 	}
 	f.frame = NewFrame()
-	f.Rallocs = NewRallocs(f.rs, f, f.frame)
+	f.Rallocs = NewRallocs(f.rs, f, f.frame, regs64, regs8)
 	o.Funcs[name] = f
 	return f, nil
 }
@@ -833,7 +852,7 @@ func (f *Function) Release(r Register) {
 // Get finds an unused register of size and marks it as in-use. When the register is no longer
 // needed it should be Released.
 func (f *Function) Get(size int) (Register, bool) {
-	return f.rs.Get(size)
+	return f.Rallocs.Get(size)
 }
 
 // Functions assume System V x86_64 calling convention.

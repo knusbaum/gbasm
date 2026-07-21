@@ -109,8 +109,8 @@ var regs64_prefer_caller_saved = append(append(other_regs, callee_saved...), fun
 var regs64 = regs64_prefer_caller_saved
 
 // unused8 is special, because multiple 8-bit registers can exist in a single higher-level register.
-func (rs *Registers) unused8() (Register, bool) {
-	for _, r := range regs8 {
+func (rs *Registers) unused8(pool8 []Register) (Register, bool) {
+	for _, r := range pool8 {
 		if !rs.rs[r].inuse {
 			full := rs.rs[r.fullReg()]
 			if !full.inuse || (full.inuse && full.size == 8) {
@@ -121,11 +121,20 @@ func (rs *Registers) unused8() (Register, bool) {
 	return 0, false
 }
 
-// Get requests the use of a register of a particular size.
-// Registers should be Released when they are no longer needed.
-func (rs *Registers) Get(size int) (Register, bool) {
+// getFrom requests the use of a register of a particular size, drawn from the
+// caller's pools in the order given. Registers should be Released when they
+// are no longer needed.
+//
+// The pools are a parameter rather than a package global because *which*
+// registers to consider, and in what preference order, is per-register-file
+// policy and belongs to the allocator (see Rallocs). Registers itself only
+// tracks which physical registers are occupied, a question with no notion of
+// class — which is why one Registers is shared by every allocator on a
+// function, so that a reservation made through Use/acquire is visible to all
+// of them.
+func (rs *Registers) getFrom(pool, pool8 []Register, size int) (Register, bool) {
 	if size == 8 {
-		r, ok := rs.unused8()
+		r, ok := rs.unused8(pool8)
 		if !ok {
 			return 0, false
 		}
@@ -135,7 +144,7 @@ func (rs *Registers) Get(size int) (Register, bool) {
 		rs.rs[r.fullReg()].size = size
 		return r, true
 	} else {
-		for _, r := range regs64 {
+		for _, r := range pool {
 			if !rs.rs[r].inuse {
 				if pr, ok := r.partial(size); ok {
 					rs.rs[r].inuse = true
