@@ -2,6 +2,21 @@
 
 ## History
 
+- 2026-07-20 — **Stage 2 landed** (`45985de`, `4c09696`). Split in two: first a
+  behavior-preserving move of register-pool policy out of `Registers` into
+  `Rallocs` (`Registers.Get` had been walking `regs8`/`regs64` directly, making
+  it the *integer* allocator under a class-neutral name), then the float
+  allocator and the `local <name> f64` class tag. Class-specific behavior that
+  had been hardcoded to the integer file — spill/reload instruction, caller-saved
+  list, `RegSize`, the `UseRegister` width assertion — is now per-file;
+  `EvictAll`/`EvictForCall`/`ForgetAll` moved up to `Function` to drive both.
+  The shared-occupancy-map decision is covered by a test verified to fail when
+  the map is split. Float *arguments* deferred to Stage 5 with the ABI.
+- 2026-07-20 — **Register-file seam corrected** (`12f9bc9`): `Rallocs` splits per
+  register file, `Registers` and `Frame` stay shared per function. See
+  *Register allocation* for the reasoning; the earlier "second `Registers`
+  instance" line was wrong and would have allowed an `acquire`d XMM to be
+  silently reallocated.
 - 2026-07-20 — **Stage 1 landed** (`9f0caad`): XMM0–15 in `reg.go` with a
   `RegClass`, the `"xmm"` operand type in `encoder.go`, and `ParseReg` accepting
   `xmm0`–`xmm15`. Byte-level goldens against GNU as (`sse_encode_test.go`, 32
