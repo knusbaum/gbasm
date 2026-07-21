@@ -876,6 +876,12 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 		// does NOT drive prefix or REX selection — for SSE both the mandatory
 		// prefix (F2/F3/66) and REX.W come from the instruction database. So
 		// reporting the true 128-bit width is safe here.
+		//
+		// Caveat for later: on a form that also takes an imm8, 128 > 8 makes
+		// the imm8 case reject any byte with the high bit set. The only such
+		// scalar forms are CMPSD/CMPSS, whose immediate is a comparison
+		// predicate in 0-7, so it does not bite today. A packed form taking a
+		// full-range imm8 (a shuffle mask, say) would need this revisited.
 		if r, ok := op.(Register); ok {
 			return r.Class() == ClassFloat, 128
 		}

@@ -469,6 +469,36 @@ A float `Ralloc` pointing at the float allocator dispatches through
 and the float file simply never has sub-register machinery rather than having
 class-aware no-ops.
 
+**`Rallocs` splits; `Registers` is shared** (decided during Stage 2). An earlier
+draft of this section called for "a second `Registers` instance over an XMM
+pool." That is the wrong seam, and it is the same distinction that motivated
+`Frame`:
+
+| Type | Is | Lifetime |
+|---|---|---|
+| `Frame` | stack cursor + local namespace | one per function |
+| `Registers` | which *physical* registers are occupied | one per function |
+| `Rallocs` | allocation policy for **one register file** — pool order, LRU, spill instruction | one per register file |
+
+`Registers` is keyed by physical register and answers a class-independent
+question. `Rallocs` is where every class-specific decision lives, and splitting
+it alone already removes the cross-class eviction hazard: each allocator's `Get`
+scans only its own pool list and each `Evict` walks only its own allocated-name
+set, so an integer request cannot reach an XMM even though both files appear in
+one map.
+
+Sharing the map is also *more* correct than splitting it. `acquire xmm0` in
+hand-written `.bs` marks the register occupied; with two maps that mark would
+land in the integer map while the float allocator consulted the other one, saw
+xmm0 free, and handed it to a float local on top of the held value — a silent
+clobber that no encoding test and no all-explicit-register test can observe.
+With one map the reservation is visible to whichever allocator asks, and
+`acquire`/`release` need no class routing at all.
+
+The discriminating test is therefore: hold an explicit `acquire xmm0` containing
+a known value across the allocation *and use* of a float local, and assert the
+held value survives.
+
 Note the allocator is consulted **only for named/allocated values**. Explicit
 registers in `.bs`, `bytes`, `var`/`data`, and everything memory-backed bypass it
 entirely — so this change's blast radius is narrower than "the register
@@ -551,9 +581,10 @@ apply.
    ranges; teach `String`/`ParseReg`/`needREX`/`byte`/`Width`. The sub-register
    helpers (`fullReg`/`brother8`/`partial`/`subRegisters8`) need only to be
    correct-by-construction for XMM (identity / not-applicable).
-2. **`regalloc.go`** — a second `Registers` instance over an `regsXMM` pool. All
-   XMM0–15 are caller-saved, so the pool needs no callee-saved preference
-   ordering — simpler than the GPR pool.
+2. **`regalloc.go`** — a `regsXMM` pool list for the float `Rallocs` to scan
+   (the availability map itself is shared; see above). All XMM0–15 are
+   caller-saved, so the pool needs no callee-saved preference ordering — simpler
+   than the GPR pool.
 3. **`encoder.go`** — implement `case "xmm"` and `case "m128"` in `Op.Match`
    (:849-861, :964); add `xmm` to `ConvertRalloc` (:685). Return a size for `xmm`
    that does not perturb immediate-selection. ~30 lines.
