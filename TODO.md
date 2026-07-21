@@ -268,13 +268,17 @@ than fix it speculatively.
 deliberately does not cache *failures* (`runtime/_iface/iface.bos`,
 `DESIGN.md:1968`). A repeatedly-failing `x.(I)` therefore re-derives the
 receiver shape, allocates an itab, walks the whole typedesc method table doing
-hash *and* byte-equal name/sig compares, fails, and frees — every iteration,
-which under today's one-mapping-per-allocation `_heap` is an `mmap`/`munmap`
-pair per failed assertion. Record the failed `(dst_desc, shape)` so the second
-attempt is O(1). Sequencing matters: this is a behavior change, so it must land
-*after* the `_iface` port and the allocator (see
-[`docs/proposed/PROPOSAL_raw_memory.md`](docs/proposed/PROPOSAL_raw_memory.md)),
-both of which rely on the current semantics as their test oracle.
+hash *and* byte-equal name/sig compares, fails, and frees — every iteration.
+Record the failed `(dst_desc, shape)` so the second attempt is O(1).
+
+Prerequisites are now met: the `_iface` port and the Boson allocator have both
+landed, so this is unblocked. It is a behavior change — the current
+no-cache-on-miss semantics were the test oracle for both of those, so it could
+not go first. Now that they are in, it can. Design question to settle when
+picked up: where the negative cache lives (a per-typedesc miss list parallel to
+the itab cache, keyed the same way) and whether it needs invalidation (it does
+not today — the typedesc/iface_desc sets are fixed at link time, so a miss is
+permanent).
 
 ### Read-only `.rodata` hardening
 String constants currently land in the writable `.data` LOAD segment;
