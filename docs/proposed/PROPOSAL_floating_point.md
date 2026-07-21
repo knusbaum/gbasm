@@ -2,6 +2,25 @@
 
 ## History
 
+- 2026-07-20 — **Stage 1 landed** (`9f0caad`): XMM0–15 in `reg.go` with a
+  `RegClass`, the `"xmm"` operand type in `encoder.go`, and `ParseReg` accepting
+  `xmm0`–`xmm15`. Byte-level goldens against GNU as (`sse_encode_test.go`, 32
+  forms) plus an executing `.bs` test (`cmd/bas/tests/sse_test.bs`). Scope was
+  trimmed to the *explicit-register encode path*: the float allocator pool and
+  `ConvertRalloc`'s xmm case moved to Stage 2, because hand-written `.bs` cannot
+  reach an allocated float name until the class tag exists, and shipping them
+  now would mean untested scaffolding. Confirmed en route that only `"xmm"` was
+  needed — `m128` is packed-move territory, and the scalar reg/mem forms take
+  `m32`/`m64`, which already matched.
+- 2026-07-20 — **Encoder REX bug found and fixed** (`304e8a3`), a prerequisite
+  discovered while diffing against `as`: REX.R/X/B were derived from operand 0
+  whenever the instruction database omitted the field (625 forms omit X, 535
+  omit R), and `REX_X` returned the base register for a plain `Indirect` even
+  though `[base+disp]` has no SIB index. Both produced non-canonical bytes that
+  ran correctly — REX.X is ignored without a SIB byte — so the execution-based
+  suites could never have caught them. Noted for the record: **the existing
+  suites validate behavior, not encodings**, so any future encoder work needs
+  byte-level assertions against an external assembler.
 - 2026-07-20 — **Stage 0 landed** (`78fa09f`): `Frame` extracted from `Rallocs`
   in `function.go`. Pure refactor, no float content, full suite green (766
   integration tests + go tests). The stack-frame cursor, spill-slot free list,
