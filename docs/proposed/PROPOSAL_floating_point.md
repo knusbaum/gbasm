@@ -1007,12 +1007,15 @@ before moving this doc to `docs/implemented/`. Distinct from *Open questions*
 below, which is about undecided design; everything here is decided and merely
 unbuilt.
 
-**The full inventory of integer assumptions in codegen** — every site that would
-silently treat a float as an integer — is in
-[`AUDIT_float_codegen_assumptions.md`](../reference/AUDIT_float_codegen_assumptions.md).
-Boson's type system began with a single type (`num`, a signed 64-bit integer), so
-those assumptions are pervasive rather than incidental; the audit exists so they
-are enumerated rather than discovered one miscompile at a time.
+**The full inventory of codegen sites floats now reach** — every dispatch that
+must become register-class-aware — is in
+[`AUDIT_float_codegen_surface.md`](../reference/AUDIT_float_codegen_surface.md).
+Codegen legitimately relies on an invariant the type checker supplies — every
+value reaching arithmetic is an integer in a general-purpose register, fully
+described by its size — which held for every type the language has had until now.
+Floats widen that invariant rather than violating it, so the work is to extend
+the dispatch at the sites a float can now reach, *not* to scatter defensive
+guards through codegen.
 
 ### Must be closed before the feature ships
 

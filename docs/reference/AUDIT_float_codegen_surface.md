@@ -1,38 +1,65 @@
-# Audit: integer assumptions in codegen (float support)
+# Audit: the codegen surface floats reach
 
 ## History
 
+- 2026-07-20 — Reframed. The original title ("integer assumptions in codegen")
+  implied codegen was defective. It was not: it relied on an invariant the type
+  checker guaranteed, which is how the layering is supposed to work. Rewritten
+  as an inventory of the sites that must become class-aware, not a bug list.
 - 2026-07-20 — Written during Stage 3→4 of
   [`PROPOSAL_floating_point.md`](../proposed/PROPOSAL_floating_point.md), after
-  two silent miscompiles made it clear the assumptions needed enumerating rather
-  than discovering one at a time.
+  two silent miscompiles made it clear the affected sites needed enumerating
+  rather than discovering one at a time.
 
 ---
 
 ## Why this exists
 
 Boson's type system began with a single type: `num`, a signed 64-bit integer.
-Every later type was added against codegen that already assumed *a scalar is an
-integer in a general-purpose register, and its size tells you everything*. That
-assumption is correct for every type the language has had until now — `i8`…`u64`,
-`byte`, `bool`, and pointers are all integers in a GPR, differing only in width.
+Codegen was written against — and is still written against — an invariant the
+**type checker** supplies:
 
-Floats break it in a way no previous type did: `f64` and `i64` are the same
-*size* and a different *register file*. So every site that dispatches on size
-alone will do something well-defined and wrong rather than failing.
+> Every value that reaches arithmetic, comparison or scalar storage is an
+> integer, living in a general-purpose register, fully described by its size.
 
-**The failure mode is silence, not error.** Two instances were found by
-accident before this audit:
+**That is not a latent bug. It is correct layering.** Codegen's job is to lower
+what the type checker has already declared legal, not to re-check legality. The
+invariant held for every type the language has ever had: `i8`…`u64`, `byte`,
+`bool` and pointers are all integers in a GPR differing only in width, and
+anything else — a pointer in a division, a bool in a multiply — is rejected
+upstream and never arrives. Verified: `*i64 / *i64` fails with "operator /
+requires numeric operands, but got \*i64", nowhere near instruction selection.
+
+What changes with floats is **the invariant, not the design**. `f64` and `i64`
+are the same *size* and a different *register file*, so "size fully describes a
+scalar" stops being true. Codegen must now dispatch on register class as well as
+size — and it must do so at exactly the sites the widened invariant lets a float
+reach, which is what this document enumerates.
+
+The corollary matters for how Stage 4 is built: **do not scatter defensive float
+guards through codegen.** That would push type knowledge back down a layer and
+duplicate the checker. Extend the dispatch where a float can now legitimately
+arrive, and leave everything else alone.
+
+### Why the two miscompiles happened
+
+Neither was codegen's fault. Stage 3 widened the type checker — making `+ - * /`
+accept floats — *before* codegen could lower them. The invariant codegen relies
+on was broken from above, so it did the well-defined integer thing:
 
 - `fn f(a f64, b f64) f64 { return a + b }` compiled clean, emitting
   `argi a 0 64` — the integer argument registers — and an integer `ADD` on the
   bits of two doubles.
-- `fn f(_ f64)` did the same through the discarded-parameter path, which the
-  first gate missed.
+- `fn f(_ f64)` did the same through the discarded-parameter path.
+
+`requireFloatCodegenSupport` is the correct response: it temporarily narrows the
+invariant back to what codegen can honor, so the gap fails loudly instead of
+silently. It is scaffolding with a deletion date, tracked in the proposal's
+gaps-and-debt checklist — not a permanent second line of defense.
 
 This document is the inventory. It is a *reference*, not a plan: the plan is the
-proposal's staged implementation. Use this to check that each stage has covered
-what it claims, and to know where to look when a float behaves like an integer.
+proposal's staged implementation. Use it to check that each stage covered what it
+claims, and to know where to look when a float behaves like an integer.
 
 ---
 
@@ -77,14 +104,16 @@ scaffolding for unimplemented lowering, not a substitute for type checking.
 
 ---
 
-## The root cause, in one line
+## The one structural change
 
-`spot` — codegen's handle for a value — has no register class. `newSpot` emits
-`local <ref> <size*8>`, and the `.bs` `local` directive interpreted that as a
-general-purpose register until Stage 2 added the `f32`/`f64` size operand.
-Nothing between the type system and the assembler carried the class.
+`spot` — codegen's handle for a value — has no register class, because until now
+there was only one. `newSpot` emits `local <ref> <size*8>`, and the `.bs` `local`
+directive read that as a general-purpose register until Stage 2 added the
+`f32`/`f64` size operand.
 
-Everything below is downstream of that.
+Giving `spot` a class and threading it through `newSpot`/`move` is the single
+change that makes most of the inventory below fall out, rather than needing a
+per-site fix.
 
 ## The highest-leverage single fact
 
@@ -109,9 +138,9 @@ mod (`imul`/`mul`, `idiv`+`cqo` / `xor rdx,rdx`+`div`); `doOp2` shift
 
 ## Inventory by category
 
-Grouped by the kind of wrongness, roughly in the order the stages must address
-them. "Silent" means a float reaching this site produces working code with the
-wrong answer.
+Grouped by the kind of dispatch that must become class-aware, roughly in the
+order the stages address them. "Silent" means a float reaching this site today
+produces working code with the wrong answer.
 
 ### 1. `mov` as the generic value move
 
@@ -227,11 +256,12 @@ in the proposal's gaps-and-debt checklist.
 
 ## The general lesson
 
-Adding a capability at one layer while another still assumes the old world
-produces **silence, not failure**. The same shape produced the encoder's REX bug
-(`304e8a3`), where wrong bytes ran correctly for years because REX.X is ignored
-without a SIB byte.
+**Widening an invariant at one layer, before the layer below can honor it,
+produces silence rather than failure.** The lower layer keeps doing the
+well-defined thing its old contract allowed. The same shape produced the
+encoder's REX bug (`304e8a3`), where wrong bytes ran correctly for years because
+REX.X is ignored without a SIB byte.
 
-At each stage boundary, ask what the next layer down will do with a value it does
-not understand. If the answer is "treat it as an integer", add a refusal before
-moving on.
+The discipline is not "distrust the layer below". It is: when you widen what a
+layer above will emit, either widen the layer below in the same change, or
+narrow it explicitly — a loud refusal — until you do.
