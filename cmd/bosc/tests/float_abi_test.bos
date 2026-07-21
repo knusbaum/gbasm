@@ -1,0 +1,46 @@
+package main
+
+import "string"
+
+// System V counts the integer and SSE argument sequences independently, so
+// an interleaved signature is the case a single position-indexed allocator
+// gets wrong: it would place the second float by parameter position rather
+// than by float position.
+
+fn addf(a f64, b f64) f64 {
+	return a + b
+}
+
+fn scale(a f64, n i64, b f64) f64 {
+	return (a + b) * f64(n)
+}
+
+fn mixed(p i64, q f64, r i64, s f64, t i64) f64 {
+	return q * s + f64(p + r + t)
+}
+
+fn ident32(x f32) f32 {
+	return x
+}
+
+fn main() {
+	string.puti(i64(addf(1.5, 2.25) * 100.0))       // 3.75  -> 375
+	string.putc(0x0A)
+
+	string.puti(i64(scale(2.5, 3, 4.0) * 10.0))     // 19.5  -> 195
+	string.putc(0x0A)
+
+	// q*s = 2.0*4.0 = 8.0; p+r+t = 1+3+5 = 9; total 17
+	string.puti(i64(mixed(1, 2.0, 3, 4.0, 5)))      // 17
+	string.putc(0x0A)
+
+	string.puti(i64(ident32(6.5) * 2.0))            // 13
+	string.putc(0x0A)
+
+	// A float value survives a call that clobbers the whole SSE file.
+	keep f64 := 12.5
+	string.puti(i64(addf(1.0, 1.0)))                // 2
+	string.putc(0x0A)
+	string.puti(i64(keep * 2.0))                    // 25
+	string.putc(0x0A)
+}

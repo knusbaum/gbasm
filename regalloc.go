@@ -109,6 +109,10 @@ var regsXMM = []Register{
 	X_XMM0, X_XMM1, X_XMM2, X_XMM3, X_XMM4, X_XMM5, X_XMM6, X_XMM7,
 }
 
+// System V passes the first eight floating-point arguments in XMM0-7, with a
+// counter independent of the integer sequence.
+var float_arg_regs = []Register{X_XMM0, X_XMM1, X_XMM2, X_XMM3, X_XMM4, X_XMM5, X_XMM6, X_XMM7}
+
 // Every XMM register is caller-saved, so a call spills the entire file.
 var xmm_caller_saved = regsXMM
 

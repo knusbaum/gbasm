@@ -1,0 +1,47 @@
+package main
+
+// Float arguments and returns. System V counts the integer and SSE argument
+// sequences independently, so an interleaved signature is precisely the case a
+// single position-indexed allocator gets wrong: it would put the second float
+// in XMM2 because it is the third *parameter*, rather than XMM1 because it is
+// the second *float*.
+
+function main
+	prologue
+
+	// scale(2.5, 3, 4.0) -> (2.5 + 4.0) * 3 = 19.5 -> 19
+	mov rax 0x4004000000000000
+	movq xmm0 rax
+	mov rdi 3
+	mov rax 0x4010000000000000
+	movq xmm1 rax
+	call scale
+	acquire rdi
+	cvttsd2si rdi xmm0
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+
+	epilogue
+	xor rax rax
+	ret
+
+// scale(a f64, n i64, b f64) f64 = (a + b) * n
+// a is SSE argument 0 (xmm0), n is integer argument 0 (rdi), and b is SSE
+// argument 1 (xmm1) — not xmm2.
+function scale
+	argi a 0 f64
+	argi n 0 64
+	argi b 1 f64
+
+	prologue
+	local sum f64
+	movsd sum a
+	addsd sum b
+	local nf f64
+	cvtsi2sd nf n
+	mulsd sum nf
+	movsd xmm0 sum
+	epilogue
+	ret

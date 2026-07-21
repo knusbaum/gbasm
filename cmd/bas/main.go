@@ -696,11 +696,11 @@ func main() {
 						sh := mustParseU64("iface_desc", iname, "sig_hash", f[3])
 						di := mustParseU64("iface_desc", iname, "decl_idx", f[4])
 						rec.Methods = append(rec.Methods, gbasm.IfaceDescMethod{
-							Name:     f[0],
-							Sig:      basUnquoteSigTok(f[1]),
-							NameHash: nh,
-							SigHash:  sh,
-							DeclIdx:  di,
+							Name:      f[0],
+							Sig:       basUnquoteSigTok(f[1]),
+							NameHash:  nh,
+							SigHash:   sh,
+							DeclIdx:   di,
 							SlotMasks: parseSlotMasks("iface_desc", iname, f[5:]),
 						})
 					default:
@@ -1226,17 +1226,29 @@ func main() {
 					fmt.Printf("Fatal: Expect an argi declaration to contain a name register/offset, but have %v\n", line)
 					os.Exit(1)
 				}
+				// As for `local`, the size operand is an integer bit width or
+				// a float type name. The index is the position within that
+				// class's argument sequence: System V counts the integer and
+				// SSE sequences independently, so in f(int, float, int) the
+				// float is SSE argument 0 and lands in XMM0.
 				size := 64
+				class := gbasm.ClassInt
 				if len(params) == 3 {
-					sz, err := strconv.ParseInt(params[2], 10, 64)
+					cl, sz, err := gbasm.ParseSizeSpec(params[2])
 					if err != nil {
-						fmt.Printf("Fatal: Expect argi size to be an integer, but have: %v\n", params[2])
+						fmt.Printf("Fatal: argi %s: %s\n", name, err)
 						os.Exit(1)
 					}
-					size = int(sz)
+					class, size = cl, sz
 				}
-				if _, err := f.ArgI(name, int(num), size); err != nil {
-					fmt.Printf("Fatal: Failed to mark arg %s: %s\n", name, err)
+				var aerr error
+				if class == gbasm.ClassFloat {
+					_, aerr = f.ArgFloat(name, int(num), size)
+				} else {
+					_, aerr = f.ArgI(name, int(num), size)
+				}
+				if aerr != nil {
+					fmt.Printf("Fatal: Failed to mark arg %s: %s\n", name, aerr)
 					os.Exit(1)
 				}
 				continue

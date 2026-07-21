@@ -1,0 +1,2 @@
+Compiling tests/float_bitnot_err_test.bos
+Fatal: operator ~ requires an integer operand, but got f64

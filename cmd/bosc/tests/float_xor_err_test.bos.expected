@@ -1,0 +1,2 @@
+Compiling tests/float_xor_err_test.bos
+Fatal: operator ^ requires integer operands, but got f64

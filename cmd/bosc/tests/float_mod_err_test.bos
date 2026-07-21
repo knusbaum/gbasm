@@ -1,0 +1,12 @@
+package main
+
+// The bitwise operators, % and the shifts are integer-only: they have no
+// meaning on an IEEE value. They must keep rejecting floats now that
+// + - * / accept them.
+
+fn f(a f64, b f64) f64 {
+	return a % b
+}
+
+fn main() {
+}

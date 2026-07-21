@@ -504,12 +504,19 @@ func (ra *Rallocs) VolatileLocal(name string) error {
 // AMD64 Calling Conventions:
 // %rdi, %rsi, %rdx, %rcx, %r8, %r9, stack
 func (ra *Rallocs) Arg(name string, reg Register) (*Ralloc, error) {
+	return ra.ArgSized(name, reg, reg.Width())
+}
+
+// ArgSized is Arg with an explicit value width. It exists for the SSE file,
+// where the register is always 128 bits but the scalar it carries is 32 or 64
+// — the width is a property of the instruction, not of the register.
+func (ra *Rallocs) ArgSized(name string, reg Register, bits int) (*Ralloc, error) {
 	if _, ok := ra.frame.names[name]; ok {
 		return nil, fmt.Errorf("Ralloc %s already declared.", name)
 	}
 	r := &Ralloc{
 		sym:     name,
-		size:    reg.Width(),
+		size:    bits,
 		inreg:   true,
 		reg:     reg,
 		regable: true,
@@ -618,6 +625,17 @@ func argRegForSize(i, size int) Register {
 		}
 	}
 	return R_RDI // unreachable for valid i
+}
+
+// ArgFloat declares argument i of the SSE sequence. The index is the
+// position among *float* parameters, not the overall parameter position:
+// System V keeps an independent counter per class, so `f(int, float, int)`
+// passes its float in XMM0 while the two integers take RDI and RSI.
+func (f *Function) ArgFloat(name string, i int, bits int) (*Ralloc, error) {
+	if i < len(float_arg_regs) {
+		return f.FRallocs.ArgSized(name, float_arg_regs[i], bits)
+	}
+	return nil, fmt.Errorf("float argument %s is the %dth in SSE registers; stack-passed float arguments are not supported yet", name, i)
 }
 
 func (f *Function) ArgI(name string, i int, size ...int) (*Ralloc, error) {

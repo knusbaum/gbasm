@@ -2086,6 +2086,15 @@ func coerceType(c *Context, dst, src ASTType) (effective ASTType, reason coerceR
 		}
 		return dst, coerceOK
 	}
+	if src.Same(floatlitASTType()) {
+		// Like <intlit>, a float literal takes the destination's type rather
+		// than staying pending — callers use the effective type to size the
+		// value, and <floatlit> has no size.
+		if dst.Accepts(src) {
+			return dst, coerceOK
+		}
+		return ASTType{}, coerceTypeMismatch
+	}
 	if src.Name == "<nil>" {
 		if dst.Indirection > 0 && dst.NilMask&1 != 0 {
 			return dst, coerceOK

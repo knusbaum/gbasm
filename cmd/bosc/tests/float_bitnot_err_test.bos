@@ -1,0 +1,8 @@
+package main
+
+fn f(a f64) f64 {
+	return ~a
+}
+
+fn main() {
+}

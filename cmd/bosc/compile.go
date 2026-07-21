@@ -219,14 +219,13 @@ func newSpot(of io.Writer, c *Context, ref string, t ASTType) spot {
 }
 
 func newSpotWithReg(of io.Writer, c *Context, ref string, t ASTType, reg string) spot {
-	requireFloatCodegenSupport(c, t, "a register-pinned local")
 	sz := t.Size(c)
 	memBacked := typeIsMemoryBacked(c, t)
 	s := spot{ref: ref, t: t, nameIsAddress: memBacked}
 	if memBacked {
 		fmt.Fprintf(of, "\tbytes %s %d %s\n", ref, sz, reg)
 	} else {
-		fmt.Fprintf(of, "\tlocal %s %d %s\n", ref, sz*8, reg)
+		fmt.Fprintf(of, "\tlocal %s %s %s\n", ref, localSizeOperand(c, t), reg)
 	}
 	return s
 }
@@ -3046,7 +3045,26 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 		size int
 	}
 	var spills []pendingSpill
-	for i, a := range ast.Args {
+	// System V keeps an independent argument counter per register class, so a
+	// parameter's position in its *class* sequence — not its position in the
+	// parameter list — selects its register. In f(i64, f64, i64) the floats
+	// and integers are numbered separately: the f64 is SSE argument 0 (XMM0)
+	// while the two integers are integer arguments 0 and 1 (RDI, RSI).
+	// Aggregates are integer-class regardless of what they contain: class is
+	// a property of raw scalars only.
+	intIdx, sseIdx := 0, 0
+	nextArg := func(t ASTType) (int, string) {
+		if isFloatType(c, t) {
+			idx := sseIdx
+			sseIdx++
+			return idx, c.ResolveUnderlying(t).Name
+		}
+		idx := intIdx
+		intIdx++
+		return idx, strconv.Itoa(t.Size(c) * 8)
+	}
+	for _, a := range ast.Args {
+		i, spec := nextArg(a.Type)
 		if isDiscard(a.Name) {
 			// `_` parameter: consume the ABI slot but bind nothing, so the
 			// argument is accepted and ignored. An owned parameter can't be
@@ -3054,8 +3072,7 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 			if a.Type.HasOwned() {
 				CompileErrorF(ast, "cannot discard an owned parameter with `_`; an owned parameter must be consumed")
 			}
-			requireFloatCodegenSupport(c, a.Type, "an argument")
-			fmt.Fprintf(of, "\targi __discard_arg_%d %d %d\n", i, i, a.Type.Size(c)*8)
+			fmt.Fprintf(of, "\targi __discard_arg_%d %d %s\n", i, i, spec)
 			continue
 		}
 		// A memBacked value (struct) ≤ 8 bytes is passed BY VALUE in the
@@ -3074,8 +3091,7 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 			fmt.Fprintf(of, "\targi __arg_%s %d %d\n", a.Name, i, sz*8)
 			spills = append(spills, pendingSpill{name: a.Name, size: sz})
 		} else {
-			requireFloatCodegenSupport(c, a.Type, "an argument")
-			fmt.Fprintf(of, "\targi %s %d %d\n", a.Name, i, a.Type.Size(c)*8)
+			fmt.Fprintf(of, "\targi %s %d %s\n", a.Name, i, spec)
 		}
 		c.BindVar(ast, a.Name, a.Type, a.IsConst)
 		c.recordUsedCandidate(a.Name, a.p)
@@ -5628,8 +5644,37 @@ func compileIndirectCall(of io.Writer, c *Context, a AST, ast *Funcall, srcRef s
 	return ret
 }
 
+// argRegisters assigns each parameter its System V argument register. The two
+// classes are counted independently — in f(i64, f64, i64) the float takes XMM0
+// while the integers take RDI and RSI — so this cannot be a plain index into
+// one list. Aggregates are integer-class whatever they contain.
+func argRegisters(c *Context, d *FuncDecl, n int) ([]string, error) {
+	intOrder := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+	regs := make([]string, n)
+	intIdx, sseIdx := 0, 0
+	for i := 0; i < n; i++ {
+		if isFloatType(c, d.Args[i].Type) {
+			if sseIdx >= 8 {
+				return nil, fmt.Errorf("more than 8 floating-point arguments are not supported")
+			}
+			regs[i] = fmt.Sprintf("xmm%d", sseIdx)
+			sseIdx++
+			continue
+		}
+		if intIdx >= len(intOrder) {
+			return nil, fmt.Errorf("more than 6 integer arguments are not supported")
+		}
+		regs[i] = intOrder[intIdx]
+		intIdx++
+	}
+	return regs, nil
+}
+
 func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
-	order := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
+	order, oerr := argRegisters(c, d, len(f.Args))
+	if oerr != nil {
+		CompileErrorF(f, "%s", oerr)
+	}
 	// This double-commented code and all comments within are obsolete.
 	// However, I still want to revisit how I'm setting up the call registers
 	// and don't want to throw this old code away yet.
@@ -5738,11 +5783,8 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		if param.HasOwned() {
 			checkOwnedSourceAvailable(c, arg)
 		}
-		if i > 5 {
-			CompileErrorF(arg, "More than 6 arguments are not supported")
-		}
 		var dest spot
-		if argt.Size(c) == PTR_SIZE {
+		if argt.Size(c) == PTR_SIZE && !isFloatType(c, argt) {
 			dest = newSpotWithReg(of, c, c.Temp(), argt, order[i])
 		} else {
 			dest = newSpot(of, c, c.Temp(), argt)
@@ -5791,6 +5833,10 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 			i, argspots[i].ref, order[i])
 		argt := argspots[i].t
 		switch {
+		case isFloatType(c, argt):
+			// The value is already in the SSE file; move it to the argument
+			// register of that file.
+			fmt.Fprintf(of, "\tinreg %s %s\n", argspots[i].ref, order[i])
 		case argt.Indirection == 0 && typeIsMemoryBacked(c, argt) && argt.Size(c) <= PTR_SIZE:
 			// memBacked struct ≤ 8 bytes (1/2/4/8): pack the value bits from
 			// the stack chunk into the argument register via a width-matched
@@ -5885,13 +5931,17 @@ func jumpOp(of io.Writer, c *Context, o *Op2, label string) {
 	}
 }
 
-// raxForType returns the rax sub-register name appropriate for the given return type.
 // i8/u8/bool/byte → "al", i16/u16 → "ax", i32/u32 → "eax", everything else → "rax".
+// raxForType returns the register a value of type t is returned in. System V
+// returns floating-point values in XMM0, not RAX — a separate register file,
+// so the name alone carries the class.
 func raxForType(t ASTType) string {
 	if t.Indirection > 0 || t.IsSliceOrArray() {
 		return "rax"
 	}
 	switch t.Name {
+	case "f32", "f64":
+		return "xmm0"
 	case "i8", "u8", "byte", "bool":
 		return "al"
 	case "i16", "u16":
