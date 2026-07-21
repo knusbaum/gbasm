@@ -272,12 +272,15 @@ func (r *Ralloc) Evict() Register {
 // 	delete(r.rallocs.regs, r.reg)
 // }
 
-type Rallocs struct {
-	regs      map[Register]*Ralloc
+// Frame is the per-function stack frame and local namespace. It is *not*
+// register-allocator state: nothing here changes when a register is allocated,
+// only when the frame grows or a name is bound. A function has exactly one
+// Frame, shared by pointer with every register allocator operating on it, so
+// that separate register files carve up a single stack frame (and resolve
+// operands against a single namespace) rather than each keeping its own
+// cursor and overlapping the other's spill slots.
+type Frame struct {
 	names     map[string]*Ralloc
-	rs        *Registers
-	f         *Function
-	lru       []Register
 	localoff  uint32 // Current local offset in bytes from base pointer for new allocations
 	freeSpace []struct {
 		size   int32
@@ -285,38 +288,35 @@ type Rallocs struct {
 	}
 }
 
-func NewRallocs(rs *Registers, f *Function) *Rallocs {
-	return &Rallocs{
-		regs:  make(map[Register]*Ralloc),
+func NewFrame() *Frame {
+	return &Frame{
 		names: make(map[string]*Ralloc),
-		rs:    rs,
-		f:     f,
 	}
 }
 
 // space allocates 'size' bytes for a local object and returns the offset from the base pointer.
-func (ra *Rallocs) space(size int32) int32 {
+func (fr *Frame) space(size int32) int32 {
 	out := -1
-	for i := 0; i < len(ra.freeSpace); i++ {
-		//fmt.Printf("Looking for size %d at 0x%x with size %d\n", size, ra.freeSpace[i].offset, ra.freeSpace[i].size)
-		if ra.freeSpace[i].size == size {
+	for i := 0; i < len(fr.freeSpace); i++ {
+		//fmt.Printf("Looking for size %d at 0x%x with size %d\n", size, fr.freeSpace[i].offset, fr.freeSpace[i].size)
+		if fr.freeSpace[i].size == size {
 			out = i
 			break
 		}
 	}
 	if out >= 0 {
-		ret := ra.freeSpace[out].offset
-		ra.freeSpace = append(ra.freeSpace[:out], ra.freeSpace[out+1:]...)
+		ret := fr.freeSpace[out].offset
+		fr.freeSpace = append(fr.freeSpace[:out], fr.freeSpace[out+1:]...)
 		return ret
 	} else {
-		ra.localoff += uint32(size)
-		return -int32(ra.localoff)
+		fr.localoff += uint32(size)
+		return -int32(fr.localoff)
 	}
 }
 
 // returnSpace returs 'size' bytes at 'offset' from the base pointer to the allocator.
-func (ra *Rallocs) returnSpace(size int32, offset int32) {
-	ra.freeSpace = append(ra.freeSpace, struct {
+func (fr *Frame) returnSpace(size int32, offset int32) {
+	fr.freeSpace = append(fr.freeSpace, struct {
 		size   int32
 		offset int32
 	}{
@@ -325,56 +325,75 @@ func (ra *Rallocs) returnSpace(size int32, offset int32) {
 	})
 }
 
+// Rallocs is one register file's allocator. Frame state is shared (see Frame);
+// everything here is specific to the set of registers this allocator owns.
+type Rallocs struct {
+	regs  map[Register]*Ralloc
+	rs    *Registers
+	f     *Function
+	lru   []Register
+	frame *Frame // shared with every other allocator on this function
+}
+
+func NewRallocs(rs *Registers, f *Function, frame *Frame) *Rallocs {
+	return &Rallocs{
+		regs:  make(map[Register]*Ralloc),
+		rs:    rs,
+		f:     f,
+		frame: frame,
+	}
+}
+
 // NewLocal allocates a new local variable of size bits. Locals created with
 // this function may have 'Forget' called on them to relinquish their storage.
 func (ra *Rallocs) NewLocal(name string, size int) (*Ralloc, error) {
 	//fmt.Printf("NewLocal %s(%d)\n", name, size)
-	if _, ok := ra.names[name]; ok {
+	if _, ok := ra.frame.names[name]; ok {
 		return nil, fmt.Errorf("Ralloc %s already declared.", name)
 	}
 	r := &Ralloc{
 		sym:     name,
 		size:    size,
 		regable: true,
-		offset:  ra.space(int32(size) / 8),
+		offset:  ra.frame.space(int32(size) / 8),
 		rallocs: ra,
 	}
-	ra.names[name] = r
+	ra.frame.names[name] = r
 	return r, nil
 }
 
 // func (ra *Rallocs) Temp(name string, size int) (*Ralloc, error) {
 // 	//fmt.Printf("Temp %s(%d)\n", name, size)
-// 	if _, ok := ra.names[name]; ok {
+// 	if _, ok := ra.frame.names[name]; ok {
 // 		return nil, fmt.Errorf("Ralloc %s already declared.", name)
 // 	}
 // 	r := &Ralloc{
 // 		sym:     name,
 // 		size:    size,
 // 		regable: true,
-// 		offset:  ra.space(int32(size) / 8),
+// 		offset:  ra.frame.space(int32(size) / 8),
 // 		rallocs: ra,
 // 	}
-// 	ra.names[name] = r
+// 	ra.frame.names[name] = r
 // 	return r, nil
 // }
 
 func (ra *Rallocs) ForgetAll() {
-	for name, r := range ra.names {
+	for name, r := range ra.frame.names {
 		if r.inreg {
 			r.rallocs.removeLRU(r.reg)
 			delete(r.rallocs.regs, r.reg)
 			r.rallocs.rs.Release(r.reg)
 		}
-		delete(ra.names, name)
-		ra.returnSpace(int32(r.size)/8, r.offset)
+		delete(ra.frame.names, name)
+		ra.frame.returnSpace(int32(r.size)/8, r.offset)
 	}
 }
 
 // Forget forgets a local value named name, giving back its storage to the register
 // and stack pool.
 func (ra *Rallocs) Forget(name string) error {
-	r, ok := ra.names[name]
+	r, ok := ra.frame.names[name]
 	if !ok {
 		return fmt.Errorf("Ralloc %s not declared.", name)
 	}
@@ -383,38 +402,38 @@ func (ra *Rallocs) Forget(name string) error {
 		delete(r.rallocs.regs, r.reg)
 		r.rallocs.rs.Release(r.reg)
 	}
-	delete(ra.names, name)
+	delete(ra.frame.names, name)
 	//fmt.Printf("Forgetting %s(%d) at offset 0x%x\n", name, r.size, r.offset)
-	ra.returnSpace(int32(r.size)/8, r.offset)
+	ra.frame.returnSpace(int32(r.size)/8, r.offset)
 	return nil
 }
 
 // Allocates 'size' bytes for variable 'name'
 func (ra *Rallocs) AllocBytes(name string, size int) (*Ralloc, error) {
-	if _, ok := ra.names[name]; ok {
+	if _, ok := ra.frame.names[name]; ok {
 		return nil, fmt.Errorf("Ralloc %s already declared.", name)
 	}
 	r := &Ralloc{
 		sym:     name,
 		size:    size * 8, // TODO: THIS IS A HACK. We should just be using byte size, not bit size.
 		regable: false,
-		offset:  ra.space(int32(size)),
+		offset:  ra.frame.space(int32(size)),
 		rallocs: ra,
 		inmem:   true,
 	}
-	ra.names[name] = r
+	ra.frame.names[name] = r
 	return r, nil
 }
 
 func (ra *Rallocs) AllocFor(name string) *Ralloc {
-	return ra.names[name]
+	return ra.frame.names[name]
 }
 
 // VolatileLocal permanently marks a named local as memory-resident.
 // It is evicted from any register it currently occupies and will never
 // be cached in a register again. Used when the address of a local is taken.
 func (ra *Rallocs) VolatileLocal(name string) error {
-	r, ok := ra.names[name]
+	r, ok := ra.frame.names[name]
 	if !ok {
 		return fmt.Errorf("no such local: %s", name)
 	}
@@ -436,7 +455,7 @@ func (ra *Rallocs) VolatileLocal(name string) error {
 // AMD64 Calling Conventions:
 // %rdi, %rsi, %rdx, %rcx, %r8, %r9, stack
 func (ra *Rallocs) Arg(name string, reg Register) (*Ralloc, error) {
-	if _, ok := ra.names[name]; ok {
+	if _, ok := ra.frame.names[name]; ok {
 		return nil, fmt.Errorf("Ralloc %s already declared.", name)
 	}
 	r := &Ralloc{
@@ -446,12 +465,12 @@ func (ra *Rallocs) Arg(name string, reg Register) (*Ralloc, error) {
 		reg:     reg,
 		regable: true,
 		//offset:  -(ra.localoff + (int32(reg.width()) / 8)),
-		offset:  ra.space(int32(reg.Width()) / 8),
+		offset:  ra.frame.space(int32(reg.Width()) / 8),
 		rallocs: ra,
 	}
 	//fmt.Printf("Argument %s in register %s and offset 0x%x\n", name, reg, r.offset)
 	//ra.localoff += int32(reg.width()) / 8
-	ra.names[name] = r
+	ra.frame.names[name] = r
 	ra.regs[reg] = r
 	ra.updateLRU(reg)
 	ra.rs.Use(reg)
@@ -463,7 +482,7 @@ func (ra *Rallocs) Arg(name string, reg Register) (*Ralloc, error) {
 // AMD64 Calling Conventions:
 // %rdi, %rsi, %rdx, %rcx, %r8, %r9, stack
 func (f *Function) StackArg(name string, stacki int) (*Ralloc, error) {
-	if _, ok := f.names[name]; ok {
+	if _, ok := f.frame.names[name]; ok {
 		return nil, fmt.Errorf("Ralloc %s already declared.", name)
 	}
 	r := &Ralloc{
@@ -475,8 +494,8 @@ func (f *Function) StackArg(name string, stacki int) (*Ralloc, error) {
 		rallocs: f.Rallocs,
 	}
 	//fmt.Printf("STACK Argument %s at offset 0x%x\n", name, r.offset)
-	f.localoff += 8
-	f.names[name] = r
+	f.frame.localoff += 8
+	f.frame.names[name] = r
 	return r, nil
 }
 
@@ -567,7 +586,7 @@ func (f *Function) ArgI(name string, i int, size ...int) (*Ralloc, error) {
 // immediately take on the value currently in 'reg'. Any other variable currently in 'reg' will be
 // evicted.
 func (ra *Rallocs) takeoverRegister(name string, reg Register) (*Ralloc, error) {
-	r, ok := ra.names[name]
+	r, ok := ra.frame.names[name]
 	if !ok {
 		return nil, fmt.Errorf("No such Ralloc %s.", name)
 	}
@@ -725,7 +744,7 @@ func (ra *Rallocs) Acquire(r Register) {
 // }
 
 // func (ra *Rallocs) NewGlobal(name string, size int, addr uint64) (*Ralloc, error) {
-// 	if _, ok := ra.names[name]; ok {
+// 	if _, ok := ra.frame.names[name]; ok {
 // 		return nil, fmt.Errorf("Ralloc %s already declared.", name)
 // 	}
 // 	r := &Ralloc{
@@ -735,7 +754,7 @@ func (ra *Rallocs) Acquire(r Register) {
 // 		addr:    addr,
 // 		rallocs: ra,
 // 	}
-// 	ra.names[name] = r
+// 	ra.frame.names[name] = r
 // 	return r, nil
 // }
 
@@ -768,8 +787,9 @@ type Function struct {
 	localsLocation uint32
 	basePointerOff int32
 
-	a  *Asm
-	rs *Registers
+	a     *Asm
+	rs    *Registers
+	frame *Frame // stack frame + local namespace, shared by every register file
 	*Rallocs
 }
 
@@ -792,7 +812,8 @@ func (o *OFile) NewFunction(srcFile string, srcLine int, name string, args ...*V
 		rs:             NewRegisters(),
 		basePointerOff: (6 * 8), // Determined in Prologue. This is the amount of "stuff" pushed on top of any arguments before the base pointer is established.
 	}
-	f.Rallocs = NewRallocs(f.rs, f)
+	f.frame = NewFrame()
+	f.Rallocs = NewRallocs(f.rs, f, f.frame)
 	o.Funcs[name] = f
 	return f, nil
 }
@@ -846,12 +867,12 @@ func (f *Function) Epilogue() error {
 	bss := bytes.NewBuffer(bs)
 	bss.Truncate(0)
 	// align the stack to 16-bytes.
-	localoff := ((f.Rallocs.localoff + 0x10) & 0xFF_FF_FF_F0)
+	localoff := ((f.frame.localoff + 0x10) & 0xFF_FF_FF_F0)
 	binary.Write(bss, binary.LittleEndian, localoff)
-	//binary.Write(bss, binary.LittleEndian, f.Rallocs.localoff)
+	//binary.Write(bss, binary.LittleEndian, f.frame.localoff)
 	// This un-does the "SUB" in the prologue, but is unnecessary since we
 	// immediately load RSP from RBP.
-	//f.f.Instr("ADD", R_RSP, uint32(f.Rallocs.localoff))
+	//f.f.Instr("ADD", R_RSP, uint32(f.frame.localoff))
 	f.Instr("MOV", R_RSP, R_RBP)
 	f.Instr("POP", R15)
 	f.Instr("POP", R14)
