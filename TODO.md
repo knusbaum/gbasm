@@ -90,6 +90,23 @@ Two sites are deliberately *not* candidates and should stay as they are:
   allocator already knows the register is occupied. Acquiring would evict the
   very value being extended.
 
+### Assigning through a call result panics instead of erroring
+
+`desc_of(x).field = v` -- a field assignment through a function-call result --
+reaches `compileLval` with a `Funcall` it does not handle and falls through to
+`panic("(LVAL) FALLTHROUGH: ...")`, printing a Go traceback with no source
+context. Hit while writing the allocator's intrusive list.
+
+Two questions, and they are separable. The diagnostic is a straightforward fix:
+CLAUDE.md already says errors carry position and go through `fatalCtx`, and a
+raw traceback for ordinary source is exactly what that rule exists to prevent.
+Whether the *form* should be supported is a language question -- it is a
+natural thing to write and the workaround (bind to a local) is mechanical, so
+supporting it is plausible; but it needs the same escape/alias analysis any
+other lvalue gets, which is not free.
+
+Do the diagnostic first regardless.
+
 ### Code formatter (`go fmt`-style)
 A canonical, opinionated formatter for `.bos` source — no config, one
 true layout, like `gofmt`. Would also give the editor integrations
