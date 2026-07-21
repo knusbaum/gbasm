@@ -1,0 +1,82 @@
+package main
+
+import "string"
+import "_halloc"
+
+// Scaffold-level checks: chunk acquisition, alignment, the registry, and span
+// runs. These are the invariants everything above them assumes -- if chunk
+// alignment is wrong, the masking that finds a span descriptor silently reads
+// the wrong memory rather than failing.
+
+fn line(n i64) {
+	string.puti(n)
+	string.putc('\n')
+}
+
+fn main() {
+	// Nothing mapped until something is asked for.
+	line(_halloc.chunk_count())
+
+	// One span. Must come back CHUNK_SIZE-aligned at the chunk level and
+	// SPAN_SIZE-aligned at the span level, or pointer masking cannot find the
+	// descriptor.
+	a := _halloc.span_alloc_for_test(1)
+	if (a != uintptr(0)) { line(1) } else { line(0) }
+	line(i64(a & uintptr(65535)))
+	line(_halloc.chunk_count())
+
+	// Span 0 is metadata, so the first allocatable span is span 1.
+	line(i64((a & uintptr(4194303)) / uintptr(65536)))
+
+	// 63 allocatable spans per chunk; one is taken.
+	line(_halloc.free_span_count())
+
+	// A run of 4 contiguous spans.
+	b := _halloc.span_alloc_for_test(4)
+	if (b != uintptr(0)) { line(1) } else { line(0) }
+	line(i64(b & uintptr(65535)))
+	line(_halloc.free_span_count())
+
+	// The run must not overlap the first allocation.
+	if (b != a) { line(1) } else { line(0) }
+
+	// Give both back; the chunk stays mapped (release policy is a later task).
+	_halloc.span_free_for_test(a, 1)
+	_halloc.span_free_for_test(b, 4)
+	line(_halloc.free_span_count())
+	line(_halloc.chunk_count())
+
+	// Exhaust one chunk: 63 single spans fit, the 64th forces a second chunk.
+	var i i64 := 0
+	for (; i < 63; i = i + 1) {
+		_ := _halloc.span_alloc_for_test(1)
+	}
+	line(_halloc.chunk_count())
+	line(_halloc.free_span_count())
+	_ := _halloc.span_alloc_for_test(1)
+	line(_halloc.chunk_count())
+
+	// A run larger than a chunk's capacity cannot be satisfied -- and must not
+	// map a chunk on the way to finding that out.
+	before := _halloc.chunk_count()
+	big := _halloc.span_alloc_for_test(64)
+	if (big == uintptr(0)) { line(1) } else { line(0) }
+	line(_halloc.chunk_count() - before)
+
+	// Every chunk base must be CHUNK_SIZE-aligned. This is the invariant that
+	// pointer masking depends on: if it fails, chunk_of() silently computes the
+	// wrong base and reads a descriptor out of unrelated memory.
+	//
+	// Asserted directly on every chunk rather than inferred from a span
+	// address, because the kernel often returns a large mapping already
+	// suitably aligned -- an inferred check passes by luck even when the
+	// alignment code is absent.
+	var bad i64 := 0
+	var k i64 := 0
+	for (; k < _halloc.chunk_count(); k = k + 1) {
+		if ((_halloc.chunk_base_at_for_test(k) & uintptr(4194303)) != uintptr(0)) {
+			bad = bad + 1
+		}
+	}
+	line(bad)
+}
