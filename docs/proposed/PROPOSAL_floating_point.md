@@ -18,10 +18,9 @@
   and instruction width in one architecture-neutral token. `<floatlit>` is a Go
   `float64`, with the decimal→f64→f32 double-rounding case recorded as a known,
   accepted limitation (constructed and verified; unreachable at random).
-  Float `==`/`!=` are **rejected** — ordering is retained, and `is_nan`/`is_zero`/
-  `bits` replace the lost idioms; this also *simplifies* codegen, since swapping
-  compare operands and using `seta`/`setae` gives NaN-false ordering with no
-  parity handling and no equality case. `%f` is fixed-6 with `ftoa` taking a
+  Float `==`/`!=` were **rejected** *(superseded — see the entry above; `==` is
+  allowed)*; the NaN-false ordering via swapped operands and `seta`/`setae`
+  survives the reversal unchanged. `%f` is fixed-6 with `ftoa` taking a
   precision parameter from day one; `%v` trims trailing zeros keeping `.0`;
   width/precision syntax is deferred to a general `fmt` feature. Only the shape of
   approximate comparison remains open.
