@@ -38,6 +38,28 @@ Boson is a statically typed, imperative language. It is intentionally small: no 
 | `bool` | 1-byte boolean |
 | `<intlit>` | Compile-time-only type for integer literals; resolved to a concrete integer type based on context |
 
+**Floating-point types:**
+
+| Type | Description |
+|------|-------------|
+| `f32` | IEEE-754 binary32 (single precision) |
+| `f64` | IEEE-754 binary64 (double precision) |
+| `<floatlit>` | Compile-time-only type for floating-point literals; resolved from context |
+
+A literal with a decimal point or an exponent is a floating-point literal:
+`3.14`, `0.5`, `1e10`, `2.5e-3`. A digit is required on both sides of the
+decimal point (`0.5`, not `.5`), and an exponent must have at least one digit.
+An untyped float literal that is never given a context defaults to `f64` — the
+width that loses nothing, since every `f32` value is exactly representable in
+it.
+
+`<floatlit>` differs from `<intlit>` in what accepts it. An integer literal is
+meaningful as a float, so `<intlit>` coerces into any numeric destination and
+`x f64 := 3` is 3.0. A float literal has no meaning in an integer slot, so
+`<floatlit>` coerces only into `f32` or `f64`: `z i64 := 2.5` is an error, not a
+silent truncation. An explicit cast still converts — see
+[Expressions](#expressions).
+
 `<intlit>` is the type of an integer literal `42` before it is assigned somewhere. Constant expressions over `<intlit>` (e.g. `4 * 1024`) are evaluated at compile time using arbitrary-precision arithmetic and range-checked against the destination type at the point of assignment.
 
 Integer literals can be written in four bases:
@@ -118,15 +140,27 @@ var t  Tag := Tag(n)       // i64 → Tag (truncating)
 
 Integer literals coerce naturally. Widening (signed source → larger type) uses sign-extension; widening (unsigned source → larger type) uses zero-extension; same-size cast is a reinterpretation; narrowing truncates.
 
+**A cast across the integer/float boundary converts the value, not the bits.** Between two integer types a same-size cast reinterprets, but an integer and a float of the same width hold entirely different encodings, so `f64(n)` produces the floating-point value of `n` and `i64(x)` produces the integer value of `x`, **truncated toward zero** — the same rule integer division follows, on both signs. `f32`→`f64` is exact; `f64`→`f32` rounds. A constant is converted the same way as a runtime value, so `i64(3.9)` and `i64(x)` with `x = 3.9` both give 3. Casting a NaN or an infinity to an integer is a compile error when the value is a constant, since neither has an integer value.
+
 A second `type Name <kind> { ... }` form, `type Name values { ... }`, declares a closed symbolic value type whose user-visible cases are scoped names rather than integer literals. See [Values Types](#values-types).
 
 ### Expressions
 
-Arithmetic: `+`, `-`, `*`, `/`, `%`. Multiplication, division, and modulo dispatch to signed (`imul`/`idiv`) or unsigned (`mul`/`div`) instructions based on the operand types; `%` is the division remainder (from `rdx`), truncated toward zero so its sign follows the dividend. All arithmetic and bitwise operators require **integer** operands — `bool` is not an integer, so `true + true` or `flag & 1` is rejected.
+Arithmetic: `+`, `-`, `*`, `/`, `%`. Multiplication, division, and modulo dispatch to signed (`imul`/`idiv`) or unsigned (`mul`/`div`) instructions based on the operand types; `%` is the division remainder (from `rdx`), truncated toward zero so its sign follows the dividend. `+`, `-`, `*` and `/` accept **any numeric** operand — integer or floating-point — while `%`, the bitwise operators and the shifts are **integer-only**: they have no meaning on an IEEE value, so `f % 2` and `f & 1` are rejected, as is `~f`. `bool` is not numeric, so `true + true` is rejected too.
+
+Boson does not convert between number types implicitly. The two operands of an arithmetic operator must be the same type, and mixing an integer with a float requires an explicit cast in one direction or the other. A literal is the exception: it adopts the other operand's type, so `x * 2` works whether `x` is an `i64` or an `f64`. When both operands are literals the expression stays pending and the destination decides, with a float literal dominating an integer one — `1.5 + 2` is a float expression.
 
 **Integer overflow wraps.** Runtime integer arithmetic that overflows its type wraps modulo 2ⁿ (two's-complement), for both signed and unsigned types. Overflow is **fully defined** — never a trap, never undefined behavior — matching Go; a program may rely on the wrapped result. This is a deliberate language decision, not merely inherited hardware behavior: wrapping is the defined, portable, zero-cost default (every target ISA is two's-complement and wraps at the instruction level, and no per-operation overflow check is emitted, so tight numeric loops stay vectorizable). It is distinct from **compile-time** constant arithmetic over `<intlit>`, which is arbitrary-precision and range-checked at the point of assignment — a constant that does not fit its destination is a compile *error*, not a wrap. Silent wrap is nonetheless a real bug class where it is unintended (size calculations, untrusted input); the planned explicit opt-in is a `checked_*` intrinsic family (returning an optional/error on overflow), keeping ordinary arithmetic cheap while making the check available where a wrong wrap would matter.
 
-Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`. Equality (`==`/`!=`) applies to scalars (value equality) and pointers (identity); ordering (`<`, `>`, `<=`, `>=`) applies to scalars only. Signed and unsigned comparisons select the appropriate `setl`/`setb`/etc. variant. **Aggregates — structs, arrays, and slices — are not comparable with `==`/`!=`**; the compiler rejects it and directs you to write an explicit equality function. A memberwise `==` would silently change meaning as a struct's fields evolve — adding a pointer field turns value-equality into pointer-identity — and the change is invisible at the use site, so equality of an aggregate must be an explicit author decision, not an operator default.
+**Floating-point evaluation precision: the declared type is the type it computes in.** An `f32` expression is evaluated in `f32` — intermediates are never silently widened to `f64` and narrowed back — and the rule holds at compile time as well, so constant folding is unobservable: an expression means the same thing whether its operands are literals or variables. The type is a promise about precision, not a storage hint; widening intermediates would make results depend on where the compiler chose to round, which is the x87 failure mode that SSE exists to have fixed. Widening is explicit and exact: `f64(a) * f64(b)` costs one conversion per operand and is visible in the source.
+
+The difference is not subtle. With all-`f32` `a = 1e8`, `b = 1.0`, `c = -1e8`, the expression `a + b + c` is `0.0` — `1.0` is below the ulp of `1e8` and vanishes — where `f64` intermediates would give `1.0`. Fused multiply-add is likewise unavailable, for the same reason: it computes `a*b+c` with a single rounding and would be another source of "same source, different answer".
+
+Note this diverges deliberately from Go, whose untyped constants are arbitrary-precision: in Go, `0.1 + 0.2` folded as constants differs from the same sum computed from variables. Boson trades that exactness for the invariant that folding is invisible.
+
+Comparison: `==`, `!=`, `<`, `>`, `<=`, `>=`. Equality (`==`/`!=`) applies to scalars (value equality) and pointers (identity); ordering (`<`, `>`, `<=`, `>=`) applies to scalars only. Signed and unsigned comparisons select the appropriate `setl`/`setb`/etc. variant.
+
+**Floating-point comparison follows IEEE-754 exactly, including its fourth outcome.** Besides less, equal and greater, two values can be *unordered*, which is what happens when either is a NaN. Every ordered comparison against a NaN is false, `x == x` is false for a NaN, and `x != x` is true — the standard NaN test. Negative zero compares equal to positive zero despite their differing bit patterns. `==` on floats is permitted: it is the correct operator for the many cases where the comparand is exactly representable (`x == 0.0`), and no mainstream language bans it. Where an approximate comparison is wanted, it belongs in a library function with an explicit tolerance, not in the operator. **Aggregates — structs, arrays, and slices — are not comparable with `==`/`!=`**; the compiler rejects it and directs you to write an explicit equality function. A memberwise `==` would silently change meaning as a struct's fields evolve — adding a pointer field turns value-equality into pointer-identity — and the change is invisible at the use site, so equality of an aggregate must be an explicit author decision, not an operator default.
 
 Logical: `&&` (and), `||` (or). **Short-circuit**: `a && b` evaluates `b` only when `a` is true; `a || b` evaluates `b` only when `a` is false. The result is a `bool`. `&&` binds tighter than `||`, so `a || b && c` is `a || (b && c)`.
 
@@ -2039,7 +2073,7 @@ At link time, the linker walks each placed var's `Relocs` and applies them. Reac
 
 Produces a flat token stream from Boson source. Recognizes keywords (`fn`, `var`, `mut`, `owned`, `dispose`, `type`, `struct`, `interface`, `if`, `else`, `for`, `return`, `break`, `continue`, `import`, `package`), identifiers, integer literals (decimal, `0x`, `0o`, `0b`), string and character literals (with `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, `\'`, `\xHH` escapes), and all operators.
 
-Integer literals are parsed as `uint64` for full-precision representation; downstream stages decide the final type. Decimal-point syntax is accepted but the fractional part is truncated (no float support yet).
+Integer literals are parsed as `uint64` for full-precision representation; downstream stages decide the final type. A literal carrying a decimal point or an exponent is scanned as a floating-point literal instead and parsed as a `float64`.
 
 Positions (file, line, column) are recorded on every token for error messages.
 
@@ -2283,11 +2317,18 @@ A `volatile` local can never be placed in a register. Once marked volatile, `inr
 
 Follows System V AMD64 ABI exactly:
 
-- **Argument registers (in order):** RDI, RSI, RDX, RCX, R8, R9
+- **Integer argument registers (in order):** RDI, RSI, RDX, RCX, R8, R9
+- **Floating-point argument registers (in order):** XMM0–XMM7
 - **Stack arguments:** pushed right-to-left, accessible at positive offsets from RSP after prologue
-- **Return value:** RAX (primary), RDX (secondary for 128-bit returns)
+- **Return value:** RAX (primary), RDX (secondary for 128-bit returns); **XMM0** for a floating-point return
 - **Callee-saved:** RBX, RSP, RBP, R12–R15 (preserved across calls; `prologue`/`epilogue` save/restore these)
-- **Caller-saved:** RAX, RCX, RDX, RSI, RDI, R8–R11 (may be clobbered by any call)
+- **Caller-saved:** RAX, RCX, RDX, RSI, RDI, R8–R11, **and every XMM register** (may be clobbered by any call)
+
+**The two argument sequences are counted independently.** A parameter's register comes from its position among parameters *of its own class*, not its position in the parameter list. In `fn f(p i64, q f64, r i64, s f64)`, `p` and `r` take RDI and RSI while `q` and `s` take XMM0 and XMM1. A single position-indexed assignment would get this wrong on any interleaved signature, and only on an interleaved signature — an all-integer or all-float list cannot distinguish the two.
+
+**Class is a property of raw scalars only.** An aggregate is passed as it always was — by address if larger than 8 bytes, otherwise as opaque bits in an integer register — regardless of whether it contains floating-point fields. System V's per-eightbyte classification of aggregates is deliberately not implemented; a struct of two floats travels in an integer register or by pointer, not in XMM.
+
+Since System V has no callee-saved XMM registers, every live floating-point value is spilled across every call.
 
 ### Symbol qualification
 
@@ -2482,6 +2523,8 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 
 - Integer types (i8/i16/i32/i64, u8/u16/u32/u64, byte alias, bool)
 - Compile-time integer literal arithmetic (`<intlit>` type) with arbitrary precision
+- Floating-point types (`f32`, `f64`): literals with exponents, `<floatlit>` inference, arithmetic, IEEE comparison including NaN's unordered outcome, int↔float and f32↔f64 casts, static initializers, the System V SSE calling convention with independently-counted argument classes and XMM0 returns, and `%f`/`%v` formatting
+- Compile-time floating-point constant folding in the destination's exact type, so folding is unobservable (`f32` folds in `f32`)
 - Type aliases (`type Name Underlying`) with distinct-type semantics
 - Type casts (`T(expr)`) including widening/narrowing/reinterpretation
 - Slices (`[]T`), fixed arrays (`[N]T`), pointers (`*T`), structs

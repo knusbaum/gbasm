@@ -2,12 +2,19 @@
 
 ## History
 
+- 2026-07-21 — Floating-point support shipped; the proposal moved to
+  `docs/implemented/` and this link followed it. **The inventory below is now
+  historical**: every site listed has been made class-aware, and
+  `requireFloatCodegenSupport` is deleted. Kept as a reference for the *shape*
+  of the problem — the next type that is the same size as an existing one but
+  lives somewhere else (a SIMD vector, a tagged pointer) will have to visit the
+  same list.
 - 2026-07-20 — Reframed. The original title ("integer assumptions in codegen")
   implied codegen was defective. It was not: it relied on an invariant the type
   checker guaranteed, which is how the layering is supposed to work. Rewritten
   as an inventory of the sites that must become class-aware, not a bug list.
 - 2026-07-20 — Written during Stage 3→4 of
-  [`PROPOSAL_floating_point.md`](../proposed/PROPOSAL_floating_point.md), after
+  [`PROPOSAL_floating_point.md`](../implemented/PROPOSAL_floating_point.md), after
   two silent miscompiles made it clear the affected sites needed enumerating
   rather than discovering one at a time.
 

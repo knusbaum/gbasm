@@ -2,6 +2,13 @@
 
 ## History
 
+- 2026-07-21 — **Implemented; moved to `docs/implemented/`.** All six stages
+  landed (`78fa09f` … `740a759`), the canonical spec is folded into
+  `DESIGN.md` (types, literals, evaluation precision, comparison, casts,
+  calling convention, Implementation Status), and the tour's scalar-types
+  lesson teaches floats (`d0eb1b5`). 784 tests green. **This doc is now frozen**
+  — it records the design and its reasoning, not the current language; read
+  `DESIGN.md` for what Boson does today.
 - 2026-07-20 — **Stage 3b landed** (`f32`/`f64` in the type system). Two findings
   worth carrying forward. (1) `isIntegerType` was the wrong place to add floats —
   it gates the bitwise operators and shifts as well as arithmetic, sharing one
