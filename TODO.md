@@ -9,6 +9,16 @@ design (see the docs convention in CLAUDE.md § Documentation and design docs).
 
 ## Language
 
+### Unary bitwise complement (`~`)
+`Op2` covers the binary bitwise operators (`& | % ^ << >>`, `cmd/bosc/ast.go:3390-3427`)
+but `parseUnary` (`cmd/bosc/parser.go:1274-1289`) handles only `*`, `-`, and `&` —
+there is no `~`. Every mask site has to spell the complement as `(0 - x)` (well
+defined given two's-complement wrap, `56f4ad6`) or an explicit XOR. Surfaced
+while writing the allocator sketch in
+[`docs/proposed/PROPOSAL_raw_memory.md`](docs/proposed/PROPOSAL_raw_memory.md),
+where alignment rounding wants it — but it is an ordinary safe operator,
+independent of that proposal.
+
 ### Checked-arithmetic intrinsics
 Integer overflow wraps by default (defined two's-complement, both signs — see
 DESIGN.md §Expressions). That is cheap and keeps numeric loops vectorizable, but
@@ -169,6 +179,19 @@ variadic function. Boson's own variadics do not go through the C convention (a
 `...any` call builds a backing array), so nothing is wrong today — but a call
 *into* a C variadic like `printf` would need this. File it with interop rather
 than fix it speculatively.
+
+### Negative caching for failed interface assertions
+`_iface.assert_to` caches successful itabs per `(iface_desc, shape)` but
+deliberately does not cache *failures* (`iface_linux.bs:156-158`,
+`DESIGN.md:1968`). A repeatedly-failing `x.(I)` therefore re-derives the
+receiver shape, allocates an itab, walks the whole typedesc method table doing
+hash *and* byte-equal name/sig compares, fails, and frees — every iteration,
+which under today's one-mapping-per-allocation `_heap` is an `mmap`/`munmap`
+pair per failed assertion. Record the failed `(dst_desc, shape)` so the second
+attempt is O(1). Sequencing matters: this is a behavior change, so it must land
+*after* the `_iface` port and the allocator (see
+[`docs/proposed/PROPOSAL_raw_memory.md`](docs/proposed/PROPOSAL_raw_memory.md)),
+both of which rely on the current semantics as their test oracle.
 
 ### Read-only `.rodata` hardening
 String constants currently land in the writable `.data` LOAD segment;
