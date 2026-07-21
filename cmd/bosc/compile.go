@@ -1999,6 +1999,16 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 			return pointerExprForAST(c, ast.Val, assignedName)
 		}
 		return c.PointerFlow().UnknownPointer()
+	case *UnsafeCast:
+		// The result has no provenance the checker can know: the address came
+		// from an integer, or from a pointer whose pointee type it no longer
+		// has. UnknownPointer is the existing representation for exactly that
+		// — a pointer that is valid to dereference but tracks to no origin.
+		//
+		// This is the precise, checkable sense in which unsafe_cast is unsafe,
+		// and it is deliberately not a new state: alloc's unassigned path
+		// already produces the same thing.
+		return c.PointerFlow().UnknownPointer()
 	case *Alloc:
 		// alloc always yields a fresh owned heap pointer. Register it as an
 		// allocated origin so free() and use-after-free tracking see it — the
@@ -2808,7 +2818,20 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 	depoint.OwnedMask >>= 1
 	depoint.NilMask >>= 1
 	if depoint.SameRepr(src.t) {
-		// dest was *T and src is T
+		// dest was *T and src is T.
+		//
+		// A file-scope global's name IS its address in .bs, so emitting
+		// `mov [dest] g` directly would be a memory-to-memory move, which x86
+		// has no encoding for — bas fails with "Failed to find an instruction
+		// for Move". Materialize the value into a temp first. This fires for
+		// any address-named source, which today means globals: `p.field = g`
+		// and every store of a global through a pointer.
+		if src.nameIsAddress {
+			tmp := newSpot(of, c, c.Temp(), src.t)
+			fmt.Fprintf(of, "\tmov %s %s\n", tmp.ref, src.ref)
+			defer tmp.free(of)
+			src = tmp
+		}
 		fmt.Fprintf(of, "\t%s [%s] %s\n", scalarMov(c, src.t), dest.ref, src.ref)
 		if src.t.Size(c) > 8 {
 			panic("(TODO) Can't copy T into *T for T.size > 8 bytes")
@@ -3974,6 +3997,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return nullspot
 	case *Alloc:
 		return compileAlloc(of, c, ast, dest)
+	case *UnsafeCast:
+		return compileUnsafeCast(of, c, ast, dest)
 	case *SizeOf:
 		return compileTypeConstant(of, c, ast, int64(ast.Type.Size(c)), dest)
 	case *AlignOf:
@@ -5576,6 +5601,36 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 //
 // EvalConst folds these too, so a constant context (file-scope const, static
 // initializer) never reaches this path.
+// compileUnsafeCast lowers `unsafe_cast(T, e)`. The emitted code is a single
+// same-width move: both a pointer and a uintptr are 8 bytes, so there is
+// nothing to convert, only to relabel. The whole operation is a type-system
+// event.
+//
+// The source must be a pointer or a uintptr. Plain integers are deliberately
+// NOT accepted -- an i64 address must be spelled uintptr(...) first. That
+// costs one visible conversion and buys an audit surface: every raw address in
+// a program is a uintptr, so nothing becomes a pointer without passing through
+// a construct that says so.
+func compileUnsafeCast(of io.Writer, c *Context, ast *UnsafeCast, dest spot) spot {
+	srcType := ast.Val.ASTType(c)
+	srcUnderlying := c.ResolveUnderlying(srcType)
+	if srcUnderlying.Indirection == 0 && srcUnderlying.Name != "uintptr" {
+		CompileErrorF(ast.Val, "unsafe_cast requires a pointer or uintptr source, but got %s; convert with uintptr(...) first", srcType)
+	}
+	if srcUnderlying.IsSliceOrArray() {
+		CompileErrorF(ast.Val, "unsafe_cast cannot take a slice or array source (%s); pass a pointer or uintptr", srcType)
+	}
+
+	srcSpot := compileTop(of, c, ast.Val, nullspot)
+	if dest.empty() {
+		dest = newSpot(of, c, c.Temp(), ast.Type)
+	}
+	fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, srcSpot.ref)
+	srcSpot.free(of)
+	dest.t = ast.Type
+	return dest
+}
+
 func compileTypeConstant(of io.Writer, c *Context, a AST, v int64, dest spot) spot {
 	if dest.empty() {
 		dest = newSpot(of, c, c.Temp(), numASTType())

@@ -1,0 +1,52 @@
+package main
+
+import "string"
+
+// Storing a file-scope global through a pointer.
+//
+// A global's name IS its address in .bs, so the naive lowering of `p.b = g` is
+// `mov [addr] g` -- a memory-to-memory move, which x86 cannot encode. bas
+// rejected it with "Failed to find an instruction for Move" rather than
+// anything that pointed at the source line. The compiler now materializes an
+// address-named source into a temp before the indirect store.
+//
+// Found while writing the raw-memory primitives: an allocator keeps its free
+// list head in a global and threads it through block storage
+// (`b.next = free_head`), which is exactly this shape.
+
+type box struct {
+	a i64
+	b i64
+}
+
+var g i64 := 7
+var u uintptr := 40
+var arr [3]i64
+
+fn line(n i64) {
+	string.puti(n)
+	string.putc('\n')
+}
+
+fn main() {
+	// Global into a struct field reached through a pointer.
+	var n box := {a: 0, b: 0}
+	p := &n
+	p.b = g
+	line(p.b)
+
+	// Same, for the other field, so the offset path is covered too.
+	p.a = g
+	line(n.a)
+
+	// A global uintptr through a pointer -- the allocator's actual shape.
+	var slot uintptr := 0
+	slotp := &slot
+	*slotp = u
+	line(i64(slot))
+
+	// Global into an array element through a pointer.
+	ap := &arr
+	ap[1] = g
+	line(arr[1])
+}

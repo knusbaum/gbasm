@@ -36,6 +36,25 @@ Fix by giving the test its own generous timeout rather than inheriting the
 production default; the 5s ceiling is a *server* policy, not a property the
 test means to assert.
 
+### A Boson local named like a register breaks in `[name]` position
+A `.bos` local whose name collides with an x86 register name (`sp`, `ax`, `di`,
+…) assembles fine in direct position — bosc emits `local sp 64` / `mov sp 5`
+and bas resolves the local. But the **indirect** form does not: a store through
+such a local emits `mov [sp] <val>`, and bas's bracket parser resolves `sp` to
+the stack-pointer register, producing
+`MOV [(SIZE 0) [SP - 0], …]: Failed to find an instruction for Move` — an error
+that names no source line and points at nothing the user wrote.
+
+So `p := &x; *p = v` is fine but `sp := &x; *sp = v` is not, which is a
+namespace leak from the assembler into the language. Found while writing the
+global-store-through-pointer regression test.
+
+Fix on either side: have bosc mangle user local names in emitted `.bs`, or have
+bas prefer a declared `local` over a register name when resolving a bracket
+operand. The bosc-side mangle is the more thorough fix (it closes the whole
+class rather than one syntactic position) but changes every `.bs` the compiler
+emits, so it wants its own change.
+
 ### Code formatter (`go fmt`-style)
 A canonical, opinionated formatter for `.bos` source — no config, one
 true layout, like `gofmt`. Would also give the editor integrations
