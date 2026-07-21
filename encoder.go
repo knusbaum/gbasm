@@ -208,12 +208,23 @@ func (x *prefix) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 // R 				2					Extension of the ModR/M reg field
 // X 				1 					Extension of the SIB index field
 // B 				0 					Extension of the ModR/M r/m field, SIB base field, or Opcode reg field
+// Each of R/X/B carries a "present" flag because an absent attribute in the
+// instruction database means *this form has no such field*, not "field 0".
+// Defaulting an absent field to operand 0 makes the bit track whichever
+// register happens to be first — e.g. `add r14, rbx` (form: R="#0" B="#1",
+// no X) set REX.X from R14 and emitted 4B 01 DE where the canonical encoding
+// is 49 01 DE. Register-direct forms have no SIB byte so the CPU ignores X,
+// which is why this went unnoticed; it is still a wrong byte, and R is
+// omitted by more forms than X is.
 type rex struct {
 	mandatory bool
 	w         byte
 	r         byte
 	x         byte
 	b         byte
+	hasR      bool
+	hasX      bool
+	hasB      bool
 }
 
 func (x *rex) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
@@ -226,20 +237,29 @@ func (x *rex) Encode(w WriteLener, os ...interface{}) ([]Relocation, error) {
 		return nil, writeByte(w, b)
 	}
 
-	// with args > 0, do the usual.
-	xr, _ := getRegister(x.r, os)
-	needed = needed || xr.needREX()
-
-	xx, _ := REX_X(x.x, os)
-	needed = needed || xx.needREX()
-
-	xb, _ := getRegister(x.b, os)
-	needed = needed || xb.needREX()
+	// with args > 0, do the usual. A field the form does not define
+	// contributes a zero bit and never forces the prefix to be emitted.
+	var rbit, xbit, bbit byte
+	if x.hasR {
+		xr, _ := getRegister(x.r, os)
+		needed = needed || xr.needREX()
+		rbit = (xr.byte() >> 3) & 0b1
+	}
+	if x.hasX {
+		xx, _ := REX_X(x.x, os)
+		needed = needed || xx.needREX()
+		xbit = (xx.byte() >> 3) & 0b1
+	}
+	if x.hasB {
+		xb, _ := getRegister(x.b, os)
+		needed = needed || xb.needREX()
+		bbit = (xb.byte() >> 3) & 0b1
+	}
 	b := 0b01000000 |
 		((xw & 0b1) << 3) |
-		(((xr.byte() >> 3) & 0b1) << 2) |
-		(((xx.byte() >> 3) & 0b1) << 1) |
-		((xb.byte() >> 3) & 0b1)
+		(rbit << 2) |
+		(xbit << 1) |
+		bbit
 	if !needed {
 		return nil, nil
 	}
@@ -427,13 +447,15 @@ func REX_X(i byte, os []interface{}) (Register, error) {
 	case Register:
 		return b, nil
 	case Indirect:
-		if b.Reg == R12 {
-			// Hack to support SIB-based indirection with R12
-			// (see: "32/64-bit addressing" here: https://wiki.osdev.org/X86-64_Instruction_Encoding#Registers)
-			return R_RBP, nil
-		}
-		return b.Reg, nil
+		// A plain [base + disp] operand has no SIB index, so REX.X must be 0 —
+		// the base register is extended by REX.B, not REX.X. Returning the base
+		// here set X from any R8-R15 base (mov rax,[r14+16] came out 4B 8B ...
+		// instead of 49 8B ...). Harmless, since X is ignored without a SIB
+		// byte, but wrong. Where a SIB byte *is* emitted (base R12 or RSP) it
+		// uses the "no index" encoding, which also needs X = 0.
+		return R_RAX, nil
 	case IndirectBaseIndexScale:
+		// Here X genuinely extends the SIB index field.
 		return b.Index, nil
 	case *Ralloc:
 		return b.Register(), nil
@@ -1299,11 +1321,12 @@ func parseForm(xform *XForm) (IForm, error) {
 				encs = append(encs, &immediate{size: isz, value: valb})
 			case "REX":
 				var (
-					mandatory bool
-					w         byte
-					r         byte
-					x         byte
-					b         byte
+					mandatory        bool
+					w                byte
+					r                byte
+					x                byte
+					b                byte
+					hasR, hasX, hasB bool
 				)
 				if mandatorys, ok := e.GetAttr("mandatory"); ok {
 					mandatory, err = strconv.ParseBool(mandatorys)
@@ -1319,25 +1342,28 @@ func parseForm(xform *XForm) (IForm, error) {
 					w = byte(wi)
 				}
 				if rs, ok := e.GetAttr("R"); ok {
+					hasR = true
 					r, err = toOp(rs)
 					if err != nil {
 						return IForm{}, fmt.Errorf("Failed to encode %s: %s", e.XMLName.Local, err)
 					}
 				}
 				if xs, ok := e.GetAttr("X"); ok {
+					hasX = true
 					x, err = toOp(xs)
 					if err != nil {
 						return IForm{}, fmt.Errorf("Failed to encode %s: %s", e.XMLName.Local, err)
 					}
 				}
 				if bs, ok := e.GetAttr("B"); ok {
+					hasB = true
 					b, err = toOp(bs)
 					if err != nil {
 						return IForm{}, fmt.Errorf("Failed to encode %s: %s", e.XMLName.Local, err)
 					}
 				}
 				//fmt.Printf("Adding rex: w: %d, r: %d, x: %d, b: %d\n", w, r, x, b)
-				encs = append(encs, &rex{mandatory: mandatory, w: w, r: r, x: x, b: b})
+				encs = append(encs, &rex{mandatory: mandatory, w: w, r: r, x: x, b: b, hasR: hasR, hasX: hasX, hasB: hasB})
 			case "ModRM":
 				var (
 					mode byte
