@@ -2,6 +2,12 @@
 
 ## History
 
+- 2026-07-20 — **Register allocation settled: parallel allocators per register
+  file, over extracted shared frame state** (resolves the former Open Question
+  #1). Rejected parameterizing the single allocator with a class. Added the
+  `Frame` extraction as a prerequisite refactor, the full list of what must be
+  coordinated across files, class-crossing moves, and the aggregate/multi-return
+  ABI decision point.
 - 2026-07-20 — Proposed. Grounded in a survey of all three affected layers
   (assembler/encoder/allocator, compiler front end + codegen, runtime
   formatting); every "current state" claim below carries a file:line citation
@@ -228,29 +234,135 @@ unaligned-tolerant, so ordinary constant loads are fine at 8.)
 
 ---
 
-## `bas` changes
+## Register allocation: parallel files over a shared frame (decided)
 
-1. **`reg.go`** — append `X_XMM0`…`X_XMM15` to the enum; add
-   `func (r Register) Class() RegClass` (`ClassGPR` / `ClassXMM`) derived from
-   enum ranges; teach the eight switches. `fullReg()` is identity for XMM and
-   `partial()` must fail (XMM has no sub-registers in this model).
-2. **`regalloc.go`** — `Get(class, size)`; a second `rs` map and `regsXMM` pool.
-   All XMM0–15 are caller-saved on SysV, which *simplifies* the pool (no
-   callee-saved subset to prefer).
-3. **`function.go`** — `class` field on `Ralloc`; class-aware `Rallocs.Evict`;
-   `MOVSD`/`MOVSS` in `Ralloc.Evict`/`Ralloc.Register` spill/reload. The existing
-   8-byte spill slots (`Rallocs.space`, `:298`) suffice for scalar floats.
-4. **`encoder.go`** — implement `case "xmm"` and `case "m128"` in `Op.Match`
+**Decision: one allocator per register file, not a class-parameterized `Get`.**
+
+The two files have genuinely different semantics — GPRs have sub-registers, XMM
+does not; GPRs mix caller- and callee-saved, XMM is entirely volatile;
+spill/reload is `MOV`/`MOVZX` vs `MOVSD`/`MOVSS`. Parameterizing the single
+allocator would thread class-aware no-ops through all eight sub-register switches
+in `reg.go`, and would leave the cross-class eviction hazard (an integer request
+stealing an XMM in `Rallocs.Evict`, `function.go:613`) as something to *remember*
+rather than something structurally impossible.
+
+The existing types already support this with no call-site churn:
+
+```go
+type Ralloc    struct { …; rallocs *Rallocs }        // alloc → its allocator
+type Rallocs   struct { …; rs *Registers }           // allocator → its file
+type Registers struct { rs map[Register]*rstate }    // pure availability map
+```
+
+A float `Ralloc` pointing at the float allocator dispatches through
+`Register()`/`Evict()` naturally, `Get(size)` keeps its signature on both sides,
+and the float file simply never has sub-register machinery rather than having
+class-aware no-ops.
+
+Note the allocator is consulted **only for named/allocated values**. Explicit
+registers in `.bs`, `bytes`, `var`/`data`, and everything memory-backed bypass it
+entirely — so this change's blast radius is narrower than "the register
+allocator" sounds.
+
+### Prerequisite: extract frame state out of `Rallocs`
+
+`Rallocs` currently owns three fields that are **not register-allocator state**.
+They live there because the spill path happened to need them:
+
+| Field | Actually is | Touched only by |
+|---|---|---|
+| `localoff` | stack-frame cursor | `space()` (:312), `Epilogue` (:849) |
+| `freeSpace` | spill-slot free list | `space()` / `free()` (:300-319) |
+| `names` | the function's local symbol table | the alloc/lookup methods |
+
+The discriminator: each changes when the *frame* grows or a *name* is bound —
+never when a register is allocated.
+
+This is not cosmetic. Two wholesale allocators would each carry their own
+`localoff` cursor and `freeSpace` list while carving up **one** stack frame →
+overlapping spill slots and silent memory corruption. `Epilogue` sizes the stack
+from a single `localoff` (`function.go:849`), which is only correct if it *is*
+single. Likewise `names` is how `bas` resolves operands (`f.AllocFor`), so
+splitting it would force every lookup to try both files.
+
+Extract them into a frame object both allocators hold by pointer:
+
+```go
+type Frame struct {                      // per function, shared by every file
+    names     map[string]*Ralloc         // one namespace
+    localoff  uint32                     // one stack frame
+    freeSpace []struct{ size, offset int32 }
+}
+
+type Rallocs struct {                    // now purely register-file state
+    regs  map[Register]*Ralloc
+    lru   []Register
+    rs    *Registers
+    frame *Frame                         // shared
+    f     *Function
+}
+```
+
+**This refactor is worth doing on its own merits**, independent of floats: it
+removes a conceptual misplacement and makes the allocator's real state obvious.
+The change is small and mechanical — the three fields appear in only the handful
+of sites listed above.
+
+### What must be coordinated across files
+
+Splitting the files makes most things fall out correctly, but four things span
+both and must be driven together:
+
+1. **`EvictForCall`** (`function.go:658`) — a call clobbers both files. All XMM
+   are caller-saved, so *every* live float spills at *every* call. It currently
+   walks only the caller-saved GPR list.
+2. **`EvictAll`** (`:648`) and **`Function.Label`** (`:864`) — a label is a
+   control-flow merge point for both files.
+3. **Spill/reload instruction selection** — `Ralloc.Evict` (:243) and
+   `Ralloc.Register` (:170) hardcode `MOV`/`MOVZX`. Once split this is naturally
+   per-file, which is another argument for this shape.
+4. **Frame allocation** — both files call `space()`/`free()` on the shared
+   `Frame`. Scalar `f32`/`f64` fit the existing 8-byte slots; only packed 128-bit
+   values would need a 16-byte size class, and those are out of scope.
+
+### `(class, size)` means different things per class
+
+Worth stating explicitly, because it shapes the allocator API. For GPRs, `size`
+selects a **sub-register** (`Get` does `r.partial(size)`). For XMM there are no
+sub-registers — the register is always 128 bits and `size` selects the
+**instruction** (`movss` vs `movsd`). So the float allocator's `Get` does not
+share the `partial()` path at all; size is carried for instruction selection, not
+register selection. `fullReg()` is identity on XMM and `partial()` does not
+apply.
+
+### Remaining `bas` changes
+
+1. **`reg.go`** — append `X_XMM0`…`X_XMM15`; add `Class()` derived from the enum
+   ranges; teach `String`/`ParseReg`/`needREX`/`byte`/`Width`. The sub-register
+   helpers (`fullReg`/`brother8`/`partial`/`subRegisters8`) need only to be
+   correct-by-construction for XMM (identity / not-applicable).
+2. **`regalloc.go`** — a second `Registers` instance over an `regsXMM` pool. All
+   XMM0–15 are caller-saved, so the pool needs no callee-saved preference
+   ordering — simpler than the GPR pool.
+3. **`encoder.go`** — implement `case "xmm"` and `case "m128"` in `Op.Match`
    (:849-861, :964); add `xmm` to `ConvertRalloc` (:685). Return a size for `xmm`
-   that does not perturb the immediate-selection logic. ~30 lines.
-5. **`cmd/bas/main.go`** — `ParseReg` accepts `xmm0`–`xmm15` (which also fixes the
-   latent bug above by construction); float literal parsing; the `local`
-   class tag.
-6. **The `local` directive gains a register class** — see *Open questions #1*.
+   that does not perturb immediate-selection. ~30 lines.
+4. **`cmd/bas/main.go`** — `ParseReg` accepts `xmm0`–`xmm15` (which fixes the
+   latent unknown-register bug by construction); float-literal parsing; the class
+   tag on `local` and argument directives.
+5. **`func_arg_regs`** (`regalloc.go:84`) — a backend-side argument register list
+   separate from `bosc`'s; needs a float sibling.
 
-Prologue/epilogue need **no change**: SysV has no callee-saved XMM registers.
-`Rallocs.EvictForCall` (`function.go:658`) does grow — every live XMM must spill
-across a call, since all are volatile.
+Prologue/epilogue need **no change**: SysV has no callee-saved XMM.
+
+### The class tag on directives
+
+Explicit registers in `.bs` carry their own class, so only *allocated* things
+need a tag: `local`, temporaries, and argument declarations. The tag's only job
+is to select which allocator handles the name. It should name a **general
+register class**, not an x86 `xmm` keyword — arm64 has its own FP file, and a
+future vector class would be a third allocator, so the concept should survive the
+port. See *Open questions #1* for the surface syntax.
 
 ---
 
@@ -299,6 +411,37 @@ documenting only the integer class; it should be corrected to note the SSE class
 and (for future C interop) that `AL` must carry the vector-register count when
 calling variadic C functions — which nothing sets today.
 
+### Class-crossing moves
+
+Nothing in the IR today expresses "move between register files," and floats need
+it in two places:
+
+- **Boxing a float into `any`/an interface.** The fat pointer's data slot is
+  filled by `packSmallMemBackedArg` (`compile.go:5600`), which assumes a GP
+  register — a boxed float needs `MOVQ xmm↔r64`, or to go by address.
+- **The float printer.** `ftoa` works on the IEEE bit pattern with *integer*
+  arithmetic, so it must get the bits into a GPR.
+
+At the `.bs` level direct registers cover this (`movq rax, xmm0`), but `bosc`'s
+`move` helper (`compile.go:2650`) dispatches on type and needs an explicit
+cross-class case. This is a distinct operation from a same-class move — not a
+size or a class on one value, but a pair of classes.
+
+### Aggregates and multi-return — needs a decision
+
+SysV classifies **per eightbyte**, not per value: `{f64,f64}` returns in
+XMM0:XMM1, `{i64,f64}` in RAX:XMM0, and the same applies to small structs passed
+by value. Boson's multi-return uses RAX:RDX today (`DESIGN.md` §Calling
+Convention: "RAX (primary), RDX (secondary)").
+
+This is the gnarliest corner of the ABI work, and it deserves an explicit choice
+rather than defaulting to "follow SysV." Boson is self-contained — raw syscalls,
+no libc, no C interop — so strict conformance only matters for future FFI and the
+(tabled) C backend. A simpler self-consistent rule (e.g. **any float-containing
+aggregate returns via memory**) is far less machinery and costs nothing today.
+Either way it should be a documented, deliberate divergence rather than an
+accident. See *Open questions #7*.
+
 ---
 
 ## Runtime and `fmt`
@@ -340,19 +483,27 @@ invalidate the `%f` API.
 
 Staged so each stage is independently testable, hardest-and-most-uncertain first.
 
+### Stage 0 — Extract `Frame` from `Rallocs`
+
+Move `names`/`localoff`/`freeSpace` into a shared `Frame` object. **Pure
+refactor, no float content, no behavior change** — the existing bas + bosc suites
+are the whole test. Worth landing on its own merits, and it is the prerequisite
+that makes a second allocator safe.
+
 ### Stage 1 — XMM in the backend (the critical path)
 
-`reg.go` enum + `Class()`; `regalloc.go` class-aware `Get` + second pool;
-`function.go` class-aware evict/spill/reload; `encoder.go` xmm/m128 operand
-matching; `bas` `ParseReg`. **Validated entirely by hand-written `.bs` golden
-tests in `cmd/bas/tests/` — no `bosc` involvement.** This de-risks the whole
-project before the compiler knows floats exist. There are no SSE tests today, so
-this stage also establishes that coverage.
+`reg.go` enum + `Class()`; a second `Registers` over an XMM pool;
+per-file spill/reload; `encoder.go` xmm/m128 operand matching; `bas` `ParseReg`.
+**Validated entirely by hand-written `.bs` golden tests in `cmd/bas/tests/` — no
+`bosc` involvement.** This de-risks the whole project before the compiler knows
+floats exist. There are no SSE tests today, so this stage also establishes that
+coverage.
 
 ### Stage 2 — The `.bs` register-class tag
 
-Extend `local` (Open question #1) and teach `bas` to route it to the right pool.
-Still `.bs`-only.
+Extend `local` and the argument directives with a class tag (Open question #1) and
+route each name to the right allocator. Wire `EvictForCall`/`EvictAll` to drive
+both files. Still `.bs`-only.
 
 ### Stage 3 — Types, literals, constants in `bosc`
 
@@ -428,12 +579,12 @@ not exist for SSE today.
 
 ## Open questions
 
-1. **How does `.bs` express a register class?** The `local` directive carries
-   only a bit width today. Options: type-tagged (`local x f64`), width + class
-   (`local x 64 xmm`), or a separate directive. This also affects the arm64
-   backend, which has its own FP register file — so the answer should be a
-   general register-class concept, not an x86 `xmm` keyword. **This is the first
-   decision to make; stages 2–6 all depend on it.**
+1. **Surface syntax for the class tag.** *(The allocator design itself is
+   settled — see "Register allocation" above.)* The `local` directive carries only
+   a bit width today. Options: type-tagged (`local x f64`), width + class
+   (`local x 64 float`), or a separate directive. It should name a general
+   register class, not `xmm` — arm64 has its own FP file. Same question for the
+   argument directives.
 2. **Does `f32` compute in `f32`, or promote to `f64` and round?** SSE supports
    both. Go computes `float32` in `float32`. Recommend true `f32` ops (`movss`,
    `addss`, …) for predictability.
@@ -451,3 +602,9 @@ not exist for SSE today.
 6. **`%f` default precision and syntax.** Fixed 6 like C, and do we support
    `%.3f` width/precision syntax in the first cut? `fmt`'s directive parser has no
    width/precision handling today.
+7. **Aggregate / multi-return classification.** Follow SysV's per-eightbyte rule
+   (`{i64,f64}` → RAX:XMM0), or adopt a simpler self-consistent rule such as
+   "any float-containing aggregate goes via memory"? Boson has no C interop
+   today, so the simpler rule costs nothing now but is a documented divergence
+   from the "System V exactly" claim. Recommend the simpler rule for the first
+   cut, revisited if/when FFI lands.
