@@ -23,6 +23,19 @@ C backend.
 
 ## Tooling
 
+### Flaky: `TestRunEndpointRunnerModeHelloIfBuilt` under full-suite load
+
+`cmd/bplayd` enforces a 5-second per-run wall-clock timeout (`runTimeout`,
+`main.go`). The playground test compiles, links, and runs a hello program
+inside that budget, which is ample standalone but not when the whole suite is
+competing for the machine — an observed failure took exactly 5.05s. Passes
+alone and on re-run, so it reads as a spurious red rather than a real one,
+which is the expensive kind of flake.
+
+Fix by giving the test its own generous timeout rather than inheriting the
+production default; the 5s ceiling is a *server* policy, not a property the
+test means to assert.
+
 ### Code formatter (`go fmt`-style)
 A canonical, opinionated formatter for `.bos` source — no config, one
 true layout, like `gofmt`. Would also give the editor integrations
@@ -67,14 +80,32 @@ removes the positive/negative asymmetry. First concrete entry off the audit abov
 
 ## Runtime / Codegen
 
+### Raise the alignment ceiling to 16 (needed for `movaps`/SIMD)
+
+BABI-0 guarantees natural alignment up to **8 bytes**, which is all any current
+Boson type needs. But 8 is also the ceiling: RBP is 8-aligned and not 16 (a
+callee enters at RSP ≡ 8 mod 16 and the prologue subtracts 48 + a multiple of
+16 + 8), and `_heap.alloc` returns a page-aligned mmap base plus an 8-byte
+header. So the 16-byte-aligned SSE forms — `movaps`, `movdqa` — are still
+unusable against Boson storage, on the stack or the heap.
+
+That is fine today: nothing emits them, and `movss`/`movsd` are
+unaligned-tolerant. It becomes a blocker the moment anything wants a vectorized
+`memcpy`/compare, a SIMD intrinsic family, or a 16-byte scalar type.
+
+Two pieces, independent: 16-align RBP (adjust the prologue's reservation and
+keep `TestBABI0PrologueEstablishesStackAlignment` in step), and widen the heap
+header to 16 so `alloc` returns a 16-aligned block. Both are small; the reason
+to defer is that neither buys anything until there is a consumer.
+
 ### Full System V AMD64 ABI conformance
 
-DESIGN.md §Calling Convention says Boson "follows System V AMD64 exactly". That
-is true for the common cases — the integer and SSE argument registers, the
-callee/caller-saved split, XMM0 returns — but several corners of the spec are
-unimplemented or divergent. They are listed separately below because each can
-land on its own, but they are one body of work: *say what we do, or do what we
-say*. Until then the doc's claim is stronger than the implementation.
+BABI-0 (DESIGN.md § The Boson ABI) matches System V on data layout, the integer
+and SSE argument registers, the callee/caller-saved split, XMM0 returns, and
+stack alignment. The corners below are still unimplemented or divergent. They
+are listed separately because each can land on its own, but they are one body of
+work: *say what we do, or do what we say*. The delta table at the end of the
+BABI-0 section is the current, authoritative summary.
 
 **Why it matters beyond tidiness.** The ABI is the boundary with everything not
 written in Boson. Any future C interop — calling libc, being called from C, a

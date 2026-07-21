@@ -71,6 +71,30 @@ func LinkedBinToElfSections(b LinkedBin) []Elf64_Section {
 	return ret
 }
 
+// padToAlign zero-pads buf so the next symbol written starts at an address
+// suitable for an object of the given size.
+//
+// Symbols were previously placed back-to-back, which was fine when struct
+// fields were packed: nothing needed a particular address. With natural
+// alignment, a struct's field offsets are only *aligned addresses* if the
+// struct itself starts on an aligned boundary, so each symbol has to be padded
+// into place.
+//
+// Like the frame allocator, the linker sees sizes rather than types, so it
+// uses the same conservative rule: the next power of two at or above the size,
+// capped at 8. That is never weaker than the object's true alignment. The
+// containing section is 8-aligned (see elf64.go), so an 8-aligned offset
+// within it is an 8-aligned address.
+func padToAlign(buf *bytes.Buffer, size int) {
+	a := 1
+	for a < size && a < 8 {
+		a *= 2
+	}
+	if rem := buf.Len() % a; rem != 0 {
+		buf.Write(make([]byte, a-rem))
+	}
+}
+
 func LinkExe(exename string, p platform, os []*OFile) error {
 	switch p {
 	case MACHO:
@@ -236,6 +260,7 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 			return
 		}
 		v := vars[name]
+		padToAlign(&varbs, len(v.Val))
 		loc := uint32(varbs.Len())
 		varbs.Write(v.Val)
 		varlocs[name] = loc
@@ -254,6 +279,7 @@ func Link(os []*OFile, textoff uint64) LinkedBin {
 			return
 		}
 		v := data[name]
+		padToAlign(&databs, len(v.Val))
 		loc := uint32(databs.Len())
 		databs.Write(v.Val)
 		datalocs[name] = loc

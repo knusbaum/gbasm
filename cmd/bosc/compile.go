@@ -2551,8 +2551,20 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 			continue
 		}
 
+		// The store emitted below is unsized, so bas takes its width from the
+		// source operand. A value compiled into nullspot carries its own
+		// natural width -- 64 bits for an integer literal -- which for a field
+		// narrower than 8 bytes writes past the field and into whatever sits
+		// after it. Struct fields are packed with no padding (DESIGN.md
+		// § BABI-0), so there is no slack to absorb that: the overrun lands on
+		// the next field, on a neighbouring local, or on the saved registers
+		// at [rbp] when the struct is at the top of the frame.
+		//
+		// Routing a narrow field through a temp of the field's own type makes
+		// the source register the field's width, so the store is too. This is
+		// what the assignment path (`v.b = 5`) has always done.
 		var v spot
-		if srcType.Same(fieldType) {
+		if srcType.Same(fieldType) && fieldType.Size(c) >= 8 {
 			v = compileTop(of, c, f.Val, nullspot)
 		} else {
 			tmp := newSpot(of, c, c.Temp(), fieldType)

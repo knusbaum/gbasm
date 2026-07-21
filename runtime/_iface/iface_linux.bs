@@ -41,17 +41,14 @@ package _iface
 // Register usage across assert_to:
 //   r12 = src_ti     r13 = src_shape   r14 = dst_desc   r15 = itab
 //   rbx = expected_receiver_shape
-// All callee-saved; restored on exit.
+// All callee-saved, and `prologue` already saves every one of them -- this
+// function must not push them again. Doing so cost 40 bytes of frame and ten
+// instructions per call, and shifted RSP by 40 (8 mod 16) for the body, which
+// would misalign the stack at any call site inside it.
 
 pub function assert_to
 	type fn(*u8,u64,i64,*u8) i64
 	prologue
-
-	push rbx
-	push r12
-	push r13
-	push r14
-	push r15
 
 	mov r12 rdi
 	mov r13 rsi
@@ -173,11 +170,6 @@ label .all_found
 	mov rdx 1
 
 label .ret
-	pop r15
-	pop r14
-	pop r13
-	pop r12
-	pop rbx
 	epilogue
 	ret
 

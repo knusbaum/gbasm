@@ -306,6 +306,28 @@ func NewFrame() *Frame {
 	}
 }
 
+// slotAlign returns the alignment to give a stack slot of the given size.
+//
+// The frame allocator sees only sizes, never types, so it infers a
+// conservative alignment: the next power of two at or above the size, capped
+// at 8 (nothing in Boson needs more -- see MAX_ALIGN). That is always at least
+// the object's true alignment, since a type's alignment never exceeds the
+// width of its widest scalar, which never exceeds its size. Over-aligning a
+// slot only wastes a few bytes of frame.
+//
+// This is what makes naturally-aligned field *offsets* produce naturally
+// aligned field *addresses*: offsets are relative to the aggregate's base, so
+// the base has to be aligned too. RBP itself is 8-aligned (entry RSP is 8 mod
+// 16 and the prologue's six pushes subtract 48), so a slot whose offset from
+// RBP is a multiple of A sits at an A-aligned address for any A <= 8.
+func slotAlign(size int32) int32 {
+	a := int32(1)
+	for a < size && a < 8 {
+		a *= 2
+	}
+	return a
+}
+
 // space allocates 'size' bytes for a local object and returns the offset from the base pointer.
 func (fr *Frame) space(size int32) int32 {
 	out := -1
@@ -321,7 +343,10 @@ func (fr *Frame) space(size int32) int32 {
 		fr.freeSpace = append(fr.freeSpace[:out], fr.freeSpace[out+1:]...)
 		return ret
 	} else {
-		fr.localoff += uint32(size)
+		// Grow downward, then round the cursor up to the slot's alignment so
+		// the object's low address (-localoff) is aligned, not just its end.
+		a := uint32(slotAlign(size))
+		fr.localoff = (fr.localoff + uint32(size) + a - 1) &^ (a - 1)
 		return -int32(fr.localoff)
 	}
 }
@@ -981,8 +1006,20 @@ func (f *Function) Epilogue() error {
 	bs = bs[f.localsLocation:]
 	bss := bytes.NewBuffer(bs)
 	bss.Truncate(0)
-	// align the stack to 16-bytes.
-	localoff := ((f.frame.localoff + 0x10) & 0xFF_FF_FF_F0)
+	// Establish 16-byte stack alignment at this function's call sites.
+	//
+	// A callee enters with RSP % 16 == 8 (the call pushed the return address),
+	// and must have RSP % 16 == 0 immediately before its own calls. The
+	// prologue's six pushes are 48 bytes -- 0 mod 16 -- so the reserved frame
+	// has to supply the missing 8 on its own: round the locals up to a
+	// multiple of 16, then add 8.
+	//
+	// Subtracting a plain multiple of 16 here (as this did originally) makes
+	// the prologue *preserve* the caller's alignment residue rather than
+	// establish a known one, which leaves call-site alignment alternating with
+	// call depth. Locals are addressed off RBP and RSP is restored from RBP,
+	// so the extra 8 moves no offset -- it only widens the reservation.
+	localoff := ((f.frame.localoff + 0x10) & 0xFF_FF_FF_F0) + 8
 	binary.Write(bss, binary.LittleEndian, localoff)
 	//binary.Write(bss, binary.LittleEndian, f.frame.localoff)
 	// This un-does the "SUB" in the prologue, but is unnecessary since we

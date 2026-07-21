@@ -281,9 +281,9 @@ fn close(fd owned i64) {          // owned parameter — moves the obligation
 
 Pointer parameters without `owned` are borrows by default. The callee may read or write through the pointer according to the pointer's `mut` bits, may forward it to other non-owning calls, and may return it (or a view derived from it) — the compiler infers which parameters each return slot may alias and the caller's borrow tracking picks up the obligation. A borrow may not be stored somewhere that outlives the call. See [Borrowing](#borrowing).
 
-Arguments follow the System V AMD64 ABI: the first six integer/pointer arguments go in RDI, RSI, RDX, RCX, R8, R9; additional arguments go on the stack. The single-value return goes in RAX.
+Arguments follow [the Boson ABI](#the-boson-abi-babi-0): the first six integer/pointer arguments go in RDI, RSI, RDX, RCX, R8, R9, and the first eight floating-point arguments in XMM0–XMM7, with the two sequences counted independently. `bosc` does not emit stack arguments, so exceeding either count is a compile error. The single-value return goes in RAX, or XMM0 for a float.
 
-Sub-64-bit return values are sign- or zero-extended into RAX as required by the ABI.
+Sub-64-bit return values are sign- or zero-extended into RAX.
 
 **Multi-value return.** A function may declare a comma-separated return-type list (`fn divide(a i64, b i64) i64, i64`). The compiler lowers a multi-value return to a synthetic anonymous struct (`{_0: e0, _1: e1, …}`) marked `MultiReturn=true`. The function returns that struct through the standard indirect-struct-return path: the caller allocates a `bytes` slot for the return values, the callee fills its fields, and `rax` points to the slot on return. The destructuring-bind form at the call site copies each field out into its own named binding (see [Statements](#statements)). Because the wire representation is a struct, multi-return crosses package boundaries the same way struct return types do.
 
@@ -2315,31 +2315,476 @@ A `volatile` local can never be placed in a register. Once marked volatile, `inr
 
 ### Calling Convention
 
-Follows the System V AMD64 ABI for the cases below. Several corners of the spec
-are unimplemented or deliberately divergent — arguments past the register count,
-odd-sized by-value aggregates, per-eightbyte aggregate classification, and the
-MEMORY-class return protocol. These are inconsequential for Boson-to-Boson calls
-and are exactly what would matter for C interop; they are enumerated in
-[`TODO.md`](TODO.md) § Full System V AMD64 ABI conformance.
-
-- **Integer argument registers (in order):** RDI, RSI, RDX, RCX, R8, R9
-- **Floating-point argument registers (in order):** XMM0–XMM7
-- **Stack arguments:** pushed right-to-left, accessible at positive offsets from RSP after prologue. Hand-written `.bs` can receive them (`arg <name> <index>`); `bosc` does not yet *emit* them, so it rejects a call with more than 6 integer or 8 floating-point arguments
-- **Return value:** RAX (primary), RDX (secondary for 128-bit returns); **XMM0** for a floating-point return
-- **Callee-saved:** RBX, RSP, RBP, R12–R15 (preserved across calls; `prologue`/`epilogue` save/restore these)
-- **Caller-saved:** RAX, RCX, RDX, RSI, RDI, R8–R11, **and every XMM register** (may be clobbered by any call)
-
-**The two argument sequences are counted independently.** A parameter's register comes from its position among parameters *of its own class*, not its position in the parameter list. In `fn f(p i64, q f64, r i64, s f64)`, `p` and `r` take RDI and RSI while `q` and `s` take XMM0 and XMM1. A single position-indexed assignment would get this wrong on any interleaved signature, and only on an interleaved signature — an all-integer or all-float list cannot distinguish the two.
-
-**Class is a property of raw scalars only.** An aggregate is passed as it always was — by address if larger than 8 bytes, otherwise as opaque bits in an integer register — regardless of whether it contains floating-point fields. System V's per-eightbyte classification of aggregates is deliberately not implemented; a struct of two floats travels in an integer register or by pointer, not in XMM.
-
-Since System V has no callee-saved XMM registers, every live floating-point value is spilled across every call.
+The calling convention is one part of the Boson ABI, specified in full in
+[The Boson ABI (BABI-0)](#the-boson-abi-babi-0). In brief: integer and pointer
+arguments go in RDI, RSI, RDX, RCX, R8, R9; floating-point arguments go in
+XMM0–XMM7; the two sequences are **counted independently**; scalar returns come
+back in RAX (XMM0 for floats) and aggregate returns as an address in RAX.
+Callee-saved is RBX, RBP, R12–R15; everything else, including every XMM
+register, is caller-saved.
 
 ### Symbol qualification
 
 The assembler stamps each function with its file's `package` name (`Function.Pkgname`). At resolve time, any bare relocation symbol (cross-function calls, jumps that aren't local labels, global var references) is automatically qualified with the function's package name. This means hand-written `.bs` files can use bare names internally (`call strlen`) and the assembler turns them into `string.strlen` (or whatever the package is) automatically. Cross-package calls use the full qualified form in source: `call other.func`.
 
 Labels (jump targets declared with `label`) remain unqualified — they're function-scoped and never become relocations.
+
+---
+
+## The Boson ABI (BABI-0)
+
+This section specifies the Boson Application Binary Interface as currently
+implemented: data representation, calling convention, stack frame layout,
+symbol naming, and the runtime entry and helper contracts. It is **normative
+and self-contained** — an implementer should be able to produce object code
+that interoperates with `bosc` output without consulting any other document.
+
+BABI-0 is a **versioned snapshot, not a permanent commitment.** It describes
+what the toolchain does today. The `-0` exists so a future revision — most
+likely one that reconciles the divergences in
+[Relationship to System V](#relationship-to-system-v) — can be named BABI-1
+and the two discussed without ambiguity. Nothing here is guaranteed stable
+across a version bump; there is no cross-version compatibility promise, and
+objects are expected to be rebuilt together.
+
+Where the current implementation is known to be **wrong** rather than merely
+different, this section says so and links the tracking item, rather than
+describing the bug as if it were the design.
+
+**Platform.** x86-64 Linux, little-endian throughout. Every multi-byte scalar,
+every header word, and every static initializer is little-endian; no other
+byte order is supported or contemplated.
+
+### Data representation
+
+#### Scalars
+
+| Type | Size (bytes) |
+|------|--------------|
+| `i8`, `u8`, `byte`, `bool` | 1 |
+| `i16`, `u16` | 2 |
+| `i32`, `u32`, `f32` | 4 |
+| `i64`, `u64`, `f64` | 8 |
+| any pointer, function pointer | 8 |
+
+`bool` occupies one byte: `true` is `1`, `false` is `0`. No other bit pattern is
+produced by the compiler, and none is given meaning.
+
+Floating-point values are IEEE-754 binary32 (`f32`) and binary64 (`f64`).
+
+#### Alignment
+
+**Every value is naturally aligned.** A type's alignment is the address
+granularity at which a value of that type must be placed:
+
+| Type | Alignment |
+|------|-----------|
+| `i8`, `u8`, `byte`, `bool` | 1 |
+| `i16`, `u16` | 2 |
+| `i32`, `u32`, `f32` | 4 |
+| `i64`, `u64`, `f64` | 8 |
+| pointer, function pointer | 8 |
+| slice, interface | 8 (each is a pair of 8-byte words) |
+| `values` | 8 (leads with an `i64` tag) |
+| `[N]T` | alignment of `T` |
+| struct | the strictest alignment among its fields |
+
+**8 is the maximum alignment in BABI-0.** Nothing in the language is wider
+than 8 bytes at scalar level, so no object ever requires more. An
+implementation that unconditionally 8-aligns every aggregate is conformant,
+merely wasteful.
+
+It is also the *ceiling*, not just the requirement, and that is worth stating
+because it is easy to over-read what natural alignment buys. Neither storage
+class provides more than 8: RBP is 8-aligned but not 16 (a callee enters at
+RSP ≡ 8 mod 16 and the prologue subtracts 48 plus a multiple of 16 plus 8), and
+`_heap.alloc` returns a page-aligned mmap base plus an 8-byte header. So the
+16-byte-aligned SSE forms — `movaps`, `movdqa` — remain unusable against Boson
+storage. What natural alignment does deliver is correct scalar access,
+C-compatible struct layout, atomicity for naturally-aligned accesses up to 8
+bytes, and correctness on architectures that fault on unaligned access. Raising
+the ceiling to 16 would mean 16-aligning RBP and widening the heap header; see
+[`TODO.md`](TODO.md).
+
+**Struct layout.** Fields keep declaration order and are never reordered —
+only padded. Each field begins at the next offset satisfying its own
+alignment, and the struct's total size is rounded up to the struct's own
+alignment, so consecutive elements of an array stay aligned:
+
+```
+struct { a u8; b u32; c u8; d u64 }
+
+offset  0   a (1 byte)
+        1-3     padding
+        4   b (4 bytes)
+        8   c (1 byte)
+        9-15    padding
+       16   d (8 bytes)
+size   24
+```
+
+This is the same layout a C compiler produces for the equivalent
+declaration — deliberately, because struct layout is the one part of an ABI
+that no amount of caller-side work can paper over.
+
+**Alignment is a property of addresses, not just offsets.** A field's offset
+being aligned only yields an aligned *address* if the aggregate's base is
+aligned too, so every storage class carries the guarantee:
+
+- **Stack slots** are allocated at aligned offsets from RBP. RBP itself is
+  8-aligned (a callee enters with RSP ≡ 8 mod 16 and the prologue's six pushes
+  subtract 48), so an offset that is a multiple of A yields an A-aligned
+  address for any A ≤ 8.
+- **Globals and data blocks** are padded into place by the linker, and the
+  containing ELF section is itself 8-aligned.
+- **Heap allocations** come from `_heap.alloc`, which returns an offset into an
+  `mmap` region — page-aligned base plus an 8-byte header, hence 8-aligned.
+
+An implementation that computes aligned offsets but places aggregates at
+arbitrary addresses is **not** conformant: every field in such an aggregate is
+misaligned, which is precisely the guarantee the offsets were computed to
+provide.
+
+**There is no packed representation and no `packed` attribute.** A program that
+needs a byte-exact wire format must serialize explicitly rather than casting a
+struct.
+
+#### Slices
+
+A slice `[]T` is a 16-byte header, independent of `T`:
+
+| Offset | Width | Field |
+|--------|-------|-------|
+| 0 | 8 | pointer to the first element |
+| 8 | 8 | length, in elements |
+
+There is **no capacity field**; BABI-0 slices are a pointer/length pair and
+nothing else. Slices are always memory-backed — a slice value lives at an
+address, and passing one passes that address (see
+[Aggregates](#aggregates-structs-arrays-slices-interfaces)).
+
+#### Strings
+
+A string is exactly a `[]byte`: the same 16-byte header, no distinct type. A
+string *literal* additionally guarantees a NUL byte immediately past the end of
+its backing bytes; that NUL is **not** counted in the length. This makes a
+literal directly usable as a C string without a copy, while `len` still reports
+the Boson length. A non-literal `[]byte` carries no such guarantee.
+
+The compiler emits literal backing bytes into the object's data section
+(immutable) rather than its var section (writable), and deduplicates identical
+literals.
+
+#### Fixed arrays
+
+`[N]T` is `N` elements of `T`, contiguous, no padding, no header. Size is
+`N * sizeof(T)`. The length is a compile-time property of the type, so there is
+nothing to store. A fixed array is **always memory-backed regardless of size** —
+it needs a stable address for indexing — which is why even a 1-byte array
+behaves as an aggregate rather than a scalar.
+
+#### Interfaces
+
+An interface value is a 16-byte fat pointer, independent of method count:
+
+| Offset | Width | Field |
+|--------|-------|-------|
+| 0 | 8 | data word |
+| 8 | 8 | vtable pointer |
+
+The data word has two interpretations, fixed at the coercion site:
+**pointer-backed** (the data word is a pointer to the concrete value) or
+**value-backed** (the data word holds the concrete value's bits directly). A
+value-backed `f32` occupies only the low 4 bytes, so an assertion back to `f32`
+reads exactly the bytes that were written.
+
+A nil interface is the all-zero fat pointer; nil-ness is tested on the **vtable
+word**, not the data word.
+
+The vtable is a static, compiler-generated table:
+
+| Offset | Contents |
+|--------|----------|
+| 0 | pointer to the concrete type's typedesc |
+| 8 | shape word (u64) |
+| 16 + 8·i | pointer to method *i*, in the interface's declaration order |
+
+Method dispatch loads `[vtable + 16 + 8*i]` and calls it with the interface's
+**data word as the first argument** (RDI), followed by the method's own
+arguments. No thunks exist: a concrete method whose receiver is `*T` receives
+the data word directly and interprets it as `*T`.
+
+Interface-to-interface assertion builds an equivalent table on the heap at
+runtime (an *itab*) whose vtable region has this same layout, so the dispatch
+sequence is identical whichever provider produced the table.
+
+#### Values types (tagged unions)
+
+A `values` type is `{ tag : i64 @0 } ++ { payload }`, where the payload begins
+at offset 8 and is sized to the largest variant's payload. The tag is
+dense from 0 in declaration order. A `values` type with no payload variants is
+a bare `i64` tag and is **not** memory-backed — it lives in a register like any
+scalar.
+
+#### Type qualifiers have no representation
+
+`owned`, `mut`, and `?` (nullability) are compile-time qualifiers only. They
+occupy no bits, change no size, and add no field. Two types differing only in
+these qualifiers are bit-identical at runtime. The only runtime traces are
+inserted *behavior* — a moved nullable pointer's source binding is zeroed, a
+nil check calls `_init.nil_assert` — never a change in layout.
+
+### Function calls
+
+#### Argument classification
+
+Each argument has a class, and each class has its own register sequence and its
+own counter:
+
+| Class | Registers | Members |
+|-------|-----------|---------|
+| INTEGER | RDI, RSI, RDX, RCX, R8, R9 | integers, `bool`, `byte`, pointers, function pointers, **and all aggregates** |
+| SSE | XMM0–XMM7 | `f32`, `f64` |
+
+**The counters are independent.** An argument's register comes from its
+position among arguments *of its own class*, not its position in the argument
+list. In `fn f(p i64, q f64, r i64, s f64)`, `p`→RDI, `r`→RSI, `q`→XMM0,
+`s`→XMM1.
+
+**Class is a property of raw scalars only.** An aggregate is INTEGER-class no
+matter what it contains: a `struct { a f64; b f64 }` travels by address in an
+integer register, never in XMM. BABI-0 has no per-eightbyte classification.
+
+#### Scalar arguments
+
+A scalar narrower than 8 bytes is **extended to the full 64-bit register** —
+sign-extended if the type is signed, zero-extended otherwise. BABI-0 therefore
+guarantees the upper bits of an argument register are defined, which is
+stricter than System V (where they are unspecified). Callees read the
+sub-register anyway, so the extension is defensive rather than load-bearing.
+
+#### Aggregates: structs, arrays, slices, interfaces
+
+Aggregates are passed **by value with caller-made copies**, in one of two forms
+selected by size:
+
+- **Size 1, 2, 4, or 8** — the caller loads the aggregate's bytes into the
+  argument register and passes them by value. Sizes 1 and 2 are *zero*-extended
+  regardless of any field's signedness, since the register holds opaque
+  aggregate bits rather than a number.
+- **Size greater than 8** — the caller allocates a fresh stack slot, copies the
+  aggregate into it, and passes the **address of that copy**. The callee reads
+  through the pointer. By-value semantics are preserved because the callee
+  never sees the caller's original storage.
+
+Slices and interfaces are 16-byte aggregates and take the second path: a
+callee receives a *pointer* to the `{ptr, len}` or `{data, vtable}` pair. **A
+slice header is never split across two registers.**
+
+**Sizes 3, 5, 6, and 7 are rejected at compile time** rather than passed. A
+by-value aggregate of one of those sizes — `struct { a i8; b i16 }`, for
+instance — is a compile error directing the author to use a pointer or a
+1/2/4/8-byte layout. This is an implementation limit, not a design decision;
+see [`TODO.md`](TODO.md).
+
+#### Argument count limits
+
+BABI-0 as emitted by `bosc` supports **at most 6 INTEGER and 8 SSE arguments**.
+Exceeding either is a compile error. There is no stack-argument path on the
+caller side.
+
+The assembler *can* express stack arguments — a hand-written `.bs` function
+receiving argument index *i* > 5 finds it at `[RBP + 56 + 8·(i-6)]`, i.e. just
+above the return address at `[RBP + 48]` — so the receiving half exists; only
+the emitting half is missing. See [`TODO.md`](TODO.md).
+
+#### Return values
+
+| Return type | Location |
+|-------------|----------|
+| `f32`, `f64` | XMM0 |
+| scalar ≤ 8 bytes | RAX (as AL/AX/EAX/RAX by width) |
+| pointer, function pointer | RAX |
+| struct, array, slice, interface, multi-value | **address** in RAX |
+
+A 1- or 2-byte scalar return is explicitly sign- or zero-extended into the full
+RAX; a 4-byte return relies on x86-64's implicit zeroing of the upper half when
+a 32-bit register is written.
+
+**Multi-value returns are aggregates.** `fn f() i64, i64` is lowered to an
+anonymous struct with positional fields `_0`, `_1`, … laid out by the ordinary
+layout rules, and returned by the aggregate path. Nothing about multi-value
+return is special at the ABI level, which is why it crosses package boundaries
+exactly as a struct does.
+
+**The returned address points into the callee's own frame**, which the epilogue
+has already released by the time the caller sees it. The caller must copy the
+result out before doing anything that pushes or calls; `bosc` emits that copy
+immediately after the `call`. This is a real hazard rather than a convention —
+the storage is below the caller's RSP and can be far beyond the 128-byte red
+zone, so it is not even signal-safe — and it is **not** System V's MEMORY-class
+protocol, which would have the caller pass a hidden result pointer in RDI. See
+[`TODO.md`](TODO.md).
+
+Note the deliberate asymmetry: an aggregate of size ≤ 8 is *passed* by value in
+a register but *returned* by address. There is no small-aggregate return-by-value
+path.
+
+#### Register preservation
+
+| Class | Registers |
+|-------|-----------|
+| Callee-saved | RBX, RBP, R12, R13, R14, R15 |
+| Caller-saved | RAX, RCX, RDX, RSI, RDI, R8–R11, **and every XMM register** |
+
+No XMM register is callee-saved, so every live floating-point value is spilled
+across every call.
+
+### Stack frame
+
+The `prologue` directive emits exactly:
+
+```
+push rbp; push rbx; push r12; push r13; push r14; push r15
+mov  rbp, rsp
+sub  rsp, <frame size>          ; multiple of 16, minimum 16
+```
+
+and `epilogue` reverses it:
+
+```
+mov rsp, rbp; pop r15; pop r14; pop r13; pop r12; pop rbx; pop rbp
+```
+
+Two consequences that an implementer will otherwise get wrong:
+
+- **All six callee-saved registers are saved unconditionally**, whether or not
+  the function uses them. Every call pays 6 pushes and 6 pops.
+- **RBP is established *after* the pushes**, so it does **not** point at a
+  saved-RBP frame chain node. `[RBP]` holds the saved R15 and the return
+  address is at `[RBP + 48]`. A debugger or unwinder cannot walk Boson frames
+  by following RBP.
+
+Locals live at **negative offsets from RBP**, each at an offset satisfying its
+own alignment (see [Alignment](#alignment)),
+allocated by a downward byte cursor. Freed slots are returned to a free list
+and reused only on an exact size match, so local offsets are not monotonic in
+declaration order. Nothing is stored below RSP: the red zone is neither used
+nor relied upon for locals.
+
+#### Stack alignment
+
+RSP is 16-byte aligned immediately before every `call`, so a callee sees
+`RSP % 16 == 8` on entry (the call pushed the return address).
+
+The prologue is what establishes this. Its six pushes are 48 bytes — 0 mod 16 —
+so the frame reservation supplies the missing 8: locals are rounded up to a
+multiple of 16 and then 8 is added, making the prologue's net displacement
+≡ 8 (mod 16).
+
+A prologue that instead subtracted a plain multiple of 16 would *preserve* the
+caller's alignment residue rather than establish a known one, leaving call-site
+alignment alternating with call depth. That was the behavior before this rule
+was written down, and it is the failure mode to check for when porting the
+prologue to another target.
+
+### Symbol naming
+
+All symbols in a `.bo` object are fully qualified. There is no name mangling of
+types or signatures into symbol names — overloading does not exist, so a name
+plus a package is unique.
+
+| Form | Meaning |
+|------|---------|
+| `pkg.name` | a package-level function or var |
+| `pkg.Type.method` | a method on `Type` |
+| `pkg.__typedesc_<Type>` | type descriptor for `Type` |
+| `pkg.__typedesc_cache_<Type>` | 8-byte itab cache cell for `Type` |
+| `pkg.__vtable_<Type>_<shape>__<Iface>` | static vtable for `Type` (at pointer shape `shape`) satisfying `Iface` |
+| `pkg.__projection_<Type>__<i>` | projection table *i* of a `values` type |
+| `pkg.__static_<N>` | anonymous global from an `&`-of-literal static initializer |
+| `pkg.__bstr<N>` / `pkg.__bstrslice<N>` | string literal backing bytes / slice header |
+
+Dots inside a type name are rewritten to underscores when it appears inside a
+generated symbol, so a cross-package type produces a flat identifier.
+
+In hand-written `.bs`, a bare symbol is automatically qualified with the file's
+`package` at assemble time — `call strlen` in `package string` resolves to
+`string.strlen`. Cross-package references must be written qualified. Labels are
+function-scoped and never become symbols.
+
+### Process entry
+
+The entry point is `_init.start`. It runs on the raw kernel stack with no
+prologue and never returns.
+
+The kernel-supplied stack at entry:
+
+```
+[rsp+0]          argc
+[rsp+8 ...]      argv[0..argc-1]   (each a NUL-terminated *byte)
+[rsp+8+8*argc]   NULL
+                 envp..., auxv..., strings
+```
+
+`start` converts that into Boson's `[][]byte`: it carves an inner array of
+`argc` 16-byte `{ptr, len}` headers plus one outer 16-byte `{data, len}`
+header from the stack, walks `argv` until the NULL terminator calling `strlen`
+on each entry, then calls `main.main` with the **address of the outer header**
+in RDI — the ordinary aggregate-argument convention. It zeroes RAX first, so a
+`main` that simply returns exits 0. On return it issues
+`exit(main's RAX)` via syscall 60.
+
+A `main` declared without parameters is called the same way; it simply ignores
+RDI. The argv slices live on the initial stack and remain valid for the
+process lifetime.
+
+### Runtime helper contracts
+
+These are the compiler-inserted calls. They are part of the ABI because
+compiler output depends on their exact contracts.
+
+| Helper | Signature | Contract |
+|--------|-----------|----------|
+| `_init.index_oob` | RDI = offending index, RSI = length | **Never returns** — prints and exits 1 |
+| `_init.nil_assert` | no arguments | **Never returns** — prints and exits 1 |
+| `_heap.alloc` | RDI = size → RAX = `*mut byte` | Normal convention. One `mmap` per allocation with an 8-byte length header before the returned pointer |
+| `_heap.free` | RDI = pointer from `alloc` | Normal convention. `free(NULL)` is a no-op; otherwise `munmap`s the whole mapping |
+| `_iface.assert_to` | RDI = source typedesc, RSI = source shape, RDX = source data, RCX = destination iface desc → **RAX = vtable (0 on failure), RDX = ok** | Returns normally. The **only** two-register return in the system |
+
+That `index_oob` and `nil_assert` never return is load-bearing: it lets the
+compiler emit a bounds-check trap after a conditional branch without modeling
+what the trap does to flags or registers.
+
+### Relationship to System V
+
+BABI-0 is System V AMD64-shaped but is **not** System V-conformant. The
+differences below are exactly the set that matters for interoperating with
+anything not written in Boson; each is tracked in [`TODO.md`](TODO.md)
+§ Full System V AMD64 ABI conformance.
+
+| Area | System V | BABI-0 | Status |
+|------|----------|--------|--------|
+| Struct field alignment | natural alignment, padding inserted | same | **matches** |
+| Aggregate classification | per eightbyte; a `{f64,f64}` goes in two XMM | aggregates are always INTEGER-class | **deliberate** |
+| Stack alignment before `call` | RSP ≡ 0 (mod 16) | same | **matches** |
+| Arguments past the registers | spilled to the stack | compile error (>6 INTEGER, >8 SSE) | unimplemented |
+| Odd-sized aggregates (3/5/6/7 bytes) | passed like any other | compile error | unimplemented |
+| Large aggregate return | caller passes hidden pointer in RDI (MEMORY class) | address of the callee's dead frame in RAX | divergent |
+| Sub-64-bit argument upper bits | unspecified | always sign/zero-extended | stricter |
+| Variadic calls | AL = number of vector registers used | AL not set | divergent |
+| Frame pointer chain | RBP chains to the caller's RBP | RBP is below six pushes; no chain | divergent |
+
+Aggregate classification is **deliberate** — a considered scope-out, revisitable
+only with a language-level decision.
+
+Struct field alignment was, for a time, the reverse: fields were packed with no
+padding, not by decision but because no alignment logic had ever been written.
+That is now fixed — layout matches C — on the grounds that alignment-sensitive
+instructions (`movaps`, atomics) and alignment-sensitive architectures are
+foreclosed without it, and that the cost of the change only grows.
+
+Everything else is a gap to close.
 
 ---
 

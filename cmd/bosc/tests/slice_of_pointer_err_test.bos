@@ -1,0 +1,17 @@
+package main
+
+// Slicing something that is neither a slice nor a fixed array is a normal
+// user error -- `p[0:n]` on a pointer is an easy thing to reach for -- so it
+// must produce a positioned diagnostic rather than a compiler panic.
+
+type s struct {
+	a i64
+	b i64
+}
+
+fn main() {
+	v s := s{a: 1, b: 2}
+	p *s := &v
+	raw []byte := p[0:16]
+	_ := raw
+}

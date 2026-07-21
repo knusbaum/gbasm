@@ -1,0 +1,75 @@
+package main
+
+// BABI-0 § Data representation / Alignment: "Heap allocations come from
+// _heap.alloc ... hence 8-aligned."
+//
+// Every dynamic allocation in the language funnels through _heap.alloc --
+// alloc(T) and new(expr) in the compiler, and the itab allocator in _iface --
+// so this one function decides whether heap-resident aggregates satisfy the
+// alignment their field offsets assume.
+//
+// It holds today only because the allocator is one mmap per allocation: the
+// kernel returns a page-aligned base and alloc hands back base+8, past an
+// 8-byte length header. That is exactly BABI-0's maximum alignment and not a
+// byte more, so a future allocator with pooling or a differently-sized header
+// could break it silently. Hence a test rather than a comment.
+//
+// Sizes deliberately straddle 8 and include non-multiples, since a bump
+// allocator that forgot to round would misalign precisely on those.
+
+// probe(size i64) allocates size bytes and prints the low 3 bits of the
+// returned pointer. Every line must be 0.
+function probe
+	argi size 0
+	prologue
+
+	local sz 64
+	mov sz size
+	forget size
+
+	acquire rdi
+	mov rdi sz
+	call _heap.alloc
+	release rdi
+
+	local p 64
+	mov p rax
+	and p 7
+
+	acquire rdi
+	mov rdi p
+	call string.puti
+	mov rdi 0x20
+	call string.putc
+	release rdi
+
+	epilogue
+	ret
+
+function main
+	prologue
+
+	acquire rdi
+	mov rdi 1
+	call probe
+	mov rdi 3
+	call probe
+	mov rdi 7
+	call probe
+	mov rdi 8
+	call probe
+	mov rdi 9
+	call probe
+	mov rdi 17
+	call probe
+	mov rdi 100
+	call probe
+	mov rdi 4096
+	call probe
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+
+	epilogue
+	xor rax rax
+	ret

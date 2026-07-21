@@ -1,0 +1,2 @@
+Compiling tests/slice_of_pointer_err_test.bos
+Fatal: Cannot slice a value of type *s; only slices and fixed arrays support [lo:hi]

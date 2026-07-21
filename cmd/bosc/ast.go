@@ -1644,6 +1644,104 @@ func (t *ASTType) BaseType() ASTType {
 
 const PTR_SIZE = 8
 
+// MAX_ALIGN is the strictest alignment any Boson type requires. Nothing in the
+// language is wider than 8 bytes at scalar level -- slices and interfaces are
+// pairs of 8-byte words, not 16-byte units -- so 8 bounds every alignment
+// computation. Code that needs a conservatively-aligned base address can use
+// this rather than deriving an alignment from a type it does not have.
+const MAX_ALIGN = 8
+
+// alignUp rounds n up to the next multiple of a, which must be a power of two.
+func alignUp(n, a int) int {
+	if a <= 1 {
+		return n
+	}
+	return (n + a - 1) &^ (a - 1)
+}
+
+// Alignment returns the type's natural alignment in bytes: the address
+// granularity at which a value of this type must be placed.
+//
+// See DESIGN.md § The Boson ABI (BABI-0) / Alignment. Scalars align to their
+// own width, aggregates to the strictest alignment among their members.
+func (t *ASTType) Alignment(c *Context) int {
+	if t.FuncSig != nil || t.Indirection > 0 {
+		return PTR_SIZE
+	}
+	// A slice header is {ptr, len} -- two 8-byte words, so 8-aligned.
+	if t.IsSlice() {
+		return PTR_SIZE
+	}
+	// An array aligns like its element; the element count is irrelevant.
+	if t.IsArray() {
+		return t.Element.Alignment(c)
+	}
+	switch t.Name {
+	case "<intlit>":
+		panic("Alignment() called on <intlit> type — this is a compiler bug")
+	case "<floatlit>":
+		panic("Alignment() called on <floatlit> type — this is a compiler bug")
+	case "i64", "u64", "f64":
+		return 8
+	case "i32", "u32", "f32":
+		return 4
+	case "i16", "u16":
+		return 2
+	case "i8", "u8", "byte", "bool":
+		return 1
+	}
+	if underlying, ok := c.TypeAliasFor(t.Name); ok {
+		return underlying.Alignment(c)
+	}
+	if c != nil {
+		// An interface value is {data, vtable} -- two 8-byte words.
+		if _, ok := c.InterfaceForName(t.Name); ok {
+			return PTR_SIZE
+		}
+		// A values type leads with its i64 tag, so it is at least 8-aligned;
+		// since MAX_ALIGN is 8, no payload can require more.
+		if _, ok := c.ValuesDeclForName(t.Name); ok {
+			return PTR_SIZE
+		}
+	}
+	if t.AnonFields != nil {
+		_, _, align := fieldLayout(c, t.AnonFields)
+		return align
+	}
+	d, ok := c.StructDeclForName(t.Name)
+	if !ok {
+		panic(&interpreterError{msg: fmt.Sprintf("No such type %q", t.Name), p: t.p})
+	}
+	return d.Alignment(c)
+}
+
+// fieldLayout computes the natural-alignment layout of a field list: each
+// field's byte offset, the aggregate's total size, and its alignment.
+//
+// Fields keep declaration order and are never reordered -- only padded. Each
+// field starts at the next offset satisfying its own alignment, and the total
+// is rounded up to the aggregate's alignment so that consecutive elements of
+// an array of this type stay aligned.
+//
+// This is the single place the layout rule lives. StructDecl.Size,
+// StructDecl.Alignment, StructDecl.ByteOffset, and the anonymous-struct arm of
+// ASTType.Size all route through it, so they cannot disagree.
+func fieldLayout(c *Context, fields []Binding) (offsets []int, size int, align int) {
+	offsets = make([]int, len(fields))
+	off := 0
+	align = 1
+	for i := range fields {
+		a := fields[i].Type.Alignment(c)
+		if a > align {
+			align = a
+		}
+		off = alignUp(off, a)
+		offsets[i] = off
+		off += fields[i].Type.Size(c)
+	}
+	return offsets, alignUp(off, align), align
+}
+
 // The size in bytes that the type occupies in memory.
 // NOTE: THIS IS NOT THE SIZE OF THE REGISTER.
 // For instance, arrays and structs are held in registers
@@ -1697,13 +1795,10 @@ func (t *ASTType) Size(c *Context) int {
 			return vd.TagType.Size(c) + vd.PayloadMaxSize(c)
 		}
 	}
-	// Anonymous struct: sum of field sizes.
+	// Anonymous struct: same natural-alignment layout as a named one.
 	if t.AnonFields != nil {
-		total := 0
-		for _, f := range t.AnonFields {
-			total += f.Type.Size(c)
-		}
-		return total
+		_, size, _ := fieldLayout(c, t.AnonFields)
+		return size
 	}
 	// Named structs.
 	d, ok := c.StructDeclForName(t.Name)
@@ -2420,24 +2515,25 @@ func (s *StructDecl) Pos() position {
 
 // Returns the size in bytes that the struct occupies.
 func (s *StructDecl) Size(c *Context) int {
-	size := 0
-	for _, f := range s.Fields {
-		size += f.Type.Size(c)
-	}
+	_, size, _ := fieldLayout(c, s.Fields)
 	return size
 }
 
+// Alignment returns the struct's natural alignment: the strictest alignment
+// of any field.
+func (s *StructDecl) Alignment(c *Context) int {
+	_, _, align := fieldLayout(c, s.Fields)
+	return align
+}
+
 func (s *StructDecl) ByteOffset(c *Context, field string) (int, ASTType) {
-	offset := 0
-	var mtype ASTType
-	for _, f := range s.Fields {
+	offsets, _, _ := fieldLayout(c, s.Fields)
+	for i, f := range s.Fields {
 		if f.Name == field {
-			mtype = f.Type
-			break
+			return offsets[i], f.Type
 		}
-		offset += f.Type.Size(c)
 	}
-	return offset, mtype
+	return 0, ASTType{}
 }
 
 // structDeclForType returns a StructDecl for either a named struct
@@ -4118,7 +4214,12 @@ func (s *SliceOp) ASTType(c *Context) ASTType {
 		}
 		return t
 	}
-	panic("Cannot perform slice operation on non-array or non-slice")
+	// Reached whenever the operand is neither a slice nor a fixed array -- a
+	// pointer, a struct, a scalar. This is ordinary user error (`p[0:n]` on a
+	// `*T` is an easy thing to try), so it gets a positioned diagnostic with a
+	// source snippet like every other type error, not a raw panic.
+	CompileErrorF(s, "Cannot slice a value of type %s; only slices and fixed arrays support [lo:hi]", t)
+	return ASTType{}
 }
 
 func (s *SliceOp) Note() string {

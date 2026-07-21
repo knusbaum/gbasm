@@ -1,0 +1,48 @@
+package main
+
+// Probe the stack alignment actually seen at function entry.
+//
+// BABI-0 requires RSP to be 16-byte aligned immediately before a `call`, so a
+// callee must see RSP % 16 == 8 on entry (the call pushed the return address).
+// probe takes no prologue, so it observes entry RSP directly.
+//
+// TestBABI0PrologueEstablishesStackAlignment (babi0_test.go) asserts the same
+// invariant statically, across every frame size, and is the authoritative
+// check. This test is kept because it covers a different failure class: it
+// exercises the *linked, running* program, so it still fires if the emitter's
+// arithmetic is right but bas encodes the reserved size wrong, or if the
+// prologue's instruction sequence changes in a way the displacement
+// calculation no longer models. The unit test checks what we meant to emit;
+// this checks what the CPU actually sees.
+function probe
+	mov rax rsp
+	and rax 15
+	ret
+
+// depth1 has a normal prologue and calls probe from inside its frame.
+function depth1
+	prologue
+	call probe
+	epilogue
+	ret
+
+function put
+	prologue
+	acquire rdi
+	mov rdi rax
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+	epilogue
+	ret
+
+function main
+	prologue
+	call probe
+	call put
+	call depth1
+	call put
+	epilogue
+	xor rax rax
+	ret

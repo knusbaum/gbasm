@@ -1,0 +1,89 @@
+package main
+
+import "fmt"
+
+// Struct-literal initialization of a field narrower than 8 bytes must store
+// exactly the field's width. A wider store overruns the struct and silently
+// clobbers whatever is adjacent — another local, or the saved callee-saved
+// registers when the struct sits at the top of the frame.
+//
+// The equivalence class is (field width) x (literal field order): the store
+// width is chosen per field, and because each store runs past its own field,
+// writing fields in descending offset order lets an earlier store stomp a
+// later one. Both axes must be exercised.
+//
+// TestBABI0StructLiteralStoreWidths (babi0_emit_test.go) asserts the store
+// widths directly in the emitted .bs and is the authoritative check. Note that
+// THIS test's discriminating power is layout-dependent: when the bug was live,
+// the i32 ascending case still printed the right answer while the i16 case did
+// not, purely because of where the frame put them. It is kept as the
+// end-to-end half -- it is the only thing that would catch bas mis-encoding a
+// correctly-sized store -- but a future reader should not read a pass here as
+// proof that store widths are right. The unit test is what proves that.
+
+type pair32 struct {
+	a i32
+	b i32
+}
+
+type pair16 struct {
+	a i16
+	b i16
+}
+
+type pair8 struct {
+	a i8
+	b i8
+}
+
+type mixed struct {
+	a byte
+	b i64
+	c i16
+}
+
+// A narrow trailing field is the case that overruns the struct's own storage
+// rather than a sibling field's.
+type trailing struct {
+	a i64
+	b i8
+}
+
+fn main() {
+	// Ascending field order: each store may only run into the *next* field,
+	// which is written afterwards.
+	asc32 pair32 := pair32{a: 1, b: 2}
+	asc16 pair16 := pair16{a: 3, b: 4}
+	asc8 pair8 := pair8{a: 5, b: 6}
+	fmt.print("asc %d %d | %d %d | %d %d\n",
+		i64(asc32.a), i64(asc32.b),
+		i64(asc16.a), i64(asc16.b),
+		i64(asc8.a), i64(asc8.b))
+
+	// Descending field order: the same values, same types. Only the order of
+	// the fields in the literal differs, which must not be observable.
+	desc32 pair32 := pair32{b: 2, a: 1}
+	desc16 pair16 := pair16{b: 4, a: 3}
+	desc8 pair8 := pair8{b: 6, a: 5}
+	fmt.print("desc %d %d | %d %d | %d %d\n",
+		i64(desc32.a), i64(desc32.b),
+		i64(desc16.a), i64(desc16.b),
+		i64(desc8.a), i64(desc8.b))
+
+	// Mixed widths, and a narrow field bracketed by a wide one.
+	m mixed := mixed{a: 7, b: 8, c: 9}
+	fmt.print("mixed %d %d %d\n", i64(m.a), m.b, i64(m.c))
+
+	// A narrow trailing field: the overrun leaves the struct entirely. Two
+	// adjacent instances catch a store that lands in the neighbour.
+	t1 trailing := trailing{a: 10, b: 11}
+	t2 trailing := trailing{a: 12, b: 13}
+	fmt.print("trailing %d %d | %d %d\n", t1.a, i64(t1.b), t2.a, i64(t2.b))
+
+	// A typed narrow source rather than a literal — the path that already
+	// works, kept so a fix that only handles literals still shows both.
+	x i32 := 14
+	y i32 := 15
+	fromvar pair32 := pair32{a: x, b: y}
+	fmt.print("fromvar %d %d\n", i64(fromvar.a), i64(fromvar.b))
+}

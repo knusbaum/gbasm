@@ -445,9 +445,23 @@ func encodeStructLiteralBytes(c *Context, dstt ASTType, lit *StructLiteral) ([]b
 		provided[f.Name] = f.Val
 	}
 
-	var out []byte
+	// Fields sit at naturally-aligned offsets, so the encoded image has gaps
+	// between them and possibly tail padding. Drive placement from the same
+	// fieldLayout the rest of the compiler uses rather than appending
+	// field-by-field, or the static image would disagree with the runtime
+	// layout -- silently, and only for globals.
+	offsets, total, _ := fieldLayout(c, fields)
+
+	out := make([]byte, 0, total)
+	padTo := func(off int) {
+		if len(out) < off {
+			out = append(out, make([]byte, off-len(out))...)
+		}
+	}
+
 	var relocs []relocSpec
-	for _, fld := range fields {
+	for i, fld := range fields {
+		padTo(offsets[i])
 		val, ok := provided[fld.Name]
 		if !ok {
 			if !fld.Type.ZeroInitializable(c) {
@@ -477,6 +491,9 @@ func encodeStructLiteralBytes(c *Context, dstt ASTType, lit *StructLiteral) ([]b
 	for name := range provided {
 		return nil, nil, fmt.Errorf("struct literal references unknown field %q of %s", name, dstt)
 	}
+	// Tail padding, so the image is exactly Size(dstt) bytes and an array of
+	// these keeps every element aligned.
+	padTo(total)
 	return out, relocs, nil
 }
 
