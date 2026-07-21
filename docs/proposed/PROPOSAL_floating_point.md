@@ -2,6 +2,19 @@
 
 ## History
 
+- 2026-07-20 — **Stage 3b landed** (`f32`/`f64` in the type system). Two findings
+  worth carrying forward. (1) `isIntegerType` was the wrong place to add floats —
+  it gates the bitwise operators and shifts as well as arithmetic, sharing one
+  `case` arm in `ast.go`, so adding floats there would have admitted `f & 1` and
+  `f % 2`. Split into `isFloatType`/`isNumericType`, with only `+ - * /`
+  consulting the numeric predicate. (2) Making the types real without codegen
+  produced a **silent miscompile**: `f64` parameters were emitted as `argi … 64`
+  (integer registers) and `a + b` as an integer `ADD`. Codegen now refuses float
+  storage outright (`requireFloatCodegenSupport`) until Stages 4/5 replace it.
+  *Test debt:* the four bitwise/shift rejection tests cannot run end-to-end yet —
+  the codegen gate fires before the operator check, because Op2's type check
+  happens during codegen rather than in `ToAST` (one of the leaked checks in
+  `AUDIT_codegen_check_segregation.md`). Add them with Stage 4.
 - 2026-07-20 — **Constant folding bound to the evaluation-precision rule.**
   `EvalConst` will fold in the destination's exact type (`float32`/`float64`;
   integers keep `big.Int`), not in exact rationals. Rational folding is more

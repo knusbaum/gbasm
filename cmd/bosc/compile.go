@@ -92,7 +92,27 @@ type spot struct {
 	nameIsAddress bool
 }
 
+// requireFloatCodegenSupport rejects float-typed storage in codegen.
+//
+// The type system knows f32/f64 (Stage 3), but codegen does not yet select
+// SSE registers or instructions for them (Stage 4) or classify them for the
+// System V argument registers (Stage 5). Without this gate a float would be
+// given an integer `local`/`argi` and integer arithmetic — `a + b` on two
+// f64 parameters silently compiled to an integer ADD on the low bits, which
+// is far worse than a refusal. Remove this when the corresponding stage
+// lands.
+func requireFloatCodegenSupport(c *Context, t ASTType, what string) {
+	if !isFloatType(c, t) {
+		return
+	}
+	panic(&interpreterError{
+		msg: fmt.Sprintf("floating-point code generation is not implemented yet: cannot emit %s of type %s", what, t),
+		p:   t.p,
+	})
+}
+
 func newSpot(of io.Writer, c *Context, ref string, t ASTType) spot {
+	requireFloatCodegenSupport(c, t, "a local")
 	sz := t.Size(c)
 	memBacked := typeIsMemoryBacked(c, t)
 	s := spot{ref: ref, t: t, nameIsAddress: memBacked}
@@ -105,6 +125,7 @@ func newSpot(of io.Writer, c *Context, ref string, t ASTType) spot {
 }
 
 func newSpotWithReg(of io.Writer, c *Context, ref string, t ASTType, reg string) spot {
+	requireFloatCodegenSupport(c, t, "a local")
 	sz := t.Size(c)
 	memBacked := typeIsMemoryBacked(c, t)
 	s := spot{ref: ref, t: t, nameIsAddress: memBacked}
@@ -345,6 +366,7 @@ func sizeOfNamedType(c *Context, typeName string) (sz int) {
 var builtinScalarTypes = []string{
 	"i8", "i16", "i32", "i64",
 	"u8", "u16", "u32", "u64",
+	"f32", "f64",
 	"byte", "bool",
 }
 
@@ -371,9 +393,9 @@ func emitBuiltinScalarTypedescs(of io.Writer) {
 // scalarSize returns the byte size of a primitive scalar by name.
 func scalarSize(name string) int {
 	switch name {
-	case "i64", "u64":
+	case "i64", "u64", "f64":
 		return 8
-	case "i32", "u32":
+	case "i32", "u32", "f32":
 		return 4
 	case "i16", "u16":
 		return 2
@@ -2944,6 +2966,7 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 			fmt.Fprintf(of, "\targi __arg_%s %d %d\n", a.Name, i, sz*8)
 			spills = append(spills, pendingSpill{name: a.Name, size: sz})
 		} else {
+			requireFloatCodegenSupport(c, a.Type, "an argument")
 			fmt.Fprintf(of, "\targi %s %d %d\n", a.Name, i, a.Type.Size(c)*8)
 		}
 		c.BindVar(ast, a.Name, a.Type, a.IsConst)

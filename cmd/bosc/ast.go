@@ -828,6 +828,10 @@ func (c *Context) TypeByName(name string) (ASTType, bool) {
 		return ASTType{Name: "u32"}, true
 	case "u64":
 		return ASTType{Name: "u64"}, true
+	case "f32":
+		return ASTType{Name: "f32"}, true
+	case "f64":
+		return ASTType{Name: "f64"}, true
 	case "byte":
 		return ASTType{Name: "byte"}, true
 	case "bool":
@@ -892,6 +896,29 @@ func isIntegerType(c *Context, t ASTType) bool {
 		return true
 	}
 	return false
+}
+
+// isFloatType reports whether t is a concrete floating-point type. Kept
+// separate from isIntegerType rather than folded into it: the bitwise and
+// shift operators are gated on isIntegerType and must keep rejecting floats.
+// Only the operators that are genuinely defined on both classes consult
+// isNumericType.
+func isFloatType(c *Context, t ASTType) bool {
+	if t.Indirection > 0 || t.IsSliceOrArray() || t.FuncSig != nil || t.AnonFields != nil {
+		return false
+	}
+	switch c.ResolveUnderlying(t).Name {
+	case "f32", "f64":
+		return true
+	}
+	return false
+}
+
+// isNumericType reports whether arithmetic (+ - * /) is defined on t. That is
+// the integers plus the floats; it deliberately does NOT cover %, &, |, ^ or
+// the shifts, which remain integer-only.
+func isNumericType(c *Context, t ASTType) bool {
+	return isIntegerType(c, t) || isFloatType(c, t)
 }
 
 // AugmentType propagates properties (Signed) from a type alias definition
@@ -1643,9 +1670,11 @@ func (t *ASTType) Size(c *Context) int {
 	switch t.Name {
 	case "<intlit>":
 		panic("Size() called on <intlit> type — this is a compiler bug")
-	case "i64", "u64":
+	case "<floatlit>":
+		panic("Size() called on <floatlit> type — this is a compiler bug")
+	case "i64", "u64", "f64":
 		return 8
-	case "i32", "u32":
+	case "i32", "u32", "f32":
 		return 4
 	case "i16", "u16":
 		return 2
@@ -1989,6 +2018,12 @@ func (dst ASTType) Accepts(src ASTType) bool {
 	if src.Same(intlitASTType()) {
 		return true
 	}
+	if src.Same(floatlitASTType()) {
+		// Only a float destination. Unlike <intlit>, a float literal has no
+		// meaning in an integer slot.
+		return dst.Indirection == 0 && !dst.IsSliceOrArray() &&
+			(dst.Name == "f32" || dst.Name == "f64")
+	}
 	if src.Name == "<nil>" {
 		return dst.Indirection > 0 && dst.NilMask&1 != 0
 	}
@@ -2320,6 +2355,16 @@ func byteSliceASTType() ASTType {
 
 func intlitASTType() ASTType {
 	return ASTType{Name: "<intlit>"}
+}
+
+// <floatlit> is the pending type of a floating-point literal, the float
+// analogue of <intlit>. It differs in one important way: <intlit> is accepted
+// by any destination, because an integer literal is meaningful as a float too.
+// <floatlit> is accepted only by a floating-point destination — 3.5 is not an
+// i64, and silently truncating it is exactly the behavior this work removed
+// from the lexer.
+func floatlitASTType() ASTType {
+	return ASTType{Name: "<floatlit>"}
 }
 
 type AST interface {
@@ -3227,13 +3272,30 @@ func (o *Op2) ASTType(c *Context) ASTType {
 	case n_add, n_sub, n_mul, n_div, n_bitand, n_bitor, n_mod, n_xor:
 		ft := o.First.ASTType(c)
 		st := o.Second.ASTType(c)
+		// + - * / are defined on any numeric type. The bitwise operators and
+		// % stay integer-only: they have no meaning on an IEEE value, and
+		// folding floats into isIntegerType would have quietly admitted
+		// `f & 1` and `f % 2`.
+		arith := o.Type == n_add || o.Type == n_sub || o.Type == n_mul || o.Type == n_div
 		// Arithmetic and bitwise operators are defined on integers only.
 		// bool, pointers, slices, structs, and function pointers are
 		// rejected here rather than silently treated as small integers
 		// (e.g. `true + true` or `&p & 1`). The <intlit> pending type is
 		// integral and allowed; it adopts the other operand's type below.
 		for _, operand := range []ASTType{ft, st} {
-			if !operand.Same(intlitASTType()) && !isIntegerType(c, operand) {
+			if operand.Same(intlitASTType()) {
+				continue
+			}
+			if arith {
+				if !isNumericType(c, operand) {
+					panic(&interpreterError{
+						msg: fmt.Sprintf("operator %s requires numeric operands, but got %s", opSym(o.Type), operand),
+						p:   o.Pos(),
+					})
+				}
+				continue
+			}
+			if !isIntegerType(c, operand) {
 				panic(&interpreterError{
 					msg: fmt.Sprintf("operator %s requires integer operands, but got %s", opSym(o.Type), operand),
 					p:   o.Pos(),
@@ -4031,6 +4093,8 @@ func (l *Literal) ASTType(*Context) ASTType {
 		return byteSliceASTType()
 	case uint64:
 		return intlitASTType()
+	case float64:
+		return floatlitASTType()
 	case byte:
 		return byteASTType()
 	case bool:
@@ -4343,10 +4407,7 @@ func (n *Node) toASTTop(c *Context) AST {
 	case n_number:
 		return &Literal{Val: n.ival, p: n.p}
 	case n_float:
-		// The lexer and parser understand float literals; the type system
-		// does not yet. Report that plainly rather than falling through to
-		// the unhandled-node dump.
-		panic(&interpreterError{"floating-point literals are not supported yet: f32/f64 are not implemented", n.p})
+		return &Literal{Val: n.fval, p: n.p}
 	case n_bool:
 		return &Literal{Val: n.ival == 1, p: n.p}
 	case n_byte:

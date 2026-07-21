@@ -1,0 +1,9 @@
+package main
+
+// A float literal has no meaning in an integer slot. <intlit> coerces into any
+// numeric destination, but <floatlit> only into a float one — silently
+// truncating 2.5 to 2 is exactly the lexer behavior this work removed.
+
+fn main() {
+	z i64 := 2.5
+}

@@ -1,0 +1,2 @@
+Compiling tests/float_int_context_err_test.bos
+Fatal: Cannot initialize i64 with value of type <floatlit>

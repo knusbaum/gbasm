@@ -1,2 +1,2 @@
 Compiling tests/bool_literal_arith_err_test.bos
-Fatal: operator + requires integer operands, but got bool
+Fatal: operator + requires numeric operands, but got bool
