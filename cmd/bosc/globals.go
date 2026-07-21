@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 )
 
@@ -139,7 +140,15 @@ func encodeStaticInit(c *Context, dstt ASTType, init AST) ([]byte, []relocSpec, 
 			n, nok := v.Second.(*Literal)
 			if zok && nok {
 				if zv, ok := z.Val.(uint64); ok && zv == 0 {
+					if nv, ok := n.Val.(float64); ok {
+						b, err := encodeFloatBytes(dstt, -nv)
+						return b, nil, err
+					}
 					if nv, ok := n.Val.(uint64); ok {
+						if floatWidthOf(dstt) != 0 {
+							b, err := encodeFloatBytes(dstt, -float64(nv))
+							return b, nil, err
+						}
 						b, err := encodeIntBytes(dstt, -int64(nv))
 						return b, nil, err
 					}
@@ -178,7 +187,16 @@ func encodeStaticInit(c *Context, dstt ASTType, init AST) ([]byte, []relocSpec, 
 func encodeLiteralBytes(c *Context, dstt ASTType, l *Literal) ([]byte, []relocSpec, error) {
 	switch v := l.Val.(type) {
 	case uint64:
+		// An untyped integer literal is meaningful in a float slot; it
+		// becomes that float type rather than being rejected.
+		if floatWidthOf(dstt) != 0 {
+			b, err := encodeFloatBytes(dstt, float64(v))
+			return b, nil, err
+		}
 		b, err := encodeIntBytes(dstt, int64(v))
+		return b, nil, err
+	case float64:
+		b, err := encodeFloatBytes(dstt, v)
 		return b, nil, err
 	case byte:
 		size := dstt.Size(c)
@@ -460,6 +478,41 @@ func encodeStructLiteralBytes(c *Context, dstt ASTType, lit *StructLiteral) ([]b
 		return nil, nil, fmt.Errorf("struct literal references unknown field %q of %s", name, dstt)
 	}
 	return out, relocs, nil
+}
+
+// floatWidthOf returns the byte width of a floating-point type, or 0 if dstt
+// is not one. Like encodeIntBytes it works off the name directly so no
+// alias-resolution machinery is required.
+func floatWidthOf(dstt ASTType) int {
+	if dstt.Indirection > 0 || dstt.IsSliceOrArray() {
+		return 0
+	}
+	switch dstt.Name {
+	case "f32":
+		return 4
+	case "f64":
+		return 8
+	}
+	return 0
+}
+
+// encodeFloatBytes lays out f as its little-endian IEEE-754 encoding, sized
+// for dstt. An f32 destination narrows through float32, which is the same
+// rounding an explicit cast performs — the declared type is the type it
+// computes in, at compile time as at run time (see the proposal's
+// "Evaluation precision").
+func encodeFloatBytes(dstt ASTType, f float64) ([]byte, error) {
+	switch floatWidthOf(dstt) {
+	case 4:
+		out := make([]byte, 4)
+		binary.LittleEndian.PutUint32(out, math.Float32bits(float32(f)))
+		return out, nil
+	case 8:
+		out := make([]byte, 8)
+		binary.LittleEndian.PutUint64(out, math.Float64bits(f))
+		return out, nil
+	}
+	return nil, fmt.Errorf("float initializer cannot be assigned to non-float type %s", dstt)
 }
 
 // encodeIntBytes lays out n as little-endian bytes sized for dstt. The
