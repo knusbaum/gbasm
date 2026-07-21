@@ -2,6 +2,12 @@
 
 ## History
 
+- 2026-07-21 — Moved span descriptors out of the spans into chunk metadata.
+  With an in-span header, `2 × 32768` exactly equals `SPAN_SIZE`, so the largest
+  class fit one object where it should fit two — half a span wasted, and the
+  tiling broken for every other class too. Out-of-span descriptors make every
+  class divide the span exactly, and let large allocations return a
+  `SPAN_SIZE`-aligned pointer with no in-band header.
 - 2026-07-21 — Proposed. Design settled: span-metadata (headerless small
   objects), three tiers, 4MB chunks / 64KB spans, power-of-two classes to 32KB,
   three-level release policy. Depends on the raw-memory primitives and the
@@ -78,16 +84,20 @@ allocations spill to the huge path early; too large and a small-live-set program
 reserves more address space than it needs (cheap, but not free). It is one
 constant and is meant to be tuned once there is something to measure.
 
-`CLASS_MAX` at 32KB is chosen against `SPAN_SIZE`: the largest class still fits
-2 objects per span, and the worst-case waste stays at the 50% bound
-powers-of-two already accept. An 8KB ceiling would be worse, not better — a 9KB
-request would round up to a whole 64KB span and waste 86%.
+`CLASS_MAX` at 32KB is chosen against `SPAN_SIZE`: every class from 16 to 32768
+divides 65536 exactly, so **each class tiles its span with zero span waste**.
+That property depends on the span header living outside the span (see Layout) —
+with an in-span header, 32768 would fit once rather than twice and waste half
+the span, and every other class would lose its tiling too. An 8KB ceiling would
+be worse in the other direction: a 9KB request would round up to a whole span
+and waste 86%.
 
 ### Alignment
 
 Every returned pointer is **16-byte aligned**. This costs nothing here because
-small objects carry no header: class sizes are multiples of 16 and each span's
-object region starts 16-aligned, so alignment falls out.
+small objects carry no header: class sizes are multiples of 16 and a span's
+objects start at `span_base`, which is `SPAN_SIZE`-aligned, so alignment falls
+out.
 
 Note this over-satisfies BABI-0, whose ceiling is currently 8
 (see [`TODO.md`](../../TODO.md)). Raising the language's ceiling to 16 for
@@ -115,43 +125,57 @@ span_index = (p & (CHUNK_SIZE - 1)) / SPAN_SIZE
 unmapping the prefix and suffix. The transient over-reservation is address
 space, not memory.
 
-**Span 0 of each chunk is metadata**, not allocatable. It holds:
+**Span 0 of each chunk is metadata**, not allocatable. It holds the chunk
+header and the per-span descriptors for all 64 spans:
 
 ```
 chunk_hdr {
-    base        uintptr   // == the chunk's own base; a self-check
-    free_spans  i64       // count of unallocated spans
-    purged      i64       // count of free spans already MADV_DONTNEED'd
-    span_state  [64]i64   // per-span: FREE / SMALL / LARGE_HEAD / LARGE_TAIL
-    span_clean  [64]i64   // 1 if the span's pages are known zero
-    span_runlen [64]i64   // for LARGE_HEAD: how many spans the run covers
+    base       uintptr        // == the chunk's own base; a self-check
+    free_spans i64            // count of unallocated spans
+    purged     i64            // count of free spans already MADV_DONTNEED'd
+    spans      [64]span_desc
+}
+
+span_desc {
+    state     i64      // FREE / SMALL / LARGE_HEAD / LARGE_TAIL
+    class     i64      // size-class index, when state == SMALL
+    free_head uintptr  // intrusive free list; 0 if empty
+    bump      uintptr  // next never-handed-out byte
+    used      i64      // live objects
+    clean     i64      // 1 if the span's pages are known zero
+    runlen    i64      // for LARGE_HEAD: spans covered by the run
+    next      uintptr  // link in the class's partial-span list
+    prev      uintptr
 }
 ```
 
-One span in 64 is 1.6% overhead, in exchange for not needing a separate
-allocation for chunk metadata — which would be a bootstrap problem, since the
-allocator cannot allocate.
+**Span descriptors live here, not in the spans themselves.** That is what makes
+the class sizes tile: a span is `SPAN_SIZE` bytes of object space with nothing
+else in it, and every power-of-two class from 16 to 32768 divides 65536
+exactly. An in-span header would cost up to half a span in the largest class
+(2 × 32768 is exactly `SPAN_SIZE`, so one object would fit where two should)
+and would break the tiling of every other class as well.
+
+It costs nothing: span 0 is 64KB and the descriptors are ~72 bytes × 64 ≈ 4.5KB,
+in space already reserved. One span in 64 is 1.6% overhead, in exchange for not
+needing a separate allocation for chunk metadata — which would be a bootstrap
+problem, since the allocator cannot allocate.
 
 ### Spans
 
-A span used for small objects begins with:
+A small-object span is `SPAN_SIZE` bytes of objects and nothing else. The first
+object is at `span_base` exactly, so:
 
 ```
-span_hdr {
-    class      i64      // size-class index
-    free_head  uintptr  // intrusive free list; 0 if empty
-    bump       uintptr  // next never-handed-out byte
-    limit      uintptr  // end of the object region
-    used       i64      // live objects
-    clean      i64      // 1 if the bump region's pages are known zero
-    next       uintptr  // link in the class's partial-span list
-    prev       uintptr
-}
+object_index = (p - span_base) / class_size
 ```
 
-Objects start at `span_base + align_up(size_of(span_hdr), 16)`. The free list
-is intrusive — a freed block stores the next pointer in its own first 8 bytes,
-which is why `CLASS_MIN` must be at least 8; it is 16 for alignment anyway.
+which is worth having for a debug-mode validity check — a pointer that does not
+land on an object boundary was not one of ours.
+
+The free list is intrusive: a freed block stores the next pointer in its own
+first 8 bytes, which is why `CLASS_MIN` must be at least 8. It is 16 for
+alignment anyway.
 
 ---
 
@@ -163,9 +187,13 @@ which is why `CLASS_MIN` must be at least 8; it is 16 for alignment anyway.
    a 16-byte header (`{magic, total_size}`) and return `base + 16`, which is
    16-aligned because `mmap` returns page-aligned.
 2. **Large** (`size > CLASS_MAX`): round to spans, find a free run of that
-   length in some chunk's `span_state`, mark `LARGE_HEAD` + `LARGE_TAIL`,
-   record `span_runlen`, and return `span_base + 16` after a small header
-   distinguishing it at free time.
+   length in some chunk, mark `LARGE_HEAD` + `LARGE_TAIL`, record `runlen`, and
+   return `span_base` itself. No in-band header is needed — the descriptor
+   already says it is large — so a large allocation is `SPAN_SIZE`-aligned.
+
+   A request in (32KB, 64KB] still consumes a whole span. That is inherent to
+   span-granular large allocation rather than to any header, and narrowing it
+   would mean sub-span large allocation: real complexity for one octave.
 3. **Small**: pick the class, then in order —
    - the class's current span's free list, if non-empty (**zero the block**);
    - the current span's bump region, if not exhausted (**zero only if
@@ -184,6 +212,10 @@ which is why `CLASS_MIN` must be at least 8; it is 16 for alignment anyway.
    - `LARGE_HEAD` → return the whole run to `FREE`.
    - `SMALL` → push `p` onto the span's free list, decrement `used`. If `used`
      hits 0, unlink the span from its class list and return it to the chunk.
+
+   Note both cases read the descriptor from chunk metadata, so `free` never
+   touches the freed span's own pages except to write the free-list link. A
+   purged span stays purged until it is reused.
 
 ### The chunk registry
 
