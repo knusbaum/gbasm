@@ -1,6 +1,9 @@
-// Package _halloc is the Boson memory allocator.
+// Package _heap is the Boson memory allocator. The compiler lowers every
+// alloc(T), new(expr) and free(p) to a call into it -- `call _heap.alloc` /
+// `call _heap.free` -- so it is not a source-level import for ordinary code and
+// the build always links it.
 //
-// Design and rationale: docs/proposed/PROPOSAL_allocator.md. In short, three
+// Design and rationale: docs/implemented/PROPOSAL_allocator.md. In short, three
 // tiers over a single kernel interface --
 //
 //   small (<= 32KB)  a power-of-two size class, many objects per span
@@ -10,16 +13,13 @@
 // -- with the property that only the chunk allocator ever calls the kernel, so
 // no ordinary allocation pattern produces a syscall storm.
 //
-// It is developed under this name so it can be tested against the existing
-// allocator; it becomes _heap at cutover.
-//
 // Constraints it must respect, all consequences of being the allocator:
 //   - no alloc/new (it IS those)
 //   - no runtime interface assertion, so no fmt %v (that path allocates itabs)
 //   - all state in file-scope globals and fixed-size arrays
 //
 // Single-threaded. There is no locking anywhere.
-package _halloc
+package _heap
 
 import "sys"
 
@@ -838,12 +838,14 @@ pub fn free(p *mut byte) {
 }
 
 // ---------------------------------------------------------------------------
-// Introspection, for tests
+// Introspection
+//
+// A small mallinfo-style surface: read-only counters over the allocator's
+// state, useful for tests (proving an alloc/free loop does not grow the heap)
+// and for anything that wants to watch memory use. Cheap and side-effect free.
 // ---------------------------------------------------------------------------
 
-// chunk_count is how many chunks are currently claimed. Tests use it to prove
-// an alloc/free loop does not grow the heap without bound, which no assertion
-// about returned values can show.
+// chunk_count is how many chunks are currently claimed.
 pub fn chunk_count() i64 {
 	var n i64 := 0
 	var base uintptr := chunk_first()
@@ -868,70 +870,4 @@ pub fn free_span_count() i64 {
 		total = total + h.free_spans
 	}
 	return total
-}
-
-// chunk_base_at_for_test exposes the nth in-use chunk base, so tests can assert
-// the CHUNK_SIZE-alignment invariant directly on every chunk rather than
-// inferring it from a span address -- the kernel returns large mappings
-// suitably aligned often enough that an inferred check passes by luck.
-pub fn chunk_base_at_for_test(i i64) uintptr {
-	var n i64 := 0
-	var base uintptr := chunk_first()
-	for (; base != uintptr(0); base = chunk_next(base)) {
-		if (n == i) {
-			return base
-		}
-		n = n + 1
-	}
-	return uintptr(0)
-}
-
-// reserve_base_at_for_test exposes a reserve base, so the CHUNK_SIZE-alignment
-// invariant can be asserted on the thing that actually establishes it rather
-// than on a chunk derived from it.
-pub fn reserve_base_at_for_test(i i64) uintptr {
-	if (i < 0 || i >= res_count) {
-		return uintptr(0)
-	}
-	return res_base[i]
-}
-
-// reserve_new_for_test forces a fresh reserve. Exhausting one naturally takes
-// 256 chunks, which is far too slow for a test, and one reserve gives the
-// alignment assertion only a single sample -- the kernel returns large
-// mappings 4MB-aligned about half the time, so a single sample passes by luck.
-pub fn reserve_new_for_test() i64 {
-	return reserve_new()
-}
-
-// chunk_alloc_for_test / chunk_release_for_test / chunk_of_for_test expose the
-// chunk layer directly. Without them chunk_of can only be reached through a
-// live span, so nothing distinguishes "this chunk is in use" from "this address
-// is inside a reserve" -- a released chunk has to be observable.
-pub fn chunk_alloc_for_test() uintptr {
-	return chunk_alloc()
-}
-
-pub fn chunk_release_for_test(base uintptr) {
-	release_chunk(base)
-}
-
-pub fn chunk_of_for_test(p uintptr) uintptr {
-	return chunk_of(p)
-}
-
-// span_alloc_for_test and span_free_for_test expose the span layer directly so
-// the chunk layer's invariants can be tested before any allocation tier is
-// built on them. Not part of the allocator's interface; they go away at
-// cutover.
-pub fn span_alloc_for_test(n i64) uintptr {
-	return span_alloc(n)
-}
-
-pub fn span_free_for_test(p uintptr, n i64) {
-	base := chunk_of(p)
-	if (base == uintptr(0)) {
-		return
-	}
-	span_give(base, span_index(p), n)
 }

@@ -83,6 +83,8 @@ func TestCommandPlan(t *testing.T) {
 		filepath.Join(root, "objects", "fmt.bo"),
 		filepath.Join(root, "objects", "_io_sys.bo"),
 		filepath.Join(root, "objects", "_heap.bo"),
+		filepath.Join(root, "objects", "sys.bo"),
+		filepath.Join(root, "objects", "_sys.bo"),
 		filepath.Join(root, "objects", "_init.bo"),
 		filepath.Join(root, "objects", "_iface.bo"),
 	}

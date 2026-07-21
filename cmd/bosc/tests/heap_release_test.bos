@@ -1,7 +1,7 @@
 package main
 
 import "string"
-import "_halloc"
+import "_heap"
 
 // The three-level release policy, and the two contracts it makes reachable.
 //
@@ -47,27 +47,27 @@ fn main() {
 	// exists and when a chunk is full, because level 3 releases a fully-free
 	// chunk back to its reserve. The anchor's span is never freed, so the
 	// chunk it lives in is never fully free and never released.
-	anchor := _halloc.alloc(16)
+	anchor := _heap.alloc(16)
 	_ := anchor
 
 	// --- Level 1: an emptied small span returns to its chunk ----------------
 	// Fill one 16KB-class span (4 objects per 64KB span), which claims exactly
 	// one span, then free them all. The span must go back to the chunk's free
 	// pool -- observable as the free-span count returning to where it started.
-	free_before := _halloc.free_span_count()
+	free_before := _heap.free_span_count()
 	var held [4]uintptr
 	var i i64 := 0
 	for (; i < 4; i = i + 1) {
-		held[i] = uintptr(_halloc.alloc(16384))
+		held[i] = uintptr(_heap.alloc(16384))
 	}
 	// A span was consumed for the class.
-	line(free_before - _halloc.free_span_count())
+	line(free_before - _heap.free_span_count())
 	i = 0
 	for (; i < 4; i = i + 1) {
-		_halloc.free(unsafe_cast(*mut byte, held[i]))
+		_heap.free(unsafe_cast(*mut byte, held[i]))
 	}
 	// ...and returned once the last object was freed.
-	line(_halloc.free_span_count() - free_before)
+	line(_heap.free_span_count() - free_before)
 
 	// --- The `used` count actually gates the release ------------------------
 	// Three of four objects freed must NOT return the span; only the fourth.
@@ -76,17 +76,17 @@ fn main() {
 	// never release.
 	i = 0
 	for (; i < 4; i = i + 1) {
-		held[i] = uintptr(_halloc.alloc(16384))
+		held[i] = uintptr(_heap.alloc(16384))
 	}
-	mid := _halloc.free_span_count()
-	_halloc.free(unsafe_cast(*mut byte, held[0]))
-	_halloc.free(unsafe_cast(*mut byte, held[1]))
-	_halloc.free(unsafe_cast(*mut byte, held[2]))
+	mid := _heap.free_span_count()
+	_heap.free(unsafe_cast(*mut byte, held[0]))
+	_heap.free(unsafe_cast(*mut byte, held[1]))
+	_heap.free(unsafe_cast(*mut byte, held[2]))
 	// Three freed, span still held: no change.
-	line(_halloc.free_span_count() - mid)
-	_halloc.free(unsafe_cast(*mut byte, held[3]))
+	line(_heap.free_span_count() - mid)
+	_heap.free(unsafe_cast(*mut byte, held[3]))
 	// Fourth freed: span returns.
-	line(_halloc.free_span_count() - mid - 1)
+	line(_heap.free_span_count() - mid - 1)
 
 	// --- Dirty bump region is re-zeroed on reuse ----------------------------
 	// Take a span for a class, dirty a fresh bump block, free the whole span
@@ -94,13 +94,13 @@ fn main() {
 	// class. The new bump allocation reuses dirty pages, so the clean flag is
 	// off and the block must be zeroed. Nothing before this task could reach
 	// the dirty-bump path, because spans never returned to be re-taken.
-	a1 := _halloc.alloc(1024)
+	a1 := _heap.alloc(1024)
 	dirty(a1, 1024)
-	_halloc.free(a1)
+	_heap.free(a1)
 	// Span is back on the chunk, dirty. Re-take it.
-	a2 := _halloc.alloc(1024)
+	a2 := _heap.alloc(1024)
 	line(count_nonzero(a2, 1024))
-	_halloc.free(a2)
+	_heap.free(a2)
 
 	// --- Level 2: purge does not corrupt, and purged pages come back zero ---
 	// Churn enough distinct spans past the purge watermark that a chunk
@@ -109,73 +109,73 @@ fn main() {
 	var many [40]uintptr
 	i = 0
 	for (; i < 40; i = i + 1) {
-		q := _halloc.alloc(32768) // one class, 2 per span -> 20 spans
+		q := _heap.alloc(32768) // one class, 2 per span -> 20 spans
 		dirty(q, 32768)
 		many[i] = uintptr(q)
 	}
 	i = 0
 	for (; i < 40; i = i + 1) {
-		_halloc.free(unsafe_cast(*mut byte, many[i]))
+		_heap.free(unsafe_cast(*mut byte, many[i]))
 	}
 	// Everything freed; the chunk crossed the watermark and purged. Allocate
 	// again and require zeroed, usable memory.
 	var reuse i64 := 0
 	i = 0
 	for (; i < 40; i = i + 1) {
-		q := _halloc.alloc(32768)
+		q := _heap.alloc(32768)
 		reuse = reuse + count_nonzero(q, 32768)
 		many[i] = uintptr(q)
 	}
 	line(reuse)
 	i = 0
 	for (; i < 40; i = i + 1) {
-		_halloc.free(unsafe_cast(*mut byte, many[i]))
+		_heap.free(unsafe_cast(*mut byte, many[i]))
 	}
 
 	// --- Level 3: a fully-free chunk returns; the heap does not grow --------
 	// A large allocation that spans a whole chunk's worth, freed, must leave
 	// the chunk count where it started rather than accumulating empty chunks.
-	chunks_before := _halloc.chunk_count()
+	chunks_before := _heap.chunk_count()
 	i = 0
 	for (; i < 50; i = i + 1) {
-		q := _halloc.alloc(4000000) // ~61 spans, most of a chunk
-		_halloc.free(q)
+		q := _heap.alloc(4000000) // ~61 spans, most of a chunk
+		_heap.free(q)
 	}
-	line(_halloc.chunk_count() - chunks_before)
+	line(_heap.chunk_count() - chunks_before)
 
 	// --- Level 3: a fully-free reserve is unmapped --------------------------
 	// Force a second reserve by holding one chunk's worth past the first
 	// reserve, then free it. reserve_count must rise and fall; the first
 	// reserve is kept (MIN_RESERVES), so it settles back to 1.
-	res_before := _halloc.reserve_count()
+	res_before := _heap.reserve_count()
 	// A huge-but-in-reserve run large enough to matter, allocated many times
 	// live, to push past a reserve. Each is ~2MB of spans; 600 live would be
 	// >1GiB and force a second reserve.
 	var big [700]uintptr
 	i = 0
 	for (; i < 700; i = i + 1) {
-		big[i] = uintptr(_halloc.alloc(2000000))
+		big[i] = uintptr(_heap.alloc(2000000))
 	}
 	var grew i64 := 0
-	if (_halloc.reserve_count() > res_before) { grew = 1 }
+	if (_heap.reserve_count() > res_before) { grew = 1 }
 	line(grew)
 	i = 0
 	for (; i < 700; i = i + 1) {
-		_halloc.free(unsafe_cast(*mut byte, big[i]))
+		_heap.free(unsafe_cast(*mut byte, big[i]))
 	}
 	// Back to the kept reserve.
-	line(_halloc.reserve_count() - res_before)
+	line(_heap.reserve_count() - res_before)
 
 	// --- Steady state: a tight alloc/free loop stays flat -------------------
 	// The whole point of the tiering: nothing here reaches a syscall, and the
 	// heap neither grows nor shrinks.
-	sc := _halloc.chunk_count()
-	sr := _halloc.reserve_count()
+	sc := _heap.chunk_count()
+	sr := _heap.reserve_count()
 	var k i64 := 0
 	for (; k < 20000; k = k + 1) {
-		r := _halloc.alloc(96)
-		_halloc.free(r)
+		r := _heap.alloc(96)
+		_heap.free(r)
 	}
-	line(_halloc.chunk_count() - sc)
-	line(_halloc.reserve_count() - sr)
+	line(_heap.chunk_count() - sc)
+	line(_heap.reserve_count() - sr)
 }

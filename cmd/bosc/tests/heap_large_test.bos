@@ -1,7 +1,7 @@
 package main
 
 import "string"
-import "_halloc"
+import "_heap"
 
 // The large and huge tiers.
 //
@@ -60,130 +60,130 @@ fn main() {
 	// --- Large: just past the largest size class ---------------------------
 	// 32769 rounds to one span. Alignment is SPAN_SIZE, not merely 16, because
 	// the run starts at a span boundary with no header in front of it.
-	a := _halloc.alloc(32769)
+	a := _heap.alloc(32769)
 	if (uintptr(a) != uintptr(0)) { line(1) } else { line(0) }
 	line(i64(uintptr(a) & uintptr(65535)))
 	line(count_nonzero(a, 32769 - 1))
 	line(touch_ends(a, 32769))
-	_halloc.free(a)
+	_heap.free(a)
 
 	// --- Large: multi-span --------------------------------------------------
 	// 200000 bytes is four spans. Writing to both ends proves the whole run is
 	// usable, which a single-span bug would not survive.
-	b := _halloc.alloc(200000)
+	b := _heap.alloc(200000)
 	if (uintptr(b) != uintptr(0)) { line(1) } else { line(0) }
 	line(i64(uintptr(b) & uintptr(65535)))
 	line(touch_ends(b, 200000))
-	_halloc.free(b)
+	_heap.free(b)
 
 	// --- Large: the exact chunk capacity ------------------------------------
 	// The largest request still served from a chunk. One past this is huge.
-	c := _halloc.alloc(CHUNK_CAPACITY)
+	c := _heap.alloc(CHUNK_CAPACITY)
 	if (uintptr(c) != uintptr(0)) { line(1) } else { line(0) }
 	line(touch_ends(c, CHUNK_CAPACITY))
-	_halloc.free(c)
+	_heap.free(c)
 
 	// --- Huge: one past chunk capacity --------------------------------------
 	// This gets its own mapping. It must NOT be inside a reserve, or free()
 	// would route it to the span path and corrupt a chunk's descriptors.
-	h := _halloc.alloc(CHUNK_CAPACITY + 1)
+	h := _heap.alloc(CHUNK_CAPACITY + 1)
 	if (uintptr(h) != uintptr(0)) { line(1) } else { line(0) }
 	line(i64(uintptr(h) & uintptr(15)))
 	// Zero check BEFORE touching it -- touch_ends writes to offset 0, so the
 	// reverse order would only prove that the write landed.
 	line(count_nonzero(h, 4096))
 	line(touch_ends(h, CHUNK_CAPACITY + 1))
-	_halloc.free(h)
+	_heap.free(h)
 
 	// --- Huge: substantially larger -----------------------------------------
 	// 16MB, several chunks' worth, to be sure nothing quietly truncates the
 	// size to something a chunk could have held.
-	g := _halloc.alloc(16777216)
+	g := _heap.alloc(16777216)
 	if (uintptr(g) != uintptr(0)) { line(1) } else { line(0) }
 	line(touch_ends(g, 16777216))
-	_halloc.free(g)
+	_heap.free(g)
 
 	// --- A large block is really as long as requested -----------------------
 	// Writing to the end of an undersized block lands in adjacent FREE spans
 	// and succeeds silently, so touch_ends alone proves nothing. Allocate a
 	// neighbour and require it to stay zero: that is what catches a run length
 	// that rounded down instead of up.
-	n1 := _halloc.alloc(200000)
-	n2 := _halloc.alloc(200000)
+	n1 := _heap.alloc(200000)
+	n2 := _heap.alloc(200000)
 	dirty(n1, 200000)
 	line(count_nonzero(n2, 200000))
-	_halloc.free(n1)
-	_halloc.free(n2)
+	_heap.free(n1)
+	_heap.free(n2)
 
 	// Same check one byte past a span boundary, where rounding is decided.
-	m1 := _halloc.alloc(65537)
-	m2 := _halloc.alloc(65537)
+	m1 := _heap.alloc(65537)
+	m2 := _heap.alloc(65537)
 	dirty(m1, 65537 - 1)
 	line(count_nonzero(m2, 65536))
-	_halloc.free(m1)
-	_halloc.free(m2)
+	_heap.free(m1)
+	_heap.free(m2)
 
 	// --- A recycled large run is re-zeroed -----------------------------------
 	// A span returned to its chunk is marked dirty, so the next large
 	// allocation that reuses it must clear it. Nothing else in this file
 	// exercises that: the checks above all run on spans that were never used.
-	r1 := _halloc.alloc(200000)
+	r1 := _heap.alloc(200000)
 	dirty(r1, 200000)
-	_halloc.free(r1)
-	r2 := _halloc.alloc(200000)
+	_heap.free(r1)
+	r2 := _heap.alloc(200000)
 	line(count_nonzero(r2, 200000))
-	_halloc.free(r2)
+	_heap.free(r2)
 
 	// --- Large runs are reused, not leaked ----------------------------------
 	// Allocating and freeing the same size repeatedly must return the same
 	// storage rather than consuming fresh spans.
-	first := uintptr(_halloc.alloc(200000))
-	_halloc.free(unsafe_cast(*mut byte, first))
+	first := uintptr(_heap.alloc(200000))
+	_heap.free(unsafe_cast(*mut byte, first))
 	var same i64 := 0
 	var i i64 := 0
 	for (; i < 20; i = i + 1) {
-		q := _halloc.alloc(200000)
+		q := _heap.alloc(200000)
 		if (uintptr(q) == first) {
 			same = same + 1
 		}
-		_halloc.free(q)
+		_heap.free(q)
 	}
 	line(same)
 
 	// --- Large does not grow the heap without bound -------------------------
-	var before i64 := _halloc.chunk_count()
+	var before i64 := _heap.chunk_count()
 	i = 0
 	for (; i < 200; i = i + 1) {
-		q := _halloc.alloc(300000)
-		_halloc.free(q)
+		q := _heap.alloc(300000)
+		_heap.free(q)
 	}
-	line(_halloc.chunk_count() - before)
+	line(_heap.chunk_count() - before)
 
 	// --- Huge does not grow the heap ----------------------------------------
 	// Huge blocks live outside the reserves entirely, so a chunk should never
 	// be claimed on their account.
-	before = _halloc.chunk_count()
+	before = _heap.chunk_count()
 	i = 0
 	for (; i < 20; i = i + 1) {
-		q := _halloc.alloc(CHUNK_CAPACITY + 4096)
-		_halloc.free(q)
+		q := _heap.alloc(CHUNK_CAPACITY + 4096)
+		_heap.free(q)
 	}
-	line(_halloc.chunk_count() - before)
+	line(_heap.chunk_count() - before)
 
 	// --- Mixed tiers interleaved --------------------------------------------
 	// Small, large and huge live at once and must not disturb each other.
-	s1 := _halloc.alloc(64)
-	l1 := _halloc.alloc(100000)
-	h1 := _halloc.alloc(CHUNK_CAPACITY + 8)
+	s1 := _heap.alloc(64)
+	l1 := _heap.alloc(100000)
+	h1 := _heap.alloc(CHUNK_CAPACITY + 8)
 	dirty(s1, 64)
 	dirty(l1, 100000)
 	dirty(h1, 4096)
 	line(count_nonzero(s1, 64) + count_nonzero(l1, 100000) - 12508)
-	_halloc.free(l1)
-	_halloc.free(h1)
+	_heap.free(l1)
+	_heap.free(h1)
 	// The small block must survive its neighbours being freed.
 	line(count_nonzero(s1, 64) - 8)
-	_halloc.free(s1)
+	_heap.free(s1)
 
 	// --- Freeing a pointer that was never ours is a no-op --------------------
 	// A huge free reads a header and checks a magic before unmapping.
@@ -195,6 +195,6 @@ fn main() {
 	// construct without mapping something and lying about it. Kept as
 	// defence, not as something the suite verifies.
 	var stack i64 := 0
-	_halloc.free(unsafe_cast(*mut byte, uintptr(&stack)))
+	_heap.free(unsafe_cast(*mut byte, uintptr(&stack)))
 	line(1)
 }

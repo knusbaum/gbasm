@@ -115,7 +115,7 @@ Every linked program pulls in some subset of these.
 | Package | Files | Purpose |
 |---------|-------|---------|
 | `_init`    | `init_linux.bs` | Process entry (`_init.start`). Builds `[][]byte` argv on stack, calls `main.main(args [][]byte)` (or `main.main()`), exits with main's rax. Also defines `index_oob` (bounds-check trap) and `nil_assert`. |
-| `_heap`    | `heap_linux.bs` | `_heap.alloc(i64) *mut byte` and `_heap.free(*mut byte)`. One mmap mapping per allocation; small size header; `free` calls munmap. Minimal, no pooling. |
+| `_heap`    | `heap.bos` | The memory allocator, written in Boson. `alloc`/`free` are the targets of `alloc`/`new`/`free`. Three tiers (size classes / span runs / direct mmap) over 4MiB chunks carved from 1GiB reserves; `MADV_DONTNEED` release. Imports `sys`, so `sys`/`_sys` link with it. Design: `docs/implemented/PROPOSAL_allocator.md`. |
 | `_sys`     | `sys_linux.bs` | The generic syscall floor: `syscall0`…`syscall6`. The only assembly the syscall surface needs — everything else is a Boson wrapper in `sys`. Note the r10 discipline (the kernel's 4th argument register differs from System V's) and the `acquire` requirement documented under [Things that bite](#hand-written-bs-must-acquire-registers-it-holds-across-a-named-access). |
 | `sys`      | `sys.bos` | Typed Boson syscall wrappers over `_sys`: `mmap`, `munmap`, `mprotect`, `madvise`, `brk`, `getpid`, `exit`, `map_anon`, the `PROT_`/`MAP_`/`MADV_` constants, and the errno convention (`is_error`, `errno`). |
 | `_io_sys`  | `io_sys_linux.bs` | Raw Linux file-IO syscall wrappers: `_io_sys.read/write/open/close`. The low-level primitives that `io` is built on; end-user code should prefer `io`'s typed FD API. |

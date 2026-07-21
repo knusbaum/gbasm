@@ -121,6 +121,9 @@ bos_exe_deps() {
     pkg_sources "$d"
     all_pkg_import_targets "$d"
     echo "target/_heap.bo"
+    # _heap is Boson now and imports sys, so its transitive deps link too.
+    echo "target/sys.bo"
+    echo "target/_sys.bo"
     echo "target/_init.bo"
     # _iface backs interface-to-interface type assertions. It is not a
     # source-level import (the compiler emits a bare call), so it is always

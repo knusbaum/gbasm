@@ -2,6 +2,15 @@
 
 ## History
 
+- 2026-07-21 — Implemented and cut over; the assembly `heap_linux.bs` is gone
+  and every program allocates through the Boson `_heap`. Moved to
+  docs/implemented/. Built across seven commits (scaffold, small, large/huge,
+  release, plus the raw-memory primitives, stack arguments and syscall floor it
+  required). The white-box `halloc_chunks_test` was retired at cutover -- the
+  chunk layer is now exercised by every allocation -- and the isolation tests
+  became `heap_small/large/release_test`. The chunk-registry design in the body
+  below was superseded mid-build by the reserve architecture (see the
+  next-oldest entry); it is left as written to record the reasoning.
 - 2026-07-21 — Chunks are carved from larger reserved regions rather than
   mmapped individually. Removes the chunk registry, its fixed-size array and
   its 4GiB ceiling; makes chunk acquisition syscall-free; and reduces the
@@ -188,8 +197,9 @@ time by luck, and it is not a contract: it depends on
 This has a direct consequence for testing. 2MB alignment *implies* `SPAN_SIZE`
 alignment, so any test that infers chunk alignment from a span address passes
 even with the trim removed. The invariant has to be asserted on the chunk base
-itself — see `halloc_chunks_test.bos`, where the indirect form passed under
-mutation and the direct form caught 2 of 3 chunks.
+itself. (This was verified in the since-retired `halloc_chunks_test`, where
+the indirect form passed under mutation and the direct form caught 2 of 3
+chunks.)
 
 **Span 0 of each chunk is metadata**, not allocatable. It holds the chunk
 header and the per-span descriptors for all 64 spans:

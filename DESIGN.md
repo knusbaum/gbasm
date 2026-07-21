@@ -491,7 +491,7 @@ The raw syscall wrappers, taking i64 fd values directly, live in `_io_sys`:
 | `_io_sys.open` | `([]byte path, i64 flags, i64 mode) i64` | Raw `open(2)` syscall |
 | `_io_sys.close` | `(i64 fd) i64` | Raw `close(2)` syscall |
 
-The `_init` package provides `_init.start` (the ELF entry point) and `_init.index_oob` (called by bounds checks). The `_heap` package provides the bootstrap allocator (mmap-backed: each allocation is one mapping with a small size header, `free` calls `munmap`). The `_iface` package provides `assert_to`, the runtime helper backing interface-to-interface type assertion (lazy per-typedesc itab cache). The `_sys` package is the generic syscall floor — `syscall0`…`syscall6`, the only hand-written assembly the syscall surface needs — and `sys` is the typed Boson package built on it (`mmap`, `munmap`, `mprotect`, `madvise`, `brk`, plus the `PROT_`/`MAP_` constants and the errno convention). Adding a syscall means adding a Boson wrapper, not another assembly stub. The `pair` package exists as a minimal cross-package struct used by tests.
+The `_init` package provides `_init.start` (the ELF entry point) and `_init.index_oob` (called by bounds checks). The `_heap` package provides the memory allocator, written in Boson (`runtime/_heap/heap.bos`): a three-tier design -- power-of-two size classes for small objects, contiguous span runs for large ones, direct `mmap` for huge ones -- carving 4MiB chunks out of 1GiB reserves, with `MADV_DONTNEED`-based release. It imports `sys`, so those objects link alongside it. The `_iface` package provides `assert_to`, the runtime helper backing interface-to-interface type assertion (lazy per-typedesc itab cache). The `_sys` package is the generic syscall floor — `syscall0`…`syscall6`, the only hand-written assembly the syscall surface needs — and `sys` is the typed Boson package built on it (`mmap`, `munmap`, `mprotect`, `madvise`, `brk`, plus the `PROT_`/`MAP_` constants and the errno convention). Adding a syscall means adding a Boson wrapper, not another assembly stub. The `pair` package exists as a minimal cross-package struct used by tests.
 
 **`fmt` package** — composable formatting, built on `io.writer` and runtime type assertion. Five layers, smallest first; all storage is caller-owned (no GC obligations in the public surface), and the only heap traffic is the lazy itab cache inside `%v` dispatch.
 
@@ -2475,13 +2475,17 @@ than 8 bytes at scalar level, so no object ever requires more. An
 implementation that unconditionally 8-aligns every aggregate is conformant,
 merely wasteful.
 
-It is also the *ceiling*, not just the requirement, and that is worth stating
-because it is easy to over-read what natural alignment buys. Neither storage
-class provides more than 8: RBP is 8-aligned but not 16 (a callee enters at
-RSP ≡ 8 mod 16 and the prologue subtracts 48 plus a multiple of 16 plus 8), and
-`_heap.alloc` returns a page-aligned mmap base plus an 8-byte header. So the
-16-byte-aligned SSE forms — `movaps`, `movdqa` — remain unusable against Boson
-storage. What natural alignment does deliver is correct scalar access,
+It is also the language's alignment *ceiling*, not just the requirement, and
+where the guarantee comes from now differs by storage class. **Stack** storage
+tops out at 8: RBP is 8-aligned but not 16 (a callee enters at RSP ≡ 8 mod 16
+and the prologue subtracts 48 plus a multiple of 16 plus 8), so the
+16-byte-aligned SSE forms — `movaps`, `movdqa` — remain unusable against a
+stack slot. **Heap** storage is different since the allocator rewrite: every
+`_heap.alloc` result is 16-byte aligned (small objects start at a
+`SPAN_SIZE`-aligned span base past a header-free region; large and huge tiers
+are span- or page-aligned), so those SSE forms *are* usable against
+heap-resident data. Note the type system still assumes an 8-byte ceiling, so
+nothing emits them yet. What natural alignment does deliver is correct scalar access,
 C-compatible struct layout, atomicity for naturally-aligned accesses up to 8
 bytes, and correctness on architectures that fault on unaligned access. Raising
 the ceiling to 16 would mean 16-aligning RBP and widening the heap header; see
@@ -2518,8 +2522,9 @@ aligned too, so every storage class carries the guarantee:
   address for any A ≤ 8.
 - **Globals and data blocks** are padded into place by the linker, and the
   containing ELF section is itself 8-aligned.
-- **Heap allocations** come from `_heap.alloc`, which returns an offset into an
-  `mmap` region — page-aligned base plus an 8-byte header, hence 8-aligned.
+- **Heap allocations** come from `_heap.alloc`, which returns 16-byte-aligned
+  storage (the allocator's smallest size class is 16 and object regions start
+  at a span boundary), so the heap over-satisfies the 8-byte ceiling.
 
 An implementation that computes aligned offsets but places aggregates at
 arbitrary addresses is **not** conformant: every field in such an aggregate is
@@ -2843,8 +2848,8 @@ compiler output depends on their exact contracts.
 |--------|-----------|----------|
 | `_init.index_oob` | RDI = offending index, RSI = length | **Never returns** — prints and exits 1 |
 | `_init.nil_assert` | no arguments | **Never returns** — prints and exits 1 |
-| `_heap.alloc` | RDI = size → RAX = `*mut byte` | Normal convention. One `mmap` per allocation with an 8-byte length header before the returned pointer |
-| `_heap.free` | RDI = pointer from `alloc` | Normal convention. `free(NULL)` is a no-op; otherwise `munmap`s the whole mapping |
+| `_heap.alloc` | RDI = size → RAX = `*mut byte` | Normal convention. Returns 16-byte-aligned, zeroed storage from the Boson allocator (`runtime/_heap/heap.bos`); 0 on failure |
+| `_heap.free` | RDI = pointer from `alloc` | Normal convention. `free(NULL)` is a no-op; returns the block to its size class, span, or (huge tier) `munmap`s it |
 | `_iface.assert_to` | RDI = source typedesc, RSI = source shape, RDX = source data, RCX = destination iface desc → **RAX = vtable (0 on failure), RDX = ok** | Returns normally. The **only** two-register return in the system |
 
 That `index_oob` and `nil_assert` never return is load-bearing: it lets the
@@ -3027,7 +3032,7 @@ The runtime lives at `runtime/<pkg>/*.bs` under `BOSON_HOME` and is shared by ev
 | Package | Files | Purpose |
 |---------|-------|---------|
 | `_init`    | `init_linux.bs` | Process entry (`start`) calling `main.main`. Bounds-check trap (`index_oob`). |
-| `_heap`    | `heap_linux.bs` | mmap-backed allocation and deallocation for `alloc`, `new`, and `free`. |
+| `_heap`    | `heap.bos` | The Boson memory allocator: `alloc`, `free` (the targets of `alloc`/`new`/`free`), plus mallinfo-style introspection. Three tiers over 4MiB chunks carved from 1GiB reserves. |
 | `_io_sys`  | `io_sys_linux.bs` | Raw Linux file-IO syscall wrappers (`read`, `write`, `open`, `close`) taking i64 fds. |
 | `string`   | `string.bs`, `puts_linux.bs` | String formatting and stdout primitives: `puts`, `puti`, `putb`, `putc`, `exit`, plus internal `strlen`, `itoa`, `uitoa`. File IO is no longer here; see `_io_sys` and `io`. |
 | `io`       | `io.bos` | Typed file IO: `type FD i64` with `read`/`write`/`close` methods; `fn open([]byte, i64, i64) owned FD, i64`; `STDIN`/`STDOUT`/`STDERR` globals; `reader`/`writer` interfaces; `fn copy(writer, reader) i64`. Wraps `_io_sys`. |

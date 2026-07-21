@@ -172,23 +172,24 @@ removes the positive/negative asymmetry. First concrete entry off the audit abov
 
 ## Runtime / Codegen
 
-### Raise the alignment ceiling to 16 (needed for `movaps`/SIMD)
+### Raise the STACK alignment ceiling to 16 (needed for `movaps`/SIMD)
 
 BABI-0 guarantees natural alignment up to **8 bytes**, which is all any current
-Boson type needs. But 8 is also the ceiling: RBP is 8-aligned and not 16 (a
-callee enters at RSP ≡ 8 mod 16 and the prologue subtracts 48 + a multiple of
-16 + 8), and `_heap.alloc` returns a page-aligned mmap base plus an 8-byte
-header. So the 16-byte-aligned SSE forms — `movaps`, `movdqa` — are still
-unusable against Boson storage, on the stack or the heap.
+Boson type needs. The **heap** already exceeds this -- the allocator rewrite
+made `_heap.alloc` return 16-byte-aligned storage -- so the remaining gap is the
+**stack**: RBP is 8-aligned and not 16 (a callee enters at RSP ≡ 8 mod 16 and
+the prologue subtracts 48 + a multiple of 16 + 8). So the 16-byte-aligned SSE
+forms — `movaps`, `movdqa` — are usable against heap-resident data but not a
+stack slot.
 
-That is fine today: nothing emits them, and `movss`/`movsd` are
-unaligned-tolerant. It becomes a blocker the moment anything wants a vectorized
-`memcpy`/compare, a SIMD intrinsic family, or a 16-byte scalar type.
+That is fine today: nothing emits them, the type system still assumes an 8-byte
+ceiling, and `movss`/`movsd` are unaligned-tolerant. It becomes a blocker the
+moment anything wants a vectorized `memcpy`/compare, a SIMD intrinsic family, or
+a 16-byte scalar type.
 
-Two pieces, independent: 16-align RBP (adjust the prologue's reservation and
-keep `TestBABI0PrologueEstablishesStackAlignment` in step), and widen the heap
-header to 16 so `alloc` returns a 16-aligned block. Both are small; the reason
-to defer is that neither buys anything until there is a consumer.
+The remaining piece: 16-align RBP by adjusting the prologue's reservation, and
+keep `TestBABI0PrologueEstablishesStackAlignment` in step. The heap half is
+already done.
 
 ### Full System V AMD64 ABI conformance
 
@@ -291,19 +292,6 @@ The tour never teaches `fn main(args [][]byte)` (argv) or `fn main() i64`
 (exit code) — every lesson uses `fn main()`. Add a short lesson once
 slices and strings are introduced (Data section), then drop the
 forward-reference now sitting in the Functions lesson.
-
----
-
-## Runtime
-
-### Replace the bootstrap allocator
-`runtime/_heap/heap_linux.bs` is one mmap per allocation and one munmap per
-free. Design settled in
-[`docs/proposed/PROPOSAL_allocator.md`](docs/proposed/PROPOSAL_allocator.md):
-span-metadata (no per-object header), three tiers, 4MB chunks / 64KB spans,
-power-of-two classes to 32KB, three-level release policy. To be written in
-Boson against the raw-memory primitives. No compiler change needed --
-`_heap.free(p)` keeps its signature.
 
 ---
 
