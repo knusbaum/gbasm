@@ -1,0 +1,27 @@
+package main
+
+// A type alias hides the pointee from the struct-vs-non-struct guard in
+// compileCast: `nodeptr` has Indirection 0 and Name "nodeptr", so
+// StructDeclForName sees a non-struct on both sides and the cast used to fall
+// through to a same-size mov -- reinterpreting a *mut byte as a *mut node.
+//
+// Nothing could be done with the result (deref, member access, and assignment
+// to *mut node each reject an alias-typed pointer independently), so this was
+// never an exploitable hole. It is closed anyway because the checked T(expr)
+// cast must not be a second path to pointer reinterpretation: the moment
+// anything resolves aliases at a use site, the hole would go live with no test
+// standing guard.
+
+type node struct {
+	a i64
+	b i64
+}
+
+type nodeptr *mut node
+
+fn main() {
+	var raw *mut byte := alloc(byte)
+	var n nodeptr := nodeptr(raw)
+	free(raw)
+	_ := n
+}

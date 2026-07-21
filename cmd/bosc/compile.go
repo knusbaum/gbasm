@@ -6301,6 +6301,17 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 	if srcIsPtr != dstIsPtr {
 		CompileErrorF(src, "Cannot cast between pointer and non-pointer types: %s to %s", srcType, destType)
 	}
+	// Both sides are pointers. Changing the pointee type is reinterpretation
+	// for the same reason as the guard above: it hands the alias tracker a
+	// pointer to storage that was never that shape. The struct-vs-non-struct
+	// checks below read the *declared* names, so they miss this when a type
+	// alias hides the pointee — `type nodeptr *mut node` makes
+	// `nodeptr(some_byte_ptr)` look like a scalar-to-scalar cast. Compare the
+	// resolved representations instead. Qualifier-only changes (mut, owned,
+	// nullable) and same-pointee aliases stay legal; SameRepr ignores those.
+	if srcIsPtr && dstIsPtr && !srcUnderlying.SameRepr(dstUnderlying) {
+		CompileErrorF(src, "Cannot cast between pointers to different types: %s to %s", srcType, destType)
+	}
 	// Slice and array shapes carry their indirection on Element, not
 	// Indirection, so the pointer-vs-scalar guard above misses
 	// `byte[](n)` where n is i64. A 16-byte slice-header destination

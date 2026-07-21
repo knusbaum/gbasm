@@ -1,0 +1,2 @@
+Compiling tests/cast_pointer_alias_reinterpret_err_test.bos
+Fatal: Cannot cast between pointers to different types: *mut byte to nodeptr
