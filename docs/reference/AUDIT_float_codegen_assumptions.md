@@ -36,6 +36,47 @@ what it claims, and to know where to look when a float behaves like an integer.
 
 ---
 
+## What actually reaches codegen (verified)
+
+**The type checker is the gate, and it works.** A pointer or a bool never
+reaches `doOp2` — `*i64 / *i64` is rejected with "operator / requires numeric
+operands, but got \*i64" long before instruction selection. The reason floats get
+further is not that the gate is missing; it is that **float arithmetic is
+legal**. Stage 3 made `+ - * /` accept floats; Stage 4 has not yet taught codegen
+to lower them.
+
+So the reachable surface is exactly "the operations that are legal on floats",
+which is much smaller than the inventory below might suggest. Measured against a
+build with the codegen gate disabled:
+
+| Operation | Reaches codegen? |
+|---|---|
+| `+` `-` `*` `/` | **yes** — legal, not yet lowered |
+| `<` `<=` `>` `>=` `==` `!=` | **yes** — legal, not yet lowered |
+| `%` `&` `\|` `^` `<<` `>>` | no — type checker rejects ("requires integer operands") |
+| `~` | no — type checker rejects ("requires an integer operand") |
+| unary `-` | no — but see below; it is caught *by accident* |
+
+Everything else in the inventory (moves, casts, arguments, returns, literals,
+field and element access) is reachable because it is not operator-gated at all:
+those paths carry values of any type.
+
+**Unary `-` is caught by accident, and will stop being caught.** `-x` is
+desugared in `ToAST` to `Op2{n_sub, Literal{0}, x}`, and the literal `0` fails
+`litFitsIn`, which has no float cases — so the error is *"Integer literal 0 does
+not fit in type f64"*. That message leaks the desugaring and is wrong on its
+face (0 is representable in an `f64`). The moment `litFitsIn` learns about
+floats, this stops erroring and starts compiling to an integer `sub` — which also
+gets `-0.0` wrong, since `0 - 0.0` is `+0.0`. Negation must be special-cased
+*before* the desugar, and the diagnostic fixed.
+
+The practical consequence: **the type checker is where non-float types are kept
+out, and it should stay that way.** Codegen's job is to lower what is legal, not
+to re-check legality. The gates described under *Current containment* are
+scaffolding for unimplemented lowering, not a substitute for type checking.
+
+---
+
 ## The root cause, in one line
 
 `spot` — codegen's handle for a value — has no register class. `newSpot` emits
@@ -94,17 +135,19 @@ backing-array chunk copies; `mov <ref> 0` zeroing, which happens to produce
 No float branch exists anywhere in `doOp2`. Selection is by size and `.Signed`.
 
 - **`add`/`sub`** — silent; need `addsd`/`addss`, `subsd`/`subss`.
-- **Unary negation** — `-x` is desugared in `ToAST` to `Op2{n_sub, Literal{0}, x}`,
-  so float negation becomes an integer `sub` from an integer immediate `0`. Needs
-  a sign-bit `xorpd`/`xorps`, and the desugar must be special-cased *before* it
-  happens. Note this also gets `-0.0` wrong, since `0 - 0.0` is `+0.0`.
+- **Unary negation** — desugared to `Op2{n_sub, Literal{0}, x}`. Currently caught
+  only incidentally (see *What actually reaches codegen*), with a misleading
+  message, and will stop being caught once `litFitsIn` learns about floats. Needs
+  a sign-bit `xorpd`/`xorps` and a special case *before* the desugar; a `sub`
+  also gets `-0.0` wrong.
 - **`mul`** — takes the one-operand `mul` via rax/rdx arm (because
   `Signed == false`). Silent and catastrophic.
 - **`div`** — `xor rdx,rdx` + unsigned `div`. Silent.
-- **`mod`, `&`, `|`, `^`, `~`, `<<`, `>>`** — must be *rejected* for floats, not
-  lowered. The type checker already rejects them (Stage 3 split
-  `isIntegerType`/`isNumericType`), but the codegen paths still exist and would
-  lower a float if reached.
+- **`mod`, `&`, `|`, `^`, `~`, `<<`, `>>`** — **not reachable**; the type checker
+  rejects all of them for floats (Stage 3 split `isIntegerType` from
+  `isNumericType`), verified against a gate-free build. The codegen paths would
+  lower a float if reached, so they are listed here for completeness, but they
+  need no float guard as long as the type checker keeps its.
 
 ### 3. Comparisons
 
