@@ -2,6 +2,18 @@
 
 ## History
 
+- 2026-07-20 — **Remaining language-surface questions settled.** Class tag: the
+  float type name *replaces* the size operand (`local y f64`), carrying allocator
+  and instruction width in one architecture-neutral token. `<floatlit>` is a Go
+  `float64`, with the decimal→f64→f32 double-rounding case recorded as a known,
+  accepted limitation (constructed and verified; unreachable at random).
+  Float `==`/`!=` are **rejected** — ordering is retained, and `is_nan`/`is_zero`/
+  `bits` replace the lost idioms; this also *simplifies* codegen, since swapping
+  compare operands and using `seta`/`setae` gives NaN-false ordering with no
+  parity handling and no equality case. `%f` is fixed-6 with `ftoa` taking a
+  precision parameter from day one; `%v` trims trailing zeros keeping `.0`;
+  width/precision syntax is deferred to a general `fmt` feature. Only the shape of
+  approximate comparison remains open.
 - 2026-07-20 — **Evaluation precision settled** (former Open Question #2):
   `f32` computes in `f32` via the single-scalar instruction family;
   intermediates are never silently widened. Widening is explicit
@@ -171,10 +183,27 @@ compile time in arbitrary precision.
   extended. `token` (`lexer.go:121`) gains an `fval float64` alongside `nval`.
   (`parser.go:232` already carries the placeholder comment `//fval float64 //
   we'll add floats later.`)
-- **Constant arithmetic** uses `big.Float`, mirroring `<intlit>`'s `big.Int`
-  (`EvalConst`, `compile.go:5737`), which today returns `(nil,false)` for a
-  non-`uint64` literal — float literals would silently fail to fold without a
-  sibling path.
+- **Representation (decided): a Go `float64`.** It represents every `f32` and
+  `f64` value exactly, so no wider type is needed. `EvalConst`
+  (`compile.go:5737`) returns `(nil,false)` for a non-`uint64` literal today, so
+  folding needs a `float64` sibling path or float literals silently fail to fold.
+
+  *Known, accepted limitation:* parsing decimal→`f64`→`f32` can land one ulp off
+  from decimal→`f32`, because `f64` may round the value *onto* an `f32` midpoint
+  that then breaks round-half-even the other way. It is not reachable by accident
+  — four million random decimals produced zero divergences — but it is
+  constructible:
+
+  ```
+  1.000000178813934325304513262011596452794037759304046630859375
+    decimal -> f32        : 1.0000001192092896   (correct: below the midpoint)
+    decimal -> f64 -> f32 : 1.000000238418579    (one ulp high)
+  ```
+
+  It requires ~60 significant digits landing within half an `f64` ulp of an `f32`
+  midpoint. The same applies to constants folded in `f64` and then narrowed. If
+  we ever care, the fix is one line: keep the literal's source text and parse with
+  `strconv.ParseFloat(text, 32)` when the destination is `f32`, so it rounds once.
 - **An integer literal coerces to a float destination** (`x f64 := 1` is legal,
   as is `x * 2` where `x` is `f64`) — `<intlit>` is untyped and adopts the
   destination. **A float literal never coerces to an integer destination**;
@@ -240,20 +269,58 @@ be emitted even by accident.
 This is a defined-evaluation-semantics rule and belongs in `DESIGN.md`
 §Expressions when it lands, alongside the integer-overflow-wraps rule.
 
-### Comparisons and NaN
+### Comparisons (decided: `==` and `!=` are rejected on floats)
 
-IEEE semantics: `NaN == NaN` is **false**, `NaN != NaN` is **true**, and all of
-`< <= > >=` are **false** when either operand is NaN.
+**Ordering (`< <= > >=`) is valid; equality is not.** `a == b` and `a != b` on
+`f32`/`f64` are a compile-time error. Equality of computed floats is a footgun
+with no correct universal answer, and a strictness-first language should make the
+user say what they actually mean. The diagnostic must be a *teaching* error that
+names the alternatives, since no mainstream language does this and it will
+surprise people arriving from C or Go.
 
-This is a *third* comparison lowering, not a tweak to the existing two. Both
-current paths are integer-shaped — the value form (`compile.go:6665-6712`) emits
-`cmp` + `setl`/`setb` keyed off `ASTType.Signed`, and the branch form `jumpOp`
-(`:5662-5701`) emits `cmp` + `jl`/`jle`/`jg`/`jge`. Floats use
-`ucomisd`/`ucomiss`, which set **CF/ZF** — so the *ordered* comparisons are
-spelled with the **unsigned** condition codes (`setb`/`seta`/`setbe`/`setae`,
-`jb`/`ja`/…), plus explicit `setp`/`jp` parity handling for the NaN cases.
-Getting this wrong is silent and only shows up on NaN inputs, so it needs
-dedicated tests.
+Ordering keeps IEEE semantics: all four relational operators are **false** when
+either operand is NaN.
+
+#### What the ban obliges us to provide
+
+Removing `==` takes away three things people legitimately use, so the
+replacements are not optional:
+
+| Lost idiom | Replacement |
+|---|---|
+| `x != x` (the NaN test) | `is_nan(x)` |
+| `x == 0.0` | `is_zero(x)` — and it handles `-0.0` correctly, which `== 0.0` obscures |
+| exact identity (tests, serialization) | `bits(x)` — the IEEE pattern as `u32`/`u64` |
+
+`bits(x)` is not an escape hatch invented for this: **`ftoa` needs it anyway**,
+since float→decimal is integer arithmetic over the bit pattern. Comparing `bits`
+is also more honest than `==` — it distinguishes `+0.0` from `-0.0` and says
+plainly that it means "same bits," not "numerically equal."
+
+Approximate comparison is still open — see *Open questions*.
+
+#### The ban simplifies codegen
+
+Dropping equality removes the parity (`PF`) handling entirely, and the remaining
+orderings need none either if operands are ordered deliberately. `UCOMISD` sets
+CF=ZF=PF=1 when unordered, so `setb`/`setbe` would wrongly report *true* for NaN
+— but `seta`/`setae` report *false*, because they require CF=0. Swapping the
+compare operands turns every ordering into the NaN-safe form:
+
+| Boson | Emitted | NaN result |
+|---|---|---|
+| `a < b`  | `ucomisd b, a; seta`  | false ✓ |
+| `a <= b` | `ucomisd b, a; setae` | false ✓ |
+| `a > b`  | `ucomisd a, b; seta`  | false ✓ |
+| `a >= b` | `ucomisd a, b; setae` | false ✓ |
+
+Same trick in the branch form with `ja`/`jae`. So this is still a third
+comparison lowering — the two current paths are integer-shaped, the value form
+(`compile.go:6665-6712`) emitting `cmp` + `setl`/`setb` keyed off
+`ASTType.Signed` and the branch form `jumpOp` (`:5662-5701`) emitting
+`cmp` + `jl`/`jle` — but it is a *simple* one, with no parity dance and no
+equality case. NaN behavior is silent when wrong, so it still needs dedicated
+tests.
 
 ### Casts
 
@@ -406,14 +473,25 @@ apply.
 
 Prologue/epilogue need **no change**: SysV has no callee-saved XMM.
 
-### The class tag on directives
+### The class tag on directives (decided: the float type replaces the size)
 
 Explicit registers in `.bs` carry their own class, so only *allocated* things
-need a tag: `local`, temporaries, and argument declarations. The tag's only job
-is to select which allocator handles the name. It should name a **general
-register class**, not an x86 `xmm` keyword — arm64 has its own FP file, and a
-future vector class would be a third allocator, so the concept should survive the
-port. See *Open questions #1* for the surface syntax.
+need a tag: `local`, temporaries, and argument declarations.
+
+**The size operand becomes "an integer bit-width *or* a float type name."**
+Integers keep today's spelling; floats name their type:
+
+```
+local x 64        ; integer, 64-bit — unchanged
+local y f64       ; float register, 64-bit ops (movsd/addsd/…)
+local z f32       ; float register, 32-bit ops (movss/addss/…)
+```
+
+One token carries exactly the two facts needed — **which allocator** (float vs
+integer) and **which instruction width** (`sd` vs `ss`) — with no separate class
+keyword and no `size + class` pair. It is also architecture-neutral: arm64 would
+spell it identically and route to its own FP file, so nothing about the IR
+becomes x86-specific.
 
 ---
 
@@ -556,6 +634,29 @@ hand-written `.bs`, and `ucountdigits` already uses it
 (`runtime/_init/print_linux.bs:32`). So a correct printer would follow this
 codebase's established pattern: an arithmetic primitive written in `.bs`.
 
+### Verb design (decided)
+
+**`%f` renders fixed-precision, default 6** — matching C and Go, so it holds no
+surprises.
+
+**Width/precision syntax (`%.3f`, `%8.2f`) is deferred, and is not a float
+feature.** `fmt` has no flags/width/precision parsing at all today: `render_one`
+(`fmt.bos:639-701`) is a linear `if` chain on a single verb byte, and there is no
+`%5d` or `%08x` either. Floats should not pay for building that layer; it belongs
+to a general `fmt` directive feature that `%d`/`%x`/`%s` want equally.
+
+**But `ftoa` takes a precision parameter from day one** — `ftoa(out, v, prec)`.
+The capability then exists, and exposing `%.3f` later is purely parser work in
+that general feature rather than a change to the conversion.
+
+**`%v` renders fixed-6 with trailing zeros trimmed**, keeping one fractional
+digit: `1.0` prints `1.0`, `3.14` prints `3.14`. Trimming is a few lines in the
+writer and makes `%v` genuinely pleasant, where bare fixed-6 would print
+`1.000000`. Retaining the `.0` keeps the value visibly a float, which fits how
+`%v` is specified in `DESIGN.md` ("natural by the value's type"). *Documented
+limitation:* this does **not** round-trip — a value needing more than 6 decimals
+loses information — until `%g` lands.
+
 **Recommended first cut: fixed-precision `%f`, default 6 decimals.** Decompose
 the bit pattern with integer ops; handle NaN/±Inf/±0 first as pure bit tests;
 integer part via the existing `utoa`; fraction as a scaled `u64` zero-padded to
@@ -570,6 +671,9 @@ invalidate the `%f` API.
 ## Implementation plan
 
 Staged so each stage is independently testable, hardest-and-most-uncertain first.
+Stage boundaries are **commit points, not ship gates** — nothing is released
+until the whole feature is done; the stages exist so progress is captured and
+each piece is verifiable on its own.
 
 ### Stage 0 — Extract `Frame` from `Rallocs`
 
@@ -667,27 +771,26 @@ not exist for SSE today.
 
 ## Open questions
 
-1. **Surface syntax for the class tag.** *(The allocator design itself is
-   settled — see "Register allocation" above.)* The `local` directive carries only
-   a bit width today. Options: type-tagged (`local x f64`), width + class
-   (`local x 64 float`), or a separate directive. It should name a general
-   register class, not `xmm` — arm64 has its own FP file. Same question for the
-   argument directives.
-*(The former #2, `f32` evaluation precision, is settled — see "Evaluation
-precision" under Language design: `f32` computes in `f32`, widening is explicit.)*
-3. **`<floatlit>` precision.** `big.Float` (mirroring `<intlit>`'s `big.Int`) at
-   what mantissa width? And is `x f64 := 0.1` required to round-to-nearest-even
-   at the assignment, matching what a runtime parse would produce?
-4. **Should `f32`/`f64` be comparable with `==` at all?** IEEE equality on floats
-   is a well-known footgun. Boson is a strictness-first language; there is an
-   argument for requiring an explicit epsilon comparison. Recommend allowing it
-   (surprising to forbid) but noting it in DESIGN.md.
-5. **Is a constants-only intermediate state (stage 3) worth shipping as a
-   milestone**, given it lets users declare and print float constants but not
-   compute with them? It is valuable as a de-risking checkpoint; it is not
-   user-facing value on its own.
-6. **`%f` default precision and syntax.** Fixed 6 like C, and do we support
-   `%.3f` width/precision syntax in the first cut? `fmt`'s directive parser has no
-   width/precision handling today.
-*(The former #7, aggregate/multi-return classification, is settled — see
-"Aggregates" under ABI: class is a property of raw scalars only.)*
+Only one remains genuinely open.
+
+1. **The shape of approximate float comparison.** With `==` rejected, users need
+   some way to ask "close enough." Options: explicit absolute tolerance
+   (`approx(a, b, tol)`), relative tolerance, or ULP distance
+   (`within_ulps(a, b, n)` — most principled, hardest to explain). A *default*
+   tolerance is tempting and should probably be resisted: a default is a hidden
+   wrong answer for somebody's magnitudes. Leaning toward an explicit-tolerance
+   function with no default, but the naming, and whether the primary form is
+   relative or absolute, are undecided.
+
+### Settled during design
+
+| Question | Resolution | Section |
+|---|---|---|
+| Register allocation shape | Parallel allocator per register file, over extracted shared `Frame` state | *Register allocation* |
+| Class-tag surface syntax | The float type name **replaces** the size: `local y f64` | *The class tag on directives* |
+| `f32` evaluation precision | Computes in `f32`; widening is explicit and exact | *Evaluation precision* |
+| `<floatlit>` representation | Go `float64`; the decimal→f64→f32 double-rounding case is a known, accepted limitation | *Literals and `<floatlit>`* |
+| Float `==` | Rejected; ordering retained; `is_nan`/`is_zero`/`bits` provided instead | *Comparisons* |
+| Aggregate ABI | Class is a property of raw scalars only; aggregates go by pointer | *Aggregates* |
+| `%f` / `%v` | `%f` fixed-6; `ftoa` takes `prec` from day one; `%v` trims trailing zeros keeping `.0`; width/precision syntax deferred to a general `fmt` feature | *Verb design* |
+| Milestones | Stage boundaries are commit points, not ship gates — nothing ships until it all does | *Implementation plan* |
