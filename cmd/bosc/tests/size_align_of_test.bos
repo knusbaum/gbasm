@@ -1,0 +1,91 @@
+package main
+
+import "string"
+
+// size_of(T) / align_of(T) are compile-time constants reporting T's BABI-0
+// representation (DESIGN.md § The Boson ABI). They exist so code that must
+// compute layout by hand -- the allocator, the interface runtime -- asks the
+// compiler rather than hardcoding numbers that go stale when the ABI moves.
+//
+// Equivalence classes covered: scalars of each width, a padded struct, a
+// struct whose fields need no padding, nested structs, fixed arrays, pointers,
+// slices, and a type alias. Plus the two constant contexts (file-scope
+// initializer, arithmetic operand).
+
+// rect is the natural-alignment worked example from BABI-0: u8 at 0, u32 at 4
+// (3 bytes pad), u8 at 8, u64 at 16 (7 bytes pad), tail-padded to 24.
+type rect struct {
+	a u8
+	b u32
+	c u8
+	d u64
+}
+
+// packed needs no padding at all: three bytes and a fourth, all 1-aligned.
+type packed struct {
+	a u8
+	b u8
+	c u8
+	d u8
+}
+
+// nested inherits its alignment from the strictest member of its members.
+type nested struct {
+	head u8
+	body rect
+}
+
+type alias rect
+
+// Usable as a file-scope initializer, which proves the value folds in
+// EvalConst rather than only in codegen.
+var RSZ i64 := size_of(rect)
+var RAL i64 := align_of(rect)
+
+fn line(n i64) {
+	string.puti(n)
+	string.putc('\n')
+}
+
+fn main() {
+	// Scalars: size tracks width, alignment equals size up to the ceiling.
+	line(size_of(u8))
+	line(align_of(u8))
+	line(size_of(u16))
+	line(align_of(u16))
+	line(size_of(u32))
+	line(align_of(u32))
+	line(size_of(i64))
+	line(align_of(i64))
+
+	// Padded struct: the BABI-0 worked example.
+	line(size_of(rect))
+	line(align_of(rect))
+
+	// No padding required.
+	line(size_of(packed))
+	line(align_of(packed))
+
+	// Nested: u8 then a rect that must land on 8.
+	line(size_of(nested))
+	line(align_of(nested))
+
+	// Fixed arrays: element size times count, element alignment.
+	line(size_of([4]u32))
+	line(align_of([4]u32))
+
+	// Pointers and slices.
+	line(size_of(*rect))
+	line(align_of(*rect))
+	line(size_of([]byte))
+	line(align_of([]byte))
+
+	// A type alias reports its underlying type's layout.
+	line(size_of(alias))
+	line(align_of(alias))
+
+	// Constant contexts: file-scope initializer, and an arithmetic operand.
+	line(RSZ)
+	line(RAL)
+	line(size_of(rect) * 2 + align_of(rect))
+}

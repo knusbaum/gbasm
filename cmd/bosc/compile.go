@@ -3973,6 +3973,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return nullspot
 	case *Alloc:
 		return compileAlloc(of, c, ast, dest)
+	case *SizeOf:
+		return compileTypeConstant(of, c, ast, int64(ast.Type.Size(c)), dest)
+	case *AlignOf:
+		return compileTypeConstant(of, c, ast, int64(ast.Type.Alignment(c)), dest)
 	case *Funcall:
 		pkg, fname := ast.PkgAndName()
 		if pkg == "" && fname == "new" {
@@ -5564,6 +5568,21 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	panic(fmt.Sprintf("(TOP) FALLTHROUGH: %#v\n", a))
 }
 
+// compileTypeConstant emits a size_of/align_of result. Both are compile-time
+// constants, so this is an immediate move — no runtime query exists. The value
+// is materialized into an i64 destination unless the caller supplied one,
+// which lets `size_of(T)` feed arithmetic like any other integer.
+//
+// EvalConst folds these too, so a constant context (file-scope const, static
+// initializer) never reaches this path.
+func compileTypeConstant(of io.Writer, c *Context, a AST, v int64, dest spot) spot {
+	if dest.empty() {
+		dest = newSpot(of, c, c.Temp(), numASTType())
+	}
+	fmt.Fprintf(of, "\tmov %s %d\n", dest.ref, v)
+	return dest
+}
+
 func containsFuncall(a AST) bool {
 	switch ast := a.(type) {
 	case *Funcall:
@@ -5991,6 +6010,10 @@ func EvalConst(c *Context, a AST) (*big.Int, bool) {
 		}
 		// big.Int.Not computes -x-1, exactly the two's-complement complement.
 		return new(big.Int).Not(v), true
+	case *SizeOf:
+		return big.NewInt(int64(ast.Type.Size(c))), true
+	case *AlignOf:
+		return big.NewInt(int64(ast.Type.Alignment(c))), true
 	case *Op2:
 		fv, fok := EvalConst(c, ast.First)
 		sv, sok := EvalConst(c, ast.Second)

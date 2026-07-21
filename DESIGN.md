@@ -363,11 +363,15 @@ Built-ins are split into two groups: **compiler intrinsics** (lowered by bosc it
 | `alloc(T)` | `owned *mut T` | Allocate writable storage for one `T`; consumes a type expression, not a runtime value. |
 | `new(expr)` | `owned *mut T` | Allocate writable storage for the expression's type, initialize with `expr`, return an owned pointer. |
 | `free(p)` | `void` | Free an `owned *T` / `owned *mut T` pointer and consume that pointer's obligation. |
+| `size_of(T)` | `i64` | Size in bytes of `T`'s representation. A compile-time constant; consumes a type expression, not a runtime value. |
+| `align_of(T)` | `i64` | Required alignment of `T` in bytes. A compile-time constant; consumes a type expression, not a runtime value. |
 | `dispose(x)` | `void` | Consume an `owned` binding with no runtime effect (see [Ownership](#ownership)). |
 | `owned(expr)` | `owned T` | Unsafe ownership promotion (see [Bring-your-own-memory](#bring-your-own-memory-byom)). |
 | `T(expr)` | `T` | Type cast (for any type `T`, including primitives and user-defined aliases). |
 
 `alloc`, `new`, and `free` lower to `_heap.alloc(size i64)` and `_heap.free(p *mut byte)`. `len` lowers inline — slice length is a `[ref+8]` load, fixed-array length is a literal. None of these are callable through a function-pointer value: passing `len` or `alloc` as a value is a compile error.
+
+`size_of` and `align_of` report the layout described in [The Boson ABI](#the-boson-abi-babi-0) — they read the same `Size`/`Alignment` computation the compiler uses to lay out storage, so they cannot drift from it. Both fold to constants at compile time and are therefore legal anywhere a literal is, including a file-scope initializer; there is no runtime size query. Like `alloc(T)`, the argument is a **type**, parsed by the type grammar rather than the expression grammar — `size_of(x)` for a value `x` is not accepted. `align_of` exists rather than being spelled as a literal because BABI-0's alignment ceiling is a property of the ABI and may rise (see [Alignment](#alignment)); code that asks stays correct across that change.
 
 The `builtin` package is special: bosc auto-imports it into every package (except `builtin` itself) and the `-listimports` driver always emits `builtin` first, so the build system pulls in `target/builtin.bo` automatically. The package currently exposes:
 

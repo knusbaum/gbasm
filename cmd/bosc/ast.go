@@ -4121,6 +4121,35 @@ func (a *Alloc) ASTType(c *Context) ASTType {
 func (a *Alloc) Note() string  { return fmt.Sprintf("alloc(%s)", a.Type) }
 func (a *Alloc) Pos() position { return a.p }
 
+// SizeOf is `size_of(T)`: the size in bytes of T's representation, as an i64
+// compile-time constant. Its value is exactly what ASTType.Size reports, so it
+// tracks the natural-alignment layout rules (BABI-0 § Data representation)
+// rather than restating them.
+type SizeOf struct {
+	Type ASTType
+	p    position
+}
+
+func (*SizeOf) ASTType(*Context) ASTType { return numASTType() }
+func (s *SizeOf) Note() string           { return fmt.Sprintf("size_of(%s)", s.Type) }
+func (s *SizeOf) Pos() position          { return s.p }
+
+// AlignOf is `align_of(T)`: T's required alignment in bytes, as an i64
+// compile-time constant.
+//
+// It exists rather than being derived at the call site because BABI-0's
+// alignment ceiling is 8 today and is intended to rise to 16 (see TODO.md).
+// Code that hardcodes an alignment is silently wrong the day that changes;
+// code that asks is not.
+type AlignOf struct {
+	Type ASTType
+	p    position
+}
+
+func (*AlignOf) ASTType(*Context) ASTType { return numASTType() }
+func (a *AlignOf) Note() string           { return fmt.Sprintf("align_of(%s)", a.Type) }
+func (a *AlignOf) Pos() position          { return a.p }
+
 type Break struct {
 	p position
 }
@@ -4756,6 +4785,10 @@ func (n *Node) toASTTop(c *Context) AST {
 		// The single arg is a type node parsed by parseTypeName; fold it into
 		// an ASTType with the one type builder, exactly like any annotation.
 		return &Alloc{Type: mkTypename(n.args[0]), p: n.p}
+	case n_sizeof:
+		return &SizeOf{Type: mkTypename(n.args[0]), p: n.p}
+	case n_alignof:
+		return &AlignOf{Type: mkTypename(n.args[0]), p: n.p}
 	case n_ownedpromo:
 		return &OwnedPromotion{Val: n.args[0].toASTTop(c), p: n.p}
 	case n_arrlit:

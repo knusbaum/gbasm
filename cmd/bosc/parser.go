@@ -58,7 +58,9 @@ const (
 	n_address
 	n_deref
 	n_dispose
-	n_alloc // alloc(T) — arg is a type node (n_typename), not an expression
+	n_alloc   // alloc(T) — arg is a type node (n_typename), not an expression
+	n_sizeof  // size_of(T) — likewise a type node; folds to a constant
+	n_alignof // align_of(T) — likewise
 	n_typedecl
 	n_ownedpromo
 	n_arrlit
@@ -182,6 +184,10 @@ func (t nodetype) String() string {
 		return "n_dispose"
 	case n_alloc:
 		return "n_alloc"
+	case n_sizeof:
+		return "n_sizeof"
+	case n_alignof:
+		return "n_alignof"
 	case n_typedecl:
 		return "n_typedecl"
 	case n_ownedpromo:
@@ -812,6 +818,19 @@ func (p *Parser) parsePostfix(v *Node) *Node {
 				tn := p.parseTypeName()
 				p.expect(tok_rparen)
 				v = &Node{t: n_alloc, p: v.p, args: []*Node{tn}}
+			case v.t == n_symbol && (v.sval == "size_of" || v.sval == "align_of"):
+				// size_of(T) / align_of(T): like alloc(T), the argument is a
+				// TYPE run through parseTypeName, not the expression grammar.
+				// Both fold to a compile-time constant (see EvalConst), so they
+				// are usable anywhere a literal is, including file-scope const.
+				nt := n_sizeof
+				if v.sval == "align_of" {
+					nt = n_alignof
+				}
+				p.advance() // consume '('
+				tn := p.parseTypeName()
+				p.expect(tok_rparen)
+				v = &Node{t: nt, p: v.p, args: []*Node{tn}}
 			case v.t == n_symbol:
 				p.advance()
 				args := p.parseArgs()

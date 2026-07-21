@@ -156,6 +156,15 @@ func encodeStaticInit(c *Context, dstt ASTType, init AST) ([]byte, []relocSpec, 
 			}
 		}
 		return nil, nil, fmt.Errorf("initializer is not a compile-time constant")
+	case *SizeOf:
+		// A pure compile-time constant with no operands to fold, so it is
+		// legal here even though this encoder does no general folding: the
+		// value is already known once the type resolves.
+		b, err := encodeIntBytes(dstt, int64(v.Type.Size(c)))
+		return b, nil, err
+	case *AlignOf:
+		b, err := encodeIntBytes(dstt, int64(v.Type.Alignment(c)))
+		return b, nil, err
 	case *Funcall:
 		// Type cast of a single constant argument: FD(0) or io.FD(0).
 		// Fold by encoding the inner expression under the underlying type.
