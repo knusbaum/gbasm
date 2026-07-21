@@ -34,6 +34,11 @@ pub MAP_PRIVATE i64 := 2
 pub MAP_FIXED i64 := 16
 pub MAP_ANONYMOUS i64 := 32
 
+// MAP_NORESERVE asks the kernel not to reserve swap/commit for the mapping.
+// It is what makes a large address-space reservation cheap: the mapping costs
+// VA and a VMA, and only touched pages are ever committed.
+pub MAP_NORESERVE i64 := 16384
+
 // madvise advice values.
 pub MADV_NORMAL i64 := 0
 pub MADV_DONTNEED i64 := 4
@@ -101,6 +106,18 @@ pub fn getpid() i64 {
 // exit terminates the process with the given status and does not return.
 pub fn exit(status i64) {
 	_ := _sys.syscall1(SYS_EXIT, status)
+}
+
+// reserve_anon maps a large private anonymous region without reserving commit
+// for it, for callers that want address space now and memory later. Returns 0
+// on failure.
+pub fn reserve_anon(length i64) uintptr {
+	r := mmap(uintptr(0), length, PROT_READ + PROT_WRITE,
+		MAP_PRIVATE + MAP_ANONYMOUS + MAP_NORESERVE, 0 - 1, 0)
+	if (is_error(r)) {
+		return uintptr(0)
+	}
+	return uintptr(r)
 }
 
 // map_anon is the common case: private, anonymous, read-write pages backed by

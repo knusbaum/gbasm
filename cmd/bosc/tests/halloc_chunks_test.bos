@@ -16,6 +16,7 @@ fn line(n i64) {
 fn main() {
 	// Nothing mapped until something is asked for.
 	line(_halloc.chunk_count())
+	line(_halloc.reserve_count())
 
 	// One span. Must come back CHUNK_SIZE-aligned at the chunk level and
 	// SPAN_SIZE-aligned at the span level, or pointer masking cannot find the
@@ -56,6 +57,9 @@ fn main() {
 	_ := _halloc.span_alloc_for_test(1)
 	line(_halloc.chunk_count())
 
+	// One 1GiB reserve holds 256 chunks, so none of the above needed a second.
+	line(_halloc.reserve_count())
+
 	// A run larger than a chunk's capacity cannot be satisfied -- and must not
 	// map a chunk on the way to finding that out.
 	before := _halloc.chunk_count()
@@ -71,6 +75,39 @@ fn main() {
 	// address, because the kernel often returns a large mapping already
 	// suitably aligned -- an inferred check passes by luck even when the
 	// alignment code is absent.
+	// A released chunk must stop being recognized: chunk_of has to consult the
+	// in-use bit, not merely decide the address falls inside a reserve.
+	// Reachable only through the chunk layer directly -- via spans, a chunk is
+	// always live.
+	cb := _halloc.chunk_alloc_for_test()
+	if (_halloc.chunk_of_for_test(cb) == cb) { line(1) } else { line(0) }
+	_halloc.chunk_release_for_test(cb)
+	if (_halloc.chunk_of_for_test(cb) == uintptr(0)) { line(1) } else { line(0) }
+
+	// Every reserve base must be CHUNK_SIZE-aligned. That is the invariant the
+	// whole masking scheme rests on: chunks sit at multiples of CHUNK_SIZE
+	// inside a reserve, so if the reserve is misaligned every chunk is, and
+	// chunk_of() silently reads a descriptor out of unrelated memory.
+	//
+	// Honest limitation: this assertion does NOT reliably catch removal of the
+	// alignment step. Measured, the kernel returns these reservations 2MB
+	// aligned -- one bit short of CHUNK_SIZE -- so an unaligned base is a
+	// coin flip. And extra samples do not help: consecutive reservations are
+	// spaced by RESERVE_SIZE + CHUNK_SIZE, which is a multiple of CHUNK_SIZE,
+	// so every reserve shares the first one's alignment mod CHUNK_SIZE. The
+	// assertion is here because it is the right invariant to state, not
+	// because it proves the trim ran.
+	_ := _halloc.reserve_new_for_test()
+
+	var badres i64 := 0
+	var j i64 := 0
+	for (; j < _halloc.reserve_count(); j = j + 1) {
+		if ((_halloc.reserve_base_at_for_test(j) & uintptr(4194303)) != uintptr(0)) {
+			badres = badres + 1
+		}
+	}
+	line(badres)
+
 	var bad i64 := 0
 	var k i64 := 0
 	for (; k < _halloc.chunk_count(); k = k + 1) {

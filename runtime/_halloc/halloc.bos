@@ -45,10 +45,22 @@ SPANS_PER_CHUNK i64 := 64
 // metadata cannot be heap-allocated by the heap.
 METADATA_SPANS i64 := 1
 
-// MAX_CHUNKS bounds the chunk registry, which is a fixed-size array because it
-// cannot itself be allocated. 1024 * 4MB is a 4GiB ceiling on in-chunk heap;
-// huge allocations are unaffected.
-MAX_CHUNKS i64 := 1024
+// A reserve is the unit of mmap. Chunks are carved from it by arithmetic, so
+// acquiring one costs no syscall and needs no registry.
+//
+// 1GiB rather than something larger on purpose: a reservation costs address
+// space, not memory, but a multi-gigabyte VSZ is an operational annoyance even
+// when harmless. This keeps VSZ unremarkable and grows in 1GiB steps.
+//
+// RESERVE_SIZE is a tuning constant, not an architectural commitment. At
+// RESERVE_SIZE == CHUNK_SIZE this degenerates into mapping each chunk
+// individually; see the migration note in the proposal.
+RESERVE_SIZE i64 := 1073741824
+CHUNKS_PER_RESERVE i64 := 256
+MAX_RESERVES i64 := 64
+
+// 256 chunk bits per reserve, packed into i64 words.
+RES_WORDS i64 := 4
 
 // Span descriptor states.
 SPAN_FREE i64 := 0
@@ -87,105 +99,211 @@ type span_desc struct {
 }
 
 // ---------------------------------------------------------------------------
-// Chunk registry
+// Reserves
+//
+// THE CHUNK-LAYER BOUNDARY. Nothing above this layer may touch a reserve, a
+// bitmap, or mmap -- the tiers see only chunk_of / chunk_alloc /
+// chunk_release / chunk_first / chunk_next / desc / span_addr. That boundary is
+// what keeps a later move to per-chunk mapping a constant change rather than a
+// rewrite, and it is exactly the kind of thing that rots silently.
 // ---------------------------------------------------------------------------
 
-// Sorted array of chunk base addresses. free() consults it to decide whether a
-// pointer belongs to a chunk at all -- it cannot simply mask and dereference,
-// because for a huge pointer the masked address may be unmapped.
-var reg_bases [1024]uintptr
-var reg_count i64
+var res_base [64]uintptr
+var res_used [256]i64
+var res_free [64]i64
+var res_count i64
 
-// Range bounds for a fast reject ahead of the binary search: a pointer outside
-// [reg_lo, reg_hi) cannot be in any chunk.
-var reg_lo uintptr
-var reg_hi uintptr
+// chunk_bit reports whether chunk i of reserve r is in use.
+fn chunk_bit(r i64, i i64) i64 {
+	w := res_used[r*RES_WORDS+i/64]
+	return (w >> (i % 64)) & 1
+}
 
-// reg_find returns the index of base in the registry, or -1.
-fn reg_find(base uintptr) i64 {
-	var lo i64 := 0
-	var hi i64 := reg_count - 1
-	for (; lo <= hi; ) {
-		mid := lo + (hi-lo)/2
-		v := reg_bases[mid]
-		if (v == base) {
-			return mid
-		}
-		if (v < base) {
-			lo = mid + 1
-		} else {
-			hi = mid - 1
+fn chunk_bit_set(r i64, i i64) {
+	idx := r*RES_WORDS + i/64
+	res_used[idx] = res_used[idx] | (1 << (i % 64))
+}
+
+fn chunk_bit_clear(r i64, i i64) {
+	idx := r*RES_WORDS + i/64
+	res_used[idx] = res_used[idx] & ~(1 << (i % 64))
+}
+
+// reserve_new maps a fresh reserve, CHUNK_SIZE-aligned so that every chunk
+// carved from it is also CHUNK_SIZE-aligned. Returns its index, or -1.
+//
+// Only CHUNK_SIZE alignment is needed, not RESERVE_SIZE alignment, so the
+// over-allocation is one chunk rather than one reserve.
+fn reserve_new() i64 {
+	if (res_count >= MAX_RESERVES) {
+		return 0 - 1
+	}
+	raw := sys.reserve_anon(RESERVE_SIZE + CHUNK_SIZE)
+	if (raw == uintptr(0)) {
+		return 0 - 1
+	}
+	base := (raw + CHUNK_MASK) & ~CHUNK_MASK
+
+	head := i64(base - raw)
+	if (head > 0) {
+		_ := sys.munmap(raw, head)
+	}
+	tail := CHUNK_SIZE - head
+	if (tail > 0) {
+		_ := sys.munmap(base+uintptr(RESERVE_SIZE), tail)
+	}
+
+	r := res_count
+	res_base[r] = base
+	res_free[r] = CHUNKS_PER_RESERVE
+	var w i64 := 0
+	for (; w < RES_WORDS; w = w + 1) {
+		res_used[r*RES_WORDS+w] = 0
+	}
+	res_count = res_count + 1
+	return r
+}
+
+// reserve_of returns the index of the reserve containing p, or -1.
+fn reserve_of(p uintptr) i64 {
+	var r i64 := 0
+	for (; r < res_count; r = r + 1) {
+		b := res_base[r]
+		if (p >= b && p < b+uintptr(RESERVE_SIZE)) {
+			return r
 		}
 	}
 	return 0 - 1
 }
 
-// reg_insert adds a chunk base, keeping the array sorted. Returns 0 if the
-// registry is full.
-fn reg_insert(base uintptr) i64 {
-	if (reg_count >= MAX_CHUNKS) {
-		return 0
-	}
-	// Shift down from the end to open a slot, so the array stays sorted
-	// without a separate search.
-	var i i64 := reg_count
-	for (; i > 0; i = i - 1) {
-		if (reg_bases[i-1] <= base) {
-			break
-		}
-		reg_bases[i] = reg_bases[i-1]
-	}
-	reg_bases[i] = base
-	reg_count = reg_count + 1
+// ---------------------------------------------------------------------------
+// Chunks
+// ---------------------------------------------------------------------------
 
-	if (reg_lo == uintptr(0)) {
-		reg_lo = base
-		reg_hi = base + uintptr(CHUNK_SIZE)
+// chunk_of returns the chunk base containing p, or 0 if p is not in any chunk.
+//
+// A miss means the pointer is a huge allocation (mapped outside every reserve)
+// or not ours at all. This is why free() cannot simply mask and dereference:
+// for a huge pointer the masked address may be unmapped.
+fn chunk_of(p uintptr) uintptr {
+	r := reserve_of(p)
+	if (r < 0) {
+		return uintptr(0)
 	}
-	if (base < reg_lo) {
-		reg_lo = base
+	b := res_base[r]
+	i := i64((p - b) / uintptr(CHUNK_SIZE))
+	if (chunk_bit(r, i) == 0) {
+		return uintptr(0)
 	}
-	if (base+uintptr(CHUNK_SIZE) > reg_hi) {
-		reg_hi = base + uintptr(CHUNK_SIZE)
-	}
-	return 1
+	return b + uintptr(i*CHUNK_SIZE)
 }
 
-// reg_remove drops a chunk base from the registry.
+// chunk_init prepares a freshly-claimed chunk's metadata.
+fn chunk_init(base uintptr) {
+	h := unsafe_cast(*mut chunk_hdr, base)
+	h.base = base
+	h.free_spans = SPANS_PER_CHUNK - METADATA_SPANS
+	h.purged = 0
+
+	// Span 0 is metadata and never allocatable; the rest start free and clean.
+	// A chunk carved from a fresh reserve has never been written, and one
+	// recycled after MADV_DONTNEED reads back as zero, so either way its pages
+	// are known zero.
+	d0 := desc(base, 0)
+	d0.state = SPAN_LARGE_HEAD
+	d0.runlen = METADATA_SPANS
+
+	var i i64 := METADATA_SPANS
+	for (; i < SPANS_PER_CHUNK; i = i + 1) {
+		d := desc(base, i)
+		d.state = SPAN_FREE
+		d.clean = 1
+	}
+}
+
+// chunk_alloc claims a chunk, growing by one reserve if none has a free one.
+// Returns the chunk base, or 0.
+fn chunk_alloc() uintptr {
+	var r i64 := 0
+	for (; r < res_count; r = r + 1) {
+		if (res_free[r] > 0) {
+			var i i64 := 0
+			for (; i < CHUNKS_PER_RESERVE; i = i + 1) {
+				if (chunk_bit(r, i) == 0) {
+					chunk_bit_set(r, i)
+					res_free[r] = res_free[r] - 1
+					base := res_base[r] + uintptr(i*CHUNK_SIZE)
+					chunk_init(base)
+					return base
+				}
+			}
+		}
+	}
+	nr := reserve_new()
+	if (nr < 0) {
+		return uintptr(0)
+	}
+	chunk_bit_set(nr, 0)
+	res_free[nr] = res_free[nr] - 1
+	base := res_base[nr]
+	chunk_init(base)
+	return base
+}
+
+// chunk_release returns a chunk to its reserve and drops its physical pages.
 //
-// reg_lo/reg_hi are deliberately NOT narrowed here. They are a conservative
-// fast-reject range; leaving them wide costs at most a binary search that
-// misses, while recomputing them on every chunk release costs a scan.
-fn reg_remove(base uintptr) {
-	idx := reg_find(base)
-	if (idx < 0) {
+// The address range stays reserved -- MADV_DONTNEED is the "free" mechanism
+// here, not munmap. Reacquiring the chunk costs page faults rather than an
+// mmap, and the pages read back as zero, which is what lets chunk_init mark
+// every span clean.
+fn chunk_release(base uintptr) {
+	r := reserve_of(base)
+	if (r < 0) {
 		return
 	}
-	var i i64 := idx
-	for (; i < reg_count-1; i = i + 1) {
-		reg_bases[i] = reg_bases[i+1]
+	i := i64((base - res_base[r]) / uintptr(CHUNK_SIZE))
+	if (chunk_bit(r, i) == 0) {
+		return
 	}
-	reg_count = reg_count - 1
+	chunk_bit_clear(r, i)
+	res_free[r] = res_free[r] + 1
+	_ := sys.madvise(base, CHUNK_SIZE, sys.MADV_DONTNEED)
+}
+
+// chunk_first and chunk_next iterate the in-use chunks, so callers that need
+// to scan chunks never learn how chunks are stored.
+fn chunk_first() uintptr {
+	return chunk_after(0, 0 - 1)
+}
+
+fn chunk_next(base uintptr) uintptr {
+	r := reserve_of(base)
+	if (r < 0) {
+		return uintptr(0)
+	}
+	i := i64((base - res_base[r]) / uintptr(CHUNK_SIZE))
+	return chunk_after(r, i)
+}
+
+// chunk_after returns the first in-use chunk strictly after chunk i of
+// reserve r, scanning into later reserves as needed.
+fn chunk_after(r i64, i i64) uintptr {
+	var rr i64 := r
+	var ii i64 := i + 1
+	for (; rr < res_count; rr = rr + 1) {
+		for (; ii < CHUNKS_PER_RESERVE; ii = ii + 1) {
+			if (chunk_bit(rr, ii) == 1) {
+				return res_base[rr] + uintptr(ii*CHUNK_SIZE)
+			}
+		}
+		ii = 0
+	}
+	return uintptr(0)
 }
 
 // ---------------------------------------------------------------------------
 // Chunk and span addressing
 // ---------------------------------------------------------------------------
-
-// chunk_of returns the chunk base containing p, or 0 if p is not in any chunk.
-fn chunk_of(p uintptr) uintptr {
-	if (p < reg_lo) {
-		return uintptr(0)
-	}
-	if (p >= reg_hi) {
-		return uintptr(0)
-	}
-	base := p & ~CHUNK_MASK
-	if (reg_find(base) < 0) {
-		return uintptr(0)
-	}
-	return base
-}
 
 // span_index returns p's span number within its chunk.
 fn span_index(p uintptr) i64 {
@@ -206,71 +324,6 @@ fn desc(base uintptr, i i64) *mut span_desc {
 // span_addr returns the base address of span i in the chunk at base.
 fn span_addr(base uintptr, i i64) uintptr {
 	return base + uintptr(i*SPAN_SIZE)
-}
-
-// ---------------------------------------------------------------------------
-// Chunk acquisition
-// ---------------------------------------------------------------------------
-
-// chunk_new maps a fresh CHUNK_SIZE-aligned chunk, registers it, and marks its
-// spans free. Returns the chunk base, or 0 on failure.
-//
-// mmap only guarantees page alignment, so this maps twice the size, keeps the
-// aligned CHUNK_SIZE window inside it, and unmaps the slack on both sides. The
-// over-reservation is address space, not memory.
-fn chunk_new() uintptr {
-	if (reg_count >= MAX_CHUNKS) {
-		return uintptr(0)
-	}
-
-	raw := sys.map_anon(CHUNK_SIZE * 2)
-	if (raw == uintptr(0)) {
-		return uintptr(0)
-	}
-
-	base := (raw + CHUNK_MASK) & ~CHUNK_MASK
-
-	// Return the slack. Either side may be empty when raw happened to be
-	// aligned already.
-	head := i64(base - raw)
-	if (head > 0) {
-		_ := sys.munmap(raw, head)
-	}
-	tail := CHUNK_SIZE*2 - head - CHUNK_SIZE
-	if (tail > 0) {
-		_ := sys.munmap(base+uintptr(CHUNK_SIZE), tail)
-	}
-
-	if (reg_insert(base) == 0) {
-		_ := sys.munmap(base, CHUNK_SIZE)
-		return uintptr(0)
-	}
-
-	h := unsafe_cast(*mut chunk_hdr, base)
-	h.base = base
-	h.free_spans = SPANS_PER_CHUNK - METADATA_SPANS
-	h.purged = 0
-
-	// Span 0 is metadata and never allocatable; the rest start free and clean,
-	// since fresh mmap pages are zero.
-	d0 := desc(base, 0)
-	d0.state = SPAN_LARGE_HEAD
-	d0.runlen = METADATA_SPANS
-
-	var i i64 := METADATA_SPANS
-	for (; i < SPANS_PER_CHUNK; i = i + 1) {
-		d := desc(base, i)
-		d.state = SPAN_FREE
-		d.clean = 1
-	}
-	return base
-}
-
-// chunk_release unmaps a chunk and drops it from the registry. The caller is
-// responsible for having established that every span is free.
-fn chunk_release(base uintptr) {
-	reg_remove(base)
-	_ := sys.munmap(base, CHUNK_SIZE)
 }
 
 // ---------------------------------------------------------------------------
@@ -347,9 +400,8 @@ fn span_alloc(n i64) uintptr {
 	if (n > SPANS_PER_CHUNK-METADATA_SPANS) {
 		return uintptr(0)
 	}
-	var c i64 := 0
-	for (; c < reg_count; c = c + 1) {
-		base := reg_bases[c]
+	var base uintptr := chunk_first()
+	for (; base != uintptr(0); base = chunk_next(base)) {
 		h := unsafe_cast(*mut chunk_hdr, base)
 		if (h.free_spans >= n) {
 			i := span_find_run(base, n)
@@ -358,7 +410,7 @@ fn span_alloc(n i64) uintptr {
 			}
 		}
 	}
-	base := chunk_new()
+	base = chunk_alloc()
 	if (base == uintptr(0)) {
 		return uintptr(0)
 	}
@@ -373,28 +425,89 @@ fn span_alloc(n i64) uintptr {
 // Introspection, for tests
 // ---------------------------------------------------------------------------
 
-// chunk_count is how many chunks are currently mapped. Tests use it to prove an
-// alloc/free loop does not grow the heap without bound, which no assertion
+// chunk_count is how many chunks are currently claimed. Tests use it to prove
+// an alloc/free loop does not grow the heap without bound, which no assertion
 // about returned values can show.
 pub fn chunk_count() i64 {
-	return reg_count
+	var n i64 := 0
+	var base uintptr := chunk_first()
+	for (; base != uintptr(0); base = chunk_next(base)) {
+		n = n + 1
+	}
+	return n
 }
 
-// free_span_count is the number of unallocated spans across all chunks.
+// reserve_count is how many address-space reserves are mapped. This is what
+// shows up as VSZ, so it is the number to watch when tuning RESERVE_SIZE.
+pub fn reserve_count() i64 {
+	return res_count
+}
+
+// free_span_count is the number of unallocated spans across all claimed chunks.
 pub fn free_span_count() i64 {
 	var total i64 := 0
-	var c i64 := 0
-	for (; c < reg_count; c = c + 1) {
-		h := unsafe_cast(*mut chunk_hdr, reg_bases[c])
+	var base uintptr := chunk_first()
+	for (; base != uintptr(0); base = chunk_next(base)) {
+		h := unsafe_cast(*mut chunk_hdr, base)
 		total = total + h.free_spans
 	}
 	return total
 }
 
+// chunk_base_at_for_test exposes the nth in-use chunk base, so tests can assert
+// the CHUNK_SIZE-alignment invariant directly on every chunk rather than
+// inferring it from a span address -- the kernel returns large mappings
+// suitably aligned often enough that an inferred check passes by luck.
+pub fn chunk_base_at_for_test(i i64) uintptr {
+	var n i64 := 0
+	var base uintptr := chunk_first()
+	for (; base != uintptr(0); base = chunk_next(base)) {
+		if (n == i) {
+			return base
+		}
+		n = n + 1
+	}
+	return uintptr(0)
+}
+
+// reserve_base_at_for_test exposes a reserve base, so the CHUNK_SIZE-alignment
+// invariant can be asserted on the thing that actually establishes it rather
+// than on a chunk derived from it.
+pub fn reserve_base_at_for_test(i i64) uintptr {
+	if (i < 0 || i >= res_count) {
+		return uintptr(0)
+	}
+	return res_base[i]
+}
+
+// reserve_new_for_test forces a fresh reserve. Exhausting one naturally takes
+// 256 chunks, which is far too slow for a test, and one reserve gives the
+// alignment assertion only a single sample -- the kernel returns large
+// mappings 4MB-aligned about half the time, so a single sample passes by luck.
+pub fn reserve_new_for_test() i64 {
+	return reserve_new()
+}
+
+// chunk_alloc_for_test / chunk_release_for_test / chunk_of_for_test expose the
+// chunk layer directly. Without them chunk_of can only be reached through a
+// live span, so nothing distinguishes "this chunk is in use" from "this address
+// is inside a reserve" -- a released chunk has to be observable.
+pub fn chunk_alloc_for_test() uintptr {
+	return chunk_alloc()
+}
+
+pub fn chunk_release_for_test(base uintptr) {
+	chunk_release(base)
+}
+
+pub fn chunk_of_for_test(p uintptr) uintptr {
+	return chunk_of(p)
+}
+
 // span_alloc_for_test and span_free_for_test expose the span layer directly so
-// the scaffold's invariants -- chunk alignment, registry lookup, run finding --
-// can be tested before any allocation tier is built on them. They are not part
-// of the allocator's interface and go away at cutover.
+// the chunk layer's invariants can be tested before any allocation tier is
+// built on them. Not part of the allocator's interface; they go away at
+// cutover.
 pub fn span_alloc_for_test(n i64) uintptr {
 	return span_alloc(n)
 }
@@ -405,14 +518,4 @@ pub fn span_free_for_test(p uintptr, n i64) {
 		return
 	}
 	span_give(base, span_index(p), n)
-}
-
-// chunk_base_at_for_test exposes a registered chunk base by index, so tests can
-// assert the CHUNK_SIZE-alignment invariant directly on every chunk rather than
-// inferring it from a span address.
-pub fn chunk_base_at_for_test(i i64) uintptr {
-	if (i < 0 || i >= reg_count) {
-		return uintptr(0)
-	}
-	return reg_bases[i]
 }
