@@ -282,3 +282,107 @@ func TestLexerEllipsisError(t *testing.T) {
 			"got %q", err.Error())
 	}
 }
+
+// TestLexerFloat covers the floating-point literal forms and the boundaries
+// between a float literal and its neighbours: the selector dot, an integer
+// that merely sits next to one, and the exponent marker.
+func TestLexerFloat(t *testing.T) {
+	nopos = true
+	defer func() { nopos = false }()
+	for _, tt := range []struct {
+		in  string
+		out []token
+		err string
+	}{
+		// Fractional part.
+		{in: "3.14", out: []token{token{t: tok_float, fval: 3.14}}},
+		{in: "0.5", out: []token{token{t: tok_float, fval: 0.5}}},
+		{in: "0.0", out: []token{token{t: tok_float, fval: 0}}},
+		{in: "1.0", out: []token{token{t: tok_float, fval: 1}}},
+
+		// Exponents, with and without a fractional part. `1e10` must not lex
+		// as the integer 1 followed by the identifier `e10`.
+		{in: "1e10", out: []token{token{t: tok_float, fval: 1e10}}},
+		{in: "1E10", out: []token{token{t: tok_float, fval: 1e10}}},
+		{in: "2.5e-3", out: []token{token{t: tok_float, fval: 2.5e-3}}},
+		{in: "2.5E+3", out: []token{token{t: tok_float, fval: 2500}}},
+		{in: "0e0", out: []token{token{t: tok_float, fval: 0}}},
+
+		// Integers are unaffected, and still parsed as uint64 so that values
+		// near UINT64_MAX keep every bit rather than rounding through a float.
+		{in: "42", out: []token{token{t: tok_number, nval: 42}}},
+		{in: "0", out: []token{token{t: tok_number, nval: 0}}},
+		{
+			in:  "18446744073709551615",
+			out: []token{token{t: tok_number, nval: 18446744073709551615}},
+		},
+		{in: "0xFF", out: []token{token{t: tok_number, nval: 255}}},
+		{in: "0b101", out: []token{token{t: tok_number, nval: 5}}},
+		{in: "0o17", out: []token{token{t: tok_number, nval: 15}}},
+
+		// A selector following something that is not a numeric literal still
+		// lexes as a dot. This is the case that made a float literal
+		// unambiguous without two runes of lookahead.
+		{
+			in: "x.y",
+			out: []token{
+				token{t: tok_ident, sval: "x"},
+				token{t: tok_dot},
+				token{t: tok_ident, sval: "y"},
+			},
+		},
+		{
+			in: "ps[0].x",
+			out: []token{
+				token{t: tok_ident, sval: "ps"},
+				token{t: tok_lsquare},
+				token{t: tok_number, nval: 0},
+				token{t: tok_rsquare},
+				token{t: tok_dot},
+				token{t: tok_ident, sval: "x"},
+			},
+		},
+
+		// Arithmetic around floats: the '-' is an operator, not a sign, just
+		// as it is for integers.
+		{
+			in: "1.5-0.5",
+			out: []token{
+				token{t: tok_float, fval: 1.5},
+				token{t: tok_minus},
+				token{t: tok_float, fval: 0.5},
+			},
+		},
+
+		// Malformed literals are rejected rather than silently truncated.
+		{in: "1.", err: "no digits after the decimal point"},
+		{in: "1.foo", err: "no digits after the decimal point"},
+		{in: "1e", err: "no digits in its exponent"},
+		{in: "1e+", err: "no digits in its exponent"},
+	} {
+		t.Run(tt.in, func(t *testing.T) {
+			l := NewLexer("", strings.NewReader(tt.in))
+			var toks []token
+			var err error
+			for {
+				var tok token
+				tok, err = l.Next()
+				if err != nil || tok.t == tok_none {
+					break
+				}
+				toks = append(toks, tok)
+			}
+			if tt.err != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got tokens %v", tt.err, toks)
+				}
+				assert.Contains(t, err.Error(), tt.err)
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			assert.Equal(t, tt.out, toks)
+		})
+	}
+}

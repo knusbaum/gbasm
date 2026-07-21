@@ -25,6 +25,7 @@ const (
 	tok_comma
 	tok_ident
 	tok_number
+	tok_float
 	tok_str
 	tok_byte
 	tok_dot
@@ -122,6 +123,7 @@ type token struct {
 	t    toktype
 	sval string
 	nval uint64
+	fval float64 // set for tok_float
 	p    position
 }
 
@@ -153,6 +155,8 @@ func (t toktype) String() string {
 		return "tok_ident"
 	case tok_number:
 		return "tok_number"
+	case tok_float:
+		return "tok_float"
 	case tok_str:
 		return "tok_str"
 	case tok_byte:
@@ -305,7 +309,7 @@ type lexer struct {
 // the lexer synthesizes a tok_semicolon before continuing.
 func isStatementEnder(t toktype) bool {
 	switch t {
-	case tok_ident, tok_number, tok_str, tok_byte,
+	case tok_ident, tok_number, tok_float, tok_str, tok_byte,
 		tok_true, tok_false,
 		tok_rparen, tok_rsquare, tok_rcurly,
 		tok_break, tok_continue, tok_return:
@@ -463,49 +467,92 @@ func (l *lexer) parseNumber(p position) token {
 			}
 			return token{t: tok_number, nval: n, p: p}
 		}
-		// Plain decimal starting with 0 (e.g. "0", "07" as decimal ten-ish, "0.5" truncated).
-		var ret []rune
-		ret = append(ret, '0')
-		for r := l.headRune(); strings.ContainsRune(numberset, r); r = l.headRune() {
-			ret = append(ret, r)
-			l.nextRune()
-		}
-		intStr := string(ret)
-		if dot := strings.IndexByte(intStr, '.'); dot >= 0 {
-			intStr = intStr[:dot]
-			if intStr == "" {
-				intStr = "0"
-			}
-		}
-		n, err := strconv.ParseUint(intStr, 10, 64)
-		if err != nil {
-			panic(&interpreterError{fmt.Sprintf("parsing number %q: %v", string(ret), err), p})
-		}
-		return token{t: tok_number, nval: n, p: p}
+		// Plain decimal starting with 0 (e.g. "0", "0.5", "0e3").
+		return l.parseDecimal(p, []rune{'0'})
+	}
+
+	// A lone '.' is the selector token, not a number. Boson requires a digit
+	// on both sides of a decimal point, so a leading '.' is never a literal.
+	if l.headRune() == '.' {
+		l.nextRune()
+		return token{t: tok_dot, p: p}
 	}
 
 	// Standard decimal literal (does not start with 0).
-	var ret []rune
-	for r := l.headRune(); strings.ContainsRune(numberset, r); r = l.headRune() {
+	return l.parseDecimal(p, nil)
+}
+
+// parseDecimal scans a decimal literal, integer or floating-point, with
+// `lead` already consumed. It is the shared tail of both decimal paths.
+//
+// The literal is a float if it has a fractional part or an exponent:
+//
+//	42        integer
+//	4.2       float
+//	4e2 4E-2  float, no fractional part needed
+//
+// Once digits have been seen, a following '.' always begins a fractional
+// part. That is unambiguous because a selector never follows a numeric
+// literal — there are no methods on an untyped numeric constant — and it
+// avoids needing two runes of lookahead, which io.RuneScanner does not
+// offer. `1.foo` is therefore a malformed float rather than a field access,
+// which is also what it was before floats existed, except that it now says
+// so instead of silently truncating to 1 and swallowing the dot.
+//
+// Integers are still parsed as uint64 rather than routed through float64,
+// so literals near UINT64_MAX keep every bit.
+func (l *lexer) parseDecimal(p position, lead []rune) token {
+	ret := lead
+	isFloat := false
+
+	for r := l.headRune(); r >= '0' && r <= '9'; r = l.headRune() {
 		ret = append(ret, r)
 		l.nextRune()
 	}
-	if string(ret) == "." {
-		return token{t: tok_dot, p: p}
-	}
-	// Parse the integer portion losslessly. A trailing fractional part (e.g.
-	// "1234.5") is silently truncated — boson does not yet have float support,
-	// but the language has historically accepted decimal syntax. Using uint64
-	// instead of float64 avoids precision loss for large integer literals
-	// near UINT64_MAX.
-	intStr := string(ret)
-	if dot := strings.IndexByte(intStr, '.'); dot >= 0 {
-		intStr = intStr[:dot]
-		if intStr == "" {
-			intStr = "0"
+
+	if l.headRune() == '.' {
+		isFloat = true
+		ret = append(ret, '.')
+		l.nextRune()
+		var frac int
+		for r := l.headRune(); r >= '0' && r <= '9'; r = l.headRune() {
+			ret = append(ret, r)
+			l.nextRune()
+			frac++
+		}
+		if frac == 0 {
+			panic(&interpreterError{fmt.Sprintf("float literal %q has no digits after the decimal point", string(ret)), p})
 		}
 	}
-	n, err := strconv.ParseUint(intStr, 10, 64)
+
+	if r := l.headRune(); r == 'e' || r == 'E' {
+		isFloat = true
+		ret = append(ret, r)
+		l.nextRune()
+		if sr := l.headRune(); sr == '+' || sr == '-' {
+			ret = append(ret, sr)
+			l.nextRune()
+		}
+		var exp int
+		for r := l.headRune(); r >= '0' && r <= '9'; r = l.headRune() {
+			ret = append(ret, r)
+			l.nextRune()
+			exp++
+		}
+		if exp == 0 {
+			panic(&interpreterError{fmt.Sprintf("float literal %q has no digits in its exponent", string(ret)), p})
+		}
+	}
+
+	if isFloat {
+		f, err := strconv.ParseFloat(string(ret), 64)
+		if err != nil {
+			panic(&interpreterError{fmt.Sprintf("parsing float literal %q: %v", string(ret), err), p})
+		}
+		return token{t: tok_float, fval: f, p: p}
+	}
+
+	n, err := strconv.ParseUint(string(ret), 10, 64)
 	if err != nil {
 		panic(&interpreterError{fmt.Sprintf("parsing number %q: %v", string(ret), err), p})
 	}

@@ -10,6 +10,7 @@ type nodetype int
 const (
 	n_none nodetype = iota
 	n_number
+	n_float
 	n_bool
 	n_byte
 	n_str
@@ -83,6 +84,8 @@ func (t nodetype) String() string {
 		return "n_none"
 	case n_number:
 		return "n_number"
+	case n_float:
+		return "n_float"
 	case n_bool:
 		return "n_bool"
 	case n_byte:
@@ -226,13 +229,13 @@ type Parser struct {
 type Node struct {
 	t         nodetype
 	ival      uint64
-	mutmask   uint64 // for n_typename: bit N = mut at pointer/slice level N
-	ownedmask uint64 // for n_typename: bit N = owned at pointer/slice level N
-	nilmask   uint64 // for n_typename: bit N = nullable pointer at pointer level N
-	//fval float64 // we'll add floats later.
-	sval  string
-	args  []*Node
-	isPub bool
+	mutmask   uint64  // for n_typename: bit N = mut at pointer/slice level N
+	ownedmask uint64  // for n_typename: bit N = owned at pointer/slice level N
+	nilmask   uint64  // for n_typename: bit N = nullable pointer at pointer level N
+	fval      float64 // for n_float
+	sval      string
+	args      []*Node
+	isPub     bool
 	// typeIdent is the raw type-identifier node for n_stlit when the
 	// literal was written with a leading type (`Name{...}` or
 	// `pkg.Type{...}`). ToAST routes it through the shared selector
@@ -387,6 +390,10 @@ func (p *Parser) parseStructLiteral() []*Node {
 
 func (p *Parser) parseTok() *Node {
 	c := p.current()
+	if c.t == tok_float {
+		p.advance()
+		return &Node{t: n_float, p: c.p, fval: c.fval}
+	}
 	if c.t == tok_number {
 		p.advance()
 		return &Node{t: n_number, p: c.p, ival: c.nval}

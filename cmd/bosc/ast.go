@@ -3907,8 +3907,8 @@ func (a *Alloc) ASTType(c *Context) ASTType {
 	t.MutMask <<= 1
 	t.OwnedMask <<= 1
 	t.NilMask <<= 1
-	t.OwnedMask |= 1      // the returned pointer is owned
-	t.MutMask |= 1 << 1   // ...and grants write-through to the pointee
+	t.OwnedMask |= 1    // the returned pointer is owned
+	t.MutMask |= 1 << 1 // ...and grants write-through to the pointee
 	return t
 }
 func (a *Alloc) Note() string  { return fmt.Sprintf("alloc(%s)", a.Type) }
@@ -4342,6 +4342,11 @@ func (n *Node) toASTTop(c *Context) AST {
 		}
 	case n_number:
 		return &Literal{Val: n.ival, p: n.p}
+	case n_float:
+		// The lexer and parser understand float literals; the type system
+		// does not yet. Report that plainly rather than falling through to
+		// the unhandled-node dump.
+		panic(&interpreterError{"floating-point literals are not supported yet: f32/f64 are not implemented", n.p})
 	case n_bool:
 		return &Literal{Val: n.ival == 1, p: n.p}
 	case n_byte:
