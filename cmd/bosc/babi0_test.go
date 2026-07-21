@@ -268,11 +268,6 @@ func TestBABI0ArgumentLimits(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name:    "seven integer arguments",
-			decl:    `fn f(a i64, b i64, c i64, d i64, e i64, g i64, h i64) i64 { return a + b + c + d + e + g + h }`,
-			wantErr: "more than 6 integer arguments are not supported",
-		},
-		{
 			name:    "nine float arguments",
 			decl:    `fn f(a f64, b f64, c f64, d f64, e f64, g f64, h f64, i f64, j f64) f64 { return a + b + c + d + e + g + h + i + j }`,
 			wantErr: "more than 8 floating-point arguments are not supported",
@@ -292,6 +287,28 @@ func TestBABI0ArgumentLimits(t *testing.T) {
 				t.Errorf("error = %q, want %q", err.Error(), tc.wantErr)
 			}
 		})
+	}
+
+	// Integer-class arguments past R9 are passed on the stack, in parameter
+	// order, and are marked argStack rather than rejected. The end-to-end
+	// behavior (slot ordering, 16-byte alignment, caller cleanup) is pinned by
+	// tests/stack_args_test.bos; this asserts the register-assignment half.
+	stackCtx := parseAndCompileForTest(t, `
+fn nine(a i64, b i64, c i64, d i64, e i64, g i64, h i64, i i64, j i64) i64 { return a + b + c + d + e + g + h + i + j }
+fn main() i64 { return 0 }`)
+	nine, ok := lookupFuncDeclForTest(stackCtx, "nine")
+	if !ok {
+		t.Fatalf("nine not found")
+	}
+	got, err := argRegisters(stackCtx, nine, len(nine.Args))
+	if err != nil {
+		t.Fatalf("argRegisters(nine) = %v, want success with stack arguments", err)
+	}
+	want := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9", argStack, argStack, argStack}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("arg %d = %q, want %q", i, got[i], want[i])
+		}
 	}
 
 	// The boundaries themselves must be accepted: exactly 6 integer and

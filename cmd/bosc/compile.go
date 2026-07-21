@@ -4130,7 +4130,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				ast.QualifiedName(), len(decl.Args), len(ast.Args))
 		}
 
-		argorder := setupArgs(of, c, ast, decl)
+		argorder, stackBytes := setupArgs(of, c, ast, decl)
 
 		retType := ast.ASTType(c)
 		raxName := raxForType(retType)
@@ -4145,7 +4145,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			callPkg = c.Pkgname()
 		}
 		fmt.Fprintf(of, "\tcall %s.%s\n", callPkg, decl.Name)
+		popStackArgs(of, stackBytes)
 		for i := 0; i < len(ast.Args); i++ {
+			if argorder[i] == argStack {
+				continue
+			}
 			note(of, "\t// release call registers\n")
 			fmt.Fprintf(of, "\trelease %s\n", argorder[i])
 		}
@@ -5697,7 +5701,7 @@ func compileIndirectCall(of io.Writer, c *Context, a AST, ast *Funcall, srcRef s
 	for _, at := range sig.Args {
 		synth.Args = append(synth.Args, Binding{Type: at})
 	}
-	argorder := setupArgs(of, c, ast, synth)
+	argorder, stackBytes := setupArgs(of, c, ast, synth)
 
 	retType := sig.Return
 	raxName := raxForType(retType)
@@ -5707,8 +5711,12 @@ func compileIndirectCall(of io.Writer, c *Context, a AST, ast *Funcall, srcRef s
 
 	fmt.Fprintf(of, "\tcall %s\n", tgt.ref)
 	tgt.free(of)
+	popStackArgs(of, stackBytes)
 
 	for i := 0; i < len(ast.Args); i++ {
+		if argorder[i] == argStack {
+			continue
+		}
 		note(of, "\t// release call registers\n")
 		fmt.Fprintf(of, "\trelease %s\n", argorder[i])
 	}
@@ -5727,10 +5735,20 @@ func compileIndirectCall(of io.Writer, c *Context, a AST, ast *Funcall, srcRef s
 	return ret
 }
 
+// argStack marks a parameter as passed on the stack rather than in a register.
+// It is not a register name, so every site that would emit `inreg`/`acquire`/
+// `release` against an argument slot must test for it first.
+const argStack = ""
+
 // argRegisters assigns each parameter its System V argument register. The two
 // classes are counted independently — in f(i64, f64, i64) the float takes XMM0
 // while the integers take RDI and RSI — so this cannot be a plain index into
 // one list. Aggregates are integer-class whatever they contain.
+//
+// Integer-class parameters past RDI…R9 are marked argStack and passed on the
+// stack (see pushStackArgs). Floating-point parameters past XMM7 are still
+// rejected: the callee side has no path for them either (Function.ArgFloat),
+// so accepting them here would produce a call the callee cannot read.
 func argRegisters(c *Context, d *FuncDecl, n int) ([]string, error) {
 	intOrder := []string{"rdi", "rsi", "rdx", "rcx", "r8", "r9"}
 	regs := make([]string, n)
@@ -5745,7 +5763,8 @@ func argRegisters(c *Context, d *FuncDecl, n int) ([]string, error) {
 			continue
 		}
 		if intIdx >= len(intOrder) {
-			return nil, fmt.Errorf("more than 6 integer arguments are not supported")
+			regs[i] = argStack
+			continue
 		}
 		regs[i] = intOrder[intIdx]
 		intIdx++
@@ -5753,7 +5772,63 @@ func argRegisters(c *Context, d *FuncDecl, n int) ([]string, error) {
 	return regs, nil
 }
 
-func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
+// stackArgIndices returns the parameter indices passed on the stack, in
+// parameter order.
+func stackArgIndices(order []string) []int {
+	var idx []int
+	for i, r := range order {
+		if r == argStack {
+			idx = append(idx, i)
+		}
+	}
+	return idx
+}
+
+// pushStackArgs emits the stack half of a call's argument setup and returns the
+// number of bytes to reclaim afterwards.
+//
+// System V puts the first stack argument at the lowest address above the
+// return address, so they are pushed in REVERSE parameter order: the last
+// argument goes deepest, and the `call` that follows pushes the return address
+// below all of them. The callee then reads argument 6 at [rbp+56] — past its
+// own six saved registers and the return address (Function.StackArg).
+//
+// BABI-0 requires RSP ≡ 0 mod 16 at the call. The frame reservation already
+// establishes that, so an odd number of 8-byte pushes would break it; one
+// padding slot goes down first in that case.
+func pushStackArgs(of io.Writer, argspots []spot, idx []int) int {
+	if len(idx) == 0 {
+		return 0
+	}
+	slots := len(idx)
+	if slots%2 != 0 {
+		note(of, "\t// pad to keep RSP 16-aligned at the call\n")
+		fmt.Fprintf(of, "\tsub rsp 8\n")
+		slots++
+	}
+	for i := len(idx) - 1; i >= 0; i-- {
+		note(of, "\t// stack argument %d\n", idx[i])
+		fmt.Fprintf(of, "\tpush %s\n", argspots[idx[i]].ref)
+	}
+	return slots * 8
+}
+
+// popStackArgs reclaims what pushStackArgs reserved. The callee does not clean
+// up its own stack arguments under System V, so this is the caller's job and
+// must run on every path out of a call.
+func popStackArgs(of io.Writer, bytes int) {
+	if bytes == 0 {
+		return
+	}
+	note(of, "\t// reclaim stack arguments\n")
+	fmt.Fprintf(of, "\tadd rsp %d\n", bytes)
+}
+
+// setupArgs materializes every argument and places it where the callee expects
+// it, returning the per-argument register assignment (argStack for the
+// stack-passed ones) and the number of stack bytes the caller must reclaim
+// after the call.
+func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) ([]string, int) {
 	order, oerr := argRegisters(c, d, len(f.Args))
 	if oerr != nil {
 		CompileErrorF(f, "%s", oerr)
@@ -5867,9 +5942,11 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 			checkOwnedSourceAvailable(c, arg)
 		}
 		var dest spot
-		if argt.Size(c) == PTR_SIZE && !isFloatType(c, argt) {
+		if argt.Size(c) == PTR_SIZE && !isFloatType(c, argt) && order[i] != argStack {
 			dest = newSpotWithReg(of, c, c.Temp(), argt, order[i])
 		} else {
+			// Stack-passed arguments have no register to be optimistically
+			// parked in; they are pushed from wherever they land.
 			dest = newSpot(of, c, c.Temp(), argt)
 		}
 		a := compileTop(of, c, arg, dest)
@@ -5915,6 +5992,27 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		note(of, "\t// Ensuring argument %d (%v) is in register %v for call.\n",
 			i, argspots[i].ref, order[i])
 		argt := argspots[i].t
+		if order[i] == argStack {
+			// Placed by pushStackArgs below, after every register argument is
+			// settled — the pushes have to be the last thing before the call
+			// so nothing else perturbs RSP in between.
+			//
+			// A stack slot is 8 bytes whatever the parameter's width, so a
+			// narrower value is widened here rather than pushed at its natural
+			// size: `push` of a byte-sized slot has no sensible meaning, and
+			// the callee names only the low bytes of the slot.
+			if argt.Size(c) < PTR_SIZE && !isFloatType(c, argt) {
+				wide := newSpot(of, c, c.Temp(), numASTType())
+				if argt.Signed {
+					fmt.Fprintf(of, "\tmovsx %s %s\n", wide.ref, argspots[i].ref)
+				} else {
+					fmt.Fprintf(of, "\tmovzx %s %s\n", wide.ref, argspots[i].ref)
+				}
+				argspots[i].free(of)
+				argspots[i] = wide
+			}
+			continue
+		}
 		switch {
 		case isFloatType(c, argt):
 			// The value is already in the SSE file; move it to the argument
@@ -5945,7 +6043,12 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) []string {
 		argspots[i].free(of)
 	}
 
-	return order
+	idx := stackArgIndices(order)
+	stackBytes := pushStackArgs(of, argspots, idx)
+	for _, i := range idx {
+		argspots[i].free(of)
+	}
+	return order, stackBytes
 }
 
 // packSmallMemBackedArg emits the width-matched load that brings a memBacked

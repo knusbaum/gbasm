@@ -154,3 +154,38 @@ pub function putc
 
 	epilogue
 	ret
+
+
+// entryalign7 / entryalign8 report the stack alignment the CALLER established,
+// measured at function entry before any prologue runs: RSP mod 16.
+//
+// BABI-0 requires RSP = 0 mod 16 immediately before a `call`, so a callee sees
+// 8 on entry -- the call pushed an 8-byte return address onto a 16-aligned
+// stack. Any other value means the caller left the stack misaligned.
+//
+// They take 7 and 8 arguments specifically because stack-passed arguments are
+// the one thing that breaks this silently: each is an 8-byte push, so an odd
+// count shifts RSP by 8 unless the caller pads. Nothing about the values a
+// function returns would reveal that -- only a direct measurement does. The
+// arguments are ignored; only the alignment matters.
+pub function entryalign7
+	type fn(i64,i64,i64,i64,i64,i64,i64) i64
+	mov rax rsp
+	and rax 15
+	ret
+
+pub function entryalign8
+	type fn(i64,i64,i64,i64,i64,i64,i64,i64) i64
+	mov rax rsp
+	and rax 15
+	ret
+
+// rspval returns the caller's stack pointer. Two readings around a region of
+// code must differ by 0: a call that fails to reclaim its stack arguments
+// leaks RSP downward, which is invisible to every other check because locals
+// are RBP-relative and the epilogue restores RSP wholesale. The leak only
+// shows up as unbounded growth across repeated calls.
+pub function rspval
+	type fn() i64
+	mov rax rsp
+	ret

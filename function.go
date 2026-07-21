@@ -562,13 +562,24 @@ func (ra *Rallocs) ArgSized(name string, reg Register, bits int) (*Ralloc, error
 //
 // AMD64 Calling Conventions:
 // %rdi, %rsi, %rdx, %rcx, %r8, %r9, stack
-func (f *Function) StackArg(name string, stacki int) (*Ralloc, error) {
+// StackArg declares an argument passed on the stack rather than in a register.
+//
+// size is the declared width of the parameter, not the slot width: every stack
+// slot is 8 bytes, but a narrower parameter names only its low bytes (the
+// caller widens before pushing, so those bytes are the value). Recording 64
+// here regardless would make the callee read a byte parameter as a qword, and
+// any narrowing operation on it -- `movzx r64, g` -- has no encoding.
+func (f *Function) StackArg(name string, stacki int, size ...int) (*Ralloc, error) {
 	if _, ok := f.frame.names[name]; ok {
 		return nil, fmt.Errorf("Ralloc %s already declared.", name)
 	}
+	sz := 64
+	if len(size) > 0 {
+		sz = size[0]
+	}
 	r := &Ralloc{
 		sym:     name,
-		size:    64,
+		size:    sz,
 		inmem:   true,
 		regable: true,
 		offset:  int32((stacki+1)*8) + f.basePointerOff, // Skip over return pointer and base pointer.
@@ -671,7 +682,7 @@ func (f *Function) ArgI(name string, i int, size ...int) (*Ralloc, error) {
 	if i <= 5 {
 		return f.Arg(name, argRegForSize(i, sz))
 	}
-	return f.StackArg(name, i-6)
+	return f.StackArg(name, i-6, sz)
 }
 
 // This causes the local variable 'name' to take over register 'reg', meaning 'name' will

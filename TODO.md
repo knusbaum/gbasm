@@ -146,19 +146,19 @@ boundary exercises it. Conversely, if a corner is deliberately *not* going to be
 implemented, DESIGN.md should say so plainly, the way it already does for
 aggregate register classification.
 
-#### Arguments beyond the register count aren't passed on the stack
+#### Floating-point arguments past XMM7 aren't passed on the stack
 
-`bosc` rejects a call with more than 6 integer or more than 8 floating-point
-arguments ("more than 6 integer arguments are not supported"), rather than
-spilling the excess to the stack as System V specifies. The limits are exactly
-the register counts of each class, so this is one missing capability, not two.
-The assembler side already has `Function.StackArg`, and `compileFunctionBody`
-already receives stack arguments via `ArgI` for index > 5 — what is missing is
-the *caller* side: `setupArgs`/`argRegisters` in `cmd/bosc/compile.go` have no
-path to push arguments beyond the register list, and `Function.ArgFloat`
-likewise refuses SSE index >= 8. Found while completing floating-point support;
-independent of it, and affects integers first. **This is the one users will hit
-first** — a seven-argument function is ordinary code, not a corner case.
+INTEGER-class stack arguments now work on both sides (`bosc` pushes them in
+reverse order with 16-byte alignment padding and reclaims them after the call;
+the callee reads argument *i* > 5 at `[RBP + 56 + 8·(i-6)]`). The SSE half is
+still missing: `Function.ArgFloat` refuses index >= 8 on the *callee* side, so
+`argRegisters` deliberately keeps rejecting it on the caller side rather than
+emitting a call the callee cannot read.
+
+Lower priority than the integer case was — a nine-float function is much rarer
+than a seven-argument one — but it is the remaining half of one feature.
+Needs `ArgFloat` to fall back to `StackArg` and a load from the slot into an
+XMM register, then the caller-side gate in `argRegisters` can come out.
 
 #### Odd-sized small structs can't be passed by value
 

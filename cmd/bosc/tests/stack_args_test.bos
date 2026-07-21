@@ -1,0 +1,103 @@
+package main
+
+import "string"
+
+// System V passes the first six integer-class arguments in RDI, RSI, RDX, RCX,
+// R8, R9 and the rest on the stack. bosc used to reject the seventh outright.
+//
+// Every function here returns a value derived from EVERY parameter, weighted by
+// position, so a slot that is swapped, dropped, or off by one changes the
+// answer. Returning only the last argument would pass even if the earlier stack
+// slots were garbage.
+
+fn line(n i64) {
+	string.puti(n)
+	string.putc('\n')
+}
+
+// Exactly one stack argument: the odd case, which needs a padding slot to keep
+// RSP 16-aligned at the call.
+fn seven(a i64, b i64, c i64, d i64, e i64, f i64, g i64) i64 {
+	return a*1000000 + b*100000 + c*10000 + d*1000 + e*100 + f*10 + g
+}
+
+// Two stack arguments: the even case, no padding.
+fn eight(a i64, b i64, c i64, d i64, e i64, f i64, g i64, h i64) i64 {
+	return a*10000000 + b*1000000 + c*100000 + d*10000 + e*1000 + f*100 + g*10 + h
+}
+
+// Four stack arguments, to catch an ordering scheme that happens to work for
+// one or two. Stack args are pushed in reverse, so a first/last swap shows up
+// here and not in `seven`.
+fn ten(a i64, b i64, c i64, d i64, e i64, f i64, g i64, h i64, i i64, j i64) i64 {
+	return a*1000000000 + b*100000000 + c*10000000 + d*1000000 + e*100000 +
+		f*10000 + g*1000 + h*100 + i*10 + j
+}
+
+// Stack arguments that are pointers, dereferenced by the callee -- proves the
+// slot holds a usable value and not just a comparable integer.
+fn seven_ptr(a i64, b i64, c i64, d i64, e i64, f i64, p *i64) i64 {
+	v := *p
+	return a + b + c + d + e + f + v
+}
+
+// A narrow type in a stack slot. Each slot is 8 bytes regardless, so this
+// pins that a byte-wide argument is widened rather than leaving 7 bytes of
+// whatever was on the stack.
+fn seven_narrow(a i64, b i64, c i64, d i64, e i64, f i64, g byte) i64 {
+	return a + b + c + d + e + f + i64(g)
+}
+
+// Mixed classes: floats consume XMM registers and do NOT consume integer
+// registers, so the integer sequence here still overflows at the seventh
+// integer even though there are only nine parameters.
+fn mixed(a i64, x f64, b i64, c i64, d i64, e i64, f i64, y f64, g i64) i64 {
+	return a*1000000 + b*100000 + c*10000 + d*1000 + e*100 + f*10 + g + i64(x) + i64(y)
+}
+
+// A call with stack arguments nested inside another call's argument list. The
+// inner call must reclaim its stack before the outer one pushes, or the outer
+// arguments land at the wrong offsets.
+fn nested(a i64, b i64, c i64, d i64, e i64, f i64, g i64) i64 {
+	return seven(a, b, c, d, e, f, g) + 1
+}
+
+fn main() {
+	line(seven(1, 2, 3, 4, 5, 6, 7))
+	line(eight(1, 2, 3, 4, 5, 6, 7, 8))
+	line(ten(1, 2, 3, 4, 5, 6, 7, 8, 9, 1))
+
+	v i64 := 42
+	line(seven_ptr(1, 2, 3, 4, 5, 6, &v))
+
+	line(seven_narrow(1, 2, 3, 4, 5, 6, 200))
+	line(mixed(1, 2.0, 3, 4, 5, 6, 7, 8.0, 9))
+	line(nested(1, 2, 3, 4, 5, 6, 7))
+
+	// A stack-argument call in the middle of an expression, so the result has
+	// to survive the RSP adjustment.
+	line(seven(1, 2, 3, 4, 5, 6, 7) + seven(1, 1, 1, 1, 1, 1, 1))
+
+	// BABI-0 requires RSP = 0 mod 16 at every call. An odd number of 8-byte
+	// pushes would break that, so the padding slot is what these check --
+	// nothing about the returned VALUES would notice a misaligned stack.
+	// BABI-0 requires RSP = 0 mod 16 at every call, so a callee sees 8 on
+	// entry. Stack arguments are 8-byte pushes, so an odd count must be
+	// padded -- and nothing about the VALUES above would reveal a miss.
+	// entryalign* measures it at the callee's entry, before any prologue.
+	line(string.entryalign7(1, 2, 3, 4, 5, 6, 7))
+	line(string.entryalign8(1, 2, 3, 4, 5, 6, 7, 8))
+
+	// The caller reclaims its own stack arguments under System V. Failing to
+	// is invisible within a single frame -- locals are RBP-relative and the
+	// epilogue restores RSP -- so it only shows up as RSP drifting across
+	// repeated calls. Both readings must be identical.
+	before := string.rspval()
+	var k i64 := 0
+	for (; k < 10; k = k + 1) {
+		_ := seven(1, 2, 3, 4, 5, 6, 7)
+		_ := ten(1, 2, 3, 4, 5, 6, 7, 8, 9, 1)
+	}
+	after := string.rspval()
+	line(after - before)
+}

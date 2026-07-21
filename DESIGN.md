@@ -294,7 +294,7 @@ fn close(fd owned i64) {          // owned parameter — moves the obligation
 
 Pointer parameters without `owned` are borrows by default. The callee may read or write through the pointer according to the pointer's `mut` bits, may forward it to other non-owning calls, and may return it (or a view derived from it) — the compiler infers which parameters each return slot may alias and the caller's borrow tracking picks up the obligation. A borrow may not be stored somewhere that outlives the call. See [Borrowing](#borrowing).
 
-Arguments follow [the Boson ABI](#the-boson-abi-babi-0): the first six integer/pointer arguments go in RDI, RSI, RDX, RCX, R8, R9, and the first eight floating-point arguments in XMM0–XMM7, with the two sequences counted independently. `bosc` does not emit stack arguments, so exceeding either count is a compile error. The single-value return goes in RAX, or XMM0 for a float.
+Arguments follow [the Boson ABI](#the-boson-abi-babi-0): the first six integer/pointer arguments go in RDI, RSI, RDX, RCX, R8, R9, and the first eight floating-point arguments in XMM0–XMM7, with the two sequences counted independently. Integer/pointer arguments past the sixth are passed on the stack; floating-point arguments past the eighth are still a compile error. The single-value return goes in RAX, or XMM0 for a float.
 
 Sub-64-bit return values are sign- or zero-extended into RAX.
 
@@ -2630,16 +2630,30 @@ instance — is a compile error directing the author to use a pointer or a
 1/2/4/8-byte layout. This is an implementation limit, not a design decision;
 see [`TODO.md`](TODO.md).
 
-#### Argument count limits
+#### Arguments past the registers
 
-BABI-0 as emitted by `bosc` supports **at most 6 INTEGER and 8 SSE arguments**.
-Exceeding either is a compile error. There is no stack-argument path on the
-caller side.
+INTEGER-class arguments past RDI, RSI, RDX, RCX, R8, R9 are **passed on the
+stack**, as System V specifies. Argument *i* > 5 lives at
+`[RBP + 56 + 8·(i-6)]` in the callee — just above the return address at
+`[RBP + 48]`, which sits above the six registers the prologue saves.
 
-The assembler *can* express stack arguments — a hand-written `.bs` function
-receiving argument index *i* > 5 finds it at `[RBP + 56 + 8·(i-6)]`, i.e. just
-above the return address at `[RBP + 48]` — so the receiving half exists; only
-the emitting half is missing. See [`TODO.md`](TODO.md).
+Because the first stack argument occupies the lowest address, the caller pushes
+them in **reverse** parameter order; the `call` then pushes the return address
+below all of them. Each slot is 8 bytes regardless of the parameter's width, so
+a narrower value is widened (`movsx`/`movzx`) before being pushed and the callee
+names only the slot's low bytes.
+
+Stack arguments are the caller's to reclaim — the callee does not pop them. And
+since each is an 8-byte push while BABI-0 requires `RSP ≡ 0 (mod 16)` at the
+`call`, an **odd** number of stack arguments is preceded by one 8-byte padding
+slot. Neither of these is observable in a function's return value, so both are
+pinned directly: `tests/stack_args_test.bos` measures callee-entry alignment
+through a 7- and an 8-argument call, and checks that RSP is unchanged across a
+loop of such calls.
+
+**SSE-class arguments past XMM7 remain a compile error.** The callee side has no
+path for them either (`Function.ArgFloat`), so accepting them would emit a call
+the callee cannot read. See [`TODO.md`](TODO.md).
 
 #### Return values
 
@@ -2811,7 +2825,7 @@ anything not written in Boson; each is tracked in [`TODO.md`](TODO.md)
 | Struct field alignment | natural alignment, padding inserted | same | **matches** |
 | Aggregate classification | per eightbyte; a `{f64,f64}` goes in two XMM | aggregates are always INTEGER-class | **deliberate** |
 | Stack alignment before `call` | RSP ≡ 0 (mod 16) | same | **matches** |
-| Arguments past the registers | spilled to the stack | compile error (>6 INTEGER, >8 SSE) | unimplemented |
+| Arguments past the registers | spilled to the stack | spilled to the stack (INTEGER); compile error (>8 SSE) | **matches** for INTEGER; SSE unimplemented |
 | Odd-sized aggregates (3/5/6/7 bytes) | passed like any other | compile error | unimplemented |
 | Large aggregate return | caller passes hidden pointer in RDI (MEMORY class) | address of the callee's dead frame in RAX | divergent |
 | Sub-64-bit argument upper bits | unspecified | always sign/zero-extended | stricter |
