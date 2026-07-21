@@ -1019,10 +1019,14 @@ guards through codegen.
 
 ### Must be closed before the feature ships
 
-- [ ] **`fmt` cannot print a float.** Stage 6. Until then every float test has
-  to scale and truncate to an integer to observe a value, which is why none of
-  them assert a decimal rendering.
-- [ ] **Float `%f` / `%v` verbs, `ftoa`, `try_float`.** Stage 6.
+- [x] **`fmt` prints floats** — `ftoa`, `float`, `float_trim`, `try_float`, and
+  the `%f` / `%v` verbs. Note `ftoa` is fixed-precision, not shortest
+  round-trip: digits are exact while the integer part is below 2^53, and
+  approximate (but deterministic) beyond it, because the digit extraction
+  divides by ten in `f64`. DBL_MAX therefore renders correctly for its first
+  ~17 significant digits.
+- [ ] **A correctly-rounded `dtoa`** remains a non-goal, as proposed. The `%f`
+  API does not foreclose it.
 - [ ] **Fold the spec into `DESIGN.md`** and move this doc to
   `docs/implemented/`. Includes the language-surface decisions made along the
   way: an untyped float literal defaults to `f64` (mirroring `<intlit>` →

@@ -1,0 +1,57 @@
+package main
+
+import "fmt"
+
+fn main() {
+	a f64 := 3.5
+	z f64 := 0.0
+	n f64 := -1.5
+	one f64 := 1.0
+	s f32 := 2.25
+	big f64 := 12345.6789
+
+	fmt.print("%f\n", a)
+	fmt.print("%f\n", z)
+	fmt.print("%f\n", n)
+	fmt.print("%f\n", s)
+	fmt.print("%f\n", big)
+	fmt.print("%v\n", a)
+	fmt.print("%v\n", one)
+	fmt.print("%v\n", n)
+	fmt.print("%v\n", s)
+
+	// Specials.
+	nan f64 := 0.0 / 0.0
+	inf f64 := 1.0 / 0.0
+	ninf f64 := -1.0 / 0.0
+	nz f64 := -0.0
+	fmt.print("%f\n", nan)
+	fmt.print("%f\n", inf)
+	fmt.print("%f\n", ninf)
+	fmt.print("%f\n", nz)
+	fmt.print("%v\n", nan)
+
+	// Values below the sixth decimal round to zero in fixed notation; %v
+	// still keeps a fraction digit so the result reads as a float.
+	sub f64 := 5.0e-324
+	tiny f64 := 1.0e-7
+	fmt.print("%f\n", sub)
+	fmt.print("%f\n", tiny)
+	fmt.print("%v\n", tiny)
+
+	// Large but exactly representable: every digit of the integer part is
+	// below 2^53, so the rendering is exact.
+	wide f64 := 1234567890123.5
+	fmt.print("%f\n", wide)
+
+	// Rounding is half-away-from-zero at the requested precision, not
+	// truncation: the seventh decimal carries into the sixth.
+	r f64 := 0.12345678
+	fmt.print("%f\n", r)
+
+	// ftoa's truncation contract matches itoa's: a rendering that does not
+	// fit returns the leading bytes of the full form.
+	var small [4]byte
+	trunc []byte := fmt.ftoa(small[:], 3.5, 6)
+	fmt.print("%s\n", &trunc)
+}

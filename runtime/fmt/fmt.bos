@@ -218,6 +218,145 @@ fn write_hex(out []mut byte, n u64, width i64) {
 // ---------------------------------------------------------------------------
 
 // str writes s to w verbatim. Returns (written, err) mirroring io.writer.write.
+// ffloor returns the largest integral value not greater than x.
+//
+// Doubles of magnitude at least 2^52 are already integral, so the i64 round
+// trip is only needed below that — which also keeps it inside i64's range.
+fn ffloor(x f64) f64 {
+	if (x >= 4503599627370496.0) { return x }
+	if (x <= -4503599627370496.0) { return x }
+	t f64 := f64(i64(x))
+	if (t > x) { return t - 1.0 }
+	return t
+}
+
+// fpow10 returns 10^n for n >= 0.
+fn fpow10(n i64) f64 {
+	var p f64
+	p = 1.0
+	var i i64
+	for (i = 0; i < n; i = i + 1) {
+		p = p * 10.0
+	}
+	return p
+}
+
+// The scratch buffers below are 352 bytes: 309 integer digits for DBL_MAX,
+// plus a sign, a point, and up to 40 fraction digits.
+
+// ftoa renders f in fixed-point notation with exactly `prec` digits after the
+// decimal point, and returns the rendered bytes as a sub-slice of out.
+//
+// Truncation follows the same contract as itoa: if the rendering does not fit
+// in out, the leading len(out) bytes are written and returned.
+//
+// This is deliberately not a shortest-round-trip conversion — that is a
+// substantial sub-project of its own, and a fixed-precision result is
+// deterministic, which matters because the test suite diffs exact strings.
+// The digits are exact for values whose integer part is below 2^53; beyond
+// that the repeated division used to extract digits is itself rounded, so
+// far-out digits of very large magnitudes are approximate. They are still
+// deterministic.
+//
+// Specials render as NaN, +Inf and -Inf. Negative zero keeps its sign, which
+// is why the sign is taken from 1.0/f rather than from a comparison: -0.0 is
+// not less than zero.
+pub fn ftoa(out []mut byte, f f64, prec i64) []byte {
+	if (f != f) { return fixed_str(out, "NaN") }
+	if (f > 1.7976931348623157e308) { return fixed_str(out, "+Inf") }
+	if (f < -1.7976931348623157e308) { return fixed_str(out, "-Inf") }
+
+	var neg bool
+	neg = f < 0.0
+	if (f == 0.0) {
+		if (1.0 / f < 0.0) { neg = true }
+	}
+	var a f64
+	a = f
+	if (neg) { a = 0.0 - a }
+
+	var p i64
+	p = prec
+	if (p < 0) { p = 0 }
+	if (p > 40) { p = 40 }
+
+	// Round half away from zero at the requested precision, then everything
+	// below is plain truncation.
+	p10 f64 := fpow10(p)
+	a = a + 0.5 / p10
+
+	var scratch [352]byte
+	buf []mut byte := scratch[:]
+	var n i64
+	n = 0
+	if (neg) {
+		buf[0] = 45                     // '-'
+		n = 1
+	}
+
+	// Integer part, most significant digit first. Count the digits, then
+	// fill backwards so no reversal pass is needed.
+	ip f64 := ffloor(a)
+	var ndig i64
+	ndig = 1
+	var t f64
+	t = ip
+	for (; t >= 10.0; t = ffloor(t / 10.0)) {
+		ndig = ndig + 1
+	}
+	var i i64
+	i = n + ndig - 1
+	t = ip
+	var d i64
+	for (d = 0; d < ndig; d = d + 1) {
+		q f64 := ffloor(t / 10.0)
+		digit f64 := t - q * 10.0
+		buf[i] = byte(48 + i64(digit))
+		i = i - 1
+		t = q
+	}
+	n = n + ndig
+
+	if (p > 0) {
+		buf[n] = 46                     // '.'
+		n = n + 1
+		var frac f64
+		frac = a - ip
+		for (d = 0; d < p; d = d + 1) {
+			frac = frac * 10.0
+			digit f64 := ffloor(frac)
+			// Guard against a rounding artifact pushing a digit to 10.
+			var dv i64
+			dv = i64(digit)
+			if (dv > 9) { dv = 9 }
+			if (dv < 0) { dv = 0 }
+			buf[n] = byte(48 + dv)
+			n = n + 1
+			frac = frac - digit
+		}
+	}
+
+	return fixed_copy(out, buf[0:n])
+}
+
+// fixed_str writes a literal into out under the truncation contract.
+fn fixed_str(out []mut byte, s []byte) []byte {
+	return fixed_copy(out, s)
+}
+
+// fixed_copy copies as much of src into out as fits and returns the written
+// prefix, matching itoa's truncation behavior.
+fn fixed_copy(out []mut byte, src []byte) []byte {
+	var n i64
+	n = len(src)
+	if (n > len(out)) { n = len(out) }
+	var i i64
+	for (i = 0; i < n; i = i + 1) {
+		out[i] = src[i]
+	}
+	return out[0:n]
+}
+
 pub fn str(w io.writer, s []byte) i64, ?error {
 	n, err := w.write(s)
 	return n, err
@@ -265,6 +404,40 @@ pub fn bool(w io.writer, b bool) i64, ?error {
 		return k, err
 	}
 	k, err := w.write("false")
+	return k, err
+}
+
+// float writes f in fixed-point notation with `prec` digits after the point.
+pub fn float(w io.writer, f f64, prec i64) i64, ?error {
+	var buf [352]byte
+	s []byte := ftoa(buf[:], f, prec)
+	k, err := w.write(s)
+	return k, err
+}
+
+// float_trim writes f with trailing fraction zeros removed, keeping at least
+// one digit so the result still reads as a float: 1.5 prints "1.5", 1.0
+// prints "1.0". This is what %v uses — a natural rendering rather than a
+// fixed column width. Specials have no fraction to trim.
+pub fn float_trim(w io.writer, f f64) i64, ?error {
+	var buf [352]byte
+	s []byte := ftoa(buf[:], f, 6)
+	var n i64
+	n = len(s)
+	var dot i64
+	dot = 0 - 1
+	var i i64
+	for (i = 0; i < n; i = i + 1) {
+		if (s[i] == 46) { dot = i }
+	}
+	if (dot >= 0) {
+		// Walk back over trailing zeros, but never past the first fraction
+		// digit.
+		for (; n > dot + 2; n = n - 1) {
+			if (s[n - 1] != 48) { break }
+		}
+	}
+	k, err := w.write(s[0:n])
 	return k, err
 }
 
@@ -627,6 +800,16 @@ fn try_unsigned(a any) u64, bool {
 	return 0, false
 }
 
+// try_float extracts a floating-point value of either width from `a`,
+// widened to f64. f32 -> f64 is exact, so nothing is lost.
+fn try_float(a any) f64, bool {
+	v32 f32, ok32 := a.(f32)
+	if (ok32) { return f64(v32), true }
+	v64 f64, ok64 := a.(f64)
+	if (ok64) { return v64, true }
+	return 0.0, false
+}
+
 // render_one renders a single directive's arg. Returns (written, stop, err):
 // stop signals a hard write failure that aborts printf. A type mismatch is
 // not a stop — it writes a marker, returns a non-OK err (latched by the
@@ -693,6 +876,14 @@ fn render_one(w io.writer, verb byte, a any) i64, bool, ?error {
 		}
 		return mismatch_result(w, verb)
 	}
+	if (verb == 102) {                    // 'f' — fixed-point, six decimals
+		fv f64, okf bool := try_float(a)
+		if (okf) {
+			k, err := float(w, fv, 6)
+			return k, ferr_stop(err), err
+		}
+		return mismatch_result(w, verb)
+	}
 	if (verb == 118) {                    // 'v' — natural, by the value's type
 		return render_v(w, a)
 	}
@@ -747,6 +938,11 @@ fn render_v(w io.writer, a any) i64, bool, ?error {
 	ui u64, okui bool := try_unsigned(a)
 	if (okui) {
 		k, err := uint(w, ui)
+		return k, ferr_stop(err), err
+	}
+	fv f64, okfv bool := try_float(a)
+	if (okfv) {
+		k, err := float_trim(w, fv)
 		return k, ferr_stop(err), err
 	}
 	bv bool, okbv bool := a.(bool)

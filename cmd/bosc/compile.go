@@ -8500,6 +8500,14 @@ func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTTy
 			}
 			fmt.Fprintf(of, "\tmov [%s+0] r10\n", destRef)
 			fmt.Fprintf(of, "\trelease r10\n")
+		} else if isFloatType(c, val.t) {
+			// A float lives in the SSE file, so its bits reach the data slot
+			// through the float store rather than a general-purpose mov. The
+			// value is stored at its *own* width: the type descriptor records
+			// f32 or f64, and a type assertion reads back exactly that many
+			// bytes, so widening here would leave an f32 assertion reading the
+			// low half of a double.
+			fmt.Fprintf(of, "\t%s [%s+0] %s\n", floatMovOp(c, val.t), destRef, val.ref)
 		} else if valSize < PTR_SIZE {
 			// Scalar narrower than a pointer: existing sign/zero-extend
 			// path on a sub-register source.
