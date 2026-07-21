@@ -6,7 +6,7 @@ package _iface
 // `call _iface.assert_to` and reads the register-pair result. Signature:
 //
 //   assert_to(src_ti *u8, src_shape u64, src_data i64, dst_desc *u8)
-//            -> (vtable *u8 in rax, ok bool in rdx)
+//            -> vtable *u8 in rax
 //
 //   rdi = src_ti     (base typedesc pointer; from source vtable slot 0)
 //   rsi = src_shape  (source shape word; from source vtable slot 1)
@@ -14,8 +14,13 @@ package _iface
 //   rcx = dst_desc   (target iface_desc pointer)
 //
 // On success rax = pointer to the itab's embedded vtable region
-// ([rax+0]=src_ti, [rax+8]=src_shape, [rax+16+i*8]=fn_i) and rdx = 1.
-// On failure rax = 0 and rdx = 0.
+// ([rax+0]=src_ti, [rax+8]=src_shape, [rax+16+i*8]=fn_i).
+// On failure rax = 0.
+//
+// There is no separate ok flag: rax == 0 iff the assertion failed, and a zero
+// vtable is exactly the null sentinel the caller's nullable interface type
+// already tests. (This function previously also returned ok in rdx, which
+// carried no information -- rdx was 1 on every path where rax was nonzero.)
 //
 // typedesc head layout (bytes, relative to td start):
 //   0 name_off  8 name_len  16 size  24 cache_ref  32 method_count
@@ -67,7 +72,6 @@ label .cache_loop
 	cmp rcx r13
 	jne .cache_next
 	add rax 24
-	mov rdx 1
 	jmp .ret
 label .cache_next
 	mov rax [rax]
@@ -157,7 +161,6 @@ label .miss_free
 	mov rdi r15
 	call _heap.free
 	mov rax 0
-	mov rdx 0
 	jmp .ret
 
 label .all_found
@@ -167,7 +170,6 @@ label .all_found
 	mov [rcx] r15
 	mov rax r15
 	add rax 24
-	mov rdx 1
 
 label .ret
 	epilogue

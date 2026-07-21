@@ -7949,9 +7949,11 @@ func ifaceDescSymbol(c *Context, ifaceName string) string {
 // verbatim and the helper-provided itab vtable; on failure it is zeroed.
 // emitAssertToCall emits the _iface.assert_to call for source interface value
 // srcRef (a 16-byte fat pointer) against target descriptor descSym, returning
-// local temps holding the result vtable pointer (rax) and ok flag (rdx). The
-// arg registers are pinned across the (already-compiled) argument loads.
-func emitAssertToCall(of io.Writer, c *Context, srcRef, descSym string) (vtTmp, okTmp string) {
+// a local temp holding the result vtable pointer (rax). Success is `vtable !=
+// 0`; the helper has no separate ok flag, because a zero vtable is exactly the
+// null sentinel the nullable result type already tests. The arg registers are
+// pinned across the (already-compiled) argument loads.
+func emitAssertToCall(of io.Writer, c *Context, srcRef, descSym string) (vtTmp string) {
 	fmt.Fprintf(of, "\tacquire rdi\n")
 	fmt.Fprintf(of, "\tacquire rsi\n")
 	fmt.Fprintf(of, "\tacquire rdx\n")
@@ -7963,18 +7965,15 @@ func emitAssertToCall(of io.Writer, c *Context, srcRef, descSym string) (vtTmp, 
 	fmt.Fprintf(of, "\tmov rdx [%s+0]\n", srcRef) // src_data
 	fmt.Fprintf(of, "\tlea rcx %s\n", descSym)
 	fmt.Fprintf(of, "\tcall _iface.assert_to\n")
-	okTmp = c.Temp()
 	vtTmp = c.Temp()
-	fmt.Fprintf(of, "\tlocal %s 64\n", okTmp)
 	fmt.Fprintf(of, "\tlocal %s 64\n", vtTmp)
-	fmt.Fprintf(of, "\tmov %s rdx\n", okTmp)
 	fmt.Fprintf(of, "\tmov %s rax\n", vtTmp)
 	fmt.Fprintf(of, "\trelease rax\n")
 	fmt.Fprintf(of, "\trelease rcx\n")
 	fmt.Fprintf(of, "\trelease rdx\n")
 	fmt.Fprintf(of, "\trelease rsi\n")
 	fmt.Fprintf(of, "\trelease rdi\n")
-	return vtTmp, okTmp
+	return vtTmp
 }
 
 // interfaceWidensTo reports whether interface src can be *implicitly* converted
@@ -8055,9 +8054,9 @@ func emitInterfaceWiden(of io.Writer, c *Context, errNode AST, dstt, srct ASTTyp
 	src := compileAsInterfaceValue(of, c, valAST, srct, valAST, false)
 	defer src.free(of)
 
-	vtTmp, okTmp := emitAssertToCall(of, c, src.ref, descSym)
+	vtTmp := emitAssertToCall(of, c, src.ref, descSym)
 	okLabel := c.Label("ifacewidenok")
-	fmt.Fprintf(of, "\tcmp %s 0\n", okTmp)
+	fmt.Fprintf(of, "\tcmp %s 0\n", vtTmp)
 	fmt.Fprintf(of, "\tjne %s\n", okLabel)
 	fmt.Fprintf(of, "\tcall _init.nil_assert\n") // unreachable given the static gate
 	fmt.Fprintf(of, "\tlabel %s\n", okLabel)
@@ -8068,7 +8067,6 @@ func emitInterfaceWiden(of io.Writer, c *Context, errNode AST, dstt, srct ASTTyp
 	fmt.Fprintf(of, "\tmov qword[%s+0] %s\n", destRef, dataTmp)
 	fmt.Fprintf(of, "\tmov qword[%s+8] %s\n", destRef, vtTmp)
 	fmt.Fprintf(of, "\tforget %s\n", dataTmp)
-	fmt.Fprintf(of, "\tforget %s\n", okTmp)
 	fmt.Fprintf(of, "\tforget %s\n", vtTmp)
 
 	// Borrow continuity: the widened interface wraps the same data, so it
@@ -8090,12 +8088,10 @@ func compileInterfaceAssert(of io.Writer, c *Context, ast *TypeAssert, dest spot
 		dest = newSpot(of, c, c.Temp(), resultType)
 	}
 
-	// assert_to returns the itab vtable in rax (0 on failure) and ok in rdx.
-	// The result is the (possibly-null) interface [data, vtable]: on failure
-	// vtable is 0, which is exactly the null sentinel `if (k != nil)` tests, so
-	// no branch is needed — the ok flag is subsumed by the nullable type.
-	vtTmp, okTmp := emitAssertToCall(of, c, src.ref, descSym)
-	fmt.Fprintf(of, "\tforget %s\n", okTmp)
+	// assert_to returns the itab vtable in rax, 0 on failure. The result is the
+	// (possibly-null) interface [data, vtable]: on failure vtable is 0, which is
+	// exactly the null sentinel `if (k != nil)` tests, so no branch is needed.
+	vtTmp := emitAssertToCall(of, c, src.ref, descSym)
 	dataTmp := c.Temp()
 	fmt.Fprintf(of, "\tlocal %s 64\n", dataTmp)
 	fmt.Fprintf(of, "\tmov %s [%s+0]\n", dataTmp, src.ref)
@@ -8413,17 +8409,15 @@ func compileTypeSwitchIfaceCase(of io.Writer, c *Context, ast *TypeSwitch, cs *T
 	fmt.Fprintf(of, "\tmov rdx [%s+0]\n", src.ref)
 	fmt.Fprintf(of, "\tlea rcx %s\n", descSym)
 	fmt.Fprintf(of, "\tcall _iface.assert_to\n")
-	okTmp := c.Temp()
 	vtTmp := c.Temp()
-	fmt.Fprintf(of, "\tlocal %s 64\n", okTmp)
 	fmt.Fprintf(of, "\tlocal %s 64\n", vtTmp)
-	fmt.Fprintf(of, "\tmov %s rdx\n", okTmp)
 	fmt.Fprintf(of, "\tmov %s rax\n", vtTmp)
 	fmt.Fprintf(of, "\trelease rcx\n")
 	fmt.Fprintf(of, "\trelease rdx\n")
 	fmt.Fprintf(of, "\trelease rsi\n")
 	fmt.Fprintf(of, "\trelease rdi\n")
-	fmt.Fprintf(of, "\tcmp %s 0\n", okTmp)
+	// Failure is a zero vtable; assert_to has no separate ok flag.
+	fmt.Fprintf(of, "\tcmp %s 0\n", vtTmp)
 	fmt.Fprintf(of, "\tje %s\n", next)
 
 	// Match: build the asserted interface block, bind `v`, run body.
@@ -8439,7 +8433,6 @@ func compileTypeSwitchIfaceCase(of io.Writer, c *Context, ast *TypeSwitch, cs *T
 	fmt.Fprintf(of, "\tforget %s\n", dataTmp)
 	compileTop(of, child, cs.Body, nullspot)
 	fmt.Fprintf(of, "\tforget %s\n", ast.BindName)
-	fmt.Fprintf(of, "\tforget %s\n", okTmp)
 	fmt.Fprintf(of, "\tforget %s\n", vtTmp)
 	fmt.Fprintf(of, "\tjmp %s\n", end)
 	fmt.Fprintf(of, "\tlabel %s\n", next)
