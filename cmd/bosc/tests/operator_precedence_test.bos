@@ -1,0 +1,64 @@
+package main
+
+import "string"
+
+// Operator precedence, with attention to the bitwise/comparison boundary.
+//
+// C places `&`, `^` and `|` OUTSIDE comparison, so `x & MASK == 0` parses as
+// `x & (MASK == 0)` -- a wart Ritchie acknowledged and Go fixed. Boson had
+// inherited it, which made the ordinary mask-and-test idiom a type error
+// rather than a subtle bug, since bitwise operators reject bool operands.
+//
+// Bitwise now binds tighter than comparison. It is deliberately NOT lifted all
+// the way to Go's table, which puts `|`/`^` at the `+` level and `&` at the `*`
+// level: that would silently change `a & b + c`. The cases below pin both the
+// fix and the thing left alone.
+
+fn line(n i64) {
+	string.puti(n)
+	string.putc('\n')
+}
+
+fn tf(b bool) {
+	if (b) { line(1) } else { line(0) }
+}
+
+fn main() {
+	a i64 := 12 // 1100
+	b i64 := 10 // 1010
+	c i64 := 8  // 1000
+
+	// --- The fix: bitwise binds tighter than comparison --------------------
+	// (12 & 10) == 8  ->  8 == 8  ->  true
+	tf(a & b == c)
+	// 12 == (10 & 8)  ->  12 == 8  ->  false
+	tf(a == b & c)
+	// (12 | 10) == 14 ->  14 == 14 ->  true
+	tf(a | b == 14)
+	// (12 ^ 10) == 6  ->  6 == 6   ->  true
+	tf(a ^ b == 6)
+	// The idiom this is all for: mask and test.
+	tf(a & 3 == 0)
+	tf(a & 4 != 0)
+
+	// --- Unchanged: bitwise still binds LOOSER than + and shifts -----------
+	// 12 & (10 + 8) -> 12 & 18 -> 0.  Go would give (12 & 10) + 8 = 16.
+	line(a & b + c)
+	// 12 | (10 - 8) -> 12 | 2 -> 14.  Go would give (12 | 10) - 8 = 6.
+	line(a | b - c)
+	// 12 & (1 << 3) -> 12 & 8 -> 8
+	line(a & 1 << 3)
+
+	// --- Unchanged: relative order among the bitwise operators -------------
+	// & tighter than ^ tighter than |, as in C.
+	// 12 | (10 ^ (8 & 6)) -> 12 | (10 ^ 0) -> 12 | 10 -> 14
+	line(a | b ^ c & 6)
+
+	// --- Unchanged: comparison still binds tighter than && and || ----------
+	tf(a > b && c < b)
+	tf(a < b || c < b)
+
+	// --- Unchanged: arithmetic ---------------------------------------------
+	line(2 + 3*4)
+	line((2 + 3) * 4)
+}

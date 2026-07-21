@@ -1470,14 +1470,14 @@ func (p *Parser) parseBoolOr() *Node {
 // parseBoolAnd handles `&&` (logical and), binding tighter than `||` and
 // looser than the bitwise operators.
 func (p *Parser) parseBoolAnd() *Node {
-	v := p.parseBitOr()
+	v := p.parseCompare()
 	for {
 		c := p.current()
 		if c.t != tok_booland {
 			break
 		}
 		p.advance()
-		v2 := p.parseBitOr()
+		v2 := p.parseCompare()
 		v = &Node{t: n_booland, p: c.p, args: []*Node{v, v2}}
 	}
 	return v
@@ -1497,7 +1497,7 @@ func (p *Parser) parseBitOr() *Node {
 	return v
 }
 
-// parseBitXor sits between `|` (looser) and `&` (tighter), matching C.
+// parseBitXor sits between `|` (looser) and `&` (tighter).
 func (p *Parser) parseBitXor() *Node {
 	v := p.parseBitAnd()
 	for {
@@ -1513,52 +1513,64 @@ func (p *Parser) parseBitXor() *Node {
 }
 
 func (p *Parser) parseBitAnd() *Node {
-	v := p.parseCompare()
+	v := p.parseShift()
 	for {
 		c := p.current()
 		if c.t != tok_amp {
 			break
 		}
 		p.advance()
-		v2 := p.parseCompare()
+		v2 := p.parseShift()
 		v = &Node{t: n_bitand, p: c.p, args: []*Node{v, v2}}
 	}
 	return v
 }
 
+// parseCompare binds LOOSER than the bitwise operators, unlike C.
+//
+// C places `&` `^` `|` outside comparison, so `x & MASK == 0` parses as
+// `x & (MASK == 0)` -- a wart Ritchie acknowledged and Go fixed. Boson had
+// inherited it, which made the ordinary mask-and-test idiom a type error.
+//
+// The bitwise levels are only lifted above comparison, not all the way to
+// Go's table, which would also put `|`/`^` at the `+` level and `&` at the `*`
+// level. That part would silently change `a & b + c` from `a & (b+c)` to
+// `(a&b) + c`. Lifting past comparison alone changes no working program:
+// bitwise operators reject bool operands, so every expression whose parse
+// this alters was previously rejected outright.
 func (p *Parser) parseCompare() *Node {
-	v := p.parseShift()
+	v := p.parseBitOr()
 	for {
 		c := p.current()
 		switch c.t {
 		case tok_deq:
 			p.advance()
-			v2 := p.parseShift()
+			v2 := p.parseBitOr()
 			v = &Node{t: n_deq, p: c.p, args: []*Node{v, v2}}
 			continue
 		case tok_neq:
 			p.advance()
-			v2 := p.parseShift()
+			v2 := p.parseBitOr()
 			v = &Node{t: n_neq, p: c.p, args: []*Node{v, v2}}
 			continue
 		case tok_lt:
 			p.advance()
-			v2 := p.parseShift()
+			v2 := p.parseBitOr()
 			v = &Node{t: n_lt, p: c.p, args: []*Node{v, v2}}
 			continue
 		case tok_gt:
 			p.advance()
-			v2 := p.parseShift()
+			v2 := p.parseBitOr()
 			v = &Node{t: n_gt, p: c.p, args: []*Node{v, v2}}
 			continue
 		case tok_le:
 			p.advance()
-			v2 := p.parseShift()
+			v2 := p.parseBitOr()
 			v = &Node{t: n_le, p: c.p, args: []*Node{v, v2}}
 			continue
 		case tok_ge:
 			p.advance()
-			v2 := p.parseShift()
+			v2 := p.parseBitOr()
 			v = &Node{t: n_ge, p: c.p, args: []*Node{v, v2}}
 			continue
 		}

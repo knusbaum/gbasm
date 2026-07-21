@@ -566,16 +566,41 @@ func TestParser(t *testing.T) {
 			}},
 		},
 		{
-			// Comparison binds tighter than & (C-style): a == b & c parses as
-			// (a == b) & c. (This is the footgun that makes `flag & MASK == 0`
-			// a type error in Boson — recorded deliberately.)
+			// Bitwise binds tighter than comparison, unlike C: a == b & c
+			// parses as a == (b & c).
+			//
+			// This test previously pinned the opposite, C's ordering, noting
+			// that it made `flag & MASK == 0` a type error. That was the
+			// footgun rather than a decision worth keeping -- Ritchie
+			// acknowledged the C precedence as a mistake and Go fixed it --
+			// so the ordering changed and this case records the new rule.
+			//
+			// Safe to change precisely because it WAS a type error: bitwise
+			// operators reject bool operands, so every expression whose parse
+			// this affects was previously rejected outright. Nothing that
+			// compiled changed meaning.
 			in: "a == b & c",
-			out: &Node{t: n_bitand, args: []*Node{
-				&Node{t: n_deq, args: []*Node{
-					&Node{t: n_symbol, sval: "a"},
+			out: &Node{t: n_deq, args: []*Node{
+				&Node{t: n_symbol, sval: "a"},
+				&Node{t: n_bitand, args: []*Node{
 					&Node{t: n_symbol, sval: "b"},
+					&Node{t: n_symbol, sval: "c"},
 				}},
-				&Node{t: n_symbol, sval: "c"},
+			}},
+		},
+		{
+			// Bitwise still binds LOOSER than + and shifts, which is where
+			// Boson stops short of Go's table. Go puts `&` at the `*` level
+			// and `|`/`^` at the `+` level, which would silently change this
+			// from a & (b + c) to (a & b) + c -- a real change to programs
+			// that compile today, unlike the comparison fix above.
+			in: "a & b + c",
+			out: &Node{t: n_bitand, args: []*Node{
+				&Node{t: n_symbol, sval: "a"},
+				&Node{t: n_add, args: []*Node{
+					&Node{t: n_symbol, sval: "b"},
+					&Node{t: n_symbol, sval: "c"},
+				}},
 			}},
 		},
 		{
