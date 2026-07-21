@@ -1,0 +1,18 @@
+package main
+
+// unsafe_cast accepts a pointer or a uintptr source, not a plain integer.
+//
+// The restriction is deliberate and costs one visible conversion: an i64
+// address must be spelled uintptr(...) first. What it buys is an audit
+// surface -- every raw address in a program is a uintptr, so nothing becomes a
+// pointer without passing through a construct that says so.
+
+type node struct {
+	a i64
+}
+
+fn main() {
+	addr i64 := 4096
+	p := unsafe_cast(*mut node, addr)
+	_ := p
+}

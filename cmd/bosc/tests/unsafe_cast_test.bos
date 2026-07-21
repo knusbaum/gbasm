@@ -1,0 +1,99 @@
+package main
+
+import "string"
+
+// unsafe_cast(T, e) reinterprets a uintptr or pointer as exactly T. This test
+// is deliberately not a set of micro-operations: it is a reduced free-list
+// allocator, because the thing that needs proving is that the result is
+// *usable* -- that you can dereference it, reach fields through it, and store
+// through it.
+//
+// That matters because the language already had a construct which produced a
+// reinterpreted pointer that compiled fine and was then a dead end at every
+// use site (pointer type aliases; see cast_pointer_alias_reinterpret_err_test).
+// Only an end-to-end store-and-read-back distinguishes the two.
+//
+// The allocator shape also exercises the one idiom raw memory exists for: two
+// different struct views of the same storage. A block carries only a size
+// header while allocated; while on the free list, the space that would hold
+// user data holds the list link instead.
+
+// Present on every block.
+type hdr struct {
+	size i64
+}
+
+// The same storage, viewed while the block sits on the free list. `next`
+// overlays what would otherwise be user data.
+type freeblock struct {
+	size i64
+	next uintptr
+}
+
+// Stand-in for an mmap region; the syscall package does not exist yet.
+var region [128]byte
+var free_head uintptr
+
+fn line(n i64) {
+	string.puti(n)
+	string.putc('\n')
+}
+
+// align_up rounds a up to a multiple of to, which must be a power of two.
+fn align_up(a uintptr, to uintptr) uintptr {
+	return (a + to - uintptr(1)) & ~(to - uintptr(1))
+}
+
+// carve writes a size header at addr and pushes the block onto the free list,
+// threading the link through the block's own storage.
+fn carve(addr uintptr, size i64) {
+	h := unsafe_cast(*mut hdr, addr)
+	h.size = size
+
+	b := unsafe_cast(*mut freeblock, addr)
+	b.next = free_head
+	free_head = addr
+}
+
+fn main() {
+	base := uintptr(&region[0])
+
+	// Alignment rounding over a real address: the result is >= base, 8-aligned,
+	// and within one alignment unit of where it started.
+	al := align_up(base, uintptr(8))
+	if (i64(al - base) < 8) { line(1) } else { line(0) }
+	line(i64(al & uintptr(7)))
+
+	// Two blocks carved out of the region at a 32-byte stride.
+	carve(al, 32)
+	carve(al + uintptr(32), 64)
+
+	// Walk the free list. Each step reinterprets a raw address as a block,
+	// reads the size written through the *other* view, and follows the link
+	// stored inside the block itself.
+	var cur uintptr := free_head
+	var total i64 := 0
+	var count i64 := 0
+	for (; cur != uintptr(0); ) {
+		b := unsafe_cast(*mut freeblock, cur)
+		total = total + b.size
+		count = count + 1
+		cur = b.next
+	}
+	line(count)
+	line(total)
+
+	// The header view sees what the freeblock view wrote, since they are the
+	// same bytes: the most recently carved block is the list head.
+	head := unsafe_cast(*mut hdr, free_head)
+	line(head.size)
+
+	// Round-tripping a pointer through uintptr and back yields a pointer to
+	// the same storage.
+	var n hdr := {size: 1234}
+	p := &n
+	q := unsafe_cast(*mut hdr, uintptr(p))
+	line(q.size)
+	q.size = 5678
+	line(n.size)
+}

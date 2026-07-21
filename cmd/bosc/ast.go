@@ -4140,6 +4140,30 @@ func (*SizeOf) ASTType(*Context) ASTType { return numASTType() }
 func (s *SizeOf) Note() string           { return fmt.Sprintf("size_of(%s)", s.Type) }
 func (s *SizeOf) Pos() position          { return s.p }
 
+// UnsafeCast is `unsafe_cast(T, e)`: reinterpret e -- a uintptr or a pointer
+// -- as exactly T. This is the one construct in the language that can
+// manufacture a pointer, and therefore the one place raw-memory unsafety
+// lives.
+//
+// Type is the FULL result type, not a pointee: `unsafe_cast(*mut node, a)`
+// yields `*mut node`. That way the mut and nullable bits are stated at the
+// cast rather than fixed by convention.
+//
+// The cast itself has no precondition -- it is always legal and always
+// succeeds, because it merely produces a value. Alignment and validity are
+// properties of what is subsequently done with the result, not of its
+// existence: holding a temporarily-misaligned or not-yet-valid pointer is
+// legitimate and must not be prohibited.
+type UnsafeCast struct {
+	Type ASTType
+	Val  AST
+	p    position
+}
+
+func (u *UnsafeCast) ASTType(*Context) ASTType { return u.Type }
+func (u *UnsafeCast) Note() string             { return fmt.Sprintf("unsafe_cast(%s, ...)", u.Type) }
+func (u *UnsafeCast) Pos() position            { return u.p }
+
 // AlignOf is `align_of(T)`: T's required alignment in bytes, as an i64
 // compile-time constant.
 //
@@ -4795,6 +4819,18 @@ func (n *Node) toASTTop(c *Context) AST {
 		return &SizeOf{Type: mkTypename(n.args[0]), p: n.p}
 	case n_alignof:
 		return &AlignOf{Type: mkTypename(n.args[0]), p: n.p}
+	case n_unsafecast:
+		t := mkTypename(n.args[0])
+		if t.Indirection == 0 {
+			panic(&interpreterError{fmt.Sprintf("unsafe_cast requires a pointer target type, but got %s", t), n.p})
+		}
+		if t.OwnedMask != 0 {
+			// Owned bits carry a consumption obligation the cast cannot
+			// establish. Composing with the existing ownership escape keeps
+			// the two assertions separately auditable: owned(unsafe_cast(T, e)).
+			panic(&interpreterError{fmt.Sprintf("unsafe_cast cannot produce an owned type (%s); wrap the result: owned(unsafe_cast(...))", t), n.p})
+		}
+		return &UnsafeCast{Type: t, Val: n.args[1].toASTTop(c), p: n.p}
 	case n_ownedpromo:
 		return &OwnedPromotion{Val: n.args[0].toASTTop(c), p: n.p}
 	case n_arrlit:

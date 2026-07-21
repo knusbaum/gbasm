@@ -1,0 +1,2 @@
+Compiling tests/unsafe_cast_int_source_err_test.bos
+Fatal: unsafe_cast requires a pointer or uintptr source, but got i64; convert with uintptr(...) first

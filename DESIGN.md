@@ -380,9 +380,35 @@ Built-ins are split into two groups: **compiler intrinsics** (lowered by bosc it
 | `align_of(T)` | `i64` | Required alignment of `T` in bytes. A compile-time constant; consumes a type expression, not a runtime value. |
 | `dispose(x)` | `void` | Consume an `owned` binding with no runtime effect (see [Ownership](#ownership)). |
 | `owned(expr)` | `owned T` | Unsafe ownership promotion (see [Bring-your-own-memory](#bring-your-own-memory-byom)). |
+| `unsafe_cast(T, e)` | `T` | Reinterpret a pointer or `uintptr` as exactly `T`. The one construct that can manufacture a pointer. |
 | `T(expr)` | `T` | Type cast (for any type `T`, including primitives and user-defined aliases). |
 
 `alloc`, `new`, and `free` lower to `_heap.alloc(size i64)` and `_heap.free(p *mut byte)`. `len` lowers inline — slice length is a `[ref+8]` load, fixed-array length is a literal. None of these are callable through a function-pointer value: passing `len` or `alloc` as a value is a compile error.
+
+`unsafe_cast(T, e)` reinterprets `e` — a pointer or a `uintptr` — as `T`. `T` is
+the **full result type**, not a pointee, so mut and nullable bits are stated at
+the cast: `unsafe_cast(*mut node, a)`. Both arguments are unusual: the first is
+a *type*, parsed by the type grammar, and the second an ordinary expression.
+
+The source must already be a pointer or a `uintptr`; a plain integer is
+rejected with a message directing you to `uintptr(...)`. That costs one visible
+conversion and buys an audit surface — every raw address in a program is a
+`uintptr`, so nothing becomes a pointer without passing through a construct
+that says so.
+
+`T` may not carry `owned`. Owned bits imply a consumption obligation the cast
+cannot establish, so ownership stays with the existing escape and the two
+compose: `owned(unsafe_cast(*mut node, a))`. Keeping them separate keeps each
+assertion auditable on its own.
+
+**The cast has no precondition.** It is always legal and always succeeds,
+because it only produces a value; alignment and validity are properties of what
+you subsequently *do* with the result, not of its existence. Holding a
+temporarily-misaligned or not-yet-valid pointer is legitimate. Its result
+carries no provenance the checker can know, so it is an *untracked* pointer —
+valid to dereference, but tracking to no origin. That is the precise sense in
+which the operation is unsafe. Pointers obtained any other way keep their full
+use-after-free and borrow checking.
 
 `size_of` and `align_of` report the layout described in [The Boson ABI](#the-boson-abi-babi-0) — they read the same `Size`/`Alignment` computation the compiler uses to lay out storage, so they cannot drift from it. Both fold to constants at compile time and are therefore legal anywhere a literal is, including a file-scope initializer; there is no runtime size query. Like `alloc(T)`, the argument is a **type**, parsed by the type grammar rather than the expression grammar — `size_of(x)` for a value `x` is not accepted. `align_of` exists rather than being spelled as a literal because BABI-0's alignment ceiling is a property of the ABI and may rise (see [Alignment](#alignment)); code that asks stays correct across that change.
 

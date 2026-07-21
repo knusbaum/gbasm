@@ -59,8 +59,9 @@ const (
 	n_deref
 	n_dispose
 	n_alloc   // alloc(T) — arg is a type node (n_typename), not an expression
-	n_sizeof  // size_of(T) — likewise a type node; folds to a constant
-	n_alignof // align_of(T) — likewise
+	n_sizeof      // size_of(T) — likewise a type node; folds to a constant
+	n_alignof     // align_of(T) — likewise
+	n_unsafecast  // unsafe_cast(T, e) — args[0] is a type node, args[1] an expression
 	n_typedecl
 	n_ownedpromo
 	n_arrlit
@@ -188,6 +189,8 @@ func (t nodetype) String() string {
 		return "n_sizeof"
 	case n_alignof:
 		return "n_alignof"
+	case n_unsafecast:
+		return "n_unsafecast"
 	case n_typedecl:
 		return "n_typedecl"
 	case n_ownedpromo:
@@ -818,6 +821,18 @@ func (p *Parser) parsePostfix(v *Node) *Node {
 				tn := p.parseTypeName()
 				p.expect(tok_rparen)
 				v = &Node{t: n_alloc, p: v.p, args: []*Node{tn}}
+			case v.t == n_symbol && v.sval == "unsafe_cast":
+				// unsafe_cast(T, e): a HYBRID form -- the first argument is a
+				// type run through parseTypeName, the second an ordinary
+				// expression. Unlike alloc/size_of/align_of it cannot reuse the
+				// single-type shape, and unlike a normal call it cannot use
+				// parseArgs, since `T` is not parseable as an expression.
+				p.advance() // consume '('
+				tn := p.parseTypeName()
+				p.expect(tok_comma)
+				val := p.parseExpression()
+				p.expect(tok_rparen)
+				v = &Node{t: n_unsafecast, p: v.p, args: []*Node{tn, val}}
 			case v.t == n_symbol && (v.sval == "size_of" || v.sval == "align_of"):
 				// size_of(T) / align_of(T): like alloc(T), the argument is a
 				// TYPE run through parseTypeName, not the expression grammar.

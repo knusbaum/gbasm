@@ -1,0 +1,20 @@
+package main
+
+// unsafe_cast cannot mint an owned type. Owned bits carry a consumption
+// obligation the cast has no way to establish, and letting them through
+// untracked would mean a resource whose destructor never runs.
+//
+// The escape already exists and composes: owned(unsafe_cast(...)). Keeping the
+// two assertions separate keeps each one auditable on its own -- `owned(` says
+// "I promise this obligation is real", `unsafe_cast(` says "I promise this
+// address is what I claim".
+
+type node struct {
+	a i64
+}
+
+fn main() {
+	addr uintptr := 4096
+	p := unsafe_cast(owned *mut node, addr)
+	_ := p
+}

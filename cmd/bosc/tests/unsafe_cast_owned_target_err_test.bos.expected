@@ -1,0 +1,2 @@
+Compiling tests/unsafe_cast_owned_target_err_test.bos
+Failed to parse: unsafe_cast cannot produce an owned type (owned *mut node); wrap the result: owned(unsafe_cast(...))
