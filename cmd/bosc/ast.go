@@ -2367,6 +2367,12 @@ func floatlitASTType() ASTType {
 	return ASTType{Name: "<floatlit>"}
 }
 
+// isPendingLit reports whether t is one of the pending literal types, whose
+// concrete type is supplied by context rather than by the literal itself.
+func isPendingLit(t ASTType) bool {
+	return t.Same(intlitASTType()) || t.Same(floatlitASTType())
+}
+
 type AST interface {
 	// returns the type the expression gives.
 	ASTType(*Context) ASTType
@@ -3286,6 +3292,18 @@ func (o *Op2) ASTType(c *Context) ASTType {
 			if operand.Same(intlitASTType()) {
 				continue
 			}
+			if operand.Same(floatlitASTType()) {
+				// A float literal is numeric but has no concrete type yet.
+				// It is legal only where floats are, so the bitwise and
+				// shift operators still reject it below.
+				if arith {
+					continue
+				}
+				panic(&interpreterError{
+					msg: fmt.Sprintf("operator %s requires integer operands, but got a float literal", opSym(o.Type)),
+					p:   o.Pos(),
+				})
+			}
 			if arith {
 				if !isNumericType(c, operand) {
 					panic(&interpreterError{
@@ -3302,11 +3320,33 @@ func (o *Op2) ASTType(c *Context) ASTType {
 				})
 			}
 		}
-		// An integer literal adopts the other operand's type.
-		if ft.Same(intlitASTType()) {
+		// A literal adopts the other operand's type. When both are literals
+		// the result stays pending, and a float literal dominates an integer
+		// one — `1.5 + 2` is a float expression — so the destination decides
+		// the concrete type and the arithmetic happens in it.
+		fPend, sPend := isPendingLit(ft), isPendingLit(st)
+		if fPend && sPend {
+			if ft.Same(floatlitASTType()) || st.Same(floatlitASTType()) {
+				return floatlitASTType()
+			}
+			return intlitASTType()
+		}
+		if fPend {
+			if ft.Same(floatlitASTType()) && !isFloatType(c, st) {
+				panic(&interpreterError{
+					msg: fmt.Sprintf("operator %s: a float literal cannot be combined with %s; Boson does not convert between number types implicitly", opSym(o.Type), st),
+					p:   o.Pos(),
+				})
+			}
 			return st
 		}
-		if st.Same(intlitASTType()) {
+		if sPend {
+			if st.Same(floatlitASTType()) && !isFloatType(c, ft) {
+				panic(&interpreterError{
+					msg: fmt.Sprintf("operator %s: a float literal cannot be combined with %s; Boson does not convert between number types implicitly", opSym(o.Type), ft),
+					p:   o.Pos(),
+				})
+			}
 			return ft
 		}
 		// Both operands are concrete. Boson does not convert between

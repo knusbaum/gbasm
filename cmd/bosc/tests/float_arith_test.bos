@@ -1,0 +1,61 @@
+package main
+
+import "string"
+
+// Float arithmetic. Results are scaled and truncated to integers because
+// float formatting does not exist yet; the scaling is chosen so that each
+// expected value is exact in binary floating point.
+
+fn main() {
+	a f64 := 3.5
+	b f64 := 1.25
+
+	string.puti(i64((a + b) * 100.0))   // 4.75  -> 475
+	string.putc(0x0A)
+	string.puti(i64((a - b) * 100.0))   // 2.25  -> 225
+	string.putc(0x0A)
+	string.puti(i64(a * b * 100.0))     // 4.375 -> 437 (truncated)
+	string.putc(0x0A)
+	string.puti(i64(a / b * 100.0))     // 2.8   -> 280
+	string.putc(0x0A)
+
+	// Division that is not exact in integers.
+	c f64 := 1.0
+	d f64 := 8.0
+	string.puti(i64(c / d * 1000.0))    // 0.125 -> 125
+	string.putc(0x0A)
+
+	// An untyped integer literal adopts the float operand's type.
+	string.puti(i64(a * 2))             // 7.0   -> 7
+	string.putc(0x0A)
+
+	// f32 computes in f32.
+	e f32 := 2.5
+	f f32 := 0.5
+	string.puti(i64((e + f) * 100.0))   // 3.0   -> 300
+	string.putc(0x0A)
+
+	// f32 intermediates are NOT widened to f64. With a = 1e8, b = 1.0,
+	// c = -1e8: in f32, 1.0 is below the ulp of 1e8 and vanishes, so the
+	// result is 0. Computed in f64 the sum is exact and the result is 1.
+	// This is the case that distinguishes the two, and it is the reason
+	// the evaluation-precision rule is stated as "the declared type is the
+	// type it computes in".
+	g f32 := 100000000.0
+	h f32 := 1.0
+	i f32 := -100000000.0
+	string.puti(i64(g + h + i))         // 0 in f32; would be 1 in f64
+	string.putc(0x0A)
+
+	// The same values in f64 give the other answer, confirming the test
+	// discriminates rather than both paths happening to agree.
+	j f64 := 100000000.0
+	k f64 := 1.0
+	l f64 := -100000000.0
+	string.puti(i64(j + k + l))         // 1
+	string.putc(0x0A)
+
+	// Compound expression with mixed precedence.
+	string.puti(i64((a + b * 2.0) * 10.0))  // 3.5 + 2.5 = 6.0 -> 60
+	string.putc(0x0A)
+}

@@ -6538,7 +6538,59 @@ func compileInterfaceEquality(of io.Writer, c *Context, o *Op2, dest spot) spot 
 	return dest
 }
 
+// floatArithOp returns the SSE mnemonic for a float-typed arithmetic operator.
+// Only + - * / reach here: the type checker rejects the bitwise operators, %
+// and the shifts on floats, and comparisons are bool-typed so they do not
+// match. The scalar SSE forms are two-operand (`op dst, src`) exactly like
+// ADD and SUB, so all four share one lowering — unlike the integer paths,
+// where mul and div have to route through rax/rdx.
+func floatArithOp(c *Context, o *Op2) (string, bool) {
+	t := o.ASTType(c)
+	if !isFloatType(c, t) {
+		return "", false
+	}
+	suffix := "sd"
+	if c.ResolveUnderlying(t).Name == "f32" {
+		suffix = "ss"
+	}
+	switch o.Type {
+	case n_add:
+		return "add" + suffix, true
+	case n_sub:
+		return "sub" + suffix, true
+	case n_mul:
+		return "mul" + suffix, true
+	case n_div:
+		return "div" + suffix, true
+	}
+	return "", false
+}
+
 func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
+	if op, ok := floatArithOp(c, o); ok {
+		t := o.ASTType(c)
+		fst := newSpot(of, c, c.Temp(), t)
+		first := compileTop(of, c, o.First, fst)
+		var second spot
+		if o.Second.ASTType(c).Same(t) {
+			second = compileTop(of, c, o.Second, nullspot)
+		} else {
+			// A literal operand has a pending type; give it a spot of the
+			// operation's type so it materializes at the right width.
+			snd := newSpot(of, c, c.Temp(), t)
+			second = compileTop(of, c, o.Second, snd)
+		}
+		fmt.Fprintf(of, "\t%s %s %s\n", op, first.ref, second.ref)
+		if dest.empty() {
+			dest = first
+		} else {
+			move(of, c, dest, first)
+			first.free(of)
+		}
+		second.free(of)
+		return dest
+	}
+
 	//if dest.empty() {
 	//dest = newSpot(of, c, c.Temp(), o.ASTType(c))
 	//}
