@@ -1,0 +1,2 @@
+Compiling tests/uintptr_to_pointer_err_test.bos
+Fatal: Cannot cast between pointer and non-pointer types: uintptr to nodeptr

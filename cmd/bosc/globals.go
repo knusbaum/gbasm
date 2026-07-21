@@ -555,7 +555,7 @@ func encodeIntBytes(dstt ASTType, n int64) ([]byte, error) {
 		width = 2
 	case "i32", "u32":
 		width = 4
-	case "i64", "u64":
+	case "i64", "u64", "uintptr":
 		width = 8
 	default:
 		return nil, fmt.Errorf("integer initializer cannot be assigned to non-integer type %s", dstt)

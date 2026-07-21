@@ -1,0 +1,52 @@
+package main
+
+import "string"
+
+// uintptr is an unsigned, pointer-width integer. Any pointer converts to it
+// with an ordinary cast; the reverse requires unsafe_cast and is rejected here
+// (see uintptr_to_pointer_err_test).
+//
+// It is safe on its own because a uintptr cannot be dereferenced: address
+// arithmetic on one can produce a nonsensical value, but not an unsound
+// operation. That is what lets all of the unsafety concentrate in unsafe_cast.
+
+type node struct {
+	a i64
+	b i64
+}
+
+fn line(n i64) {
+	string.puti(n)
+	string.putc('\n')
+}
+
+fn main() {
+	// Width and alignment match a pointer.
+	line(size_of(uintptr))
+	line(align_of(uintptr))
+
+	// A pointer converts, and the value is stable across a round of
+	// arithmetic that cancels out.
+	var n node := {a: 7, b: 9}
+	p := &n
+	a := uintptr(p)
+	line(i64(a - a))
+
+	// Arithmetic: the difference between adjacent field addresses is the
+	// field offset the ABI assigns, so this reads layout rather than a
+	// hardcoded number.
+	off := uintptr(&n.b) - uintptr(&n.a)
+	line(i64(off))
+
+	// Unsigned semantics: 0 - 1 wraps to the maximum, and shifting it right
+	// fills with zero rather than sign bits.
+	zero uintptr := 0
+	w := zero - 1
+	line(i64(w >> 60))
+
+	// Ordinary integer ops apply, including the bitwise ones an allocator
+	// needs for alignment rounding.
+	addr uintptr := 1000
+	al := (addr + 15) & ~uintptr(15)
+	line(i64(al))
+}

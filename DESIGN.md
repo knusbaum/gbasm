@@ -36,7 +36,20 @@ Boson is a statically typed, imperative language. It is intentionally small: no 
 | `u8`, `u16`, `u32`, `u64` | Unsigned integers of the given width |
 | `byte` | Alias for `u8` |
 | `bool` | 1-byte boolean |
+| `uintptr` | Unsigned, pointer-width integer (8 bytes). Any pointer converts to it with an ordinary cast; the reverse requires `unsafe_cast` |
 | `<intlit>` | Compile-time-only type for integer literals; resolved to a concrete integer type based on context |
+
+`uintptr` is an ordinary unsigned integer in every respect — the full set of
+arithmetic, bitwise, shift, and comparison operators applies, with the same
+defined two's-complement wrap as every other Boson integer. What makes it
+useful is what it *cannot* do: a `uintptr` cannot be dereferenced. Converting a
+pointer to one therefore discards pointer-ness safely, and address arithmetic
+on the result can produce a nonsensical value but never an unsound operation.
+That is why `T(expr)` accepts pointer → `uintptr` while the reverse direction —
+manufacturing a pointer from an arbitrary integer — is reserved to
+`unsafe_cast`. Boson has no GC, so `uintptr` carries none of the
+object-liveness hazard the equivalent type has in a garbage-collected language;
+it really is just an integer.
 
 **Floating-point types:**
 

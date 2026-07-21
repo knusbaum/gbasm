@@ -52,7 +52,7 @@ func canonicalTypeName(c *Context, name string) string {
 		return name
 	}
 	switch name {
-	case "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64",
+	case "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "uintptr",
 		"byte", "bool", "void", "self", "any",
 		// The builtin interfaces are available everywhere unqualified and
 		// have a single home (package builtin); render them bare so a

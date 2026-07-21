@@ -1,0 +1,25 @@
+package main
+
+// The safe direction of the uintptr conversion is pointer -> uintptr: the
+// result cannot be dereferenced, so nothing unsound follows from it. The
+// reverse manufactures a pointer from an arbitrary integer, which is the
+// unsafe half and belongs to unsafe_cast -- the ordinary T(expr) cast must
+// keep rejecting it, or the "all unsafety is concentrated in one construct"
+// property is false.
+//
+// The alias is deliberate: it is what hides the pointee from the name-based
+// guards, so this also pins that the check runs on resolved types.
+
+type node struct {
+	a i64
+	b i64
+}
+
+type nodeptr *mut node
+
+fn main() {
+	var n node := {a: 1, b: 2}
+	addr uintptr := uintptr(&n)
+	p := nodeptr(addr)
+	_ := p
+}

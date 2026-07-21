@@ -828,6 +828,12 @@ func (c *Context) TypeByName(name string) (ASTType, bool) {
 		return ASTType{Name: "u32"}, true
 	case "u64":
 		return ASTType{Name: "u64"}, true
+	case "uintptr":
+		// Unsigned, pointer-width. Any pointer converts to it with an ordinary
+		// cast; the reverse needs unsafe_cast. Safe on its own precisely
+		// because a uintptr cannot be dereferenced -- address arithmetic can
+		// produce a nonsensical value but not an unsound operation.
+		return ASTType{Name: "uintptr"}, true
 	case "f32":
 		return ASTType{Name: "f32"}, true
 	case "f64":
@@ -892,7 +898,7 @@ func isIntegerType(c *Context, t ASTType) bool {
 		return false
 	}
 	switch c.ResolveUnderlying(t).Name {
-	case "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "byte":
+	case "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "byte", "uintptr":
 		return true
 	}
 	return false
@@ -1681,7 +1687,7 @@ func (t *ASTType) Alignment(c *Context) int {
 		panic("Alignment() called on <intlit> type — this is a compiler bug")
 	case "<floatlit>":
 		panic("Alignment() called on <floatlit> type — this is a compiler bug")
-	case "i64", "u64", "f64":
+	case "i64", "u64", "f64", "uintptr":
 		return 8
 	case "i32", "u32", "f32":
 		return 4
@@ -1770,7 +1776,7 @@ func (t *ASTType) Size(c *Context) int {
 		panic("Size() called on <intlit> type — this is a compiler bug")
 	case "<floatlit>":
 		panic("Size() called on <floatlit> type — this is a compiler bug")
-	case "i64", "u64", "f64":
+	case "i64", "u64", "f64", "uintptr":
 		return 8
 	case "i32", "u32", "f32":
 		return 4

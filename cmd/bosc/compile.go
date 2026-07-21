@@ -461,6 +461,7 @@ var builtinScalarTypes = []string{
 	"u8", "u16", "u32", "u64",
 	"f32", "f64",
 	"byte", "bool",
+	"uintptr",
 }
 
 // isBuiltinScalarType reports whether name is a primitive scalar type whose
@@ -486,7 +487,7 @@ func emitBuiltinScalarTypedescs(of io.Writer) {
 // scalarSize returns the byte size of a primitive scalar by name.
 func scalarSize(name string) int {
 	switch name {
-	case "i64", "u64", "f64":
+	case "i64", "u64", "f64", "uintptr":
 		return 8
 	case "i32", "u32", "f32":
 		return 4
@@ -6321,6 +6322,25 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 	// T(expr) cast.
 	srcIsPtr := srcUnderlying.Indirection > 0
 	dstIsPtr := dstUnderlying.Indirection > 0
+	// uintptr is the one sanctioned exception, and only in the safe direction.
+	// Pointer -> uintptr discards pointer-ness, which is exactly the point: the
+	// result cannot be dereferenced, so address arithmetic on it can produce a
+	// nonsensical value but never an unsound operation. The reverse --
+	// manufacturing a pointer from an integer -- is the unsafe half and lives
+	// in unsafe_cast, so it stays rejected here.
+	if srcIsPtr && !dstIsPtr && dstUnderlying.Name == "uintptr" {
+		if srcSize != dstSize {
+			CompileErrorF(src, "internal: pointer and uintptr differ in size (%d vs %d)", srcSize, dstSize)
+		}
+		srcSpot := compileTop(of, c, src, nullspot)
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), destType)
+		}
+		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, srcSpot.ref)
+		srcSpot.free(of)
+		dest.t = destType
+		return dest
+	}
 	if srcIsPtr != dstIsPtr {
 		CompileErrorF(src, "Cannot cast between pointer and non-pointer types: %s to %s", srcType, destType)
 	}
@@ -6497,7 +6517,7 @@ func litFitsIn(val *big.Int, t ASTType) bool {
 	case "i64":
 		lo = new(big.Int).Neg(new(big.Int).Lsh(big.NewInt(1), 63))
 		hi = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 63), big.NewInt(1))
-	case "u64":
+	case "u64", "uintptr":
 		lo = big.NewInt(0)
 		hi = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 64), big.NewInt(1))
 	default:
