@@ -123,7 +123,21 @@ span_index = (p & (CHUNK_SIZE - 1)) / SPAN_SIZE
 `mmap` only guarantees page alignment, so a chunk is obtained by mapping
 `2 * CHUNK_SIZE`, rounding the base up to a `CHUNK_SIZE` boundary, and
 unmapping the prefix and suffix. The transient over-reservation is address
-space, not memory.
+space, not memory. This is what jemalloc and mimalloc do, for the same reason.
+
+**Do not conclude from a debugger that the trim is unnecessary.** Measured on
+this kernel, every large anonymous mapping comes back **2MB-aligned**, not
+merely page-aligned — Linux's transparent-huge-page placement rounds large
+anonymous mappings to the PMD boundary so they can be backed by huge pages.
+That is one bit short of `CHUNK_SIZE`, so chunks land aligned about half the
+time by luck, and it is not a contract: it depends on
+`CONFIG_TRANSPARENT_HUGEPAGE` and on the mapping being large enough.
+
+This has a direct consequence for testing. 2MB alignment *implies* `SPAN_SIZE`
+alignment, so any test that infers chunk alignment from a span address passes
+even with the trim removed. The invariant has to be asserted on the chunk base
+itself — see `halloc_chunks_test.bos`, where the indirect form passed under
+mutation and the direct form caught 2 of 3 chunks.
 
 **Span 0 of each chunk is metadata**, not allocatable. It holds the chunk
 header and the per-span descriptors for all 64 spans:
