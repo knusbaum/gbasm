@@ -422,6 +422,38 @@ statement. `} else` on the same line works; `}` newline `else`
 **does not parse** (the `;` separates them). DESIGN.md §Statements
 has the full list of statement-ending tokens.
 
+#### Hand-written `.bs` must `acquire` registers it holds across a named access
+
+bas's register allocator tracks which registers are occupied by **named
+allocations** — `local`, `arg`/`argi`, `bytes`. A raw `mov r10 r8` writes the
+register directly and tells the allocator *nothing*, so the pool still believes
+r10 is free.
+
+That is harmless in a function built entirely from raw registers, which is what
+every runtime `.bs` was historically. It bites the moment one function mixes
+raw registers with a named allocation: reading the named one makes the
+allocator materialize it into a register **of its own choosing**, and it will
+happily choose a register you are hand-holding a value in.
+
+This cost a real debugging cycle in `runtime/_sys/sys_linux.bs`. `mov r9 a6`
+(a6 being a stack argument) lowered to *two* instructions — a scratch load and
+a move — and the scratch it picked was r10, one instruction before a `syscall`,
+replacing mmap's flags with a stack address:
+
+```
+mov r10, r8            ; a4 -> r10
+mov r8, r9             ; a5 -> r8
+mov r10, [rbp+0x38]    ; scratch load CLOBBERS a4
+mov r9, r10
+syscall
+```
+
+The fix is `acquire` (and `release` after), which is why bosc emits
+acquire/release around its own call setup. Reordering so the named access
+happens while the register is dead also "works" but only by accident of which
+register bas picks — don't rely on it. Leave at least one register unacquired,
+or the allocator has nowhere to materialize into.
+
 #### bas does not model EFLAGS
 
 The `bas` register allocator tracks registers and memory, but **not the
