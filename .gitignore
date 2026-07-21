@@ -5,6 +5,8 @@
 /bdoc
 /bplayd
 /bplay-runner
+/bdump
+/btourd
 
 # Per-subproject build binaries + test-harness intermediates
 cmd/bosc/bosc
@@ -24,7 +26,8 @@ cmd/bosc/pair.bs
 cmd/bosc/visibility.bs
 cmd/bosc/retalias_pkg.bs
 
-# Example build artifacts (mmk writes everything under target/)
+# Build artifacts (mmk writes package .bo files and work dirs under target/)
+/target/
 examples/*/target/
 
 # Compiler scratch emitted next to inputs during ad-hoc runs
