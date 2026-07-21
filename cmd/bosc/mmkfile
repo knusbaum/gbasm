@@ -368,7 +368,7 @@ test: go_tests bosc_tests {
     fi
     if grep -q '^import "sys"' "$target"; then
         case "$extra_bo" in *" sys.bo"*) ;; *) extra_bo="$extra_bo sys.bo";; esac
-        extra_bo="$extra_bo syspkg.bo"
+        case "$extra_bo" in *syspkg.bo*) ;; *) extra_bo="$extra_bo syspkg.bo";; esac
     fi
     if grep -q '^import "errors"' "$target"; then
         extra_bo="$extra_bo errors.bo"

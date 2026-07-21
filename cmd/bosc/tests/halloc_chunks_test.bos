@@ -89,14 +89,21 @@ fn main() {
 	// inside a reserve, so if the reserve is misaligned every chunk is, and
 	// chunk_of() silently reads a descriptor out of unrelated memory.
 	//
-	// Honest limitation: this assertion does NOT reliably catch removal of the
-	// alignment step. Measured, the kernel returns these reservations 2MB
-	// aligned -- one bit short of CHUNK_SIZE -- so an unaligned base is a
-	// coin flip. And extra samples do not help: consecutive reservations are
-	// spaced by RESERVE_SIZE + CHUNK_SIZE, which is a multiple of CHUNK_SIZE,
-	// so every reserve shares the first one's alignment mod CHUNK_SIZE. The
-	// assertion is here because it is the right invariant to state, not
-	// because it proves the trim ran.
+	// Whether removing the trim is CAUGHT depends on ASLR, and that is a
+	// property of the environment rather than a gap in the test. These
+	// reservations come back 2MB-aligned -- one bit short of CHUNK_SIZE -- so
+	// about half of runs are CHUNK_SIZE-aligned anyway, and in those runs the
+	// untrimmed allocator is genuinely correct. There is nothing to detect.
+	//
+	// In the other half the failure is loud and lands on several assertions at
+	// once: the span-index line above reads 33 instead of 1, because span_index
+	// masks by CHUNK_MASK and a chunk 2MB off resolves every pointer 32 spans
+	// wrong. Measured over 12 mutated runs: 7 caught, 5 correct-by-luck.
+	//
+	// Extra reserves do not add samples. Consecutive reservations are spaced by
+	// a multiple of CHUNK_SIZE, so every reserve inherits the first one's
+	// alignment -- an attempt to break that with a 2MB spacer between them
+	// changed nothing, and was removed rather than left looking effective.
 	_ := _halloc.reserve_new_for_test()
 
 	var badres i64 := 0
