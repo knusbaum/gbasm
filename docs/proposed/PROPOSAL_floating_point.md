@@ -998,6 +998,71 @@ not exist for SSE today.
 
 ---
 
+## Known gaps and debt
+
+Live checklist of everything deliberately deferred or left incomplete while this
+feature is in flight. **Entries are removed only when the gap is actually
+closed** — this is the list to re-read before declaring the feature done, and
+before moving this doc to `docs/implemented/`. Distinct from *Open questions*
+below, which is about undecided design; everything here is decided and merely
+unbuilt.
+
+### Must be closed before the feature ships
+
+- [ ] **`requireFloatCodegenSupport` must be deleted.** `compile.go` currently
+  refuses float storage outright. It exists because making the types real
+  without codegen produced a *silent miscompile* — `fn f(a f64, b f64) f64
+  { return a + b }` compiled clean, emitting `argi … 64` (the integer argument
+  registers) and an integer `ADD`. Stage 4 replaces the local case, Stage 5 the
+  argument case. If any float program compiles while this function still exists,
+  something is wrong.
+- [ ] **Bitwise/shift rejection tests for floats** (`f & 1`, `f % 2`, `f ^ g`,
+  `f << 1`). Verified by hand; not committed, because the codegen gate fires
+  before the operator check. Root cause is architectural: `Op2`'s type check runs
+  during codegen rather than in `ToAST` — one of the leaked checks catalogued in
+  [`AUDIT_codegen_check_segregation.md`](../reference/AUDIT_codegen_check_segregation.md).
+  Add these the moment Stage 4 makes a float local compilable.
+- [ ] **Argument directives have no class tag.** Stage 2 gave `local` the
+  `f32`/`f64` size operand; `argi` and friends still take a bit width only.
+  Needed by Stage 5 along with the two-cursor System V classification.
+- [ ] **Constant-folding invariant test.** For a set of expressions, compute each
+  as constants *and* at runtime from variables holding the same values, and
+  assert bit-identical results. This is the executable form of the
+  evaluation-precision rule and the test that distinguishes destination-typed
+  folding from exact-rational folding. See *Evaluation precision*.
+
+### Accepted limitations (decided, not defects)
+
+- **`<floatlit>` → `f32` rounds twice.** A literal is lexed as a Go `float64`
+  and then narrowed. Constructed and verified; unreachable at random, and
+  identical to what an explicit runtime cast does — so it is consistent with the
+  evaluation-precision rule rather than an exception to it. See *Literals*.
+- **`case "xmm"` reports a 128-bit operand size.** Safe only because the size
+  feeds nothing but the immediate sign-extension check, and the one scalar family
+  with an `imm8` (`CMPSD`/`CMPSS`) uses predicates 0–7. A packed form taking a
+  full-range `imm8` — a shuffle mask — would need this revisited. Noted in
+  `encoder.go` at the call site.
+- **FMA is unreachable.** VEX-encoded, and `parseForm` hard-errors on VEX. This
+  is load-bearing for the evaluation-precision rule, not an omission.
+
+### Lessons that outlive this feature
+
+- **The existing suites validate behavior, not encodings.** The REX bug
+  (`304e8a3`) produced wrong bytes that ran correctly for years, because REX.X is
+  ignored without a SIB byte. Any future encoder work needs byte-level assertions
+  against an external assembler (`as` + `objdump`), not just passing programs.
+- **Adding a capability at one layer while another still assumes the old world
+  produces silence, not failure.** Both the REX bug and the `f64`-as-integer
+  miscompile have this shape. At each stage boundary, ask what the *next* layer
+  down will do with a value it does not understand — and if the answer is
+  "treat it as an integer", add a refusal before moving on.
+- **This encoder always emits disp32**, where `as` shortens to disp8 when it
+  fits. Both are valid; ours are larger. Not a defect and out of scope here, but
+  it is why byte-level tests against `as` must use displacements too large for
+  disp8 to be directly comparable.
+
+---
+
 ## Open questions
 
 **None blocking.** Every design question raised has been settled; what remains is
