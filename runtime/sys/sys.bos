@@ -1,0 +1,119 @@
+// Package sys is the typed Boson surface over the raw Linux syscall stubs in
+// _sys. Adding a syscall here is ordinary Boson: name the number, name the
+// arguments, call the right syscallN. Nothing new has to be written in
+// assembly.
+//
+// The wrappers are deliberately thin. They convert between Boson types and the
+// kernel's flat i64 arguments and do nothing else -- no retry, no errno
+// translation into an error value, no hidden allocation. A caller that wants
+// richer handling builds it on top; a caller that needs the raw result (the
+// allocator, which runs below any error machinery) still has it.
+package sys
+
+import "_sys"
+
+// x86-64 Linux syscall numbers.
+SYS_MMAP i64 := 9
+SYS_MPROTECT i64 := 10
+SYS_MUNMAP i64 := 11
+SYS_BRK i64 := 12
+SYS_MADVISE i64 := 28
+SYS_GETPID i64 := 39
+SYS_EXIT i64 := 60
+
+// Memory protection bits, for the `prot` argument of mmap and mprotect.
+pub PROT_NONE i64 := 0
+pub PROT_READ i64 := 1
+pub PROT_WRITE i64 := 2
+pub PROT_EXEC i64 := 4
+
+// Mapping flags. PRIVATE and ANONYMOUS together are the "give me zeroed pages
+// backed by nothing" request an allocator wants.
+pub MAP_SHARED i64 := 1
+pub MAP_PRIVATE i64 := 2
+pub MAP_FIXED i64 := 16
+pub MAP_ANONYMOUS i64 := 32
+
+// madvise advice values.
+pub MADV_NORMAL i64 := 0
+pub MADV_DONTNEED i64 := 4
+pub MADV_FREE i64 := 8
+
+// A syscall reports failure by returning the negated errno, which is always in
+// [-4095, -1]. Every other value is a result -- including negative ones for
+// calls that legitimately return them, which is why the range matters rather
+// than just the sign.
+ERRNO_FLOOR i64 := 0 - 4095
+
+// is_error reports whether a raw syscall return is a failure.
+pub fn is_error(r i64) bool {
+	return r < 0 && r >= ERRNO_FLOOR
+}
+
+// errno extracts the positive errno from a failed syscall return, or 0 if the
+// call succeeded.
+pub fn errno(r i64) i64 {
+	if (is_error(r)) {
+		return 0 - r
+	}
+	return 0
+}
+
+// mmap maps memory. Returns the mapping address, or a negated errno.
+//
+// This is the six-argument syscall that motivated the generic floor: with the
+// syscall number it needs seven argument slots, one past the six argument
+// registers, so the last travels on the stack.
+pub fn mmap(addr uintptr, length i64, prot i64, flags i64, fd i64, offset i64) i64 {
+	return _sys.syscall6(SYS_MMAP, i64(addr), length, prot, flags, fd, offset)
+}
+
+// munmap unmaps a region. Returns 0, or a negated errno.
+pub fn munmap(addr uintptr, length i64) i64 {
+	return _sys.syscall2(SYS_MUNMAP, i64(addr), length)
+}
+
+// mprotect changes the protection on a region. Returns 0, or a negated errno.
+pub fn mprotect(addr uintptr, length i64, prot i64) i64 {
+	return _sys.syscall3(SYS_MPROTECT, i64(addr), length, prot)
+}
+
+// madvise advises the kernel about a region's expected use. Returns 0, or a
+// negated errno. MADV_DONTNEED is how an allocator returns pages to the system
+// without giving up the address range.
+pub fn madvise(addr uintptr, length i64, advice i64) i64 {
+	return _sys.syscall3(SYS_MADVISE, i64(addr), length, advice)
+}
+
+// brk sets the program break. Returns the new break, which equals the old one
+// if the request could not be satisfied -- brk reports failure by refusing to
+// move rather than by returning an errno.
+pub fn brk(addr uintptr) i64 {
+	return _sys.syscall1(SYS_BRK, i64(addr))
+}
+
+// getpid returns the calling process's ID. It cannot fail, which makes it the
+// cheapest way to check that the syscall path itself works.
+pub fn getpid() i64 {
+	return _sys.syscall0(SYS_GETPID)
+}
+
+// exit terminates the process with the given status and does not return.
+pub fn exit(status i64) {
+	_ := _sys.syscall1(SYS_EXIT, status)
+}
+
+// map_anon is the common case: private, anonymous, read-write pages backed by
+// nothing, at an address of the kernel's choosing. Returns 0 on failure rather
+// than a negated errno, so the result is directly usable as a pointer.
+//
+// The pages are zero-filled, which callers may rely on -- it is a property of
+// MAP_ANONYMOUS, not an accident.
+pub fn map_anon(length i64) uintptr {
+	r := mmap(uintptr(0), length, PROT_READ + PROT_WRITE,
+		MAP_PRIVATE + MAP_ANONYMOUS, 0 - 1, 0)
+	if (is_error(r)) {
+		return uintptr(0)
+	}
+	return uintptr(r)
+}

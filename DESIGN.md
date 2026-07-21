@@ -366,7 +366,7 @@ Owned types are not allowed at file scope. A global never goes out of scope, so 
 
 ### Built-in Functions
 
-Built-ins are split into two groups: **compiler intrinsics** (lowered by bosc itself, not callable through a function pointer) and **runtime packages** (ordinary Boson packages that any program imports). The runtime packages are `string`, `io`, `fmt`, `_io_sys`, `_init`, `_heap`, `_iface`, `pair`, and `builtin`.
+Built-ins are split into two groups: **compiler intrinsics** (lowered by bosc itself, not callable through a function pointer) and **runtime packages** (ordinary Boson packages that any program imports). The runtime packages are `string`, `io`, `fmt`, `sys`, `_sys`, `_io_sys`, `_init`, `_heap`, `_iface`, `pair`, and `builtin`.
 
 **Compiler intrinsics:**
 
@@ -453,7 +453,7 @@ The raw syscall wrappers, taking i64 fd values directly, live in `_io_sys`:
 | `_io_sys.open` | `([]byte path, i64 flags, i64 mode) i64` | Raw `open(2)` syscall |
 | `_io_sys.close` | `(i64 fd) i64` | Raw `close(2)` syscall |
 
-The `_init` package provides `_init.start` (the ELF entry point) and `_init.index_oob` (called by bounds checks). The `_heap` package provides the bootstrap allocator (mmap-backed: each allocation is one mapping with a small size header, `free` calls `munmap`). The `_iface` package provides `assert_to`, the runtime helper backing interface-to-interface type assertion (lazy per-typedesc itab cache). The `pair` package exists as a minimal cross-package struct used by tests.
+The `_init` package provides `_init.start` (the ELF entry point) and `_init.index_oob` (called by bounds checks). The `_heap` package provides the bootstrap allocator (mmap-backed: each allocation is one mapping with a small size header, `free` calls `munmap`). The `_iface` package provides `assert_to`, the runtime helper backing interface-to-interface type assertion (lazy per-typedesc itab cache). The `_sys` package is the generic syscall floor — `syscall0`…`syscall6`, the only hand-written assembly the syscall surface needs — and `sys` is the typed Boson package built on it (`mmap`, `munmap`, `mprotect`, `madvise`, `brk`, plus the `PROT_`/`MAP_` constants and the errno convention). Adding a syscall means adding a Boson wrapper, not another assembly stub. The `pair` package exists as a minimal cross-package struct used by tests.
 
 **`fmt` package** — composable formatting, built on `io.writer` and runtime type assertion. Five layers, smallest first; all storage is caller-owned (no GC obligations in the public surface), and the only heap traffic is the lazy itab cache inside `%v` dispatch.
 

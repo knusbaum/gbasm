@@ -1,0 +1,73 @@
+package main
+
+import "string"
+import "sys"
+
+// The typed syscall surface. Everything here is ordinary Boson calling the
+// generic _sys stubs -- the point of the package is that adding a syscall no
+// longer means writing assembly.
+//
+// The mmap path gets the most attention because it is the one the allocator
+// depends on and the one with the most ways to be subtly wrong: six arguments,
+// the last of which travels on the stack.
+
+fn line(n i64) {
+	string.puti(n)
+	string.putc('\n')
+}
+
+fn main() {
+	// A call that cannot fail, so a failure here means the syscall path
+	// itself is broken rather than the arguments.
+	if (sys.getpid() > 0) { line(1) } else { line(0) }
+
+	// The errno convention: failures are negated errnos in [-4095, -1], and
+	// everything else is a result. The range matters rather than just the
+	// sign, since some syscalls legitimately return negative values.
+	if (sys.is_error(0 - 1)) { line(1) } else { line(0) }
+	if (sys.is_error(0 - 4095)) { line(1) } else { line(0) }
+	if (sys.is_error(0 - 4096)) { line(1) } else { line(0) }
+	if (sys.is_error(0)) { line(1) } else { line(0) }
+	line(sys.errno(0 - 12))
+	line(sys.errno(4096))
+
+	// map_anon: the common case, returning 0 on failure so the result is
+	// directly usable as an address.
+	base := sys.map_anon(8192)
+	if (base != uintptr(0)) { line(1) } else { line(0) }
+	line(i64(base & uintptr(4095)))
+
+	// The mapping must actually work. MAP_ANONYMOUS pages are zero-filled,
+	// which callers are entitled to rely on.
+	p := unsafe_cast(*mut i64, base)
+	line(*p)
+	*p = 0x5A5A5A5A
+	line(*p)
+
+	// Reach the far end of the mapping: proves the length argument was
+	// honored and not silently truncated to one page.
+	q := unsafe_cast(*mut i64, base + uintptr(8192) - uintptr(8))
+	*q = 99
+	line(*q)
+
+	// mprotect to read-only, then back. Both must report success.
+	line(sys.mprotect(base, 4096, sys.PROT_READ))
+	line(sys.mprotect(base, 4096, sys.PROT_READ + sys.PROT_WRITE))
+
+	// madvise is how an allocator releases physical pages while keeping the
+	// address range.
+	line(sys.madvise(base, 4096, sys.MADV_DONTNEED))
+
+	// MADV_DONTNEED on an anonymous mapping zeroes the page, so the value
+	// written earlier is gone while the mapping itself is still valid.
+	line(*p)
+
+	line(sys.munmap(base, 8192))
+
+	// A deliberately invalid unmap: a misaligned address is EINVAL (22).
+	line(sys.errno(sys.munmap(uintptr(1), 4096)))
+
+	// mmap with a bad length fails rather than returning a wild address.
+	bad := sys.map_anon(0)
+	if (bad == uintptr(0)) { line(1) } else { line(0) }
+}

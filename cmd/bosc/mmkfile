@@ -55,6 +55,22 @@ file sys.bo : bas $RUNTIME/_sys/sys_linux.bs {
     ./bas -o sys.bo $RUNTIME/_sys/sys_linux.bs >/dev/null 2>&1
 }
 
+# The typed Boson syscall package, built on the _sys stubs.
+file syspkg.importcfg : builtin.bo sys.bo {
+    cat > syspkg.importcfg <<EOF
+builtin=builtin.bo
+_sys=sys.bo
+EOF
+}
+
+file syspkg.bs : bosc syspkg.importcfg $RUNTIME/sys/sys.bos {
+    ./bosc -importcfg=syspkg.importcfg -o syspkg.bs $RUNTIME/sys/sys.bos >/dev/null 2>&1
+}
+
+file syspkg.bo : bas syspkg.bs {
+    ./bas -o syspkg.bo syspkg.bs >/dev/null 2>&1
+}
+
 # The _iface runtime helper backs interface-to-interface type assertions.
 # Always linked (reachability drops it when unused).
 #
@@ -227,7 +243,7 @@ file fmt.bo : bas fmt.bs {
 }
 
 # Generate a project-wide importcfg.
-file test.importcfg : builtin.bo string.bo pair.bo io.bo io_sys.bo sys.bo errors.bo visibility.bo iface.bo geom.bo ifaces.bo fmt.bo retalias_pkg.bo {
+file test.importcfg : builtin.bo string.bo pair.bo io.bo io_sys.bo sys.bo syspkg.bo errors.bo visibility.bo iface.bo geom.bo ifaces.bo fmt.bo retalias_pkg.bo {
     cat > test.importcfg <<EOF
 builtin=builtin.bo
 string=string.bo
@@ -235,6 +251,7 @@ pair=pair.bo
 io=io.bo
 _io_sys=io_sys.bo
 _sys=sys.bo
+sys=syspkg.bo
 errors=errors.bo
 visibility=visibility.bo
 _iface=iface.bo
@@ -247,7 +264,7 @@ EOF
 
 clean : {
     rm -f tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout *.importcfg
-    rm -f bosc bas bld string.bo init.bo heap.bo iface.bo iface.bs iface.importcfg sys.bo builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo errors.bo errors.bs visibility.bo visibility.bs geom.bo geom.bs ifaces.bo ifaces.bs fmt.bo fmt.bs fmt.importcfg test.importcfg retalias_pkg.bo retalias_pkg.bs retalias_pkg.importcfg
+    rm -f bosc bas bld string.bo init.bo heap.bo iface.bo iface.bs iface.importcfg sys.bo syspkg.bo syspkg.bs syspkg.importcfg builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs io_sys.bo errors.bo errors.bs visibility.bo visibility.bs geom.bo geom.bs ifaces.bo ifaces.bs fmt.bo fmt.bs fmt.importcfg test.importcfg retalias_pkg.bo retalias_pkg.bs retalias_pkg.importcfg
 }
 
 go_tests {
@@ -325,6 +342,10 @@ test: go_tests bosc_tests {
     fi
     if grep -q '^import "_sys"' "$target"; then
         extra_bo="$extra_bo sys.bo"
+    fi
+    if grep -q '^import "sys"' "$target"; then
+        case "$extra_bo" in *" sys.bo"*) ;; *) extra_bo="$extra_bo sys.bo";; esac
+        extra_bo="$extra_bo syspkg.bo"
     fi
     if grep -q '^import "errors"' "$target"; then
         extra_bo="$extra_bo errors.bo"
