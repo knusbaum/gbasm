@@ -1019,40 +1019,41 @@ guards through codegen.
 
 ### Must be closed before the feature ships
 
-- [ ] **Untyped float literal defaults to `f64`** — done, mirroring `<intlit>` →
-  `i64`. Recorded here because it is a language-surface decision that belongs in
-  `DESIGN.md` when the feature ships.
-- [ ] **`requireFloatCodegenSupport` must be deleted.** `compile.go` currently
-  refuses float storage outright. It exists because making the types real
-  without codegen produced a *silent miscompile* — `fn f(a f64, b f64) f64
-  { return a + b }` compiled clean, emitting `argi … 64` (the integer argument
-  registers) and an integer `ADD`. Stage 4 replaces the local case, Stage 5 the
-  argument case. If any float program compiles while this function still exists,
-  something is wrong.
-- [ ] **Bitwise/shift rejection tests for floats** (`f & 1`, `f % 2`, `f ^ g`,
-  `f << 1`). Verified by hand; not committed, because the codegen gate fires
-  before the operator check. Root cause is architectural: `Op2`'s type check runs
-  during codegen rather than in `ToAST` — one of the leaked checks catalogued in
-  [`AUDIT_codegen_check_segregation.md`](../reference/AUDIT_codegen_check_segregation.md).
-  Add these the moment Stage 4 makes a float local compilable.
-- [ ] **Argument directives have no class tag.** Stage 2 gave `local` the
-  `f32`/`f64` size operand; `argi` and friends still take a bit width only.
-  Needed by Stage 5 along with the two-cursor System V classification.
-- [x] **Destination-typed `EvalConst` folding** — done (`evalFloatConst`). (`float32`/`float64` per the
-  destination; integers keep `big.Int`). Moved to Stage 4: `EvalConst` is
-  consulted from `compileTop` (`compile.go:3063`), the *function-local* path, so
-  it is unreachable until float locals compile. Note the file-scope path is
-  separate and folds only negation — `a i64 := 1 / 2` as a global already fails
-  with "initializer is not a compile-time constant", for integers too. That is a
-  pre-existing limitation, not a float gap, and is out of scope here.
-- [x] **Constant-folding invariant test** — done
-  (`cmd/bosc/tests/float_const_fold_test.bos`). It immediately caught a real
-  bug: `x f64 := 1 / 2` was folding the integer division first and converting
-  the result, giving 0.0 instead of 0.5. For a set of expressions, compute each
-  as constants *and* at runtime from variables holding the same values, and
-  assert bit-identical results. This is the executable form of the
-  evaluation-precision rule and the test that distinguishes destination-typed
-  folding from exact-rational folding. See *Evaluation precision*.
+- [ ] **`fmt` cannot print a float.** Stage 6. Until then every float test has
+  to scale and truncate to an integer to observe a value, which is why none of
+  them assert a decimal rendering.
+- [ ] **Float `%f` / `%v` verbs, `ftoa`, `try_float`.** Stage 6.
+- [ ] **Fold the spec into `DESIGN.md`** and move this doc to
+  `docs/implemented/`. Includes the language-surface decisions made along the
+  way: an untyped float literal defaults to `f64` (mirroring `<intlit>` →
+  `i64`); `<floatlit>` coerces only into a float destination; `+ - * /` accept
+  floats while the bitwise operators, `%`, the shifts and `~` do not.
+- [ ] **Stack-passed float arguments** (a 9th float parameter) return a
+  directed "not supported yet" from `Function.ArgFloat` rather than being
+  spilled to the stack. Integer arguments past the 6th are supported, so this
+  is an asymmetry, not a wholesale gap.
+
+**Closed:**
+
+- [x] **`requireFloatCodegenSupport` deleted.** Stages 4 and 5 replaced every
+  call site. The composite paths it never covered — struct fields, array
+  elements, array literals, slices, pointers, multi-return, globals — were
+  probed one at a time and *fixed* rather than gated, and are pinned by
+  `float_composite_test.bos`.
+- [x] **Bitwise/shift rejection tests** — committed once float locals became
+  compilable (`float_{bitand,mod,xor,shl,bitnot}_err_test.bos`).
+- [x] **Argument directives take the class tag** — `argi <name> <idx> f64`,
+  where the index counts within that class's own sequence.
+- [x] **Destination-typed `EvalConst` folding** — `evalFloatConst`, folding in
+  `float32`/`float64` per the destination; integers keep `big.Int`.
+- [x] **Constant-folding invariant test** —
+  `cmd/bosc/tests/float_const_fold_test.bos`. It caught a real bug immediately:
+  `x f64 := 1 / 2` took the integer fast path, folded to `0` in `big.Int` and
+  converted that, giving `0.0` where the runtime form gives `0.5`.
+
+*Note:* the file-scope initializer path folds only negation — `a i64 := 1 / 2`
+as a global fails with "initializer is not a compile-time constant" for integers
+too. Pre-existing, not a float gap.
 
 ### Accepted limitations (decided, not defects)
 

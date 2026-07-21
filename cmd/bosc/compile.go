@@ -94,25 +94,6 @@ type spot struct {
 	nameIsAddress bool
 }
 
-// requireFloatCodegenSupport rejects float-typed storage in codegen.
-//
-// The type system knows f32/f64 (Stage 3), but codegen does not yet select
-// SSE registers or instructions for them (Stage 4) or classify them for the
-// System V argument registers (Stage 5). Without this gate a float would be
-// given an integer `local`/`argi` and integer arithmetic — `a + b` on two
-// f64 parameters silently compiled to an integer ADD on the low bits, which
-// is far worse than a refusal. Remove this when the corresponding stage
-// lands.
-func requireFloatCodegenSupport(c *Context, t ASTType, what string) {
-	if !isFloatType(c, t) {
-		return
-	}
-	panic(&interpreterError{
-		msg: fmt.Sprintf("floating-point code generation is not implemented yet: cannot emit %s of type %s", what, t),
-		p:   t.p,
-	})
-}
-
 // localSizeOperand returns the size operand of a `local` directive for t.
 // For an integer-class scalar that is a bit width; for a float it is the type
 // name itself, which tells bas both which register file to allocate from and
@@ -123,6 +104,17 @@ func localSizeOperand(c *Context, t ASTType) string {
 		return c.ResolveUnderlying(t).Name
 	}
 	return strconv.Itoa(t.Size(c) * 8)
+}
+
+// scalarMov returns the instruction that moves a register-resident scalar of
+// type t to or from memory. Both register files load and store the same way
+// apart from the mnemonic, so sites that already know the value's type only
+// need to ask for the right one.
+func scalarMov(c *Context, t ASTType) string {
+	if isFloatType(c, t) {
+		return floatMovOp(c, t)
+	}
+	return "mov"
 }
 
 // floatMovOp returns the SSE scalar move for t's width.
@@ -323,8 +315,16 @@ func compileArrayLiteralInto(of io.Writer, c *Context, a AST, dest spot, lit *Ar
 				elemDest = newSpot(of, c, c.Temp(), elemT)
 			}
 			val := compileTop(of, c, e, elemDest)
-			elemBits := elemSize * 8
-			fmt.Fprintf(of, "\tmov [%s+%d] %s:%d\n", dest.ref, off, val.ref, elemBits)
+			if isFloatType(c, elemT) {
+				// No partial-of-alloc form for the SSE file: the value is
+				// already exactly the element's width, and the instruction
+				// carries that width.
+				fmt.Fprintf(of, "\t%s [%s+%d] %s\n", floatMovOp(c, elemT), dest.ref, off, val.ref)
+			} else {
+				// Source comes back at its own width (often 64-bit for integer
+				// literals), so select the low N bits with `val.ref:bits`.
+				fmt.Fprintf(of, "\tmov [%s+%d] %s:%d\n", dest.ref, off, val.ref, elemSize*8)
+			}
 			val.free(of)
 		}
 	}
@@ -2559,7 +2559,7 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 			v = compileTop(of, c, f.Val, tmp)
 		}
 		markMovedIfOwnedSource(of, c, fieldType, f.Val)
-		fmt.Fprintf(of, "\tmov [%s+%d] %s\n", dest.ref, off, v.ref)
+		fmt.Fprintf(of, "\t%s [%s+%d] %s\n", scalarMov(c, v.t), dest.ref, off, v.ref)
 		v.free(of)
 	}
 
@@ -2789,12 +2789,6 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, src.ref)
 		return
 	}
-	// A float and a non-float never have the same representation, so anything
-	// reaching here with exactly one float side is a conversion that should
-	// have gone through compileCast.
-	if isFloatType(c, dest.t) != isFloatType(c, src.t) {
-		panic(fmt.Sprintf("internal compiler error: cannot move %s into %s; a float/integer conversion needs an explicit cast", src.t, dest.t))
-	}
 	depoint := dest.t
 	depoint.Indirection--
 	depoint.MutMask >>= 1
@@ -2802,11 +2796,18 @@ func move(of io.Writer, c *Context, dest spot, src spot) {
 	depoint.NilMask >>= 1
 	if depoint.SameRepr(src.t) {
 		// dest was *T and src is T
-		fmt.Fprintf(of, "\tmov [%s] %s\n", dest.ref, src.ref)
+		fmt.Fprintf(of, "\t%s [%s] %s\n", scalarMov(c, src.t), dest.ref, src.ref)
 		if src.t.Size(c) > 8 {
 			panic("(TODO) Can't copy T into *T for T.size > 8 bytes")
 		}
 		return
+	}
+
+	// A float and a non-float never share a representation, so reaching here
+	// with exactly one float side means a conversion was skipped: the two
+	// live in different register files and no move can bridge them.
+	if isFloatType(c, dest.t) != isFloatType(c, src.t) {
+		panic(fmt.Sprintf("internal compiler error: cannot move %s into %s; a float/integer conversion needs an explicit cast", src.t, dest.t))
 	}
 
 	panic(fmt.Sprintf("internal compiler error: don't know how to move %s into %s", src.t, dest.t))
@@ -3799,7 +3800,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 					}
 					fmt.Fprintf(of, "\tforget %s\n", tmp)
 				} else {
-					fmt.Fprintf(of, "\tmov %s [%s+%d]\n", b.Name, srcSpot.ref, offset)
+					fmt.Fprintf(of, "\t%s %s [%s+%d]\n", scalarMov(c, existingType), b.Name, srcSpot.ref, offset)
 				}
 			} else {
 				s := newSpot(of, c, b.Name, bindType)
@@ -3814,7 +3815,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 					}
 					fmt.Fprintf(of, "\tforget %s\n", tmp)
 				} else {
-					fmt.Fprintf(of, "\tmov %s [%s+%d]\n", b.Name, srcSpot.ref, offset)
+					// bindType, not b.Type: a `:=` binding declares its type as
+					// <infer> and only bindType carries the resolved one.
+					fmt.Fprintf(of, "\t%s %s [%s+%d]\n", scalarMov(c, bindType), b.Name, srcSpot.ref, offset)
 				}
 			}
 		}
@@ -3868,7 +3871,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				}
 				fmt.Fprintf(of, "\tforget %s\n", tmp)
 			} else {
-				fmt.Fprintf(of, "\tmov %s [%s+%d]\n", sym.Name, srcSpot.ref, offset)
+				fmt.Fprintf(of, "\t%s %s [%s+%d]\n", scalarMov(c, declType), sym.Name, srcSpot.ref, offset)
 			}
 			// Keep flow facts conservative: a freshly-assigned pointer is
 			// treated as a new local origin so later reads don't trip stale
@@ -4188,7 +4191,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				spot_memcpy(of, c, dest, addr, mtype.Size(c))
 				addr.free(of)
 			} else {
-				fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, base.ref, voff)
+				fmt.Fprintf(of, "\t%s %s [%s+%d]\n", scalarMov(c, dest.t), dest.ref, base.ref, voff)
 			}
 			base.free(of)
 			return dest
@@ -4237,7 +4240,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			spot_memcpy(of, c, dest, addr, mtype.Size(c))
 			addr.free(of)
 		} else {
-			fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, l.ref, offset)
+			fmt.Fprintf(of, "\t%s %s [%s+%d]\n", scalarMov(c, dest.t), dest.ref, l.ref, offset)
 		}
 		return dest
 	case *Deref:
@@ -4277,7 +4280,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				dest = newSpot(of, c, c.Temp(), t)
 			}
 			// it's a pointer. Just copy.
-			fmt.Fprintf(of, "\tmov %s [%s]\n", dest.ref, src)
+			fmt.Fprintf(of, "\t%s %s [%s]\n", scalarMov(c, dest.t), dest.ref, src)
 		} else if typeIsMemoryBacked(c, t) {
 			// Memory-backed pointee (a struct OR a fixed array, any size): the
 			// deref result IS the pointee's address — return the pointer retyped
@@ -4301,7 +4304,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				dest = newSpot(of, c, c.Temp(), t)
 			}
 			// It's a small scalar. Just copy the value.
-			fmt.Fprintf(of, "\tmov %s [%s]\n", dest.ref, src)
+			fmt.Fprintf(of, "\t%s %s [%s]\n", scalarMov(c, dest.t), dest.ref, src)
 		}
 
 		return dest
@@ -4473,7 +4476,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				spot_memcpy(of, c, dest, elemAddr, vt.Size(c))
 				elemAddr.free(of)
 			} else {
-				fmt.Fprintf(of, "\tmov %s [%s+%d]\n", dest.ref, addr.ref, off)
+				fmt.Fprintf(of, "\t%s %s [%s+%d]\n", scalarMov(c, dest.t), dest.ref, addr.ref, off)
 			}
 			return dest
 		}
@@ -4518,7 +4521,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if !typeIsMemoryBacked(c, vt) && (scale == 1 || scale == 2 || scale == 4 || scale == 8) {
 			// Scalar element with a hardware-addressable size: direct value
 			// load via x86 base+index*scale addressing.
-			fmt.Fprintf(of, "\tmov %s [%s+%s*%d]\n", dest.ref, base.ref, index.ref, scale)
+			fmt.Fprintf(of, "\t%s %s [%s+%s*%d]\n", scalarMov(c, dest.t), dest.ref, base.ref, index.ref, scale)
 		} else {
 			// Memory-backed element (struct, array), or an odd size: compute
 			// &elem and memcpy. A direct value load would load only the first
@@ -6146,7 +6149,7 @@ func compileProjectionCast(of io.Writer, c *Context, src AST, srcType ASTType, p
 	} else {
 		// Scalar projection: single indexed load straight into the
 		// destination register.
-		fmt.Fprintf(of, "\tmov %s [%s+%s*%d]\n", dest.ref, base.ref, idxRef, idxScale)
+		fmt.Fprintf(of, "\t%s %s [%s+%s*%d]\n", scalarMov(c, dest.t), dest.ref, base.ref, idxRef, idxScale)
 	}
 
 	if !offTmp.empty() {

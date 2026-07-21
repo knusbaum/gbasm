@@ -1,0 +1,79 @@
+package main
+
+import "string"
+
+// Floats inside the composite forms: struct fields, array elements, behind a
+// pointer, and in a multi-value return. None of these are operator-gated, so
+// they carry any type and each needed its scalar load/store taught the
+// register class.
+
+gpi f64 := 3.25
+
+type P struct {
+	x f64
+	n i64
+	y f32
+}
+
+fn two() f64, i64 {
+	return 3.5, 7
+}
+
+fn main() {
+	// Struct field read and write, with an integer field interleaved so a
+	// float field is not at offset 0.
+	var p P
+	p.x = 3.5
+	p.n = 2
+	p.y = 1.5
+	string.puti(i64(p.x * 2.0))       // 7
+	string.putc(0x0A)
+	string.puti(i64(p.y * 4.0) + p.n) // 6 + 2 = 8
+	string.putc(0x0A)
+
+	// Struct literal initialization.
+	q P := P{x: 1.25, n: 1, y: 0.5}
+	string.puti(i64(q.x * 8.0))       // 10
+	string.putc(0x0A)
+
+	// Array elements.
+	var a [3]f64
+	a[0] = 3.5
+	a[1] = 1.5
+	a[2] = a[0] + a[1]
+	string.puti(i64(a[2] * 2.0))      // 10
+	string.putc(0x0A)
+
+	// Behind a pointer.
+	x f64 := 6.25
+	ptr *f64 := &x
+	v f64 := *ptr
+	string.puti(i64(v * 4.0))         // 25
+	string.putc(0x0A)
+
+	// Array literal with float elements, and a slice over it.
+	lit [2]f64 := [3.5, 1.5]
+	sl []f64 := lit[0:2]
+	string.puti(i64((sl[0] + sl[1]) * 2.0))  // 10
+	string.putc(0x0A)
+
+	// Accumulating in a loop, which exercises repeated spill and reload of a
+	// float local across a control-flow merge.
+	var acc f64
+	var i i64
+	acc = 0.0
+	for (i = 0; i < 7; i = i + 1) {
+		acc = acc + 1.5
+	}
+	string.puti(i64(acc))                    // 10.5 -> 10
+	string.putc(0x0A)
+
+	// A file-scope float global read at run time.
+	string.puti(i64(gpi * 2.0))              // 6
+	string.putc(0x0A)
+
+	// Multi-value return with a float slot, destructured by inference.
+	f, n := two()
+	string.puti(i64(f * 2.0) + n)     // 7 + 7 = 14
+	string.putc(0x0A)
+}
