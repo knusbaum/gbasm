@@ -868,9 +868,17 @@ func (o *Op) Match(op interface{}, largestOpBits int) (bool, int) {
 			//r == R8 || r == R9 || r == R10 || r == R11 || r == R12 || r == R13 || r == R14 || r == R15
 			return r.Width() == 64, 64
 		}
-		// 	case "mm":
-		// 	case "xmm0":
-		// 	case "xmm":
+	// 	case "mm":
+	// 	case "xmm0":
+	case "xmm":
+		// The returned size only feeds `largestOpBits`, which exists solely to
+		// decide whether an immediate would be sign-extended out of range. It
+		// does NOT drive prefix or REX selection — for SSE both the mandatory
+		// prefix (F2/F3/66) and REX.W come from the instruction database. So
+		// reporting the true 128-bit width is safe here.
+		if r, ok := op.(Register); ok {
+			return r.Class() == ClassFloat, 128
+		}
 		// 	case "xmm{k}":
 		// 	case "xmm{k}{z}":
 		// 	case "ymm":

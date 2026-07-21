@@ -1,0 +1,119 @@
+package main
+
+// Exercises the SSE register file end-to-end: bas must parse xmm operands,
+// the encoder must emit the mandatory prefixes and the REX bits for the high
+// registers, and the result has to be right when the CPU actually runs it.
+//
+// Doubles are materialized by moving their bit pattern through a GPR with
+// MOVQ, so this needs no float-literal support in the assembler.
+
+function main
+	prologue
+
+	// --- scalar double arithmetic in the low registers ---
+	// 3.5 + 1.25 = 4.75; 4.75 * 8.0 = 38.0
+	mov rax 0x400C000000000000
+	movq xmm0 rax
+	mov rax 0x3FF4000000000000
+	movq xmm1 rax
+	addsd xmm0 xmm1
+	mov rax 0x4020000000000000
+	movq xmm2 rax
+	mulsd xmm0 xmm2
+	acquire rdi
+	cvtsd2si rdi xmm0
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+
+	// --- the same, in xmm8-15, which need the fourth register bit in REX ---
+	// 10.0 - 2.5 = 7.5; 7.5 / 2.5 = 3.0
+	mov rax 0x4024000000000000
+	movq xmm12 rax
+	mov rax 0x4004000000000000
+	movq xmm13 rax
+	subsd xmm12 xmm13
+	divsd xmm12 xmm13
+	acquire rdi
+	cvtsd2si rdi xmm12
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+
+	// --- round-trip through memory (the reg/mem encoding forms) ---
+	// 12.0 stored and reloaded, then doubled = 24.0
+	bytes slot 8
+	mov rax 0x4028000000000000
+	movq xmm3 rax
+	movsd [slot] xmm3
+	movsd xmm14 [slot]
+	addsd xmm14 xmm14
+	acquire rdi
+	cvtsd2si rdi xmm14
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+	forget slot
+
+	// --- single precision, and widening back to double ---
+	// 2.5f + 1.5f = 4.0f -> 4.0 -> 4
+	mov rax 0x40200000
+	movq xmm4 rax
+	mov rax 0x3FC00000
+	movq xmm5 rax
+	addss xmm4 xmm5
+	cvtss2sd xmm4 xmm4
+	acquire rdi
+	cvtsd2si rdi xmm4
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+
+	// --- int -> float and back ---
+	// 21 -> 21.0 -> +21.0 = 42.0 -> 42
+	mov rax 21
+	cvtsi2sd xmm6 rax
+	addsd xmm6 xmm6
+	acquire rdi
+	cvtsd2si rdi xmm6
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+
+	// --- acquire/release on an explicitly-named xmm register ---
+	// 6.0 + 6.0 = 12.0 -> 12
+	acquire xmm9
+	mov rax 0x4018000000000000
+	movq xmm9 rax
+	addsd xmm9 xmm9
+	acquire rdi
+	cvtsd2si rdi xmm9
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+	release xmm9
+
+	// --- ordered comparison sets EFLAGS ---
+	// 1.0 < 2.0, so CF is set and `setb` yields 1.
+	mov rax 0x3FF0000000000000
+	movq xmm7 rax
+	mov rax 0x4000000000000000
+	movq xmm8 rax
+	acquire rdi
+	xor rdi rdi
+	ucomisd xmm7 xmm8
+	setb dil
+	call string.puti
+	mov rdi 0x0A
+	call string.putc
+	release rdi
+
+	epilogue
+	xor rax rax
+	ret

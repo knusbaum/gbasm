@@ -3,6 +3,7 @@ package gbasm
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 )
 
@@ -93,7 +94,59 @@ const (
 
 	R_DIL // 8-bit sub-register of RDI (requires REX prefix)
 	R_SIL // 8-bit sub-register of RSI (requires REX prefix)
+
+	// The SSE register file. Unlike the general-purpose registers these have
+	// no sub-registers: XMM0 is always 128 bits wide, and an operation's width
+	// (movss vs movsd) is chosen by the *instruction*, not by naming a narrower
+	// register. Keep these contiguous and last — several helpers below identify
+	// the file by the X_XMM0..X_XMM15 range rather than by enumerating cases.
+	X_XMM0
+	X_XMM1
+	X_XMM2
+	X_XMM3
+	X_XMM4
+	X_XMM5
+	X_XMM6
+	X_XMM7
+	X_XMM8
+	X_XMM9
+	X_XMM10
+	X_XMM11
+	X_XMM12
+	X_XMM13
+	X_XMM14
+	X_XMM15
 )
+
+// RegClass identifies which physical register file a register belongs to.
+// The two files are allocated independently (see Rallocs) and values move
+// between them only through explicit instructions (MOVQ/MOVD, CVTSI2SD, …),
+// never through a plain MOV.
+type RegClass int
+
+const (
+	ClassInt   RegClass = iota // general-purpose registers
+	ClassFloat                 // SSE (XMM) registers
+)
+
+func (c RegClass) String() string {
+	if c == ClassFloat {
+		return "float"
+	}
+	return "int"
+}
+
+// Class reports which register file r belongs to.
+func (r Register) Class() RegClass {
+	if r.isXMM() {
+		return ClassFloat
+	}
+	return ClassInt
+}
+
+func (r Register) isXMM() bool {
+	return r >= X_XMM0 && r <= X_XMM15
+}
 
 func (r Register) String() string {
 	switch r {
@@ -249,6 +302,9 @@ func (r Register) String() string {
 	case R_SIL:
 		return "SIL"
 	}
+	if r.isXMM() {
+		return fmt.Sprintf("XMM%d", int(r-X_XMM0))
+	}
 	return "UNKNOWN"
 }
 
@@ -403,15 +459,22 @@ func ParseReg(r string) (Register, error) {
 		return R_DIL, nil
 	case "SIL":
 		return R_SIL, nil
-
-	default:
-		return 0, fmt.Errorf("No such register: %s", r)
 	}
+	if n, ok := strings.CutPrefix(r, "XMM"); ok {
+		if i, err := strconv.Atoi(n); err == nil && i >= 0 && i <= 15 {
+			return X_XMM0 + Register(i), nil
+		}
+	}
+	return 0, fmt.Errorf("No such register: %s", r)
 }
 
 func (r Register) needREX() bool {
 	if r == R_DIL || r == R_SIL {
 		return true
+	}
+	if r.isXMM() {
+		// XMM8-15 need the extra bit in REX.R/REX.B, exactly as R8-R15 do.
+		return r >= X_XMM8
 	}
 	switch r.fullReg() {
 	case R8:
@@ -436,6 +499,11 @@ func (r Register) needREX() bool {
 }
 
 func (r Register) byte() byte {
+	if r.isXMM() {
+		// The full four-bit register index, as for R8-R15: callers mask to
+		// three bits for ModRM/SIB and the REX encoder takes bit 3 for R/X/B.
+		return byte(r - X_XMM0)
+	}
 	switch r {
 	case R_AL:
 		fallthrough
@@ -538,6 +606,9 @@ func (r Register) byte() byte {
 }
 
 func (r Register) Width() int {
+	if r.isXMM() {
+		return 128
+	}
 	switch r {
 	case R_AL:
 		return 8
@@ -717,6 +788,10 @@ func (r Register) brother8() (Register, bool) {
 }
 
 func (r Register) fullReg() Register {
+	if r.isXMM() {
+		// No sub-registers: an XMM register is its own full register.
+		return r
+	}
 	switch r {
 	case R_AL:
 		fallthrough
@@ -817,6 +892,10 @@ func (r Register) fullReg() Register {
 
 // subRegisters8 returns the set of 8-bit registers that belong to r
 func (r Register) subRegisters8() ([]Register, bool) {
+	if r.isXMM() {
+		// XMM has no 8-bit sub-registers to conflict over.
+		return nil, false
+	}
 	if r.Width() == 8 {
 		return []Register{r}, true
 	}
@@ -855,6 +934,12 @@ func (r Register) subRegisters8() ([]Register, bool) {
 }
 
 func (r Register) partial(size int) (Register, bool) {
+	if r.isXMM() {
+		// For XMM, `size` selects the *instruction* (movss vs movsd), not a
+		// narrower register — the low 32 bits of XMM0 are still named XMM0.
+		// So every width resolves to the same register.
+		return r, true
+	}
 	switch r {
 	case R_RAX:
 		if size == 8 {

@@ -57,6 +57,13 @@ func NewRegisters() *Registers {
 	rs.rs[R14] = &rstate{}
 	rs.rs[R15B] = &rstate{}
 	rs.rs[R15] = &rstate{}
+	// The SSE file. These are present so `acquire`/`release`/`InUse` work on
+	// an explicitly-named xmm register, but they are deliberately absent from
+	// the regs8/regs64 allocation lists that Get walks, so an integer request
+	// can never be handed one.
+	for r := X_XMM0; r <= X_XMM15; r++ {
+		rs.rs[r] = &rstate{}
+	}
 	return rs
 }
 
