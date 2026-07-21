@@ -5492,13 +5492,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if t.Indirection > 0 || t.ArraySize > 0 {
 			panic("NOT IMPLEMENTED (TODO)")
 		}
-		if _, isFloatLit := ast.Val.(float64); isFloatLit {
-			// There is no route to materialize a float constant into a
-			// register yet: EvalConst is *big.Int-only and there is no
-			// `mov xmm, imm` on x86-64. Report it rather than falling
-			// through to the bare NOT IMPLEMENTED panic below.
-			CompileErrorF(ast, "floating-point code generation is not implemented yet: cannot materialize the literal %v", ast.Val)
-		}
 		if ast.Val == nil {
 			if dest.empty() {
 				CompileErrorF(a, "nil requires pointer context")

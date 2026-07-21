@@ -1032,13 +1032,22 @@ guards through codegen.
   approximate (but deterministic) beyond it, because the digit extraction
   divides by ten in `f64`. DBL_MAX therefore renders correctly for its first
   ~17 significant digits.
-- [ ] **A correctly-rounded `dtoa`** remains a non-goal, as proposed. The `%f`
-  API does not foreclose it.
-- [ ] **Fold the spec into `DESIGN.md`** and move this doc to
-  `docs/implemented/`. Includes the language-surface decisions made along the
-  way: an untyped float literal defaults to `f64` (mirroring `<intlit>` →
-  `i64`); `<floatlit>` coerces only into a float destination; `+ - * /` accept
-  floats while the bitwise operators, `%`, the shifts and `~` do not.
+**Deliberately not done** (both were non-goals from the start, neither blocks
+anything):
+
+- **A correctly-rounded `dtoa`.** `ftoa` is fixed-precision; the `%f` API does
+  not foreclose a better conversion later.
+- **Approximate comparison.** With IEEE `==` allowed this is library work, not
+  a language obligation. If it lands, the recommendation stands: Zig's model —
+  separate `approx_eq_abs(a, b, tol)` and `approx_eq_rel(a, b, tol)` with the
+  tolerance always explicit and no default. Python's `math.isclose` shows why a
+  default is risky: its `abs_tol=0.0` silently fails when comparing against
+  zero.
+- [x] **Spec folded into `DESIGN.md`; this doc moved to `docs/implemented/`**
+  (`bd08c83`), including the language-surface decisions made along the way: an
+  untyped float literal defaults to `f64`; `<floatlit>` coerces only into a
+  float destination; `+ - * /` accept floats while the bitwise operators, `%`,
+  the shifts and `~` do not.
 - [x] **Stack-passed float arguments — not a float gap.** An earlier draft of
   this list claimed floats past the eighth were an *asymmetry* because integers
   past the sixth spilled to the stack. That was wrong: `bosc` rejects a seventh
