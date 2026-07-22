@@ -1,0 +1,2 @@
+Compiling tests/owned_array_element_err_test.bos
+Parse Error: `owned` cannot qualify an array element; a fixed array is one value with no per-element storage, so own the whole array with `owned [N]T`, not `[N]owned T`

@@ -4,10 +4,10 @@ import "fmt"
 
 // Passing an owned fixed array to an owned parameter moves it; using it
 // afterward is rejected.
-fn sink(x [3]owned i64) { dispose(x) }
+fn sink(x owned [3]i64) { dispose(x) }
 
 fn main() {
-	a [3]owned i64 := [1, 2, 3]
+	a owned [3]i64 := [1, 2, 3]
 	sink(a)
 	fmt.print("%d\n", a[0])
 }

@@ -449,7 +449,7 @@ func isTypeStart(t toktype) bool {
 // specified in §3.3 and enforced by ptrWrap / sliceWrap / arrayWrap below.
 func (p *Parser) parseTypeName() *Node {
 	pos := p.current().p
-	at := p.parseTypeExpr(false)
+	at := p.parseTypeExpr(false, false)
 	return &Node{t: n_typename, p: pos, sval: "<prebuilt>", prebuilt: &at}
 }
 
@@ -458,15 +458,24 @@ func (p *Parser) parseTypeName() *Node {
 // element) — the only positions where a leading `mut` is legal. A leading `mut`
 // at a binding level is spelled `var`, not written into the type; a `mut` after
 // `[N]` (an array element) is meaningless because an array fuses into its
-// parent's storage. `owned` and `?` are legal at any level (interface-ness of a
-// `?T` base is validated later, in ToAST).
-func (p *Parser) parseTypeExpr(refOperand bool) ASTType {
+// parent's storage. arrayElem is true when this level is the element of a `[N]`:
+// a leading `owned` there is likewise meaningless — a fixed array is one value
+// with no per-element storage seam, so it is owned as a whole (`owned [N]T`),
+// not per element (`[N]owned T`), exactly as `[N]mut T` is rejected. `?` is
+// still legal on an array element (`[N]?*T` is an array of nullable pointers);
+// only `owned`/`mut` are position-restricted. Interface-ness of a `?T` base is
+// validated later, in ToAST.
+func (p *Parser) parseTypeExpr(refOperand bool, arrayElem bool) ASTType {
 	// Leading qualifiers for THIS level. They bind right and land at bit 0 of
 	// whatever this level turns out to be.
 	var qOwned, qMut, qNil bool
 	for {
 		switch p.current().t {
 		case tok_owned:
+			op := p.current().p
+			if arrayElem {
+				panic(&interpreterError{"`owned` cannot qualify an array element; a fixed array is one value with no per-element storage, so own the whole array with `owned [N]T`, not `[N]owned T`", op})
+			}
 			qOwned = true
 			p.advance()
 		case tok_mut:
@@ -489,12 +498,12 @@ qualsDone:
 	switch p.current().t {
 	case tok_star:
 		p.advance()
-		t = ptrWrap(p.parseTypeExpr(true)) // pointee is a reference operand
+		t = ptrWrap(p.parseTypeExpr(true, false)) // pointee is a reference operand
 	case tok_lsquare:
 		p.advance()
 		if p.current().t == tok_rsquare {
 			p.advance()
-			t = sliceWrap(p.parseTypeExpr(true)) // slice element is a reference operand
+			t = sliceWrap(p.parseTypeExpr(true, false)) // slice element is a reference operand
 		} else {
 			if p.current().t != tok_number {
 				panic(&interpreterError{fmt.Sprintf("Expected an array size or ']', but found: %s", p.current().t), p.current().p})
@@ -502,13 +511,13 @@ qualsDone:
 			n := p.current().nval
 			p.advance()
 			p.expect(tok_rsquare)
-			t = arrayWrap(p.parseTypeExpr(false), int(n)) // array element is NOT a ref operand
+			t = arrayWrap(p.parseTypeExpr(false, true), int(n)) // array element: not a ref operand, and owned is rejected there
 		}
 	case tok_lparen:
 		// Grouping. Prefix rarely needs it, but `*(...)` etc. stays legal so
 		// serialized forms and hand-written types can parenthesize freely.
 		p.advance()
-		t = p.parseTypeExpr(refOperand)
+		t = p.parseTypeExpr(refOperand, arrayElem)
 		p.expect(tok_rparen)
 	default:
 		t = p.parseTypeBaseAt()

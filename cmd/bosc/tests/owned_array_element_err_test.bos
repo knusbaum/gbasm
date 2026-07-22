@@ -1,0 +1,16 @@
+package main
+
+// A leading `owned` in array-element position (`[N]owned T`) is rejected. A
+// fixed array is one value with no per-element storage seam, so ownership
+// attaches to the whole array (`owned [N]T`), never to individual elements --
+// exactly as `[N]mut T` is rejected while `mut [N]T`/`[]mut T` are not. The
+// element-owned concept exists only for slices (`[]owned T`), which do have a
+// separate backing.
+fn sink(a [3]owned i64) {
+	dispose(a)
+}
+
+fn main() {
+	a owned [3]i64 := [1, 2, 3]
+	sink(a)
+}

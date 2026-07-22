@@ -101,12 +101,15 @@ var typeEncodingCases = []struct {
 	{"?**i64", ASTType{Name: "i64", Indirection: 2, NilMask: 0b1, Signed: true}},
 	{"owned ?*owned mut node", ASTType{Name: "node", Indirection: 1, MutMask: 0b10, OwnedMask: 0b11, NilMask: 0b1}},
 
-	// Arrays of pointers: owned/mut collapse onto the shared array level, but a
-	// pointer element's nullability stays on the ELEMENT (an array is never
-	// nullable). Regression: arrayWrap was moving nil to the array too.
+	// Arrays of pointers: a leading `owned` on the array (`owned [N]...`) lands
+	// on the array level, while a pointer element's nullability/mutability stays
+	// on the ELEMENT (an array is never nullable). A leading `owned` in element
+	// position (`[N]owned T`) is rejected -- see the parser -- so an owned array
+	// of pointers is spelled with the prefix form. Regression: arrayWrap was
+	// moving nil to the array too.
 	{"[3]?*i64", ASTType{ArraySize: 3, Element: &ASTType{Name: "i64", Indirection: 1, NilMask: 0b1, Signed: true}}},
 	{"[3]*mut i64", ASTType{ArraySize: 3, MutMask: 0b10, Element: &ASTType{Name: "i64", Indirection: 1, Signed: true}}},
-	{"[3]owned *i64", ASTType{ArraySize: 3, OwnedMask: 0b1, Element: &ASTType{Name: "i64", Indirection: 1, Signed: true}}},
+	{"owned [3]*i64", ASTType{ArraySize: 3, OwnedMask: 0b1, Element: &ASTType{Name: "i64", Indirection: 1, Signed: true}}},
 
 	// String() branches the primitive cases above never exercise, but that the
 	// runtime `.bo`s serialize (io.bos: `?error`, `owned FD`, fn-typed values):

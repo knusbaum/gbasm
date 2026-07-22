@@ -5,7 +5,7 @@ import "fmt"
 // #8-class: a value copied out of an owned-array element, read after the
 // array is disposed, must be rejected (the value aliases consumed storage).
 fn main() {
-	a [3]owned i64 := [10, 20, 30]
+	a owned [3]i64 := [10, 20, 30]
 	b i64 := a[1]
 	dispose(a)
 	fmt.print("%d\n", b)

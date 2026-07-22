@@ -19,11 +19,32 @@ language surface for "allocate n of T and hand back a `[]T`", including how the
 slice header is constructed and who owns the backing.
 
 ### Ownership in arrays and spans
-How `owned` elements behave inside arrays and slices: moving an element out
-(and leaving a hole the checker tracks), whole-container ownership vs
-per-element, and what indexing an owned-element container yields. Interacts with
-the borrow checker's flow facts, which today reason about scalar and struct
-fields, not container elements.
+The type grammar is settled and correct (verified): position distinguishes the
+levels, exactly parallel to `mut`.
+- `owned []T` = the slice owns its backing (bit 0).
+- `[]owned T` = each element owned (bit 1). **This is the target feature.**
+- `owned [N]T` = whole array owned (bit 0).
+- `[N]owned T` = rejected (arrays have no element seam; parallel to `[N]mut T`).
+
+What remains is *enforcement*, not spelling. Two gaps:
+
+1. **The flow checker collapses everything through `HasOwned()`** -- any owned
+   bit makes the whole binding one obligation, discharged coarsely by `dispose`.
+   It does not distinguish `owned []T` (backing) from `[]owned T` (elements), and
+   has no per-element notion. Needs the checker to track container-level vs
+   element-level obligations separately.
+2. **You cannot build or drain a `[]owned T` yet.** Needs dynamic slice
+   allocation (above), an `append` that *moves* an owned element in, and a
+   consuming drain -- the clean primitive is a `for owned x in s { ... }` loop
+   that binds each element as owned (must-consume) and consumes the slice,
+   decidable by construction. You never move an element out by raw index (`s[i]`
+   is a borrow); transfer happens only through operations, Rust-style.
+
+Driving use case: hold an unknown number of `owned FD`s in a slice, use them by
+borrow (`files[i].read(...)`), drain-close at the end. `dispose` stays the
+coarse "I got it" escape (it is designed that way, discharging all obligations
+on a binding at once, like `owned *owned i64`); the drain loop is the granular,
+checked path normally reached through a destructor.
 
 ### Native map
 A hash map type. Needs a hashing/equality contract and iteration-order

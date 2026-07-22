@@ -694,7 +694,8 @@ fn close(fd owned i64) void {
 - `owned *T` → OwnedMask bit 0 set (the pointer itself is owned)
 - `owned *owned T` → OwnedMask bits 0+1 (both obligations exist independently)
 - `*mut T` → MutMask bit 1 set (write-through to T)
-- `[]owned T` → OwnedMask set at the backing level (the slice owns the buffer it points at)
+- `[]owned T` → OwnedMask at the element level (bit 1, bumped by the slice): each element is owned
+- `owned []T` → OwnedMask bit 0: the slice owns its backing buffer
 - `owned [N]T` → OwnedMask bit 0 set (the whole array value is one obligation)
 
 The same convention applies to MutMask. This means `*mut T` and `*owned T` are placed symmetrically — both qualifiers sit between the `*` and the type they modify.
@@ -703,32 +704,39 @@ The same convention applies to MutMask. This means `*mut T` and `*owned T` are p
 
 #### `owned` on slices and fixed arrays
 
-`owned` on an aggregate denotes a **single** whole-aggregate obligation, never
-per-element obligations. There is no per-element ownership in the language:
+Position is meaningful, exactly as it is for `mut` (see
+[Mutability](#mutability-and-the-type-system)): a leading `owned` binds the
+level to its right, and where it lands distinguishes *which* thing is owned.
 
-- **`[]owned T` (slice).** A slice is a fat pointer `{ptr → backing, len}`. The
-  `owned` bit attaches to the **backing level** — the same slot `*owned T` uses
-  for "the T at the other end is owned." So `[]owned T` means *the slice owns the
-  buffer it points at*: one obligation, discharged with a single `free` of the
+- **`owned []T` — the slice owns its backing.** A slice is a fat pointer
+  `{ptr → backing, len}`; a leading `owned` puts the obligation at bit 0, on the
+  slice value itself. One obligation, discharged by a single `free` of the
   backing. The elements are not individually owned.
-- **`owned [N]T` (fixed array).** A fixed array has no separate backing — the
-  array *is* its storage, inline, exactly like a struct's bytes. So `owned`
-  attaches to the value itself (bit 0), and `owned [N]T` means *the whole array
-  value is one obligation*, disposed as a unit. This is the array analogue of
-  `owned <struct>`, where the entire struct value is a single obligation
-  ([Owned struct fields](#owned-struct-fields)).
+- **`[]owned T` — each element is owned.** Putting `owned` after the `[]` binds
+  it to the *element*; the slice bumps it to bit 1. This is per-element
+  ownership: every element carries an obligation, managed through the slice's
+  operations (append moves one in, remove/drain moves them out) — you never move
+  an element out by raw index (`s[i]` yields a borrow). This mirrors `[]mut T`
+  (mutable *elements*) vs `mut []T` (mutable *slice*).
+- **`owned [N]T` — the whole array is one obligation.** A fixed array has no
+  separate backing — it *is* its storage, inline, like a struct's bytes — so
+  `owned` attaches to the value (bit 0) and the array is disposed as a unit. The
+  array analogue of `owned <struct>` ([Owned struct fields](#owned-struct-fields)).
+- **`[N]owned T` is rejected.** A fixed array has no per-element storage seam, so
+  element-position ownership is meaningless — you own the whole array or nothing.
+  This is exactly parallel to `[N]mut T` being rejected: neither qualifier is
+  meaningful in an array's element position, because the array fuses element and
+  container into one value. (Per-element ownership needs the separate backing a
+  *slice* has; hence `[]owned T` is allowed and `[N]owned T` is not.)
 
-`mut` and `owned` diverge on fixed arrays, and the divergence is principled:
-
-- **`mut [N]T` is rejected.** Fixed-array element mutability is governed by the
-  *binding* (`var` vs not — see [Mutability](#mutability-and-the-type-system)),
-  not by a type qualifier, so a `mut` on a fixed array would be redundant. `mut`
-  on a *slice* (`[]mut T`) is meaningful — it is the write-through-element form —
-  because a slice's elements live behind a pointer whose write permission is a
-  property of the reference.
-- **`owned [N]T` is accepted** (whole-array obligation, above). Unlike `mut`, the
-  obligation is a property of the value, not of a reference's write permission,
-  so it is as meaningful on a fixed array as on a struct.
+**Implementation status.** The type *encoding* distinguishes all of the above
+(`owned []T` at bit 0, `[]owned T` at bit 1), and `[N]owned T` is rejected at
+parse time. Per-element enforcement is **not yet complete**: the flow checker
+currently treats any owned bit as a single whole-binding obligation (discharged
+coarsely by `dispose`), and there is no way to *build* a `[]owned T` yet
+(dynamic slice allocation, `append`, and a consuming drain are future work — see
+[`TODO.md`](TODO.md) § Roadmap). So `[]owned T` parses and encodes correctly but
+is not yet usable as element-granular ownership.
 
 ### State machines
 

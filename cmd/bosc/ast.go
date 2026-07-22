@@ -2313,10 +2313,13 @@ func (t ASTType) stringRef(refOperand bool) string {
 		if t.IsArray() {
 			sb.WriteString(fmt.Sprintf("[%d]", t.ArraySize))
 			// The array shares its owned/mut with the element (no shift); nil
-			// stayed on the element. Restore owned/mut so the element renders
-			// them (e.g. `[3]owned *i64`, `[3]?*i64`).
+			// stayed on the element. Restore the element's *inner* owned/mut so
+			// it renders them (e.g. `[3]*owned i64`, `[3]?*i64`) -- but NOT the
+			// array-value owned at bit 0: that was already emitted as the `owned`
+			// prefix above (`owned [N]T`). Restoring bit 0 too would print
+			// `owned [3]owned ...`, and `[N]owned T` is rejected on re-parse.
 			elem := *t.Element
-			elem.OwnedMask |= t.OwnedMask
+			elem.OwnedMask |= t.OwnedMask &^ 1
 			elem.MutMask |= t.MutMask
 			sb.WriteString(elem.stringRef(false))
 		} else {
