@@ -7,7 +7,84 @@ design (see the docs convention in CLAUDE.md § Documentation and design docs).
 
 ---
 
+## Roadmap (larger features, need design)
+
+Recorded so they are not lost; each needs its own proposal before work starts.
+
+### Dynamic span / array allocation
+`alloc(T)` and `new(expr)` take a *type* and allocate one T; there is no
+runtime-length allocation (`make([]T, n)`). The allocator (`_heap.alloc(size)`)
+already takes a byte count, so the runtime half exists -- what is missing is the
+language surface for "allocate n of T and hand back a `[]T`", including how the
+slice header is constructed and who owns the backing.
+
+### Ownership in arrays and spans
+How `owned` elements behave inside arrays and slices: moving an element out
+(and leaving a hole the checker tracks), whole-container ownership vs
+per-element, and what indexing an owned-element container yields. Interacts with
+the borrow checker's flow facts, which today reason about scalar and struct
+fields, not container elements.
+
+### Native map
+A built-in hash map type. Needs the generics story (or a blessed built-in that
+sidesteps it), a hashing/equality contract, and iteration order semantics
+(defined or deliberately unspecified). Likely wants the dynamic-allocation and
+ownership-in-containers pieces first.
+
+### Generics
+Parametric polymorphism. The single largest language feature here, and a
+prerequisite (or strong want) for map and any real collection library. Design
+space is wide -- monomorphization vs dictionary-passing, constraint/interface
+bounds, inference. Everything above leans on it.
+
+### Context
+A scoped cancellation / deadline / value-propagation mechanism (Go's
+`context.Context` shape). Threads through call chains to carry cancellation and
+request-scoped data. NOTE: recorded from a one-word prompt -- confirm the
+intended scope (cancellation propagation vs something else) before designing.
+
+---
+
 ## Language
+
+### Taking the address / runtime-indexing of a by-address parameter is broken
+
+**Silent memory corruption in ordinary code.** A struct/slice/array value larger
+than 8 bytes is passed to a function *by address* (BABI-0): the callee's
+parameter slot holds a hidden pointer to the caller's value, and bas
+auto-dereferences `[name]` / `[name+off]` so field access reads through it. That
+abstraction -- "the name pretends to be the value" -- leaks anywhere codegen
+takes the slot's address with `lea name` instead of loading the pointer the slot
+holds. Confirmed broken at (at least) two sites:
+
+- **`&p`** on a by-address parameter (`compile.go` ~4494, the `lea %s %s`
+  named-target emission). `read_a(&p)` where `p` is a struct parameter passes
+  the address of the *pointer slot*, not the value, so the callee reads garbage.
+  `&p.field` is fine -- it builds `[p+off]`, which bas derefs -- only bare `&p`
+  breaks.
+- **`arr[i]` with a runtime index** on a by-address array parameter
+  (`compile.go` ~3045 and ~4557, the `if base.nameIsAddress { lea baseAddr
+  base.ref }` SIB-base materialization). `arr[0]` (constant offset) works;
+  `arr[i]` reads from the pointer slot's address. Reproduced: a `[4]i64` param
+  indexed by a variable returns the wrong element.
+
+Root cause is the `nameIsAddress` predicate conflating two representations that
+need opposite handling:
+  - a memory-backed **local** (`bytes` slot, global): the name IS the storage,
+    so `lea name` is the value's address. Correct today.
+  - a by-address **parameter**: the name is a slot HOLDING a pointer, so the
+    value's address is `mov name` (load the pointer), and `lea name` is wrong.
+
+The narrow fix patches each `lea name` site to emit `mov` for by-address params,
+but the leak slipping through undetected says the pattern is not encapsulated --
+there may be more sites. Prefer a single classification (e.g. an
+`IsByAddressParam(name)` predicate set in `compileFunctionBody`) behind one
+`emitValueAddress(name)` helper that chooses `mov` vs `lea`, and route every
+bare-name base-materialization and address-of through it. Then audit the full
+`lea` inventory in `compile.go` against it. A regression test must cover `&p`
+passed to a `*T` function, `&p` coerced to an interface, and runtime-indexed
+struct/slice/array parameters -- all reading a value back, not just comparing
+addresses.
 
 ### Checked-arithmetic intrinsics
 Integer overflow wraps by default (defined two's-complement, both signs — see
