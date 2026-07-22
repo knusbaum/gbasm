@@ -1,7 +1,7 @@
 package main
 
 import "string"
-import "_io_sys"
+import "sys"
 
 // #define O_RDONLY	00000000
 // #define O_WRONLY	00000001
@@ -10,7 +10,7 @@ import "_io_sys"
 
 fn main() i64 {
 	var fd i64
-	fd = _io_sys.open("./tests/io_test.bos", 0, 0)
+	fd = sys.open("./tests/io_test.bos", 0, 0)
 	if (fd < 0) {
 		string.puts("Failed to open io_test.bos: ")
 		string.puti(fd)
@@ -26,12 +26,12 @@ fn main() i64 {
 	bs = buf[:]
 
 	var n i64
-	n = _io_sys.read(fd, bs)
+	n = sys.read(fd, bs)
 	// extra security. This should not be necessary
 	// with
 	bs[10] = 'a'
 
 	// write stdout
-	n = _io_sys.write(1, bs[:n])
+	n = sys.write(1, bs[:n])
 	return 0
 }

@@ -43,13 +43,12 @@ btourd { go build ./cmd/btourd }
 
 include ./boson.mmk
 
-playground-runtime : bld bas bosc target/builtin.bo target/io.bo target/fmt.bo target/_io_sys.bo target/_heap.bo target/sys.bo target/_sys.bo target/_init.bo target/_iface.bo {
+playground-runtime : bld bas bosc target/builtin.bo target/io.bo target/fmt.bo target/_heap.bo target/sys.bo target/_sys.bo target/_init.bo target/_iface.bo {
     set -e
     mkdir -p "$PLAYGROUND_BUNDLE/objects"
     cp target/builtin.bo "$PLAYGROUND_BUNDLE/objects/builtin.bo"
     cp target/io.bo "$PLAYGROUND_BUNDLE/objects/io.bo"
     cp target/fmt.bo "$PLAYGROUND_BUNDLE/objects/fmt.bo"
-    cp target/_io_sys.bo "$PLAYGROUND_BUNDLE/objects/_io_sys.bo"
     cp target/_heap.bo "$PLAYGROUND_BUNDLE/objects/_heap.bo"
     cp target/sys.bo "$PLAYGROUND_BUNDLE/objects/sys.bo"
     cp target/_sys.bo "$PLAYGROUND_BUNDLE/objects/_sys.bo"

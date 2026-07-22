@@ -11,7 +11,7 @@
 // and must be disposed rather than closed.
 package io
 
-import "_io_sys"
+import "sys"
 
 // Flags for open(). These correspond to the O_* constants in <fcntl.h> on
 // Linux x86-64. Combine with bitwise OR for multi-flag values.
@@ -336,7 +336,7 @@ pub type FD i64 {
 	// coerced to the builtin error interface. A partial read
 	// (n < len(buf), err == io_err.OK) may be retried.
 	read(fd *FD, buf []mut byte) i64, ?error {
-		raw i64 := _io_sys.read(i64(*fd), buf)
+		raw i64 := sys.read(i64(*fd), buf)
 		if (raw < 0) {
 			return 0, err_from_code(-raw)
 		}
@@ -350,7 +350,7 @@ pub type FD i64 {
 	// to error). A short write (n < len(buf), err == io_err.OK) is not
 	// an error; the caller is responsible for re-issuing the remainder.
 	write(fd *FD, buf []byte) i64, ?error {
-		raw i64 := _io_sys.write(i64(*fd), buf)
+		raw i64 := sys.write(i64(*fd), buf)
 		if (raw < 0) {
 			return 0, err_from_code(-raw)
 		}
@@ -365,7 +365,7 @@ pub type FD i64 {
 	// coerced to error. Some filesystems surface delayed write errors
 	// through close.
 	close(fd *owned FD) ?error {
-		raw i64 := _io_sys.close(i64(*fd))
+		raw i64 := sys.close(i64(*fd))
 		dispose(fd)
 		if (raw < 0) {
 			return err_from_code(-raw)
@@ -421,7 +421,7 @@ pub fn open(path []byte, flags i64, mode i64) owned FD, ?error {
 		buf[i] = path[i]
 	}
 	buf[n] = 0
-	raw i64 := _io_sys.open(buf[:n+1], flags, mode)
+	raw i64 := sys.open(buf[:n+1], flags, mode)
 	if (raw < 0) {
 		return owned(FD(-1)), err_from_code(-raw)
 	}

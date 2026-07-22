@@ -13,6 +13,10 @@ package sys
 import "_sys"
 
 // x86-64 Linux syscall numbers.
+SYS_READ i64 := 0
+SYS_WRITE i64 := 1
+SYS_OPEN i64 := 2
+SYS_CLOSE i64 := 3
 SYS_MMAP i64 := 9
 SYS_MPROTECT i64 := 10
 SYS_MUNMAP i64 := 11
@@ -118,6 +122,42 @@ pub fn reserve_anon(length i64) uintptr {
 		return uintptr(0)
 	}
 	return uintptr(r)
+}
+
+// buf_ptr returns the address of a byte slice's data, or 0 for an empty slice.
+//
+// &s[0] is the data pointer, but only for a non-empty slice: indexing [0] into
+// an empty one traps the bounds check. A read or write of zero bytes never
+// touches the buffer, so a null pointer with length 0 is what the kernel wants
+// there anyway.
+fn buf_ptr(s []byte) uintptr {
+	if (len(s) == 0) {
+		return uintptr(0)
+	}
+	return uintptr(&s[0])
+}
+
+// read reads up to len(buf) bytes from fd into buf. Returns the byte count, or
+// a negated errno.
+pub fn read(fd i64, buf []mut byte) i64 {
+	return _sys.syscall3(SYS_READ, fd, i64(buf_ptr(buf[:])), len(buf))
+}
+
+// write writes len(buf) bytes from buf to fd. Returns the byte count, or a
+// negated errno.
+pub fn write(fd i64, buf []byte) i64 {
+	return _sys.syscall3(SYS_WRITE, fd, i64(buf_ptr(buf)), len(buf))
+}
+
+// open opens path (which must be null-terminated) with the given flags and
+// mode. Returns the new fd, or a negated errno.
+pub fn open(path []byte, flags i64, mode i64) i64 {
+	return _sys.syscall3(SYS_OPEN, i64(buf_ptr(path)), flags, mode)
+}
+
+// close closes fd. Returns 0, or a negated errno.
+pub fn close(fd i64) i64 {
+	return _sys.syscall1(SYS_CLOSE, fd)
 }
 
 // map_anon is the common case: private, anonymous, read-write pages backed by

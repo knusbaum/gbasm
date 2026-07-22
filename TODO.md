@@ -128,6 +128,22 @@ global. It is the genuine case for importing a symbol's size across packages
 mechanism -- distinct from the type string, which bas must never parse. File it
 here rather than build it speculatively.
 
+### `io.io_err` has no `OK` case, but code and comments assume one
+
+`runtime/io/io.bos` documents its error model as "every fallible operation
+returns `(value, err)` where `err` is `io_err.OK` on success", and the
+`examples/cat` and `examples/buggy` sources test `err != io.io_err.OK`. But the
+`pub type io_err values` block defines no `OK` case, so those examples fail to
+compile: *"Values type io.io_err has no case OK"*. Pre-existing (io.bos last
+changed in `591d441`, before the `_io_sys`→`sys` migration, which did not touch
+`io_err`); the two examples are not in `mmk test`, so it went unnoticed.
+
+Decide the success sentinel and make it consistent: either add an `OK` case to
+`io_err` (a values type can carry a zero/no-error member) and ensure every io
+function returns it on success, or change the model to a nullable `?error` and
+fix the comments and the two examples. The maintained examples (hello, linked,
+interface) do not hit this; cat/buggy do.
+
 ### Code formatter (`go fmt`-style)
 A canonical, opinionated formatter for `.bos` source — no config, one
 true layout, like `gofmt`. Would also give the editor integrations

@@ -404,7 +404,7 @@ Owned types are not allowed at file scope. A global never goes out of scope, so 
 
 ### Built-in Functions
 
-Built-ins are split into two groups: **compiler intrinsics** (lowered by bosc itself, not callable through a function pointer) and **runtime packages** (ordinary Boson packages that any program imports). The runtime packages are `string`, `io`, `fmt`, `sys`, `_sys`, `_io_sys`, `_init`, `_heap`, `_iface`, `pair`, and `builtin`.
+Built-ins are split into two groups: **compiler intrinsics** (lowered by bosc itself, not callable through a function pointer) and **runtime packages** (ordinary Boson packages that any program imports). The runtime packages are `string`, `io`, `fmt`, `sys`, `_sys`, `_init`, `_heap`, `_iface`, `pair`, and `builtin`.
 
 **Compiler intrinsics:**
 
@@ -468,7 +468,7 @@ Bare references to `error` resolve to `builtin.error` without needing an explici
 | `string.putc` | `(byte) void` | Print a single byte as a character |
 | `string.exit` | `(i64 code) void` | Exit the process with the given code |
 
-File IO lives in the `io` and `_io_sys` packages. The typed FD API in `io`:
+File IO lives in the `io` package, built on the raw syscall wrappers in `sys`. The typed FD API in `io`:
 
 | Function/Method | Signature | Description |
 |------|------|------|
@@ -482,16 +482,13 @@ File IO lives in the `io` and `_io_sys` packages. The typed FD API in `io`:
 | `io.writer` | `interface { write(w *self, buf []byte) i64, i64 }` | Anything writable; `FD` satisfies it. |
 | `io.copy` | `(dst writer, src reader) i64` | Copy bytes from `src` to `dst` until EOF; returns total bytes copied (or a negative errno on a read/write error). |
 
-The raw syscall wrappers, taking i64 fd values directly, live in `_io_sys`:
+The raw syscall wrappers `io` is built on live in `sys` alongside the rest of
+the syscall surface: `sys.read(i64, []mut byte) i64`, `sys.write(i64, []byte)
+i64`, `sys.open([]byte, i64, i64) i64`, `sys.close(i64) i64`, each returning the
+kernel's raw result (negative errno on failure). See § Built-in Functions for
+the `sys` package.
 
-| Function | Signature | Description |
-|------|------|------|
-| `_io_sys.read` | `(i64 fd, []mut byte buf) i64` | Raw `read(2)` syscall |
-| `_io_sys.write` | `(i64 fd, []byte buf) i64` | Raw `write(2)` syscall |
-| `_io_sys.open` | `([]byte path, i64 flags, i64 mode) i64` | Raw `open(2)` syscall |
-| `_io_sys.close` | `(i64 fd) i64` | Raw `close(2)` syscall |
-
-The `_init` package provides `_init.start` (the ELF entry point) and `_init.index_oob` (called by bounds checks). The `_heap` package provides the memory allocator, written in Boson (`runtime/_heap/heap.bos`): a three-tier design -- power-of-two size classes for small objects, contiguous span runs for large ones, direct `mmap` for huge ones -- carving 4MiB chunks out of 1GiB reserves, with `MADV_DONTNEED`-based release. It imports `sys`, so those objects link alongside it. The `_iface` package provides `assert_to`, the runtime helper backing interface-to-interface type assertion (lazy per-typedesc itab cache). The `_sys` package is the generic syscall floor — `syscall0`…`syscall6`, the only hand-written assembly the syscall surface needs — and `sys` is the typed Boson package built on it (`mmap`, `munmap`, `mprotect`, `madvise`, `brk`, plus the `PROT_`/`MAP_` constants and the errno convention). Adding a syscall means adding a Boson wrapper, not another assembly stub. The `pair` package exists as a minimal cross-package struct used by tests.
+The `_init` package provides `_init.start` (the ELF entry point) and `_init.index_oob` (called by bounds checks). The `_heap` package provides the memory allocator, written in Boson (`runtime/_heap/heap.bos`): a three-tier design -- power-of-two size classes for small objects, contiguous span runs for large ones, direct `mmap` for huge ones -- carving 4MiB chunks out of 1GiB reserves, with `MADV_DONTNEED`-based release. It imports `sys`, so those objects link alongside it. The `_iface` package provides `assert_to`, the runtime helper backing interface-to-interface type assertion (lazy per-typedesc itab cache). The `_sys` package is the generic syscall floor — `syscall0`…`syscall6`, the only hand-written assembly the syscall surface needs — and `sys` is the typed Boson package built on it: file IO (`read`, `write`, `open`, `close`, which `io` wraps), memory (`mmap`, `munmap`, `mprotect`, `madvise`, `brk`, `map_anon`), plus the `PROT_`/`MAP_` constants and the errno convention. Adding a syscall means adding a Boson wrapper, not another assembly stub. The `pair` package exists as a minimal cross-package struct used by tests.
 
 **`fmt` package** — composable formatting, built on `io.writer` and runtime type assertion. Five layers, smallest first; all storage is caller-owned (no GC obligations in the public surface), and the only heap traffic is the lazy itab cache inside `%v` dispatch.
 
@@ -3033,9 +3030,8 @@ The runtime lives at `runtime/<pkg>/*.bs` under `BOSON_HOME` and is shared by ev
 |---------|-------|---------|
 | `_init`    | `init_linux.bs` | Process entry (`start`) calling `main.main`. Bounds-check trap (`index_oob`). |
 | `_heap`    | `heap.bos` | The Boson memory allocator: `alloc`, `free` (the targets of `alloc`/`new`/`free`), plus mallinfo-style introspection. Three tiers over 4MiB chunks carved from 1GiB reserves. |
-| `_io_sys`  | `io_sys_linux.bs` | Raw Linux file-IO syscall wrappers (`read`, `write`, `open`, `close`) taking i64 fds. |
-| `string`   | `string.bs`, `puts_linux.bs` | String formatting and stdout primitives: `puts`, `puti`, `putb`, `putc`, `exit`, plus internal `strlen`, `itoa`, `uitoa`. File IO is no longer here; see `_io_sys` and `io`. |
-| `io`       | `io.bos` | Typed file IO: `type FD i64` with `read`/`write`/`close` methods; `fn open([]byte, i64, i64) owned FD, i64`; `STDIN`/`STDOUT`/`STDERR` globals; `reader`/`writer` interfaces; `fn copy(writer, reader) i64`. Wraps `_io_sys`. |
+| `string`   | `string.bs`, `puts_linux.bs` | String formatting and stdout primitives: `puts`, `puti`, `putb`, `putc`, `exit`, plus internal `strlen`, `itoa`, `uitoa`. File IO is no longer here; see `sys` and `io`. |
+| `io`       | `io.bos` | Typed file IO: `type FD i64` with `read`/`write`/`close` methods; `fn open([]byte, i64, i64) owned FD, i64`; `STDIN`/`STDOUT`/`STDERR` globals; `reader`/`writer` interfaces; `fn copy(writer, reader) i64`. Built on `sys`. |
 | `pair`     | `pair.bos` | Minimal cross-package struct used only by tests. |
 | `builtin`  | `builtin.bos` | Auto-imported into every package. Currently holds the `error` interface and acts as the home for documentation of compiler intrinsics. |
 

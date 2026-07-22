@@ -23,8 +23,8 @@ func TestValidateRuntimeBundle(t *testing.T) {
 	if info.Importcfg != filepath.Join(root, "importcfg") {
 		t.Fatalf("Importcfg = %q", info.Importcfg)
 	}
-	if got := info.Objects["_io_sys"]; got != filepath.Join(root, "objects", "_io_sys.bo") {
-		t.Fatalf("_io_sys object = %q", got)
+	if got := info.Objects["_heap"]; got != filepath.Join(root, "objects", "_heap.bo") {
+		t.Fatalf("_heap object = %q", got)
 	}
 }
 
@@ -33,12 +33,12 @@ func TestValidateRuntimeBundleRejectsInternalImportcfgEntry(t *testing.T) {
 		"builtin": "builtin.bo",
 		"io":      "io.bo",
 		"fmt":     "fmt.bo",
-		"_io_sys": "_io_sys.bo",
+		"_heap":   "_heap.bo",
 	})
 
 	_, err := ValidateRuntimeBundle(root)
 	if err == nil {
-		t.Fatal("ValidateRuntimeBundle succeeded with _io_sys in importcfg")
+		t.Fatal("ValidateRuntimeBundle succeeded with _heap in importcfg")
 	}
 }
 
@@ -81,7 +81,6 @@ func TestCommandPlan(t *testing.T) {
 		filepath.Join(root, "objects", "builtin.bo"),
 		filepath.Join(root, "objects", "io.bo"),
 		filepath.Join(root, "objects", "fmt.bo"),
-		filepath.Join(root, "objects", "_io_sys.bo"),
 		filepath.Join(root, "objects", "_heap.bo"),
 		filepath.Join(root, "objects", "sys.bo"),
 		filepath.Join(root, "objects", "_sys.bo"),
@@ -194,7 +193,7 @@ func writeTestBundle(t *testing.T, imports map[string]string) string {
 		}
 	}
 	var cfg bytes.Buffer
-	for _, pkg := range []string{"builtin", "io", "fmt", "_io_sys", "_iface"} {
+	for _, pkg := range []string{"builtin", "io", "fmt", "_heap", "_iface"} {
 		name, ok := imports[pkg]
 		if !ok {
 			continue

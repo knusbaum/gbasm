@@ -251,11 +251,20 @@ defbody bos_exe : $(bos_exe_deps "$source") {
     mainbo="$workdir/main.bo"
     $BAS -o "$mainbo" "${asm_files[@]}"
 
-    # Collect all package .bo files from the deps.
+    # Collect all package .bo files from the deps, de-duplicated. A package can
+    # appear twice -- e.g. sys is both a hardcoded always-link dep (for _heap)
+    # and discovered transitively when a program imports io -- and the linker
+    # rejects duplicate packages.
     link_files=("$mainbo")
+    seen=" "
     for d in "${dep[@]}"; do
         case "$d" in
-            target/*.bo) link_files+=("$d") ;;
+            target/*.bo)
+                case "$seen" in
+                    *" $d "*) ;;
+                    *) link_files+=("$d"); seen="$seen$d " ;;
+                esac
+                ;;
         esac
     done
 

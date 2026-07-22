@@ -254,7 +254,6 @@ var runtimeObjects = []runtimeObject{
 	{Package: "builtin", Filename: "builtin.bo"},
 	{Package: "io", Filename: "io.bo"},
 	{Package: "fmt", Filename: "fmt.bo"},
-	{Package: "_io_sys", Filename: "_io_sys.bo", Internal: true},
 	{Package: "_heap", Filename: "_heap.bo", Internal: true},
 	// _heap is written in Boson and imports sys, so its transitive deps are
 	// linked alongside it.
