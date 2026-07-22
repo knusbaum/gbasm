@@ -26,10 +26,16 @@ the borrow checker's flow facts, which today reason about scalar and struct
 fields, not container elements.
 
 ### Native map
-A built-in hash map type. Needs the generics story (or a blessed built-in that
-sidesteps it), a hashing/equality contract, and iteration order semantics
-(defined or deliberately unspecified). Likely wants the dynamic-allocation and
-ownership-in-containers pieces first.
+A hash map type. Needs a hashing/equality contract and iteration-order
+semantics (defined or deliberately unspecified), and it leans on dynamic
+allocation and ownership-in-containers.
+
+**Leaning toward NOT native.** The current inclination is to defer this and
+write it in Boson once generics exist, rather than bless a built-in that
+sidesteps generics. That makes it a library, not a language feature -- which is
+the better outcome if the allocator and generics make an in-Boson map
+competitive. Revisit once generics land: if a Boson map is clean and fast
+enough, there is no native map; if not, reconsider a built-in.
 
 ### Generics
 Parametric polymorphism. The single largest language feature here, and a
@@ -37,11 +43,65 @@ prerequisite (or strong want) for map and any real collection library. Design
 space is wide -- monomorphization vs dictionary-passing, constraint/interface
 bounds, inference. Everything above leans on it.
 
-### Context
-A scoped cancellation / deadline / value-propagation mechanism (Go's
-`context.Context` shape). Threads through call chains to carry cancellation and
-request-scoped data. NOTE: recorded from a one-word prompt -- confirm the
-intended scope (cancellation propagation vs something else) before designing.
+### Context (implicit, dynamically scoped)
+Like Go's `context.Context` in purpose -- carry deadlines, cancellation, and
+request-scoped values down a call chain -- but **implicit**, fixing the reason
+Go's is disliked: Go threads it manually through every signature, so one
+function that forgets to accept and forward it severs the chain, and you can't
+add context to a call path without editing every frame on it. Here the
+compiler/runtime owns the propagation, so the chain **cannot** be broken -- there
+is no parameter to forget.
+
+**Semantics.** `get_context()` reads the current context. Deriving from it
+(`with_deadline`, `with_value`, `with_cancel`, …) installs a new context as
+current for the rest of *this* frame and everything it calls. Callees see a
+frame's derivations; the caller does not once the frame returns. Precisely:
+
+    A: ctx = get_context()      # C0
+       ctx.with_deadline(...)   # installs C1
+       B()                      # B (and its callees) see C1
+       ...
+    A returns  -> current restored to C0; A's caller never sees C1
+
+This is deliberate dynamic scoping -- an intentional island of it in an
+otherwise lexical, explicit language. The design must keep it from becoming
+"global mutable state by the back door" (see "what's in it" below).
+
+**Implementation shape (settled in discussion).**
+- Context is a **value with derivation**, not a mutable object: deriving builds a
+  new context and installs it; the parent is never mutated. That is what makes
+  "the caller doesn't see it" a single-pointer restore rather than a deep undo.
+- The current context is a runtime global (thread-local once threads exist).
+  `get_context()` is a bare load.
+- **Only mutators pay.** A function that derives a context gets compiler-inserted
+  save-current-on-entry / restore-on-epilogue (all `return`s already funnel
+  through one epilogue label). A function that never derives one needs nothing --
+  each callee restores itself, so `current` is already back to the entry value
+  when a non-participant returns. Zero overhead for non-participants, unlike Go
+  where every frame carries the parameter.
+
+**Open design decisions.**
+- *What's in it.* Start with a **fixed, typed shape** (deadline, a cancel flag, a
+  small known set). An open key→value bag is more Go-like and more powerful but
+  pulls in native map / generics AND is the dynamic-scoping footgun; defer it
+  until generics exist.
+- *Cancellation under single-threaded Boson.* The *propagation mechanism* is
+  fully buildable now; true cancellation is not, because there is no concurrency
+  to interrupt. "Cancelled" can only be a **cooperative check**
+  (`if get_context().cancelled() { return }`) and a deadline a timeout passed to
+  / a clock checked by a blocking syscall. Ship the mechanism plus
+  value/deadline propagation first; cancellation semantics are partly gated on
+  the I/O model.
+- *Lifetime of context values.* A value placed in the context lives for the frame
+  subtree; a callee must not stash it past that. Same non-escaping-borrow
+  discipline as borrowed parameters. Restrict context values to copyable/borrowed
+  things at first; owned values would drag the drop machinery into the
+  restore-on-exit path.
+
+Style: snake_case -- `get_context()`, `context.with_value(...)`.
+
+Not scheduled; recorded so the design is not re-derived. Discussed and
+understood, deliberately deferred.
 
 ---
 
