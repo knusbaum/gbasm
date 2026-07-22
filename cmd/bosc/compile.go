@@ -227,6 +227,30 @@ func regSpot(of io.Writer, name string) spot {
 	return spot{ref: name, t: regtype}
 }
 
+// valueAddress materializes the address of the memory-backed value named `name`
+// into a fresh register temp, typed as a pointer to valType.
+//
+// It is the single place that resolves the two name-is-address representations,
+// which are otherwise indistinguishable by type:
+//   - a by-address PARAMETER holds a pointer to the caller's value, so its
+//     address is the value it holds -> `mov`.
+//   - a memory-backed LOCAL or global IS the storage, so its address is taken
+//     with `lea`.
+// Every site that needs a value's address -- `&x`, and materializing a base for
+// register-scaled indexing -- routes through here, so the distinction cannot be
+// re-derived (and re-gotten-wrong) per site.
+func valueAddress(of io.Writer, c *Context, name string, valType ASTType) spot {
+	pt := valType
+	pt.Indirection++
+	dest := newSpot(of, c, c.Temp(), pt)
+	if c.NameHoldsPointer(name) {
+		fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, name)
+	} else {
+		fmt.Fprintf(of, "\tlea %s %s\n", dest.ref, name)
+	}
+	return dest
+}
+
 // emitIndexOOBTrap emits the call into the bounds-check trap, which takes the
 // offending index in RDI and the limit in RSI and does not return.
 //
@@ -3039,11 +3063,10 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		// bas exposes. Either way, lea the storage's address into a
 		// register first.
 		if base.nameIsAddress {
-			addrT := vt
-			addrT.Indirection++
-			baseAddr := newSpot(of, c, c.Temp(), addrT)
-			fmt.Fprintf(of, "\tlea %s %s\n", baseAddr.ref, base.ref)
-			base = baseAddr
+			// A by-address parameter holds a pointer here, not storage, so
+			// this must load the held pointer rather than lea the slot --
+			// valueAddress picks the right instruction.
+			base = valueAddress(of, c, base.ref, vt)
 		}
 		index := compileTop(of, c, ast.NAST, nullspot)
 		scale := vt.Size(c)
@@ -3147,6 +3170,15 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 			spills = append(spills, pendingSpill{name: a.Name, size: sz})
 		} else {
 			fmt.Fprintf(of, "\targi %s %d %s\n", a.Name, i, spec)
+			// A memory-backed value larger than 8 bytes is passed by address:
+			// this argi slot holds a pointer to the caller's value. Record it
+			// so valueAddress loads that pointer (mov) rather than taking the
+			// slot's address (lea) when the value's address is wanted. (The
+			// <=8-byte memBacked case above spills into a real `bytes` local,
+			// so it is name-is-storage like any local and not recorded here.)
+			if a.Type.Indirection == 0 && typeIsMemoryBacked(c, a.Type) {
+				c.pointerHeldParams[a.Name] = true
+			}
 		}
 		c.BindVar(ast, a.Name, a.Type, a.IsConst)
 		c.recordUsedCandidate(a.Name, a.p)
@@ -4483,10 +4515,21 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				}
 			}
 		}
+		// A by-address parameter already holds the value's address, so `&name`
+		// is that held pointer -- a load, not an lea of the slot. No volatile
+		// spill: the value lives in the caller's frame, not this name's slot.
+		if c.NameHoldsPointer(name) {
+			c.MarkAddress(name)
+			fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, name)
+			return dest
+		}
 		// For register-resident locals, force-spill to memory so the
 		// taken address is stable; for memory-backed names (globals,
 		// bytes-allocated locals) the address is already stable and
-		// the volatile directive would be a no-op or unrecognized.
+		// the volatile directive would be a no-op or unrecognized. This
+		// check must precede MarkAddress -- MarkAddress records the name as
+		// address-taken, which itself makes NameIsAddress return true and would
+		// suppress the very spill it needs.
 		if !c.NameIsAddress(name) {
 			fmt.Fprintf(of, "\tvolatile %s\n", name)
 		}
@@ -4551,11 +4594,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// chunk) can't be the base of a '[name + reg*scale]' SIB form;
 		// lea its address into a register first.
 		if base.nameIsAddress {
-			addrT := vt
-			addrT.Indirection++
-			baseAddr := newSpot(of, c, c.Temp(), addrT)
-			fmt.Fprintf(of, "\tlea %s %s\n", baseAddr.ref, base.ref)
-			base = baseAddr
+			// A by-address parameter holds a pointer here, not storage, so
+			// this must load the held pointer rather than lea the slot --
+			// valueAddress picks the right instruction.
+			base = valueAddress(of, c, base.ref, vt)
 		}
 		index := compileTop(of, c, ast.NAST, nullspot)
 		l := c.Label("icheck")

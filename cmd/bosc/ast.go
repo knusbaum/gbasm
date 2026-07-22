@@ -49,6 +49,17 @@ type Context struct {
 	// allocated as `bytes` on the stack and accessed by address too).
 	addressNames map[string]bool
 
+	// pointerHeldParams lists parameter names that are memory-backed values
+	// (struct/slice/array/>8-byte) passed BY ADDRESS: the callee's slot holds a
+	// pointer to the caller's value, not the value itself. Both these and
+	// memory-backed locals report NameIsAddress==true, but they need opposite
+	// handling when the *address of the value* is wanted -- a local's name IS
+	// the storage (`lea name`), whereas one of these HOLDS the address
+	// (`mov name`). NameHoldsPointer distinguishes them. Written by
+	// compileFunctionBody as it declares each `argi`; per-function, so it lives
+	// on the body context, not the root.
+	pointerHeldParams map[string]bool
+
 	// anonGlobals is a queue of file-scope-data blocks synthesized
 	// during static-init encoding (the `&someLiteral` case). Each
 	// entry already has its bytes and relocations computed; the
@@ -169,7 +180,8 @@ func NewContext() *Context {
 		bindings:        make(map[string]ASTType),
 		checker:         NewCheckerState(nil),
 		prebound:        make(map[string]bool),
-		addressNames:    make(map[string]bool),
+		addressNames:      make(map[string]bool),
+		pointerHeldParams: make(map[string]bool),
 		constBindings:   make(map[string]bool),
 		mutCandidates:   make(map[string]position),
 		mutRelied:       make(map[string]bool),
@@ -257,6 +269,26 @@ func (c *Context) NameIsAddress(name string) bool {
 	// Locals: derive from the declared type's memory-backing.
 	if t, ok := c.TypeForVar(name); ok {
 		return typeIsMemoryBacked(c, t)
+	}
+	return false
+}
+
+// NameHoldsPointer reports whether name is a memory-backed value passed to the
+// current function BY ADDRESS -- the slot named `name` holds a pointer to the
+// caller's value, not the value itself.
+//
+// Such a name reports NameIsAddress==true just like a memory-backed local, but
+// the two need opposite handling when the value's address is wanted: a local's
+// name IS the storage, so its address is `lea name`; one of these HOLDS the
+// address, so its address is the value it holds, `mov name`. Everything that
+// reaches for a value's address must consult this to choose correctly (see
+// valueAddress in compile.go). Marked at parameter binding by
+// compileFunctionBody; searched up the scope chain so nested blocks see it.
+func (c *Context) NameHoldsPointer(name string) bool {
+	for cur := c; cur != nil; cur = cur.parent {
+		if cur.pointerHeldParams[name] {
+			return true
+		}
 	}
 	return false
 }

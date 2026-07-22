@@ -1,0 +1,69 @@
+package main
+
+import "string"
+
+// Taking the address of, or runtime-indexing, a by-address parameter.
+//
+// A struct/slice/array value larger than 8 bytes is passed by address: the
+// callee's parameter slot holds a hidden pointer to the caller's value. Every
+// access must maintain that "the name behaves like the value" pretense. It used
+// to leak wherever codegen took the slot's address with `lea` instead of
+// loading the held pointer -- silently reading a stack address as if it were
+// the value. Fixed by routing every value-address site through valueAddress,
+// which loads the pointer (mov) for a by-address param and lea's storage for a
+// local.
+//
+// Each check reads a VALUE back through the taken address, not just compares
+// pointers -- an address bug that returned a plausible-looking wrong pointer
+// would pass an address comparison but fail a value readback.
+
+type box struct{ a i64, b i64 } {
+	rd(b *box) i64 {
+		return b.a * 100 + b.b
+	}
+}
+
+interface Reader { rd(r *self) i64 }
+
+fn read_through(p *box) i64 { return p.a * 100 + p.b }
+
+fn line(n i64) { string.puti(n) string.putc('\n') }
+
+// &param passed to a *T function
+fn amp_to_ptr(p box) i64 { return read_through(&p) }
+
+// &param coerced to an interface, dispatched
+fn amp_to_iface(p box) i64 {
+	r Reader := &p
+	return r.rd()
+}
+
+// runtime-indexed array parameter
+fn arr_rt(a [4]i64, i i64) i64 { return a[i] * 10 + a[0] }
+
+// runtime-indexed slice parameter
+fn slice_rt(s []i64, i i64) i64 { return s[i] * 10 + s[0] }
+
+// slice-header reinterpret through &s -- the original motivating case. &s must
+// be the header address, so reading two i64s there yields {ptr, len}.
+fn header_len(s []byte) i64 {
+	return *unsafe_cast(*i64, uintptr(&s) + uintptr(8))
+}
+
+fn main() {
+	b box := {a: 7, b: 3}
+	line(amp_to_ptr(b))              // 703
+	line(amp_to_iface(b))            // 703
+
+	a [4]i64 := [10, 20, 30, 40]
+	i i64 := 2
+	line(arr_rt(a, i))               // 30*10 + 10 = 310
+
+	s [4]i64 := [11, 22, 33, 44]
+	sl := s[0:4]
+	line(slice_rt(sl, i))            // 33*10 + 11 = 341
+
+	// &s header address: length field reads 5 for a 5-byte slice.
+	msg := "hello"
+	line(header_len(msg[0:5]))       // 5
+}
