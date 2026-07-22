@@ -1,0 +1,17 @@
+package main
+
+import "string"
+
+// The tracked deref-copy is fully usable while the target is live: read through
+// the copied pointer x before freeing p. Also confirms a scalar value-copy
+// (v := *x) is independent of the freed allocation.
+fn main() {
+	p := alloc(i64)
+	*p = 7
+	pp **i64 := &p
+	x := *pp
+	v := *x
+	free(p)
+	string.puti(v)
+	string.putc(10)
+}

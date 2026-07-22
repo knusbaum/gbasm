@@ -1,0 +1,15 @@
+package main
+
+import "fmt"
+
+// Reslicing an owned array produces a usable borrowed view. Reading through
+// it before the array is disposed is fine; the single obligation stays with
+// the array and is discharged by dispose(a).
+fn main() {
+	a owned [3]i64 := [10, 20, 30]
+	s := a[:]
+	fmt.print("%d\n", s[1])
+	p := &s[2]
+	fmt.print("%d\n", *p)
+	dispose(a)
+}

@@ -729,6 +729,54 @@ level to its right, and where it lands distinguishes *which* thing is owned.
   container into one value. (Per-element ownership needs the separate backing a
   *slice* has; hence `[]owned T` is allowed and `[N]owned T` is not.)
 
+**Reslicing an owned aggregate borrows — it never transfers ownership.**
+`a[:]` on an `owned [N]T` array (or `s[:]` on an `owned []T` slice) yields a
+plain, non-owned `[]T`: a *borrowed view* into the owner's storage, exactly like
+`&a` yields a borrowed `*T`. It does **not** produce a second `owned []T` — that
+would fabricate a duplicate obligation over one storage (the slice analogue of
+copying an `owned *T` into a second `owned *T` and keeping both, which is a
+move). The single obligation stays with the array/slice binding and is
+discharged by disposing *it*. The view roots at the owner's flow origin, so
+disposing the owner invalidates the view and any raw pointer taken into it
+(`&s[i]`): a read or deref through the stale view is rejected as
+use-after-consume. The slice's element writability still follows the source
+lvalue's mutability (`var` array → `[]mut T`, `const` → `[]T`); only the *owned*
+bit is stripped.
+
+The same rooting applies when the array lives behind a pointer. `(*p)[:]` is not
+a copy — a plain value deref like `y := *arr` copies the array's bytes into an
+independent binding (so `y` outlives `free(p)`), but `[:]` is an *address-taking*
+operation: "deref `p`, take the address of that array, build a slice header over
+it." The resulting view aliases `p`'s backing, so it roots at `p`'s origin and
+`free(p)` (or any invalidation of `p`) invalidates the view — a read or store
+through a saved `s := (*p)[:]` after `free(p)` is rejected as use-after-free,
+just as the direct `(*p)[i]` deref is rejected at its own site. (`[:]` and `&`
+are the two address-of forms; both propagate the base's provenance, whereas a
+value deref does not, because it copies.)
+
+**A value copy carries the tracking of the value it copied.** `x := *e` reads
+`*e` and copies it; the copy's tracking is whatever *that value* tracks, decided
+by the value's type, not by where the storage came from. A scalar tracks nothing
+(`z := *new(i64)` is independent — and identical to `z := *f()` where `f`
+returns `owned *i64`; both are just "copy the pointee scalar"). A **pointer**
+value tracks its target, so copying a pointer out of another pointer preserves
+the chain: in
+
+```
+pp **i64 := &p     // pp points at p's slot
+x  := *pp          // x copies p's value — x now points where p points
+free(p)            // (or free/consume p's target through any owner)
+return *x          // rejected: x's target is gone
+```
+
+`x` inherits `p`'s target, so a later free/consume of that target is caught at
+`*x`. This is one level per deref — each `*` peels one indirection — and it
+composes through `z := &y; x := *z`. Ownership alone drives this: there is no
+"allocation" notion in the tracker; an owned pointer is an owned pointer whether
+it came from `new`, `alloc`, or a function returning `owned *T`. A value read
+*through a borrow* (`q *i64 := &p; x := *q`) yields a plain, non-owned value —
+the borrow stripped ownership — so that copy is correctly independent.
+
 **Implementation status.** The type *encoding* distinguishes all of the above
 (`owned []T` at bit 0, `[]owned T` at bit 1), and `[N]owned T` is rejected at
 parse time. Per-element enforcement is **not yet complete**: the flow checker

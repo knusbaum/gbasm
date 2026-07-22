@@ -1,0 +1,15 @@
+package main
+
+// Two levels of indirection: y points at owned p, z points at y's slot.
+// `x := *z` copies y's value, so x tracks p through the chain. Consuming p
+// then dereferencing x must be caught — the tracking propagates one level per
+// deref.
+fn take(v owned i64) { dispose(v) }
+fn main() i64 {
+	p owned i64 := 5
+	y *i64 := &p
+	z := &y
+	x := *z
+	take(p)
+	return *x
+}

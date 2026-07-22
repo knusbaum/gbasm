@@ -1,0 +1,2 @@
+Compiling tests/cov_owned_array_reslice_double_dispose_err_test.bos
+Fatal: dispose: "s" has type []i64 which has no owned obligation

@@ -1,0 +1,13 @@
+package main
+
+// Multi-level: `x := *pp` copies the pointer stored in *pp (which is p's
+// value), so x tracks p's allocation. Freeing p then dereferencing the copy x
+// is a use-after-free and must be caught. `*e` inherits the tracking of the
+// value it copies (Pointer(slotTarget)), not e's own validity.
+fn main() i64 {
+	p := alloc(i64)
+	pp **i64 := &p
+	x := *pp
+	free(p)
+	return *x
+}

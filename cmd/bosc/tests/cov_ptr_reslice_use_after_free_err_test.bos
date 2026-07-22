@@ -1,0 +1,13 @@
+package main
+
+// A reslice of a heap array `s := (*arr)[:]` borrows arr's origin, so the
+// view cannot outlive the allocation. Reading through the saved view after
+// free(arr) is a use-after-free and must be rejected — even though the
+// reslice itself happened while arr was still live. (The direct `(*arr)[i]`
+// deref is caught at its own site; this pins the outlives-the-free case.)
+fn main() i64 {
+	arr := alloc([4]i64)
+	s []mut i64 := (*arr)[:]
+	free(arr)
+	return s[0]
+}

@@ -1160,52 +1160,6 @@ func checkSliceEscapeLocalOnly(c *Context, a AST, what string) {
 	}
 }
 
-// lvalueLocalRoot walks an lvalue chain (Symbol, Dot, Index, NonNullAssert)
-// to its root binding and returns the binding name if every step stays
-// inside the same stack frame — no pointer auto-deref at a Dot, no
-// indexing through a slice, no global root, no pointer-typed Symbol.
-// Used by SliceOp provenance to decide whether `expr[:]` carries the
-// root binding's local-storage origin.
-func lvalueLocalRoot(c *Context, expr AST) (string, bool) {
-	for {
-		switch v := expr.(type) {
-		case *Symbol:
-			if c.IsGlobalBinding(v.Name) {
-				return "", false
-			}
-			t, ok := c.TypeForVar(v.Name)
-			if !ok {
-				return "", false
-			}
-			if t.Indirection > 0 {
-				return "", false
-			}
-			return v.Name, true
-		case *Dot:
-			// Auto-deref through a pointer-typed receiver breaks the
-			// local-root chain (the pointee's storage is opaque).
-			if v.Val.ASTType(c).Indirection > 0 {
-				return "", false
-			}
-			expr = v.Val
-		case *Index:
-			// Indexing into a slice reads through the slice header's
-			// data pointer — that storage isn't necessarily local.
-			// Indexing into a fixed array stays within the receiver's
-			// storage, so the walk continues.
-			recvType := v.Val.ASTType(c)
-			if !recvType.IsArray() {
-				return "", false
-			}
-			expr = v.Val
-		case *NonNullAssert:
-			expr = v.Val
-		default:
-			return "", false
-		}
-	}
-}
-
 // recordStructLiteralFieldFacts walks a struct-literal initializer and
 // records pointer/slice provenance facts at full FlowPath keys.
 // Recurses into nested struct literals so
@@ -1966,6 +1920,70 @@ func lvalueIsWritable(c *Context, a AST) (bool, string) {
 	return false, fmt.Sprintf("Cannot assign to expression of this form")
 }
 
+// lvalueStorageOrigin returns the flow origin of the STORAGE that an lvalue
+// refers to — the provenance an *address-of* operation over it inherits. It is
+// the shared engine behind both `&e` and `e[:]`/`e[a:b]`: an address-of
+// produces a pointer that aliases the operand's storage, so it lives and dies
+// with that storage.
+//
+// It is defined by composing the operations, not by matching AST shapes:
+//   - `*p`      → the storage p points at, i.e. p's own flow link (Pointer(p)).
+//   - `e[i]`    → e's storage (an element aliases its aggregate). If e is a
+//                 pointer base (auto-deref, `arr[i]` on `*[N]T`), that resolves
+//                 through the Symbol arm to Pointer(arr).
+//   - `e.f`     → e's storage (a field aliases its struct).
+//   - `e[:]`    → e's storage.
+//   - a value binding → a synthesized frame-local origin (so `&a[i]` on a stack
+//                 array/struct is escape-restricted); an owned binding's
+//                 existing self-origin is preserved.
+//   - a pointer/slice binding → its existing flow link (the pointee / backing);
+//                 no frame origin is synthesized (its storage is elsewhere).
+//
+// This is deliberately separate from the value-read path (readProvenancePath /
+// the Symbol/Index/Dot arms of pointerExprForAST): reading `*p` as a value
+// COPIES it, so the copy is independent — only the address-of operations alias.
+// Multi-level indirection (`(**pp)[:]`) stops one hop short here; that awaits
+// the storage→tracking-state model.
+func lvalueStorageOrigin(c *Context, e AST, assignedName string) flow.PointerExpr {
+	// If e is itself a slice or a pointer, its storage sits at the far end of
+	// that indirection — the backing a slice points at, or a pointer's pointee.
+	// Follow e's OWN provenance (readProvenancePath / the field-pointer facts),
+	// which already tracks where that indirect storage came from (a borrowed
+	// param, an allocation, …). Descending into a container would be wrong:
+	// reslicing a slice field `b.buf[:]` keeps buf's backing, it does not point
+	// into b. Only inline aggregates (array/struct *values*) live in their
+	// container, and those fall through to the structural walk below.
+	et := e.ASTType(c)
+	if et.IsSlice() || et.Indirection > 0 {
+		return pointerExprForAST(c, e, assignedName)
+	}
+	switch ast := e.(type) {
+	case *Deref:
+		return pointerExprForAST(c, ast.Val, assignedName)
+	case *Index:
+		return lvalueStorageOrigin(c, ast.Val, assignedName)
+	case *Dot:
+		return lvalueStorageOrigin(c, ast.Val, assignedName)
+	case *SliceOp:
+		return lvalueStorageOrigin(c, ast.Val, assignedName)
+	case *NonNullAssert:
+		return lvalueStorageOrigin(c, ast.Val, assignedName)
+	case *Symbol:
+		if c.IsGlobalBinding(ast.Name) {
+			return c.PointerFlow().UnknownPointer()
+		}
+		existing := c.PointerFlow().Pointer(flow.Binding(ast.Name))
+		if existing.KnownOrigin {
+			return existing
+		}
+		// Inline value binding (scalar/array/struct — the slice/pointer cases
+		// were handled above): an address into it is frame-bound, so synthesize
+		// a local origin and let escape analysis reject it outliving the frame.
+		return c.PointerFlow().NewLocalOrigin(flow.Binding(ast.Name))
+	}
+	return c.PointerFlow().UnknownPointer()
+}
+
 // pointerExprForAST returns the binding-flow link for an expression: an Origin
 // or pointer-slot reference that downstream alias bookkeeping can record.
 // Despite the name, the link is not pointer-specific — a value-typed `owned`
@@ -2003,11 +2021,13 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 			return c.PointerFlow().NewLocalOrigin(flow.Binding(name))
 		}
 		if ast.Lit != nil {
-			if root, ok := rootSymbolName(ast.Lit); ok && !c.IsGlobalBinding(root) {
-				if t, ok := c.TypeForVar(root); ok && t.Indirection == 0 {
-					return c.PointerFlow().NewLocalOrigin(flow.Binding(root))
-				}
-			}
+			// `&expr` aliases expr's storage, so it roots wherever that storage
+			// roots — computed compositionally by lvalueStorageOrigin. This
+			// covers value locals (`&a[i]` → frame origin of a), a reslice view
+			// (`&s[i]` where `s := a[:]` → a's origin), and arrays/fields behind
+			// a pointer (`&arr[i]`/`&h.f` on a `*T` → the pointer's pointee), by
+			// the operation semantics rather than a fixed set of AST forms.
+			return lvalueStorageOrigin(c, ast.Lit, assignedName)
 		}
 		return c.PointerFlow().UnknownPointer()
 	case *Dot:
@@ -2018,37 +2038,35 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 		return pointerExprForAST(c, ast.Val, assignedName)
 	case *OwnedPromotion:
 		return pointerExprForAST(c, ast.Val, assignedName)
-	case *SliceOp:
-		// A slice's data pointer roots at the source's storage. Walk
-		// the lvalue chain to its root:
-		//   - Array sources rooted at a local binding (`local[:]`,
-		//     `o.inner.buf[:]`, `a[0][:]`, `b.bufs[0][:]`, …) carry the
-		//     binding's local-storage origin. The walker accepts any
-		//     mix of Dot and Index as long as every step stays within
-		//     the same stack frame: no pointer auto-deref, no indexing
-		//     through a slice.
-		//   - Slice sources (`s[:]` for a slice binding `s`) propagate
-		//     the source binding's flow link directly.
-		//   - Anything else (globals, sources behind a pointer, etc.)
-		//     is opaque.
-		valType := ast.Val.ASTType(c)
-		if valType.IsArray() {
-			if root, ok := lvalueLocalRoot(c, ast.Val); ok {
-				existing := c.PointerFlow().Pointer(flow.Binding(root))
-				if existing.KnownOrigin {
-					return existing
-				}
-				return c.PointerFlow().NewLocalOrigin(flow.Binding(root))
-			}
-		}
-		if valType.IsSlice() {
-			// Re-slicing a slice keeps the same backing storage. Delegate
-			// to pointerExprForAST so field facts (`b.buf[:]`) and array
-			// element facts (`arr[0][:]`) propagate uniformly, not only
-			// the bare-Symbol case.
-			return pointerExprForAST(c, ast.Val, assignedName)
+	case *Deref:
+		// Reading `*e` as a value COPIES it, and the copy inherits the tracking
+		// of the value it copied — not e's own validity (which is checked at the
+		// deref site). When e's flow link is a pointer SLOT (`*pp`/`*z` where the
+		// operand was `&p`/`&y` of a pointer binding — an AddressOfPointerSlot),
+		// `*e` reads that slot's binding value, so the copy tracks whatever that
+		// binding points at: `Pointer(slotTarget)`. This is what makes
+		//   pp := &p; x := *pp; free(p); *x
+		//   z := &y; x := *z          (y := &p)
+		// track p through the copy, so a later free/consume of the target is
+		// caught at `*x`. One level per deref — each `*` peels one indirection.
+		//
+		// Any other pointee is left opaque: a scalar/struct value copy is
+		// independent (`z := *new(i64)` tracks nothing), and value-alias-of-owned
+		// is handled by the owned-scalar coercion path, not here.
+		inner := pointerExprForAST(c, ast.Val, assignedName)
+		if inner.KnownSlot {
+			return c.PointerFlow().Pointer(inner.SlotTarget)
 		}
 		return c.PointerFlow().UnknownPointer()
+	case *SliceOp:
+		// `e[:]` / `e[a:b]` is an address-of over e's storage: the slice header
+		// points into whatever e refers to, so the view roots at e's storage
+		// origin — the same engine `&e` uses. This makes a reslice of an array
+		// behind a pointer (`(*p)[:]`) borrow the pointer and die when it is
+		// freed, and keeps stack-array (`a[:]`, `o.inner.buf[:]`) and slice-of-
+		// slice (`s[:]`) sources rooted at their bindings, all by composition
+		// rather than per-shape handling.
+		return lvalueStorageOrigin(c, ast.Val, assignedName)
 	case *UnsafeCast:
 		// The result has no provenance the checker can know: the address came
 		// from an integer, or from a pointer whose pointee type it no longer
@@ -3019,6 +3037,18 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		// would then write into the throwaway copy instead of `w`. The Dot
 		// lvalue case above already addresses its base via compileLval; this
 		// keeps Index consistent.
+		// Validity guard: the rvalue read path validates an origin via
+		// checkReadable (compileTop's Symbol case); the lvalue path must do the
+		// same for its base, or a store `s[i] = v` through a *stale* base would
+		// silently write into consumed/freed storage. This fires for real: a
+		// heap-reslice view `s := (*p)[:]` borrows p's origin (see the SliceOp
+		// case in pointerExprForAST), so `free(p)` then `s[i] = v` is rejected
+		// here — cov_ptr_reslice_store_after_free_err pins it. (A store through
+		// a stale reslice of a stack `owned [N]T` is not yet reachable, because
+		// such an array is immutable — `[]T`, not `[]mut T` — so its reslice
+		// isn't writable; that path will be covered when mutable owned arrays
+		// become constructible.)
+		checkReadable(c, ast.Val)
 		w := compileLval(of, c, ast.Val, nullspot)
 		vt := ast.ASTType(c)
 		max := newSpot(of, c, c.Temp(), numASTType())

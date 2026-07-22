@@ -1,0 +1,12 @@
+package main
+
+// A reslice of an owned array borrows the array's local storage. Letting
+// that borrowed view escape to a global would outlive the array, so it is
+// rejected (the array is disposed in-scope to isolate the escape from an
+// unrelated unconsumed-owned diagnostic).
+var g []i64
+fn main() {
+	a owned [3]i64 := [10, 20, 30]
+	g = a[:]
+	dispose(a)
+}

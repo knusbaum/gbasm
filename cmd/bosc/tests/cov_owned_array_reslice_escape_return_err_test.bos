@@ -1,0 +1,10 @@
+package main
+
+// Returning a reslice of a local owned array lets the borrowed view outlive
+// the array's storage; rejected as an escape.
+fn leak() []i64 {
+	a owned [3]i64 := [10, 20, 30]
+	s := a[:]
+	return s
+}
+fn main() {}

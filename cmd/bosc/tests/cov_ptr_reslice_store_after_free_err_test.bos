@@ -1,0 +1,12 @@
+package main
+
+// Store counterpart of cov_ptr_reslice_use_after_free_err: writing through a
+// heap-reslice view after free(arr) must also be rejected. This exercises the
+// lvalue-store validity guard (compileLval's Index case runs checkReadable on
+// the base), which the heap-reslice path makes reachable.
+fn main() {
+	arr := alloc([4]i64)
+	s []mut i64 := (*arr)[:]
+	free(arr)
+	s[0] = 9
+}

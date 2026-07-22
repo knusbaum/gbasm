@@ -1,0 +1,2 @@
+Compiling tests/cov_owned_array_reslice_escape_return_err_test.bos
+Fatal: Borrowed slice escapes through return

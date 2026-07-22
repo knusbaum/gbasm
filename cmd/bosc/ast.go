@@ -4294,13 +4294,32 @@ func isLvalueMutable(c *Context, a AST) bool {
 func (s *SliceOp) ASTType(c *Context) ASTType {
 	t := s.Val.ASTType(c)
 	if t.IsSlice() {
-		// Slice-of-slice: mut is already encoded in the slice type.
+		// Slice-of-slice: mut is already encoded in the slice type. A reslice
+		// is a borrowed view, never a transfer of the backing's ownership, so
+		// strip the backing-owned bit (bit 0). Element ownership (bit 1) is a
+		// separate axis and is left as-is.
+		//
+		// This branch is currently unreachable for a real `owned []T`: there is
+		// no way to build one at function scope (reslicing an owned array now
+		// yields a borrowed []T — see below — and no other construct mints an
+		// owned slice). It is kept for parity so that when dynamic owned-slice
+		// allocation lands, reslicing an owned slice already borrows rather than
+		// fabricating a second backing obligation.
+		t.OwnedMask &^= 1
 		return t
 	}
 	if t.IsArray() {
 		// Convert array to slice. Propagate element writability from the
 		// source lvalue: a var array produces mut T[], a const array produces T[].
+		//
+		// The result is a *borrowed view* into the array's storage, never an
+		// owner of it: an `owned [N]T` array carries its single obligation in
+		// the array binding, and `a[:]` must not fabricate a second obligation
+		// (a disposable `owned []T`) over the same storage. Strip the owned
+		// bit; the reslice roots at the array's origin (pointerExprForAST's
+		// SliceOp case), so disposing the array invalidates this view.
 		t.ArraySize = 0
+		t.OwnedMask &^= 1
 		if isLvalueMutable(c, s.Val) {
 			t.MutMask |= 1 << 1
 		} else {

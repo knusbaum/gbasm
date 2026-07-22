@@ -1,0 +1,11 @@
+package main
+
+// `&s[i]` on a reslice `s := a[:]` inherits the owned array a's origin,
+// so a raw pointer into the view cannot outlive disposing the backing.
+fn main() i64 {
+	a owned [3]i64 := [10, 20, 30]
+	s := a[:]
+	p := &s[0]
+	dispose(a)
+	return *p
+}

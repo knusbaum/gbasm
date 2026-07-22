@@ -1,0 +1,12 @@
+package main
+
+// Reslicing an owned array yields a *borrowed* view (`[]i64`), never a
+// second owner of the backing. Disposing both the array and the slice
+// would discharge one storage twice -- a fabricated obligation. The
+// slice carries no owned bit, so dispose(s) is rejected outright.
+fn main() {
+	a owned [3]i64 := [10, 20, 30]
+	s := a[:]
+	dispose(a)
+	dispose(s)
+}

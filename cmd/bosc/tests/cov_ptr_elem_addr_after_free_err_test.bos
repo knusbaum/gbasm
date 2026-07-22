@@ -1,0 +1,12 @@
+package main
+
+// `&arr[i]` where arr is a pointer to a heap array addresses into *arr, so the
+// raw pointer borrows arr and cannot outlive the allocation. Dereferencing it
+// after free(arr) is a use-after-free. Composes through the general
+// address-of/lvalue-storage-origin path, not a slice-specific rule.
+fn main() i64 {
+	arr := alloc([4]i64)
+	q := &arr[0]
+	free(arr)
+	return *q
+}

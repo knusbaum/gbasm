@@ -1,0 +1,2 @@
+Compiling tests/cov_ptr_deref_copy_use_after_consume_err_test.bos
+Fatal: cannot dereference pointer to "p": the target was consumed

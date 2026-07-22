@@ -40,6 +40,23 @@ What remains is *enforcement*, not spelling. Two gaps:
    decidable by construction. You never move an element out by raw index (`s[i]`
    is a borrow); transfer happens only through operations, Rust-style.
 
+Reslicing an owned aggregate now correctly *borrows* rather than fabricating an
+obligation: `a[:]` on an `owned [N]T` (and `s[:]` on an `owned []T`) strips the
+owned bit and yields a non-owned `[]T` view rooted at the owner's flow origin, so
+disposing the owner invalidates the view and any `&s[i]` taken into it. (Before
+this fix the reslice propagated bit 0 and both the array and the slice were
+independently disposable -- one storage, two obligations.) See DESIGN.md
+§Ownership "Reslicing an owned aggregate borrows" and the
+`cov_owned_array_reslice_*` tests. This closes the *view* seam; building and
+draining a `[]owned T` (the two gaps above) is still open. The lvalue store path
+(`s[i] = v` via `compileLval`'s Index case) also now runs `checkReadable` on its
+base, so a store through a *stale* base errors instead of writing into freed
+storage — matching the rvalue read path and exercised by
+`cov_ptr_reslice_store_after_free_err`. (A store through a stale reslice of a
+stack `owned [N]T` is not yet reachable — such an array is immutable, `[]T` not
+`[]mut T`, so its reslice isn't writable — and gets its regression test when
+mutable owned arrays become constructible.)
+
 Driving use case: hold an unknown number of `owned FD`s in a slice, use them by
 borrow (`files[i].read(...)`), drain-close at the end. `dispose` stays the
 coarse "I got it" escape (it is designed that way, discharging all obligations

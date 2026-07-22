@@ -1,0 +1,2 @@
+Compiling tests/cov_ptr_reslice_store_after_free_err_test.bos
+Fatal: cannot dereference pointer to "arr": the allocation was freed

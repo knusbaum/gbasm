@@ -1,0 +1,14 @@
+package main
+
+// `&h.field` where h is a pointer to a heap struct addresses into *h, so the
+// raw pointer borrows h. Dereferencing it after free(h) is a use-after-free.
+type pair struct {
+	first  i64
+	second i64
+}
+fn main() i64 {
+	h := alloc(pair)
+	q := &h.first
+	free(h)
+	return *q
+}
