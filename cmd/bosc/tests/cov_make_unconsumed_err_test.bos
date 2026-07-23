@@ -1,0 +1,7 @@
+package main
+
+// make owns its backing, so the binding must be discharged (free/dispose).
+fn main() {
+	s := make([]mut i64, 4)
+	s[0] = 1
+}

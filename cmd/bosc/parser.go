@@ -59,6 +59,7 @@ const (
 	n_deref
 	n_dispose
 	n_alloc   // alloc(T) — arg is a type node (n_typename), not an expression
+	n_make        // make([]T, len[, cap]) — args[0] a type node, rest expressions
 	n_sizeof      // size_of(T) — likewise a type node; folds to a constant
 	n_alignof     // align_of(T) — likewise
 	n_unsafecast  // unsafe_cast(T, e) — args[0] is a type node, args[1] an expression
@@ -185,6 +186,8 @@ func (t nodetype) String() string {
 		return "n_dispose"
 	case n_alloc:
 		return "n_alloc"
+	case n_make:
+		return "n_make"
 	case n_sizeof:
 		return "n_sizeof"
 	case n_alignof:
@@ -842,6 +845,30 @@ func (p *Parser) parsePostfix(v *Node) *Node {
 				val := p.parseExpression()
 				p.expect(tok_rparen)
 				v = &Node{t: n_unsafecast, p: v.p, args: []*Node{tn, val}}
+			case v.t == n_symbol && v.sval == "make":
+				// The builtin `make([]T, len[, cap])` takes a slice TYPE first,
+				// so it is recognized only when `(` is followed by `[`. Anything
+				// else keeps `make` as an ordinary function name — a no-arg or
+				// scalar-arg constructor like `fn make() T`. (A qualified
+				// `pkg.make(...)` is an n_dot and never reaches this branch.)
+				p.advance() // consume '('
+				if p.current().t == tok_lsquare {
+					// HYBRID like unsafe_cast: type via parseTypeName, then
+					// length and optional capacity as ordinary expressions.
+					tn := p.parseTypeName()
+					p.expect(tok_comma)
+					margs := []*Node{tn, p.parseExpression()}
+					if p.current().t == tok_comma {
+						p.advance()
+						margs = append(margs, p.parseExpression())
+					}
+					p.expect(tok_rparen)
+					v = &Node{t: n_make, p: v.p, args: margs}
+				} else {
+					args := p.parseArgs()
+					p.expect(tok_rparen)
+					v = &Node{t: n_funcall, p: v.p, sval: v.sval, args: args}
+				}
 			case v.t == n_symbol && (v.sval == "size_of" || v.sval == "align_of"):
 				// size_of(T) / align_of(T): like alloc(T), the argument is a
 				// TYPE run through parseTypeName, not the expression grammar.

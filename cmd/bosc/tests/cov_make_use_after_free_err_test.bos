@@ -1,0 +1,8 @@
+package main
+
+// After free() the backing is gone; indexing the slice is use-after-free.
+fn main() {
+	s := make([]mut i64, 4)
+	free(s)
+	s[0] = 1
+}

@@ -4174,6 +4174,24 @@ func (a *Alloc) ASTType(c *Context) ASTType {
 func (a *Alloc) Note() string  { return fmt.Sprintf("alloc(%s)", a.Type) }
 func (a *Alloc) Pos() position { return a.p }
 
+// Make is `make([]T, len[, cap])`: a runtime-allocated slice. The result owns
+// its backing (bit 0), so it must be discharged (free/dispose). Cap is nil when
+// the call gives only a length (cap defaults to len).
+type Make struct {
+	Type ASTType // the slice type as written (`[]T`, before the owned-backing bit)
+	Len  AST
+	Cap  AST // nil => cap == len
+	p    position
+}
+
+func (m *Make) ASTType(c *Context) ASTType {
+	t := m.Type
+	t.OwnedMask |= 1 // make allocates the backing, so the result owns it
+	return t
+}
+func (m *Make) Note() string  { return fmt.Sprintf("make(%s)", m.Type) }
+func (m *Make) Pos() position { return m.p }
+
 // SizeOf is `size_of(T)`: the size in bytes of T's representation, as an i64
 // compile-time constant. Its value is exactly what ASTType.Size reports, so it
 // tracks the natural-alignment layout rules (BABI-0 § Data representation)
@@ -4881,6 +4899,14 @@ func (n *Node) toASTTop(c *Context) AST {
 		// The single arg is a type node parsed by parseTypeName; fold it into
 		// an ASTType with the one type builder, exactly like any annotation.
 		return &Alloc{Type: mkTypename(n.args[0]), p: n.p}
+	case n_make:
+		// args[0] is a type node (the slice type); args[1] is len; args[2], if
+		// present, is cap.
+		m := &Make{Type: mkTypename(n.args[0]), Len: n.args[1].toASTTop(c), p: n.p}
+		if len(n.args) > 2 {
+			m.Cap = n.args[2].toASTTop(c)
+		}
+		return m
 	case n_sizeof:
 		return &SizeOf{Type: mkTypename(n.args[0]), p: n.p}
 	case n_alignof:

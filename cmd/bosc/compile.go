@@ -2753,6 +2753,69 @@ func compileAlloc(of io.Writer, c *Context, ast *Alloc, dest spot) spot {
 	return dest
 }
 
+// compileMake lowers `make([]T, len[, cap])` to a heap allocation plus a slice
+// header. The backing is `cap * sizeof(T)` bytes from _heap.alloc (zeroed, like
+// Go's make); the header is `{ptr, len, cap}`. len/cap are written into the
+// (memory-backed) header *before* the call so they survive it — only `dest`
+// lives across the call; the ptr is written from rax after.
+func compileMake(of io.Writer, c *Context, ast *Make, dest spot) spot {
+	t := ast.Type
+	if !t.IsSlice() {
+		CompileErrorF(ast, "make requires a slice type []T, got %s", t)
+	}
+	// Element-owned slices (`[]owned T`) need element-granular construction
+	// (append/drain), which is not built yet. Gate on the *parsed* owned bits,
+	// before ASTType ORs in the backing bit.
+	if t.OwnedMask != 0 {
+		CompileErrorF(ast, "make of a slice with owned elements (%s) is not yet supported", t)
+	}
+	elemT := *t.Element
+	if !elemT.ZeroInitializable(c) {
+		CompileErrorF(ast, "make([]%s, ...) requires a zero-initializable element type", elemT)
+	}
+	elemSize := elemT.Size(c)
+
+	retType := ast.ASTType(c) // owned []T
+	if dest.empty() {
+		dest = newSpot(of, c, c.Temp(), retType)
+	} else {
+		dest.t = retType
+	}
+
+	lenSpot := compileTop(of, c, ast.Len, nullspot)
+	capSpot := lenSpot
+	if ast.Cap != nil {
+		capSpot = compileTop(of, c, ast.Cap, nullspot)
+	}
+
+	// Write len@8 and cap@16 into the header now (the header slot survives the
+	// alloc call; lenSpot/capSpot registers do not).
+	fmt.Fprintf(of, "\tmov qword%s %s\n", sliceHdrLen(dest.ref), lenSpot.ref)
+	fmt.Fprintf(of, "\tmov qword%s %s\n", sliceHdrCap(dest.ref), capSpot.ref)
+
+	// Byte count = cap * elemSize into rdi for _heap.alloc.
+	rdi := regSpot(of, "rdi")
+	fmt.Fprintf(of, "\tmov rdi %s\n", capSpot.ref)
+	if elemSize != 1 {
+		scaleTmp := newSpot(of, c, c.Temp(), numASTType())
+		fmt.Fprintf(of, "\tmov %s %d\n", scaleTmp.ref, elemSize)
+		fmt.Fprintf(of, "\timul rdi %s\n", scaleTmp.ref)
+		scaleTmp.free(of)
+	}
+	if capSpot.ref != lenSpot.ref {
+		capSpot.free(of)
+	}
+	lenSpot.free(of)
+	fmt.Fprintf(of, "\tcall _heap.alloc\n")
+	rdi.free(of)
+
+	// ptr = alloc result -> header@0.
+	rax := regSpot(of, "rax")
+	fmt.Fprintf(of, "\tmov qword%s %s\n", sliceHdrPtr(dest.ref), rax.ref)
+	rax.free(of)
+	return dest
+}
+
 // newStructLiteralArg returns the struct literal X from `new(X)` (the heap
 // constructor applied to a struct literal), or nil. Used to record the heap
 // pointee's field provenance so a borrow constructed into heap is tracked.
@@ -2849,8 +2912,29 @@ func compileFreeBuiltin(of io.Writer, c *Context, a AST, ast *Funcall) spot {
 	}
 	arg := ast.Args[0]
 	argt := arg.ASTType(c)
-	if argt.Indirection == 0 || argt.OwnedMask&1 == 0 {
-		CompileErrorF(ast.Args[0], "free requires an owned pointer, got %s", argt)
+	isOwnedSlice := argt.IsSlice() && argt.OwnedMask&1 != 0
+	isOwnedPtr := argt.Indirection > 0 && argt.OwnedMask&1 != 0
+	if !isOwnedPtr && !isOwnedSlice {
+		CompileErrorF(ast.Args[0], "free requires an owned pointer or owned slice, got %s", argt)
+	}
+	if isOwnedSlice {
+		// Free the backing buffer the slice owns: load ptr@0 and hand it to
+		// _heap.free. The pointer-only checks below (nil-fact, owned-struct-field
+		// leak) don't apply — a slice header is not a struct with owned fields.
+		// (When []owned T becomes buildable, its element obligations are drained
+		// first; a plain owned []T has none.)
+		sv := compileTop(of, c, arg, nullspot)
+		rdi := regSpot(of, "rdi")
+		fmt.Fprintf(of, "\tmov rdi %s\n", sliceHdrPtr(sv.ref))
+		sv.free(of)
+		fmt.Fprintf(of, "\tcall _heap.free\n")
+		fmt.Fprintf(of, "\trelease rdi\n")
+		rdi.free(of)
+		markMovedIfOwnedSource(of, c, argt, arg)
+		if ptrExpr := pointerExprForAST(c, arg, ""); ptrExpr.KnownOrigin {
+			c.PointerFlow().InvalidateOrigin(ptrExpr.Origin, flow.TargetDead)
+		}
+		return nullspot
 	}
 	if path, ok := FlowPathForExpr(arg); ok {
 		// A statically-known-nil owned pointer carries no obligation: there
@@ -4133,6 +4217,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return nullspot
 	case *Alloc:
 		return compileAlloc(of, c, ast, dest)
+	case *Make:
+		return compileMake(of, c, ast, dest)
 	case *UnsafeCast:
 		return compileUnsafeCast(of, c, ast, dest)
 	case *SizeOf:

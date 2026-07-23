@@ -1,0 +1,8 @@
+package main
+
+// Building a slice of owned elements needs element-granular construction
+// (append/drain), which is future work — make rejects it for now.
+fn main() {
+	s := make([]owned i64, 3)
+	free(s)
+}

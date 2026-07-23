@@ -1,0 +1,2 @@
+Compiling tests/cov_make_owned_elements_err_test.bos
+Fatal: make of a slice with owned elements ([]owned i64) is not yet supported

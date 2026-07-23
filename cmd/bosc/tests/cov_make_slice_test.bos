@@ -1,0 +1,19 @@
+package main
+
+import "fmt"
+
+// make([]T, n) allocates n zeroed elements and owns the backing (free discharges
+// it). make([]T, len, cap) allocates cap but reports len. cap() reads the
+// header's capacity. The result is owned, so it is captured in an owned binding.
+fn main() {
+	s := make([]mut i64, 4)
+	s[0] = 10
+	s[3] = 40
+	fmt.print("%d %d\n", len(s), cap(s))       // 4 4
+	fmt.print("%d %d %d\n", s[0], s[1], s[3])  // 10 0 40  (s[1] zeroed by alloc)
+	free(s)
+
+	b := make([]mut i64, 2, 8)
+	fmt.print("%d %d\n", len(b), cap(b))       // 2 8
+	free(b)
+}
