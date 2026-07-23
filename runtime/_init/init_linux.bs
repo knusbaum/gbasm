@@ -11,10 +11,13 @@ var nilassert string "Fatal: nullable pointer assertion failed\n\0"
 //   [rsp+8+8*argc]     = NULL (argv terminator)
 //   [rsp+...]          = envp..., auxv..., strings
 //
-// We build a Boson-style [][]byte from argv: an outer 16-byte slice header
-// {data, len} where data points to a tightly-packed array of argc 16-byte
-// inner slice headers {ptr, len}. Both the inner array and the outer
-// header are placed on _start's stack; since _start never returns (it
+// We build a Boson-style [][]byte from argv: an outer 24-byte slice header
+// {data, len, cap} where data points to a tightly-packed array of argc 24-byte
+// inner slice headers {ptr, len, cap}. cap equals len at both levels (these are
+// exact views, no spare backing). The header width must match the compiler's
+// slice layout (sliceHeaderBytes = 24, {ptr@0,len@8,cap@16}; see
+// docs/reference/AUDIT_slice_representation.md). Both the inner array and the
+// outer header are placed on _start's stack; since _start never returns (it
 // finishes with the exit syscall) these allocations live for the whole
 // process lifetime.
 //
@@ -27,20 +30,24 @@ pub function start
 	// rbx = argc
 	mov rbx [r12]
 
-	// Inner-array size = argc * 16, computed by successive doubling
-	// to avoid relying on shift-by-immediate encodings.
+	// Inner-array size = argc * 24 = argc*16 + argc*8, via successive doubling
+	// to avoid relying on shift-by-immediate encodings. r8 is scratch here and
+	// dead before the loop (so it need not survive the strlen call below):
+	//   r9 = 8*argc (three doublings); r8 = 8*argc; r9 = 16*argc; r9 += r8 -> 24*argc.
 	mov r9 rbx
 	add r9 r9
 	add r9 r9
 	add r9 r9
+	mov r8 r9
 	add r9 r9
+	add r9 r8
 
 	// Allocate inner array; r13 = base.
 	sub rsp r9
 	mov r13 rsp
 
-	// Allocate outer slice header; r14 = address.
-	sub rsp 16
+	// Allocate outer slice header (24 bytes); r14 = address.
+	sub rsp 24
 	mov r14 rsp
 
 	// Walking pointers across argv and into the inner array.
@@ -58,20 +65,22 @@ label argv_loop
 	// prologue/epilogue, so our walking state survives the call.
 	call strlen
 
-	// inner[i].ptr = argv[i], inner[i].len = strlen result.
+	// inner[i] = { ptr = argv[i], len = strlen, cap = strlen }.
 	mov rdx [r15]
 	mov [rbp] rdx
 	mov [rbp+8] rax
+	mov [rbp+16] rax
 
 	add r15 8
-	add rbp 16
+	add rbp 24
 	jmp argv_loop
 
 label argv_done
 
-	// Outer slice header = { inner_array_base, argc }.
+	// Outer slice header = { inner_array_base, argc, argc }.
 	mov [r14] r13
 	mov [r14+8] rbx
+	mov [r14+16] rbx
 
 	// Pass &outer_header in rdi to main.main, then exit with its return.
 	// Zero rax so a hand-written main that just `ret`s exits with 0,

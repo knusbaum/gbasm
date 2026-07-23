@@ -114,7 +114,7 @@ func pubPrefix(isPub bool) string {
 //   - *Literal with uint64 Val for integer types (any width, any signedness)
 //   - *Literal with byte Val for byte / 8-bit integer types
 //   - *Literal with string Val for byte[N] (inline copy) and byte[]
-//     (16-byte slice header with a relocation to a string constant)
+//     (slice header with a relocation to a string constant)
 //   - *Op2{n_sub, *Literal{0}, *Literal{uint64}} for negative integers
 //   - *StructLiteral for struct types, recursively, when every field's
 //     initializer is itself a supported form; relocations from nested
@@ -233,7 +233,7 @@ func encodeLiteralBytes(c *Context, dstt ASTType, l *Literal) ([]byte, []relocSp
 			copy(out, v)
 			return out, nil, nil
 		}
-		// byte[] (slice) destination: emit a 16-byte slice header.
+		// byte[] (slice) destination: emit a slice header.
 		// First 8 bytes hold a pointer to a string constant (filled in
 		// by the linker via the returned relocation). Last 8 bytes
 		// hold the length, encoded little-endian here at compile time.
@@ -241,6 +241,7 @@ func encodeLiteralBytes(c *Context, dstt ASTType, l *Literal) ([]byte, []relocSp
 			sym := c.String(v) // existing string-constants machinery
 			out := make([]byte, sliceHeaderBytes)
 			binary.LittleEndian.PutUint64(out[sliceOffLen:], uint64(len(v)))
+			binary.LittleEndian.PutUint64(out[sliceOffCap:], uint64(len(v)))
 			return out, []relocSpec{{Offset: sliceOffPtr, Symbol: sym, Addend: 0}}, nil
 		}
 		return nil, nil, fmt.Errorf("cannot initialize %s with a string literal", dstt)
@@ -357,7 +358,7 @@ func encodeInterfaceAddressBytes(c *Context, dstt ASTType, a *Address) ([]byte, 
 //     element encodes against T and the encoded bytes are concatenated.
 //     Element relocations are shifted into the outer array's coordinates.
 //
-//   - Slice `T[]`: emit a 16-byte slice header. The backing storage is
+//   - Slice `T[]`: emit a slice header. The backing storage is
 //     a fresh anonymous fixed array `T[len(elements)]`, queued via
 //     AddAnonGlobal; the header's ptr slot relocates to it, and the
 //     length is encoded inline.
@@ -381,6 +382,7 @@ func encodeArrayLiteralBytes(c *Context, dstt ASTType, lit *ArrayLiteral) ([]byt
 		name := c.AddAnonGlobal(backingT.String(), backingBytes, backingRelocs)
 		out := make([]byte, sliceHeaderBytes)
 		binary.LittleEndian.PutUint64(out[sliceOffLen:], uint64(len(lit.Elements)))
+		binary.LittleEndian.PutUint64(out[sliceOffCap:], uint64(len(lit.Elements)))
 		return out, []relocSpec{{Offset: sliceOffPtr, Symbol: name, Addend: 0}}, nil
 	default:
 		return nil, nil, fmt.Errorf("array literal cannot initialize %s (need a fixed-array or slice type)", dstt)

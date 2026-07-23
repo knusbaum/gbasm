@@ -136,11 +136,11 @@ type holder struct { a i64 } {
 }
 fn main() i64 { return 0 }`)
 
-	// A slice is a 16-byte {ptr, len} header regardless of element type --
-	// two words, which is what rules out a capacity field.
+	// A slice is a 24-byte {ptr, len, cap} header regardless of element type --
+	// three words ({ptr@0, len@8, cap@16}).
 	sliceOfByte := byteSliceASTType()
-	if got := sliceOfByte.Size(ctx); got != 16 {
-		t.Errorf("sizeof([]byte) = %d, want 16 ({ptr@0, len@8}, no capacity)", got)
+	if got := sliceOfByte.Size(ctx); got != 24 {
+		t.Errorf("sizeof([]byte) = %d, want 24 ({ptr@0, len@8, cap@16})", got)
 	}
 
 	// An interface value is a 16-byte fat pointer however many methods the

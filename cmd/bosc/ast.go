@@ -1558,9 +1558,10 @@ func (c *Context) String(s string) string {
 	return r
 }
 
-// StringSliceHeader returns the symbol name of a static 16-byte slice
-// header for the string literal s, registering one (and the backing string
-// constant) on first request. The header is `{ptr -> bytes, len(s)}`; its
+// StringSliceHeader returns the symbol name of a static slice header
+// (sliceHeaderBytes wide) for the string literal s, registering one (and the
+// backing string constant) on first request. The header is `{ptr -> bytes,
+// len(s), cap(s)}`; its
 // address is a stable, read-only, never-dies pointer to a byte slice —
 // exactly what function-scope `&"literal"` needs. Identical literals share
 // one header.
@@ -1579,8 +1580,9 @@ func (c *Context) StringSliceHeader(s string) string {
 }
 
 // WriteStrSliceHeaders emits the static slice headers registered by
-// StringSliceHeader. Each is a 16-byte payload — 8 bytes relocated to the
-// string constant, then the little-endian length — emitted via the same
+// StringSliceHeader. Each is a sliceHeaderBytes payload — 8 bytes relocated to
+// the string constant, then the little-endian length and capacity — emitted via
+// the same
 // block-form `var` directive the file-scope `&literal` anon-globals use.
 // The storage is statically initialized and never written at runtime, so it
 // is effectively read-only; using `var` keeps it on the existing
@@ -1589,9 +1591,11 @@ func (c *Context) StringSliceHeader(s string) string {
 func (c *Context) WriteStrSliceHeaders(of io.Writer) {
 	for k, sym := range c.strSliceHeaders {
 		strSym := c.String(k)
-		payload := make([]byte, 16)
-		binary.LittleEndian.PutUint64(payload[8:], uint64(len(k)))
-		emitVarBlock(of, sym, byteSliceASTType().String(), payload, []relocSpec{{Offset: 0, Symbol: strSym, Addend: 0}}, false)
+		// {ptr -> bytes (reloc @0), len, cap} — an exact view, so cap = len.
+		payload := make([]byte, sliceHeaderBytes)
+		binary.LittleEndian.PutUint64(payload[sliceOffLen:], uint64(len(k)))
+		binary.LittleEndian.PutUint64(payload[sliceOffCap:], uint64(len(k)))
+		emitVarBlock(of, sym, byteSliceASTType().String(), payload, []relocSpec{{Offset: sliceOffPtr, Symbol: strSym, Addend: 0}}, false)
 	}
 }
 
@@ -1794,9 +1798,11 @@ func (t *ASTType) Size(c *Context) int {
 	if t.Indirection > 0 {
 		return PTR_SIZE
 	}
-	// Slice header is fixed-width regardless of element type.
+	// Slice header is fixed-width regardless of element type:
+	// {ptr@0, len@8, cap@16} — see the slice-header helpers in compile.go and
+	// docs/reference/AUDIT_slice_representation.md.
 	if t.IsSlice() {
-		return 16
+		return 24
 	}
 	// Array: total bytes = element size × element count.
 	if t.IsArray() {

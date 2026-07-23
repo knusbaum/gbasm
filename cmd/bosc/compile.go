@@ -389,23 +389,27 @@ func compileArrayLiteralInto(of io.Writer, c *Context, a AST, dest spot, lit *Ar
 const (
 	sliceOffPtr      = 0
 	sliceOffLen      = 8
-	sliceHeaderBytes = 16
+	sliceOffCap      = 16
+	sliceHeaderBytes = 24
 )
 
-// sliceHdrPtr / sliceHdrLen return the memory operand for a slice header's
-// fields, given a ref that already holds the header's address.
+// sliceHdrPtr / sliceHdrLen / sliceHdrCap return the memory operand for a slice
+// header's fields, given a ref that already holds the header's address. Layout is
+// {ptr@0, len@8, cap@16} (Go order) — ptr/len offsets are stable regardless of
+// whether cap exists, which is why cap was appended at the end.
 func sliceHdrPtr(hdr string) string { return fmt.Sprintf("[%s]", hdr) }
 func sliceHdrLen(hdr string) string { return fmt.Sprintf("[%s+%d]", hdr, sliceOffLen) }
+func sliceHdrCap(hdr string) string { return fmt.Sprintf("[%s+%d]", hdr, sliceOffCap) }
 
 // emitSliceHeaderStore writes a complete slice header at hdr from operand
 // strings (register names or immediates). Routing every construction site
-// through one helper means no site can populate a partial header — the exact
-// failure mode the cap widening must avoid (a header with a garbage cap word).
-// qword[] forces 64-bit stores so an immediate length is not narrowed (see
-// CLAUDE.md "mov [mem] imm encodes narrow").
-func emitSliceHeaderStore(of io.Writer, hdr, ptr, length string) {
+// through one helper means no site can populate a partial header — a header with
+// a garbage cap word. qword[] forces 64-bit stores so an immediate length/cap is
+// not narrowed (see CLAUDE.md "mov [mem] imm encodes narrow").
+func emitSliceHeaderStore(of io.Writer, hdr, ptr, length, capacity string) {
 	fmt.Fprintf(of, "\tmov qword%s %s\n", sliceHdrPtr(hdr), ptr)
 	fmt.Fprintf(of, "\tmov qword%s %s\n", sliceHdrLen(hdr), length)
+	fmt.Fprintf(of, "\tmov qword%s %s\n", sliceHdrCap(hdr), capacity)
 }
 
 func spot_memcpy(of io.Writer, c *Context, dst, src spot, bytes int) {
@@ -4770,6 +4774,16 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, "\tmov %s %d\n", length.ref, v.t.ArraySize)
 		}
 
+		// Backing capacity, carried from the source so the reslice can later
+		// grow into the same backing. Slice sources hold cap@16; a fixed array's
+		// capacity is its declared length. Adjusted by `- lo` below alongside len.
+		capacity := newSpot(of, c, c.Temp(), numASTType())
+		if v.t.IsSlice() {
+			fmt.Fprintf(of, "\tmov %s %s\n", capacity.ref, sliceHdrCap(v.ref))
+		} else {
+			fmt.Fprintf(of, "\tmov %s %d\n", capacity.ref, v.t.ArraySize)
+		}
+
 		var upper spot
 		if ast.Upper != nil {
 			upper = compileTop(of, c, ast.Upper, nullspot)
@@ -4803,10 +4817,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, "\tlabel %s\n", look)
 			fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", addr.ref, addr.ref, lower.ref, baset.Size(c))
 			fmt.Fprintf(of, "\tsub %s %s\n", upper.ref, lower.ref)
+			fmt.Fprintf(of, "\tsub %s %s\n", capacity.ref, lower.ref)
 			lower.free(of)
 		}
 		newslice := newSpot(of, c, c.Temp(), newt)
-		emitSliceHeaderStore(of, newslice.ref, addr.ref, upper.ref)
+		emitSliceHeaderStore(of, newslice.ref, addr.ref, upper.ref, capacity.ref)
+		capacity.free(of)
 		return newslice
 
 	case *Assignment:
@@ -5713,7 +5729,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			s := c.String(v)
 			reg := regSpot(of, "r10")
 			fmt.Fprintf(of, "\tlea r10 %s\n", s)
-			emitSliceHeaderStore(of, dest.ref, "r10", fmt.Sprintf("%d", len(v)))
+			// String literal: an exact view — cap = len (no spare backing).
+			emitSliceHeaderStore(of, dest.ref, "r10", fmt.Sprintf("%d", len(v)), fmt.Sprintf("%d", len(v)))
 			reg.free(of)
 		case uint64:
 			fmt.Fprintf(of, "\tmov %s %d\n", dest.ref, v)

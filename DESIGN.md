@@ -94,7 +94,7 @@ Boolean literals are `true` and `false` (reserved words), each of type `bool`. A
 |------|-------------|
 | `*T` | Non-null pointer to T |
 | `?*T` | Nullable pointer to T |
-| `[]T` | Slice (fat pointer: data pointer + length, 16 bytes) |
+| `[]T` | Slice header `{ptr@0, len@8, cap@16}`, 24 bytes. (`cap` is carried through construction/reslice but not yet consumed by any operation — `make`/`append`/`pop` are future work; see [`docs/reference/AUDIT_slice_representation.md`](docs/reference/AUDIT_slice_representation.md).) |
 | `[N]T` | Fixed-size array |
 | `type Name struct { ... }` | Named record type (file scope) |
 | `struct { ... }` | Anonymous struct type (usable as a parameter, return, or var type) |
@@ -511,7 +511,7 @@ Truncation: if `out` is too small, the longest prefix that fits is written and t
 
 *Layer 5 — variadic helpers* `fmt.print(format []byte, args ...any) i64, error` (to stdout) and `fmt.printf(w io.writer, format []byte, args ...any) i64, error`. A verb names a *rendering*; the argument's own type (carried by the `any`) decides correctness, so there is no verb whose job is to announce the type. Directives: `%d`→decimal for any integer type (signed types signed, unsigned unsigned), `%x`→`0x`-prefixed hex for any integer type, `%s`→pointer-to-`[]byte` (`&name` or `&"literal"`), `%c`→an integer as a character (its low byte), `%v`→natural by the value's type (integers in decimal, `bool` as `true`/`false`, `[]byte` as text, then `stringer`/`Formatter`, else a `%!v(?)` placeholder), `%%`→literal `%`. (C's `%u`/`%t` are gone — the type already carries signedness and boolean-ness; the verbs that existed only to restate the argument's type are unneeded.) A verb against a genuinely incompatible value (e.g. `%d` of a `bool`) writes an inline `%!d(BADTYPE)`-style marker and latches a non-OK error but continues; an unknown verb (e.g. `%q`) consumes its arg, writes `%!q(BADTYPE)`, and latches the same error; an out-of-args slot writes `%!d(MISSING)`; surplus args are appended `%v`-style and latch a surplus error; a write failure stops immediately. The `BADTYPE` / `?` placeholders are fixed v1 markers: surfacing the arg's actual type name in the marker awaits a typedesc-name intrinsic that bosc does not yet expose to source (fmt proposal Open Question #6); until it lands the markers carry no type name. `Formatter` dispatch wraps the writer in a stack-allocated counting adapter so the returned byte total includes the Formatter's output.
 
-Because a slice (16 bytes) cannot be coerced into an interface by value, `[]byte` arguments at a `...any` call site must be addressed — `fmt.print("%s", &name)`. Function-scope `&"literal"` (below) supplies the literal form `fmt.print("%s", &"hello")`.
+Because a slice (24 bytes) cannot be coerced into an interface by value, `[]byte` arguments at a `...any` call site must be addressed — `fmt.print("%s", &name)`. Function-scope `&"literal"` (below) supplies the literal form `fmt.print("%s", &"hello")`.
 
 `alloc(T)` is only valid for zero-initializable types. Types containing non-null pointers are not zero-initializable, so they must be constructed with `new(expr)` or some other initialized storage path.
 
@@ -1452,7 +1452,7 @@ In static-init context (see [Static Initializers](#static-initializers)) two mor
 
 Non-string `&literal` at runtime is rejected with "cannot take the address of this expression at runtime; address-of-literal is only valid in static initializers" — there's no stable storage to point at for an arbitrary expression outside file scope.
 
-**Function-scope `&"literal"` is the one exception.** Taking the address of a *string literal* at function scope is valid: `&"hello"` evaluates to a pointer to a 16-byte static slice header `{ptr -> bytes, len}` synthesized in read-only-style static memory (one header per distinct literal, identical literals shared). Its lifetime is forever and its storage is never written, so the result is a stable, never-dies pointer to a `[]byte` — exactly what a `...any` call site needs for a string argument (`fmt.print("%s", &"hello")`). The header rides the same anonymous-global machinery (`StringSliceHeader` / `WriteStrSliceHeaders` in bosc) that file-scope `&SomeStruct{...}` uses, emitted as a block-form `var` directive with a relocation to the underlying string constant. The result type is pointer-to-byte-slice, written `*[]byte` (see [Type syntax: prefix reading order](#type-syntax-prefix-reading-order)).
+**Function-scope `&"literal"` is the one exception.** Taking the address of a *string literal* at function scope is valid: `&"hello"` evaluates to a pointer to a 24-byte static slice header `{ptr -> bytes, len, cap}` synthesized in read-only-style static memory (one header per distinct literal, identical literals shared). Its lifetime is forever and its storage is never written, so the result is a stable, never-dies pointer to a `[]byte` — exactly what a `...any` call site needs for a string argument (`fmt.print("%s", &"hello")`). The header rides the same anonymous-global machinery (`StringSliceHeader` / `WriteStrSliceHeaders` in bosc) that file-scope `&SomeStruct{...}` uses, emitted as a block-form `var` directive with a relocation to the underlying string constant. The result type is pointer-to-byte-slice, written `*[]byte` (see [Type syntax: prefix reading order](#type-syntax-prefix-reading-order)).
 
 ### Function pointers
 
@@ -1834,7 +1834,7 @@ string.puti(i64(e))         // copies the i64 projection at tag(e)
 
 There is no implicit conversion: every projection use is an explicit cast. Casting to a type the values declaration does *not* project to is rejected with the directed `Cannot cast V to T: V has no T projection` diagnostic.
 
-The cast path handles scalar and memory-backed projection element types uniformly: scalar projections (i8…i64, function pointers, plain pointers) lower to a single `mov dest [base+idx*scale]`; memory-backed projections (`[]byte`, structs, fixed arrays) lower to a `lea` of the table slot followed by `spot_memcpy`. Element sizes that x86-64's SIB byte cannot encode (16-byte slice headers, larger structs) precompute the byte offset (`shl` for power-of-two sizes, `imul` otherwise) and index with scale 1.
+The cast path handles scalar and memory-backed projection element types uniformly: scalar projections (i8…i64, function pointers, plain pointers) lower to a single `mov dest [base+idx*scale]`; memory-backed projections (`[]byte`, structs, fixed arrays) lower to a `lea` of the table slot followed by `spot_memcpy`. Element sizes that x86-64's SIB byte cannot encode (24-byte slice headers, larger structs) precompute the byte offset (`shl` for power-of-two sizes, `imul` otherwise) and index with scale 1.
 
 ### Closed symbolic set
 
@@ -2159,9 +2159,9 @@ The supported forms compose recursively:
 - Integer literals (any width, any signedness; negative via the `0 - N` parser shape).
 - Byte literals.
 - String literals into `byte[N]` (inline copy, zero-padded).
-- String literals into `[]byte` (16-byte slice header with a relocation to a string constant in `.data`).
+- String literals into `[]byte` (24-byte slice header ({ptr, len, cap}) with a relocation to a string constant in `.data`).
 - Struct literals (each field encoded recursively, byte offsets concatenated, relocations shifted into the outer struct's coordinates).
-- Array literals `[e1, e2, …]` into `[N]T` (element-by-element encoding, length must match) or into `[]T` (anonymous backing array `T[len]` queued via the anonymous-globals path, plus a 16-byte slice header with a relocation to it).
+- Array literals `[e1, e2, …]` into `[N]T` (element-by-element encoding, length must match) or into `[]T` (anonymous backing array `T[len]` queued via the anonymous-globals path, plus a 24-byte slice header ({ptr, len, cap}) with a relocation to it).
 - `&someGlobal` — 8-byte pointer slot with a relocation to the named global.
 - `&SomeStruct{...}` — recursively encodes the inner struct into a fresh anonymous global (`__static_0`, `__static_1`, …) and emits a pointer slot relocated to it.
 - `&someGlobalArr[N]` for compile-time-constant N — a single relocation to the array's symbol with `Addend = N * elementSize`. Pointer-into-array without any auxiliary storage.
@@ -2590,21 +2590,26 @@ struct.
 
 #### Slices
 
-A slice `[]T` is a 16-byte header, independent of `T`:
+A slice `[]T` is a 24-byte header, independent of `T`:
 
 | Offset | Width | Field |
 |--------|-------|-------|
 | 0 | 8 | pointer to the first element |
 | 8 | 8 | length, in elements |
+| 16 | 8 | capacity, in elements |
 
-There is **no capacity field**; BABI-0 slices are a pointer/length pair and
-nothing else. Slices are always memory-backed — a slice value lives at an
-address, and passing one passes that address (see
+The **capacity** field records how many elements the backing can hold from the
+pointer onward. It is populated by every header-construction site (a reslice
+carries `source_cap - lo`; a literal/string uses `cap = len`) but is **not yet
+consumed** by any operation — `make`, `append`, and `pop` are future work (see
+[`docs/reference/AUDIT_slice_representation.md`](docs/reference/AUDIT_slice_representation.md)
+and the owned-slices proposal). Slices are always memory-backed — a slice value
+lives at an address, and passing one passes that address (see
 [Aggregates](#aggregates-structs-arrays-slices-interfaces)).
 
 #### Strings
 
-A string is exactly a `[]byte`: the same 16-byte header, no distinct type. A
+A string is exactly a `[]byte`: the same 24-byte header, no distinct type. A
 string *literal* additionally guarantees a NUL byte immediately past the end of
 its backing bytes; that NUL is **not** counted in the length. This makes a
 literal directly usable as a C string without a copy, while `len` still reports
@@ -2716,9 +2721,9 @@ selected by size:
   through the pointer. By-value semantics are preserved because the callee
   never sees the caller's original storage.
 
-Slices and interfaces are 16-byte aggregates and take the second path: a
-callee receives a *pointer* to the `{ptr, len}` or `{data, vtable}` pair. **A
-slice header is never split across two registers.**
+Slices (24-byte `{ptr, len, cap}`) and interfaces (16-byte `{data, vtable}`) are
+memory-backed aggregates and take the second path: a callee receives a *pointer*
+to the header. **A slice header is never split across registers.**
 
 **Sizes 3, 5, 6, and 7 are rejected at compile time** rather than passed. A
 by-value aggregate of one of those sizes — `struct { a i8; b i16 }`, for
@@ -2881,9 +2886,10 @@ The kernel-supplied stack at entry:
 ```
 
 `start` converts that into Boson's `[][]byte`: it carves an inner array of
-`argc` 16-byte `{ptr, len}` headers plus one outer 16-byte `{data, len}`
-header from the stack, walks `argv` until the NULL terminator calling `strlen`
-on each entry, then calls `main.main` with the **address of the outer header**
+`argc` 24-byte `{ptr, len, cap}` headers plus one outer 24-byte `{data, len, cap}`
+header from the stack (cap = len at both levels), walks `argv` until the NULL
+terminator calling `strlen` on each entry, then calls `main.main` with the
+**address of the outer header**
 in RDI — the ordinary aggregate-argument convention. It zeroes RAX first, so a
 `main` that simply returns exits 0. On return it issues
 `exit(main's RAX)` via syscall 60.

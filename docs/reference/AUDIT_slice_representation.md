@@ -2,6 +2,20 @@
 
 ## History
 
+- 2026-07-23 — **The widening landed (16 → 24, `{ptr, len, cap}`).** `Size()`→24
+  (`ast.go`); `emitSliceHeaderStore` + `sliceOffCap`/`sliceHdrCap` write the cap
+  word; reslice threads `source_cap - lo` (reading cap@16 for slice sources,
+  `ArraySize` for arrays); string/array literals, `StringSliceHeader`, and the
+  globals encoders write `cap = len`; the runtime `[][]byte` argv builder
+  (`init_linux.bs`) rebuilt for 24-byte inner+outer headers with `cap = len`.
+  Interfaces left at 16 (§D). Predicted-auto-follow held (fact 3): the only
+  fallout beyond the catalogued sites was two expected-value updates
+  (`babi0_test.go` slice size, `size_align_of_test` `size_of([]byte)`). Full bosc
+  suite (773) + bas (49) + `go_test` (incl. tour) + argv tests + the `linked`
+  example all green. DESIGN.md updated. **Residual:** the `.bo` format has no
+  version field (§G), so cross-package safety relies on a full rebuild (which the
+  repo's build does); adding a version field to reject stale 16-byte objects is a
+  follow-up.
 - 2026-07-23 — Step 1 (the consolidation refactor) **landed**: the Go codegen
   now routes slice-header access through `sliceOffPtr`/`sliceOffLen`/
   `sliceHeaderBytes`, the read helpers `sliceHdrPtr`/`sliceHdrLen`, and the
@@ -211,21 +225,23 @@ the language today; if/when added, `cap = max - lo`.
    `emitSliceHeaderStore` with a cap operand, add `sliceOffCap = 16`, bump
    `sliceHeaderBytes` to 24. (The interface fat-pointer sites in §D were left at
    16 and are untouched by these helpers.)
-2. **Bump `ast.go:1798` → 24 and fix `babi0_test.go:142`.** Build and run the
-   suite: `Size()`-driven paths (§F) follow; the failures that remain are the
-   hand-written and hardcoded sites — a live worklist confirming this audit.
-3. **Teach reslice to carry `cap`** (§B, `compile.go:4780`), threading source cap
-   (read `cap@16` for slice sources, `ArraySize` for array sources). This is the
-   keystone; do it before anything reads cap.
-4. **Fix the other construction sites** (§B: string literal, `&"literal"`,
-   `globals.go` slice headers) to write `cap`.
-5. **Rewrite the runtime `.bs`** (§C: `init_linux.bs` argv, and the print-helper
-   policy).
-6. **Split interface vs slice** at the shared literals (§D) — verify no interface
-   header widened.
-7. **Bump the `.bo` version / force full rebuild** (§G).
+2. **Bump `Size()` → 24 and fix `babi0_test.go`. — DONE.** As predicted the
+   `Size()`-driven paths (§F) followed; the only fallout was two expected-value
+   test updates.
+3. **Teach reslice to carry `cap`. — DONE** (`compile.go`, threads
+   `source_cap - lo`, cap@16 for slices / `ArraySize` for arrays).
+4. **Fix the other construction sites. — DONE** (string/array literals,
+   `StringSliceHeader`, `globals.go` — all `cap = len`; `&"literal"` rides
+   `StringSliceHeader`).
+5. **Rewrite the runtime `.bs`. — DONE** (`init_linux.bs` argv builder, 24-byte
+   headers, `cap = len`). Print helpers (`print_linux.bs`) left as-is: `puts`
+   reads only ptr/len, so their 16-byte scratch headers still function.
+6. **Split interface vs slice. — DONE** (interfaces untouched at 16, §D).
+7. **`.bo` version / full rebuild. — RESIDUAL.** No version field exists; safety
+   relies on a full rebuild (which the repo's build performs). Adding a version
+   field to reject stale 16-byte objects is a follow-up.
 8. Only then build **`cap()`**, and on top of it **`make` / `append` / `pop`**
-   (the actual owned-slices feature).
+   (the actual owned-slices feature) — now unblocked.
 
 Steps 1–7 are the representation migration and are the risky part; they should
 land as one coherent change (fact: reslice needs source cap, so the pipeline
