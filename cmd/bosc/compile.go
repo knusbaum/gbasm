@@ -3081,9 +3081,22 @@ func compileFreeBuiltin(of io.Writer, c *Context, a AST, ast *Funcall) spot {
 		// Free the backing buffer the slice owns: load ptr@0 and hand it to
 		// _heap.free. The pointer-only checks below (nil-fact, owned-struct-field
 		// leak) don't apply — a slice header is not a struct with owned fields.
-		// (When []owned T becomes buildable, its element obligations are drained
-		// first; a plain owned []T has none.)
 		sv := compileTop(of, c, arg, nullspot)
+		// Element-owned slice (`owned []owned T`, bit 1): free only releases the
+		// backing, so the elements must already be drained (popped out) — freeing
+		// with live elements would leak their obligations (e.g. unclosed FDs).
+		// Require len == 0 at runtime; a plain `owned []T` (backing only) has no
+		// element obligations and skips this. (Reuses the bounds trap for now.)
+		if argt.OwnedMask&2 != 0 {
+			lenReg := newSpot(of, c, c.Temp(), numASTType())
+			fmt.Fprintf(of, "\tmov %s %s\n", lenReg.ref, sliceHdrLen(sv.ref))
+			drained := c.Label("free_drained")
+			fmt.Fprintf(of, "\tcmp %s 0\n", lenReg.ref)
+			fmt.Fprintf(of, "\tje %s\n", drained)
+			emitIndexOOBTrap(of, lenReg.ref, false, "0")
+			fmt.Fprintf(of, "\tlabel %s\n", drained)
+			lenReg.free(of)
+		}
 		rdi := regSpot(of, "rdi")
 		fmt.Fprintf(of, "\tmov rdi %s\n", sliceHdrPtr(sv.ref))
 		sv.free(of)

@@ -2,6 +2,12 @@
 
 ## History
 
+- 2026-07-23 — Landed the **`free` drain-check** specified in the terminal
+  section: freeing an element-owned slice (`owned []owned T`) now traps at
+  runtime unless `len == 0`, so live elements can't leak past a `free` of the
+  backing (`cov_owned_slice_free_undrained_trap`). Coarse ownership otherwise
+  unchanged; static (compile-time) drain precision remains future work in
+  `TODO.md`.
 - 2026-07-23 — **Core implemented; moved to `docs/implemented/`.** Shipped: the
   24-byte `{ptr, len, cap}` header (`8c7ad28`, behind helpers `e4304e9`, per
   `docs/reference/AUDIT_slice_representation.md`); destination-typed `owned()`

@@ -1,0 +1,13 @@
+package main
+
+import "fmt"
+
+// free of an element-owned slice traps unless it has been drained (len == 0):
+// free only releases the backing, so live elements would leak.
+fn main() {
+	var x [4]i64
+	s owned []owned i64 := owned(x[:2])   // 2 live owned elements
+	fmt.print("start\n")
+	free(s)                               // undrained -> traps
+	fmt.print("unreached\n")
+}

@@ -417,7 +417,7 @@ Built-ins are split into two groups: **compiler intrinsics** (lowered by bosc it
 | `pop(s)` | `(S) (S, E)` | Remove the last element, returning `(shortened slice, element)`; **traps** if `s` is empty. Ownership-polymorphic like `append`. Used as `s, x = pop(s)`. |
 | `alloc(T)` | `owned *mut T` | Allocate writable storage for one `T`; consumes a type expression, not a runtime value. |
 | `new(expr)` | `owned *mut T` | Allocate writable storage for the expression's type, initialize with `expr`, return an owned pointer. |
-| `free(p)` | `void` | Free an `owned *T` pointer, or an `owned []T` slice's backing, and consume the obligation. |
+| `free(p)` | `void` | Free an `owned *T` pointer, or an `owned []T` slice's backing, and consume the obligation. Freeing an *element-owned* slice (`owned []owned T`) **traps** unless it is drained (`len == 0`) — `free` only releases the backing, so live elements must be `pop`ped out first or they would leak. |
 | `size_of(T)` | `i64` | Size in bytes of `T`'s representation. A compile-time constant; consumes a type expression, not a runtime value. |
 | `align_of(T)` | `i64` | Required alignment of `T` in bytes. A compile-time constant; consumes a type expression, not a runtime value. |
 | `dispose(x)` | `void` | Consume an `owned` binding with no runtime effect (see [Ownership](#ownership)). |

@@ -15,15 +15,18 @@ Recorded so they are not lost; each needs its own proposal before work starts.
 The core shipped (see [`docs/implemented/PROPOSAL_owned_slices.md`](docs/implemented/PROPOSAL_owned_slices.md)
 and DESIGN.md § Built-in Functions): the 24-byte `{ptr, len, cap}` header,
 `cap()`/`make()`/`append()`/`pop()`, destination-typed `owned()`, the
-`free`/`dispose` terminal, and reslice-borrows. Ownership is tracked **coarsely**
-(any owned bit is one whole-binding obligation). Remaining:
+`free`/`dispose` terminal (with `free` of an element-owned slice trapping unless
+drained), and reslice-borrows. Element ownership **flows** correctly — `append`
+consumes the element in, `pop` yields an owned element out — but is tracked
+**coarsely** (any owned bit is one whole-binding obligation), which is sound but
+imprecise. Remaining:
 
-1. **Per-element (granular) ownership enforcement.** The flow checker collapses
-   any owned bit into a whole-binding obligation (discharged coarsely by
-   `dispose`/`free`, or drained via `pop`). It does not distinguish `owned []T`
-   (backing) from `[]owned T` (elements) or track per-slot obligations —
-   granular tracking would let a partially-drained slice be reasoned about
-   precisely, and is the prerequisite for the two gates the proposal describes.
+1. **Optional: static per-element (granular) precision.** The runtime drain-check
+   on `free` closes the safety hole (freeing a `[]owned FD` with live elements
+   traps instead of leaking). What granular tracking would add is *compile-time*
+   precision: catching an undrained `free` statically, distinguishing `owned []T`
+   (backing) from `[]owned T` (element) obligations, and reasoning about a
+   partially-drained slice. Not needed for soundness — a precision upgrade.
 2. **`make([]owned T, n)` construction.** Element-owned `make` is gated (you
    cannot instantiate `n` owned elements from nothing). Today `[]owned T` is
    reached via `owned(...)` promotion + `append`. The natural constructible form
@@ -34,8 +37,9 @@ and DESIGN.md § Built-in Functions): the 24-byte `{ptr, len, cap}` header,
    wants an `imul`-offset path shared across the slice codegen.
 4. **`for owned x in s` drain sugar**, and `swap(i, x)` / `take(i)` for the
    nullable slot-map (random-access move-in/out with representable holes).
-5. **Dedicated trap messages** for append-past-cap and pop-empty (both currently
-   reuse the bounds-check "Index Out Of Bounds" trap).
+5. **Dedicated trap messages** for append-past-cap, pop-empty, and
+   free-of-undrained-owned-slice (all currently reuse the bounds-check "Index Out
+   Of Bounds" trap).
 
 ### Vec[T] — growable dynamic array (library, pending generics)
 A growable, amortized dynamic array written in ordinary Boson over generics —
