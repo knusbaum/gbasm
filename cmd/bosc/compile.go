@@ -2450,6 +2450,47 @@ func ownedAggregateRebindSource(c *Context, dstt ASTType, val AST) (*Symbol, boo
 	return sym, true
 }
 
+// rhsConsumesBinding reports whether evaluating `val` definitely consumes the
+// owned binding `name` — i.e. `name` is passed, as a bare Symbol argument, to an
+// owned parameter of a directly-resolvable call. "owned in a parameter always
+// moves," so a match guarantees the binding is moved (MoveConsume or
+// MoveTransfer) during RHS evaluation; either way its obligation is no longer
+// live afterward.
+//
+// This is the enabling predicate for self-consuming reassignment
+// (`x = transition(x)`, `s = append(s, x)`): the RHS discharges the target's
+// obligation before the assignment re-inits it, so the store is not a drop. The
+// predicate is deliberately conservative — it returns true ONLY when it can
+// prove the consume, so it is only ever used to *grant* the re-init. Anything it
+// cannot cleanly resolve (nested calls `f(g(x))`, unreachable method decls,
+// function pointers, `&x` arguments) returns false and stays rejected: an
+// incomplete "true" would permit a silent obligation drop, so incompleteness
+// must fall on the safe side. See docs/proposed/PROPOSAL_owned_slices.md
+// § "Prerequisite bug: self-consuming reassignment".
+func rhsConsumesBinding(c *Context, val AST, name string) bool {
+	call, ok := val.(*Funcall)
+	if !ok {
+		return false
+	}
+	decl, args := resolveCalleeForAlias(c, call)
+	if decl == nil {
+		return false
+	}
+	for i, arg := range args {
+		if i >= len(decl.Args) {
+			break
+		}
+		sym, ok := arg.(*Symbol)
+		if !ok || sym.Name != name {
+			continue
+		}
+		if decl.Args[i].Type.HasOwned() {
+			return true
+		}
+	}
+	return false
+}
+
 // moveOwnedSourceForLocalOwner performs the owned-source move at a site that
 // binds the value into a new same-scope owner (a `var`/`:=` initializer or an
 // assignment to an owned binding). An owned scalar rebound from another owned
@@ -4828,7 +4869,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 		}
 		if targetIsSymbol {
-			if c.OwnedObligationLive(targetSym.Name, dstt) {
+			if c.OwnedObligationLive(targetSym.Name, dstt) && !rhsConsumesBinding(c, ast.Val, targetSym.Name) {
+				// The obligation is live AND the RHS does not consume it —
+				// reassigning would drop it (a leak). When the RHS *does*
+				// consume the target (`x = transition(x)`, `s = append(s,x)`),
+				// this is a re-init after move, not a drop: the RHS discharges
+				// the obligation before the store, and the later Unmove marks
+				// the binding live again.
 				CompileErrorF(a, "Cannot assign to owned binding \"%s\" before consuming its current value", targetSym.Name)
 			} else if dstt.HasOwned() && c.IsMoved(targetSym.Name) && c.HasLiveOwnedAlias(targetSym.Name) {
 				// Re-init of a previously-consumed owned binding starts

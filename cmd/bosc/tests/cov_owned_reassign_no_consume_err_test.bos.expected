@@ -1,0 +1,2 @@
+Compiling tests/cov_owned_reassign_no_consume_err_test.bos
+Fatal: Cannot assign to owned binding "x" before consuming its current value

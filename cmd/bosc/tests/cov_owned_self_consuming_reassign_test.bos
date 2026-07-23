@@ -1,0 +1,23 @@
+package main
+
+import "fmt"
+
+// Self-consuming reassignment: `x = inc(x)` consumes x in the RHS (inc's owned
+// parameter moves it) and rebinds x from the return. This is the state-machine
+// idiom `s = transition(s)` — legal because the RHS discharges x's obligation
+// before the assignment re-inits it, so nothing is dropped. The value threads
+// through three transitions: 5 -> 6 -> 7 -> 8.
+fn inc(v owned i64) owned i64 {
+	r := v + 1
+	dispose(v)
+	return owned(r)
+}
+
+fn main() {
+	var x owned i64 := 5
+	x = inc(x)
+	x = inc(x)
+	x = inc(x)
+	fmt.print("%d\n", x)
+	dispose(x)
+}

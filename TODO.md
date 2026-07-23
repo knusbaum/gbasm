@@ -152,30 +152,6 @@ understood, deliberately deferred.
 
 ## Language
 
-### Bug: self-consuming reassignment `x = f(x)` rejected (breaks the state-machine idiom)
-Reassigning an `owned` binding from an expression that **consumes that same
-binding** is wrongly rejected. Repro:
-
-    fn transition(v owned i64) owned i64 { return v }
-    fn main() {
-        var x owned i64 := 5
-        x = transition(x)   // REJECTED: "Cannot assign to owned binding 'x'
-                            //            before consuming its current value"
-        dispose(x)
-    }
-
-`transition(x)` consumes `x` in the RHS, so by the assignment `x` is already
-moved and the store is a legal re-init (the same shape `dispose(x); x = 10`
-accepts). The checker tests LHS overwrite-safety **without crediting that the RHS
-already consumed the target**. This is the in-place typestate-update idiom the
-ownership system was explicitly designed for; DESIGN.md's state-machine examples
-only ever use fresh bindings (`process(start())`), so it was never exercised. Not
-a load-bearing restriction — a bug. **Fix: process the RHS's consume/flow effects
-before the LHS overwrite-safety check.** After the fix `x = f(x)` (RHS consumes
-`x`) is allowed while `x = g()` (RHS does not touch `x`) is still correctly
-rejected as an obligation drop. Prerequisite for the owned-slice `s = append(s,
-x)` shape — see [`docs/proposed/PROPOSAL_owned_slices.md`](docs/proposed/PROPOSAL_owned_slices.md) §Q3.
-
 ### Checked-arithmetic intrinsics
 Integer overflow wraps by default (defined two's-complement, both signs — see
 DESIGN.md §Expressions). That is cheap and keeps numeric loops vectorizable, but

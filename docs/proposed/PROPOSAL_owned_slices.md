@@ -2,6 +2,12 @@
 
 ## History
 
+- 2026-07-23 — Prerequisite fix **landed**: self-consuming reassignment
+  (`x = transition(x)` / `s = append(s, x)`) is now accepted via a conservative
+  `rhsConsumesBinding` predicate in the `*Assignment` owned-binding check;
+  covered by `cov_owned_self_consuming_reassign` (runs, prints `8`) and
+  `cov_owned_reassign_no_consume_err` (soundness boundary). Full bosc suite +
+  `go_test` green.
 - 2026-07-23 — Resolving open questions one at a time. **Q1 resolved:** v1 is the
   pop-stack `owned []owned T`, `free`-time guard is an exact runtime `len == 0`
   check (trap on nonzero = leak); the slot-map and its live-count question are
@@ -220,27 +226,38 @@ same aliasing could be expressed generally through subfield/return ownership
 info rather than special-cased.) `s` must be a mutable binding (`var`) to be
 reassigned, plus the element gate above.
 
-### Prerequisite bug: self-consuming reassignment is rejected today
+### Prerequisite bug: self-consuming reassignment (FIXED)
 
 `s = append(s, x)` is the self-reassignment shape `s = transition(s)`, and that
-shape is **rejected today** — a confirmed bug, not a load-bearing restriction.
-The scalar analogue fails identically:
+shape was **rejected** — a confirmed bug, not a load-bearing restriction. The
+scalar analogue failed identically:
 
 ```
 var x owned i64 := 5
 x = transition(x)   // transition(v owned i64) owned i64
-// REJECTED: "Cannot assign to owned binding 'x' before consuming its current value"
+// (was) REJECTED: "Cannot assign to owned binding 'x' before consuming its current value"
 ```
 
-The checker tests LHS assignability *without* crediting that the RHS already
+The checker tested LHS assignability *without* crediting that the RHS already
 consumed the target. DESIGN.md's state-machine section only ever uses fresh
 bindings / nested calls (`process(start())`), so this in-place typestate-update
 idiom was never exercised — but the ownership system was **designed with it in
-mind**. The fix: **process the RHS's consume effects before the LHS
-overwrite-safety check.** Then `s = append(s, x)` and general `x = transition(x)`
-both work, while `s = f()` (where `f` does not consume `s`) is still correctly
-rejected as an obligation drop. This fix is a prerequisite for the owned-slice
-`append` and is worth landing on its own; tracked in [`TODO.md`](../../TODO.md).
+mind**.
+
+**Fixed** (`compile.go`, the `*Assignment` owned-binding check): the live-obligation
+rejection now also consults `rhsConsumesBinding` — a sound predicate that returns
+true only when the target is passed as a bare `Symbol` argument to an **owned
+parameter** of a directly-resolvable call ("owned in a parameter always moves,"
+so a match guarantees the consume). When the RHS consumes the target the store is
+a re-init, not a drop, so it is permitted; the later `Unmove` marks the binding
+live again. The predicate is deliberately conservative — anything it cannot
+resolve (nested calls, unreachable method decls, function pointers, `&x` args)
+returns false and stays rejected, so incompleteness can only *over*-reject, never
+permit a silent obligation drop. `s = f()` where `f` does not consume `s` is
+therefore still correctly rejected. Tests: `cov_owned_self_consuming_reassign`
+(positive, runs and prints `8` — proves the compile-into-`lv` codegen) and
+`cov_owned_reassign_no_consume_err` (soundness boundary: a borrowing RHS stays
+rejected).
 
 ---
 
@@ -461,10 +478,10 @@ runs to the end of the backing), `make` with-cap forms, and a `cap()` intrinsic.
    consumes both `owned` params and returns the rebound obligation, so the
    assignment is a re-init (state-machine shape), not a drop. `MoveTransfer`
    preserves `s`'s backing origin across the rebind so borrows into `[0, len)`
-   survive ("creating a field"). Requires the prerequisite checker fix — crediting
-   RHS consumption before the LHS overwrite check — which also fixes the general
-   `x = transition(x)` self-reassignment bug (see the append section and
-   `TODO.md`). A `*mut` header parameter was rejected: you cannot take a `*mut` of
+   survive ("creating a field"). The prerequisite checker fix — recognizing when
+   the RHS consumes the target (`rhsConsumesBinding`) — has **landed**, which also
+   fixed the general `x = transition(x)` self-reassignment bug (see the append
+   section). A `*mut` header parameter was rejected: you cannot take a `*mut` of
    an owned binding (the same rule that gives us the `mut` element gate).
 
 4. **`for owned x in s` drain loop — DEFERRED (2026-07-23), and its payoff

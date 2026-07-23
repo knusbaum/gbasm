@@ -1,0 +1,16 @@
+package main
+
+// Soundness boundary for self-consuming reassignment: peek's parameter is
+// non-owned, so passing x *borrows* it — x is NOT consumed and its obligation
+// is still live at the assignment. Reassigning x here would drop that live
+// obligation (a leak), so it must stay rejected even though the syntactically
+// identical `x = inc(x)` (where inc consumes x) is allowed.
+fn peek(v i64) i64 {
+	return v + 1
+}
+
+fn main() {
+	var x owned i64 := 5
+	x = peek(x)
+	dispose(x)
+}
