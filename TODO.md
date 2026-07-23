@@ -166,6 +166,17 @@ C backend.
 
 ## Tooling
 
+### bas: support trailing `//` comments on instruction lines
+`bas` only recognizes `//` as a comment when it begins the line (or is the whole
+line). A trailing comment on an instruction — `add r9 r9   // 2*argc` — is parsed
+as operands and fails: `Failed to find an instruction for Add [..., "//", "2*argc"]`.
+This has bitten hand-written runtime `.bs` more than once (most recently the
+`init_linux.bs` argv rewrite for the 24-byte slice header). The fix should be
+small: strip from an unquoted `//` to end-of-line in the line tokenizer
+(`cmd/bas/main.go`), the same way full-line comments are already handled. Watch
+for `//` inside string-literal operands (`data`/`var` bytes) — only strip when
+`//` is outside a quoted token.
+
 ### Flaky: `TestRunEndpointRunnerModeHelloIfBuilt` under full-suite load
 
 `cmd/bplayd` enforces a 5-second per-run wall-clock timeout (`runTimeout`,

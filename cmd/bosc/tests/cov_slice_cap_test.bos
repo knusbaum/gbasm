@@ -1,0 +1,21 @@
+package main
+
+import "fmt"
+
+// cap() reports the capacity carried in the slice header. A fixed array's cap is
+// its length; a reslice preserves the backing capacity minus the low bound, so
+// cap tracks "space from the pointer to the end of the backing" through both an
+// array reslice and a slice-of-slice reslice.
+fn main() {
+	var arr [5]i64
+	fmt.print("%d\n", cap(arr))   // 5 — array cap == len
+	s := arr[:]
+	fmt.print("%d\n", cap(s))     // 5 — full reslice keeps all 5
+	s2 := arr[1:3]
+	fmt.print("%d\n", len(s2))    // 2
+	fmt.print("%d\n", cap(s2))    // 4 — 5 - lo(1)
+	s3 := s2[1:]
+	fmt.print("%d\n", cap(s3))    // 3 — 4 - lo(1)
+	msg := "hello"
+	fmt.print("%d\n", cap(msg))   // 5 — string literal cap == len
+}

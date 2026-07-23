@@ -4166,6 +4166,27 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			v.free(of)
 			return dest
 		}
+		if pkg == "" && fname == "cap" {
+			if len(ast.Args) != 1 {
+				CompileErrorF(a, "cap() requires exactly one argument")
+			}
+			v := compileTop(of, c, ast.Args[0], nullspot)
+			if !v.t.IsSliceOrArray() {
+				CompileErrorF(a, "cap() argument must be a slice or array, got %s", v.t)
+			}
+			if dest.empty() {
+				dest = newSpot(of, c, c.Temp(), numASTType())
+			}
+			// A fixed array has no separate backing, so its capacity is its
+			// length. A slice carries cap in its header at offset 16.
+			if v.t.IsArray() {
+				fmt.Fprintf(of, "\tmov %s %d\n", dest.ref, v.t.ArraySize)
+			} else {
+				fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, sliceHdrCap(v.ref))
+			}
+			v.free(of)
+			return dest
+		}
 		// Cast expression: type name used as a single-argument function.
 		// Works for unqualified names (FD(x)) and qualified names (io.FD(x)).
 		//

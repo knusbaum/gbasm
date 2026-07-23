@@ -2839,6 +2839,12 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 		}
 		return numASTType()
 	}
+	if pkg == "" && name == "cap" {
+		if len(f.Args) != 1 {
+			CompileErrorF(f, "cap() requires exactly one argument")
+		}
+		return numASTType()
+	}
 	// Cast expression: type name used as a function. Works for both
 	// unqualified (FD(x)) and qualified (io.FD(x)) forms. When a
 	// function of the same name exists, the call form wins so that
