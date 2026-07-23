@@ -1,3 +1,4 @@
 view[0] = 20
 view[1] = 30
-len(nums) = 4
+len=3 cap=4
+popped 300, len now 2

@@ -3,11 +3,25 @@ package main
 import "fmt"
 
 fn main() {
+	// An array, and a slice viewing part of it.
 	var nums [4]i64 := [10, 20, 30, 40]
 	view []i64 := nums[1:3]
 	var i i64 := 0
 	for (i = 0; i < len(view); i = i + 1) {
 		fmt.print("view[%d] = %d\n", i, view[i])
 	}
-	fmt.print("len(nums) = %d\n", len(nums))
+
+	// A slice with its own storage: room for 4, starts empty.
+	var s := make([]i64, 0, 4)
+	s = append(s, 100)
+	s = append(s, 200)
+	s = append(s, 300)
+	fmt.print("len=%d cap=%d\n", len(s), cap(s))
+
+	// pop returns the shortened slice and the removed element.
+	var last i64 := 0
+	s, last = pop(s)
+	fmt.print("popped %d, len now %d\n", last, len(s))
+
+	free(s)
 }

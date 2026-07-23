@@ -19,3 +19,26 @@ with `[lo:hi]`, which views the elements from `lo` up to *but not including*
 
 `len(x)` gives the element count of either, and `x[i]` indexes it. Indexing
 out of bounds is caught at runtime — a later lesson covers that.
+
+## Slices with their own storage
+
+The slices above are *views* — they borrow an array's memory. A slice can
+also carry its own backing buffer. `make([]i64, len, cap)` allocates one:
+`len` is how many elements it starts with, and `cap` is how much room it has
+before it's full. `cap(s)` reports that capacity.
+
+```
+var s := make([]i64, 0, 4)   // empty, room for 4
+```
+
+Two operations grow and shrink it:
+
+- **`append(s, v)`** adds `v` to the end and hands back the grown slice, so
+  you write `s = append(s, v)`. It fills the spare capacity; appending past
+  `cap` traps rather than silently growing.
+- **`pop(s)`** removes the last element and returns *two* values — the
+  shortened slice and the element that came off: `s, x = pop(s)`.
+
+When you're done with a made slice, **`free(s)`** releases its storage.
+(Views don't need freeing — they point into storage that already exists
+somewhere else.)
