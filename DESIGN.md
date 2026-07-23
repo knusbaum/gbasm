@@ -1063,7 +1063,7 @@ fn main() {
 }
 ```
 
-`owned(expr)` is an unsafe built-in: it asserts that `expr` may be used wherever an owned obligation is required, without consuming any source variable. It can promote at any level — `owned(&r)` produces a `*owned T` from a `*T`, and the result also satisfies `owned *owned T` if the destination demands it (both obligations are asserted at once). The compiler cannot verify the semantic correctness; the programmer is responsible for the aliasing invariant.
+`owned(expr)` is an unsafe built-in: it asserts that `expr` may be used wherever an owned obligation is required, without consuming any source variable. It is **destination-typed**, like a bare struct literal: it adopts the destination's owned mask verbatim, asserting whatever ownership the LHS demands at every level at once. So `owned(&r)` on a `*T` satisfies `*owned T`, `owned *T`, or `owned *owned T` according to the destination, and `owned(x[:0])` on a `[]T` view satisfies `[]owned T` (element-owned) or `owned []T` (backing-owned) as demanded — the escape hatch expresses exactly the ownership the destination wants. When there is no destination context (e.g. `:= owned(expr)` inferring its own type) it falls back to setting the single innermost-level bit. The compiler cannot verify the semantic correctness; the programmer is responsible for the aliasing invariant.
 
 Implicit ownership promotion is rejected: `var x owned T := some_non_owned_T` is a compile error. The only way to gain owned bits a source value doesn't have is `owned(expr)`. Integer literals are exempt (they can initialize an `owned T` directly, since there's no source value to alias).
 

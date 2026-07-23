@@ -3720,15 +3720,24 @@ func lowerForToLoop(f *For) AST {
 // where an owned type is required, but does NOT mark the inner variable
 // as moved. The programmer is responsible for the aliasing invariant.
 type OwnedPromotion struct {
-	Val AST
-	p   position
+	Val  AST
+	dest *ASTType // destination-context owned mask, filled like a bare struct literal's type
+	p    position
 }
 
 func (o *OwnedPromotion) ASTType(c *Context) ASTType {
 	t := o.Val.ASTType(c)
-	// Set owned at the innermost level: for a plain value (Ind=0) this is bit 0
-	// (the value itself is owned); for a pointer (Ind=1) this is bit 1 (the
-	// pointed-to value is owned), matching the '*owned T' convention.
+	// owned() is an unconditional ownership *assertion* keyed to the
+	// destination: it adopts whatever owned mask the LHS demands (all levels at
+	// once), which is why it is the escape hatch. When a destination context is
+	// present (fillOwnedPromotionIfNeeded), take its owned mask verbatim.
+	if o.dest != nil && o.dest.OwnedMask != 0 {
+		t.OwnedMask = o.dest.OwnedMask
+		return t
+	}
+	// No destination context (e.g. `:= owned(expr)` inferring its own type):
+	// set owned at the innermost level — bit 0 for a plain value, bit 1 for a
+	// pointer (`*owned T`), etc.
 	t.OwnedMask |= 1 << uint(t.Indirection)
 	return t
 }

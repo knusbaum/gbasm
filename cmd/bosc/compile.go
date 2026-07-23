@@ -726,6 +726,19 @@ func fillAnonymousLiteralIfNeeded(sl *StructLiteral, expectedType ASTType) {
 	}
 }
 
+// fillOwnedPromotionIfNeeded threads the destination type into an `owned(expr)`
+// so it can adopt the destination's owned mask (see OwnedPromotion.ASTType).
+// Called at the same context sites as fillAnonymousLiteralIfNeeded — typed
+// var/const init, assignment RHS, return, and call arguments — before any
+// ASTType query. Only a destination that actually carries owned bits is
+// adopted; otherwise owned() keeps its innermost-level fallback.
+func fillOwnedPromotionIfNeeded(op *OwnedPromotion, expectedType ASTType) {
+	if op.dest == nil && expectedType.OwnedMask != 0 {
+		t := expectedType
+		op.dest = &t
+	}
+}
+
 func fallsThrough(a AST) bool {
 	switch ast := a.(type) {
 	case *Break, *Continue, *Return:
@@ -3761,6 +3774,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if sl, ok := ast.Init.(*StructLiteral); ok {
 			fillAnonymousLiteralIfNeeded(sl, ast.Type)
 		}
+		if op, ok := ast.Init.(*OwnedPromotion); ok {
+			fillOwnedPromotionIfNeeded(op, ast.Type)
+		}
 		// Reject single-binding a multi-value return: must use destructuring.
 		if ast.Init != nil {
 			initT := ast.Init.ASTType(c)
@@ -5077,6 +5093,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if sl, ok := ast.Val.(*StructLiteral); ok {
 			fillAnonymousLiteralIfNeeded(sl, dstt)
 		}
+		if op, ok := ast.Val.(*OwnedPromotion); ok {
+			fillOwnedPromotionIfNeeded(op, dstt)
+		}
 		checkAddressOfOwnedForDest(c, ast.Val, dstt)
 		// Reject implicit ownership promotion: if the destination has owned bits
 		// that the source doesn't, the source must be wrapped in owned().
@@ -5490,6 +5509,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		if sl, ok := ast.Val.(*StructLiteral); ok {
 			fillAnonymousLiteralIfNeeded(sl, retType)
+		}
+		if op, ok := ast.Val.(*OwnedPromotion); ok {
+			fillOwnedPromotionIfNeeded(op, retType)
 		}
 		valType := ast.Val.ASTType(c)
 		// A partially-consumed aggregate cannot be returned: the caller's
@@ -6160,6 +6182,9 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) ([]string, int
 		param := d.Args[i].Type
 		if sl, ok := arg.(*StructLiteral); ok {
 			fillAnonymousLiteralIfNeeded(sl, param)
+		}
+		if op, ok := arg.(*OwnedPromotion); ok {
+			fillOwnedPromotionIfNeeded(op, param)
 		}
 		argt := arg.ASTType(c)
 		// A partially-consumed aggregate cannot cross the call boundary —

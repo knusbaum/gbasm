@@ -1,0 +1,23 @@
+package main
+
+import "fmt"
+
+// owned() is destination-typed: it adopts the destination's full owned mask
+// (all levels at once), which is why it is the ownership escape hatch. A single
+// bit at the innermost level is only the fallback when there is no destination.
+fn main() {
+	// Stacked: &r is *mut i64; owned() asserts BOTH obligations to match
+	// `owned *owned i64` (DESIGN.md "both obligations are asserted at once").
+	var r i64 := 42
+	p owned *owned i64 := owned(&r)
+	fmt.print("%d\n", *p)   // 42
+	dispose(p)
+
+	// Element-owned: owned() asserts the ELEMENT bit to match `[]owned i64`,
+	// making an element-owned slice over borrowed backing constructible.
+	var x [4]i64
+	x[0] = 7
+	y []owned i64 := owned(x[:1])
+	fmt.print("%d\n", y[0])  // 7
+	dispose(y)
+}
