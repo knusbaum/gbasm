@@ -2,11 +2,14 @@
 
 ## History
 
-- 2026-07-23 — Prerequisite fix **landed**: self-consuming reassignment
-  (`x = transition(x)` / `s = append(s, x)`) is now accepted via a conservative
-  `rhsConsumesBinding` predicate in the `*Assignment` owned-binding check;
-  covered by `cov_owned_self_consuming_reassign` (runs, prints `8`) and
-  `cov_owned_reassign_no_consume_err` (soundness boundary). Full bosc suite +
+- 2026-07-23 — Prerequisite fix **landed**, then reworked: self-consuming
+  reassignment (`x = transition(x)` / `s = append(s, x)`) is now accepted by
+  moving the owned-drop check to *after* RHS evaluation in each `*Assignment`
+  store branch (`checkOwnedTargetNotDropped`), so it observes real flow state
+  instead of predicting the consume — which also handles nested consumes
+  (`x = inc(id(x))`). Replaced the earlier conservative `rhsConsumesBinding`
+  predicate. Covered by `cov_owned_self_consuming_reassign` (runs, prints `8`)
+  and `cov_owned_reassign_no_consume_err` (soundness boundary). Full bosc suite +
   `go_test` green.
 - 2026-07-23 — Resolving open questions one at a time. **Q1 resolved:** v1 is the
   pop-stack `owned []owned T`, `free`-time guard is an exact runtime `len == 0`
@@ -244,20 +247,21 @@ bindings / nested calls (`process(start())`), so this in-place typestate-update
 idiom was never exercised — but the ownership system was **designed with it in
 mind**.
 
-**Fixed** (`compile.go`, the `*Assignment` owned-binding check): the live-obligation
-rejection now also consults `rhsConsumesBinding` — a sound predicate that returns
-true only when the target is passed as a bare `Symbol` argument to an **owned
-parameter** of a directly-resolvable call ("owned in a parameter always moves,"
-so a match guarantees the consume). When the RHS consumes the target the store is
-a re-init, not a drop, so it is permitted; the later `Unmove` marks the binding
-live again. The predicate is deliberately conservative — anything it cannot
-resolve (nested calls, unreachable method decls, function pointers, `&x` args)
-returns false and stays rejected, so incompleteness can only *over*-reject, never
-permit a silent obligation drop. `s = f()` where `f` does not consume `s` is
-therefore still correctly rejected. Tests: `cov_owned_self_consuming_reassign`
-(positive, runs and prints `8` — proves the compile-into-`lv` codegen) and
-`cov_owned_reassign_no_consume_err` (soundness boundary: a borrowing RHS stays
-rejected).
+**Fixed** (`compile.go`, the `*Assignment` case): the "would this store drop a
+live owned obligation?" check was moved from *before* the RHS is evaluated to
+*after* it, at each store branch (`checkOwnedTargetNotDropped`). Observing the
+real post-RHS flow state is exact: if the target's obligation is still live after
+the RHS ran, the RHS did not consume it and the store is a drop → rejected; if
+the RHS consumed the target (`x = transition(x)`), the obligation is gone and the
+store is a re-init → permitted, and the branch's existing `Unmove` marks the
+binding live again. No prediction of what the RHS consumes is needed — which also
+means nested consumes like `x = inc(id(x))` work for free (an earlier draft used
+a conservative `rhsConsumesBinding` predicate that could not see through
+nesting). The RHS's flow-state consume happens inside `compileTop` regardless of
+codegen destination, so the check reads correct state even on the same-type
+into-`lv` path. Tests: `cov_owned_self_consuming_reassign` (positive, runs and
+prints `8`) and `cov_owned_reassign_no_consume_err` (soundness boundary: a
+same-type RHS that does not consume the target stays rejected as a drop).
 
 ---
 
@@ -478,11 +482,12 @@ runs to the end of the backing), `make` with-cap forms, and a `cap()` intrinsic.
    consumes both `owned` params and returns the rebound obligation, so the
    assignment is a re-init (state-machine shape), not a drop. `MoveTransfer`
    preserves `s`'s backing origin across the rebind so borrows into `[0, len)`
-   survive ("creating a field"). The prerequisite checker fix — recognizing when
-   the RHS consumes the target (`rhsConsumesBinding`) — has **landed**, which also
-   fixed the general `x = transition(x)` self-reassignment bug (see the append
-   section). A `*mut` header parameter was rejected: you cannot take a `*mut` of
-   an owned binding (the same rule that gives us the `mut` element gate).
+   survive ("creating a field"). The prerequisite checker fix — moving the
+   owned-drop check to *after* the RHS is evaluated so it observes real flow
+   state (`checkOwnedTargetNotDropped`) — has **landed**, which also fixed the
+   general `x = transition(x)` self-reassignment bug (see the append section). A
+   `*mut` header parameter was rejected: you cannot take a `*mut` of an owned
+   binding (the same rule that gives us the `mut` element gate).
 
 4. **`for owned x in s` drain loop — DEFERRED (2026-07-23), and its payoff
    doesn't exist.** The loop's only marginal benefit over `pop` would be a

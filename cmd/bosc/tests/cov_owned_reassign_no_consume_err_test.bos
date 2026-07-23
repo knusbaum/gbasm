@@ -1,16 +1,17 @@
 package main
 
-// Soundness boundary for self-consuming reassignment: peek's parameter is
-// non-owned, so passing x *borrows* it — x is NOT consumed and its obligation
-// is still live at the assignment. Reassigning x here would drop that live
-// obligation (a leak), so it must stay rejected even though the syntactically
-// identical `x = inc(x)` (where inc consumes x) is allowed.
-fn peek(v i64) i64 {
-	return v + 1
+// Soundness boundary for self-consuming reassignment: fresh() returns a new
+// owned i64 but does NOT consume x, so x's obligation is still live at the
+// assignment. Reassigning x here would drop that live obligation (a leak), so it
+// must stay rejected — the post-RHS drop check observes that x was not consumed.
+// Contrast the accepted `x = inc(x)`, where the RHS *does* consume x.
+fn fresh() owned i64 {
+	n := 99
+	return owned(n)
 }
 
 fn main() {
 	var x owned i64 := 5
-	x = peek(x)
+	x = fresh()
 	dispose(x)
 }

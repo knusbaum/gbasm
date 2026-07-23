@@ -2450,45 +2450,26 @@ func ownedAggregateRebindSource(c *Context, dstt ASTType, val AST) (*Symbol, boo
 	return sym, true
 }
 
-// rhsConsumesBinding reports whether evaluating `val` definitely consumes the
-// owned binding `name` — i.e. `name` is passed, as a bare Symbol argument, to an
-// owned parameter of a directly-resolvable call. "owned in a parameter always
-// moves," so a match guarantees the binding is moved (MoveConsume or
-// MoveTransfer) during RHS evaluation; either way its obligation is no longer
-// live afterward.
+// checkOwnedTargetNotDropped rejects an assignment that would overwrite a
+// still-live owned obligation on a bare-Symbol target. It is called at each
+// store branch *after* the RHS has been evaluated, so any consume of the target
+// by the RHS is already reflected in flow state: if the target's obligation is
+// still live, the store would drop it (a leak). When the RHS consumed the target
+// (`x = transition(x)`, `s = append(s, x)`) the obligation is no longer live, so
+// the store is a re-init after move and passes.
 //
-// This is the enabling predicate for self-consuming reassignment
-// (`x = transition(x)`, `s = append(s, x)`): the RHS discharges the target's
-// obligation before the assignment re-inits it, so the store is not a drop. The
-// predicate is deliberately conservative — it returns true ONLY when it can
-// prove the consume, so it is only ever used to *grant* the re-init. Anything it
-// cannot cleanly resolve (nested calls `f(g(x))`, unreachable method decls,
-// function pointers, `&x` arguments) returns false and stays rejected: an
-// incomplete "true" would permit a silent obligation drop, so incompleteness
-// must fall on the safe side. See docs/proposed/PROPOSAL_owned_slices.md
-// § "Prerequisite bug: self-consuming reassignment".
-func rhsConsumesBinding(c *Context, val AST, name string) bool {
-	call, ok := val.(*Funcall)
-	if !ok {
-		return false
+// This replaces an earlier pre-RHS check that had to *predict* whether the RHS
+// consumed the target. Observing the real post-RHS state is exact — it needs no
+// prediction and handles nested consumes (`x = f(g(x))`) for free. The RHS's
+// flow-state consume happens inside compileTop regardless of codegen
+// destination, so this reads correct state even where the RHS is compiled into
+// the target's own storage (the same-type into-lv path). See
+// docs/proposed/PROPOSAL_owned_slices.md § "Prerequisite bug: self-consuming
+// reassignment".
+func checkOwnedTargetNotDropped(c *Context, a AST, targetIsSymbol bool, targetSym *Symbol, dstt ASTType) {
+	if targetIsSymbol && c.OwnedObligationLive(targetSym.Name, dstt) {
+		CompileErrorF(a, "Cannot assign to owned binding \"%s\" before consuming its current value", targetSym.Name)
 	}
-	decl, args := resolveCalleeForAlias(c, call)
-	if decl == nil {
-		return false
-	}
-	for i, arg := range args {
-		if i >= len(decl.Args) {
-			break
-		}
-		sym, ok := arg.(*Symbol)
-		if !ok || sym.Name != name {
-			continue
-		}
-		if decl.Args[i].Type.HasOwned() {
-			return true
-		}
-	}
-	return false
 }
 
 // moveOwnedSourceForLocalOwner performs the owned-source move at a site that
@@ -4869,15 +4850,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 		}
 		if targetIsSymbol {
-			if c.OwnedObligationLive(targetSym.Name, dstt) && !rhsConsumesBinding(c, ast.Val, targetSym.Name) {
-				// The obligation is live AND the RHS does not consume it —
-				// reassigning would drop it (a leak). When the RHS *does*
-				// consume the target (`x = transition(x)`, `s = append(s,x)`),
-				// this is a re-init after move, not a drop: the RHS discharges
-				// the obligation before the store, and the later Unmove marks
-				// the binding live again.
-				CompileErrorF(a, "Cannot assign to owned binding \"%s\" before consuming its current value", targetSym.Name)
-			} else if dstt.HasOwned() && c.IsMoved(targetSym.Name) && c.HasLiveOwnedAlias(targetSym.Name) {
+			// The "would this store drop a live owned obligation?" check is NOT
+			// here (pre-RHS) but at each store branch after the RHS is evaluated
+			// — see checkOwnedTargetNotDropped. Doing it post-RHS lets the RHS
+			// consume the target first (`x = transition(x)`), so a re-init after
+			// move is distinguished from a real drop by observing flow state
+			// rather than predicting it. The two checks below do not depend on
+			// RHS consumption and stay pre-RHS.
+			if dstt.HasOwned() && c.IsMoved(targetSym.Name) && c.HasLiveOwnedAlias(targetSym.Name) {
 				// Re-init of a previously-consumed owned binding starts
 				// a fresh lifecycle. It is rejected when any live owned
 				// pointer could still observe or consume the binding's
@@ -4999,6 +4979,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				c.PointerFlow().ForgetFieldPointers(flow.Binding(destBinding))
 			}
 			emitInterfaceFatPtr(of, c, a, dstt, srct, ast.Val, lv.ref, destBinding)
+			checkOwnedTargetNotDropped(c, a, targetIsSymbol, targetSym, dstt)
 			markMovedIfOwnedSource(of, c, dstt, ast.Val)
 			invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 			if path, ok := FlowPathForExpr(ast.Target); ok {
@@ -5021,6 +5002,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// the direct field-store path uses.
 			checkStructLiteralFieldsForOpaqueTarget(c, ast.Target, dstt, sl)
 			compileStructLiteralInto(of, c, a, sl, lv, dstt)
+			checkOwnedTargetNotDropped(c, a, targetIsSymbol, targetSym, dstt)
 			if targetIsSymbol && dstt.HasOwned() {
 				c.Unmove(targetSym.Name)
 			}
@@ -5042,6 +5024,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// codegen for `=` assignment.
 		if al, ok := ast.Val.(*ArrayLiteral); ok && dstt.IsArray() {
 			compileArrayLiteralInto(of, c, a, spot{ref: lv.ref, t: dstt, nameIsAddress: true}, al)
+			checkOwnedTargetNotDropped(c, a, targetIsSymbol, targetSym, dstt)
 			invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 			if path, ok := FlowPathForExpr(ast.Target); ok {
 				c.InvalidateFlowFacts(path)
@@ -5062,6 +5045,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			move(of, c, lv, ret)
 			ret.free(of)
 			markMovedIfOwnedSource(of, c, dstt, ast.Val)
+			checkOwnedTargetNotDropped(c, a, targetIsSymbol, targetSym, dstt)
 			if targetIsSymbol && dstt.HasOwned() {
 				c.Unmove(targetSym.Name)
 			}
@@ -5099,6 +5083,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				val.free(of)
 			}
 			moveOwnedSourceForLocalOwner(of, c, dstt, ast.Val)
+			checkOwnedTargetNotDropped(c, a, targetIsSymbol, targetSym, dstt)
 			if targetIsSymbol && dstt.HasOwned() {
 				c.Unmove(targetSym.Name)
 			}
@@ -5126,6 +5111,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		lv.free(of)
 		val.free(of)
 		moveOwnedSourceForLocalOwner(of, c, dstt, ast.Val)
+		checkOwnedTargetNotDropped(c, a, targetIsSymbol, targetSym, dstt)
 		if targetIsSymbol && dstt.HasOwned() {
 			c.Unmove(targetSym.Name)
 		}
