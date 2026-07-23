@@ -2,6 +2,10 @@
 
 ## History
 
+- 2026-07-23 — Owned-slices feature complete (`cap`/`make`/`append`/`pop` on the
+  24-byte header); the design doc moved to `docs/implemented/` and this audit's
+  implementation plan is fully done (step 8). This reference doc stays as the
+  record of the representation migration.
 - 2026-07-23 — **The widening landed (16 → 24, `{ptr, len, cap}`).** `Size()`→24
   (`ast.go`); `emitSliceHeaderStore` + `sliceOffCap`/`sliceHdrCap` write the cap
   word; reslice threads `source_cap - lo` (reading cap@16 for slice sources,
@@ -26,7 +30,7 @@
   runtime `.bs`, not a scattered literal hunt. The interface fat-pointer sites
   were deliberately left at 16 (§D).
 - 2026-07-23 — Audit performed ahead of the owned-slices `cap` work
-  ([`PROPOSAL_owned_slices.md`](../proposed/PROPOSAL_owned_slices.md)). Surveys
+  ([`PROPOSAL_owned_slices.md`](../implemented/PROPOSAL_owned_slices.md)). Surveys
   every place that infers the 2-word `{ptr, len}` slice layout so the widening to
   `{ptr, len, cap}` can be done without a silent miscompile. No code changed.
 
@@ -240,8 +244,8 @@ the language today; if/when added, `cap = max - lo`.
 7. **`.bo` version / full rebuild. — RESIDUAL.** No version field exists; safety
    relies on a full rebuild (which the repo's build performs). Adding a version
    field to reject stale 16-byte objects is a follow-up.
-8. Only then build **`cap()`**, and on top of it **`make` / `append` / `pop`**
-   (the actual owned-slices feature) — now unblocked.
+8. **DONE.** `cap()` / `make` / `append` / `pop` built on the 24-byte header —
+   see [`docs/implemented/PROPOSAL_owned_slices.md`](../implemented/PROPOSAL_owned_slices.md).
 
 Steps 1–7 are the representation migration and are the risky part; they should
 land as one coherent change (fact: reslice needs source cap, so the pipeline

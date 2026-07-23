@@ -2,6 +2,20 @@
 
 ## History
 
+- 2026-07-23 — **Core implemented; moved to `docs/implemented/`.** Shipped: the
+  24-byte `{ptr, len, cap}` header (`8c7ad28`, behind helpers `e4304e9`, per
+  `docs/reference/AUDIT_slice_representation.md`); destination-typed `owned()`
+  (`96ea577`); `cap()` (`ce5a2e4`); `make([]T, len[, cap])` (`72e49ff`,
+  `e1aced2`); `append(s, v)` (`83117fd`); `pop(s)` (`6b21757`); the
+  self-consuming-reassignment prerequisite (`9be0205`); and the `[]?*T` `make`
+  fix (`5d57813`). Ownership is tracked **coarsely** as designed. This doc now
+  **freezes** as the design record; the current language surface lives in
+  DESIGN.md § Built-in Functions and § Ownership. Deferred items moved to
+  `TODO.md`: per-element (granular) enforcement, `make([]owned T, n)`,
+  memory-backed elements, the `for owned x in s` drain and `swap`/`take`, and —
+  **explicitly not part of this feature** — a growable `Vec[T]` (its own TODO
+  entry, pending generics). The `Vec[T]` section below is retained only as the
+  rationale for why `append` traps instead of reallocating.
 - 2026-07-23 — Prerequisite fix **landed**, then reworked: self-consuming
   reassignment (`x = transition(x)` / `s = append(s, x)`) is now accepted by
   moving the owned-drop check to *after* RHS evaluation in each `*Assignment`
@@ -387,6 +401,10 @@ provenance, including non-heap. That is what makes the promotion question below
 ---
 
 ## `Vec[T]` is a library, not a builtin
+
+> **Out of scope for this feature.** `Vec[T]` (growth) is tracked separately in
+> [`TODO.md`](../../TODO.md) § "Vec[T]"; this section is retained only as the
+> rationale for why `append` traps at capacity instead of reallocating.
 
 A growable, amortized dynamic array is `Vec[T]`, written in **ordinary Boson over
 generics** — not a compiler builtin. A builtin Vec with methods and a constructor

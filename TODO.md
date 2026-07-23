@@ -11,64 +11,43 @@ design (see the docs convention in CLAUDE.md § Documentation and design docs).
 
 Recorded so they are not lost; each needs its own proposal before work starts.
 
-### Dynamic span / array allocation
-**Now designed in [`docs/proposed/PROPOSAL_owned_slices.md`](docs/proposed/PROPOSAL_owned_slices.md).**
-`alloc(T)` and `new(expr)` take a *type* and allocate one T; there is no
-runtime-length allocation (`make([]T, n)`). The allocator (`_heap.alloc(size)`)
-already takes a byte count, so the runtime half exists -- what is missing is the
-language surface for "allocate n of T and hand back a `[]T`", including how the
-slice header is constructed and who owns the backing. The proposal settles the
-header (3-word `{ptr, len, cap}`), the `make([]T, len, cap)` surface, and the
-ownership of the backing.
+### Owned slices — remaining work
+The core shipped (see [`docs/implemented/PROPOSAL_owned_slices.md`](docs/implemented/PROPOSAL_owned_slices.md)
+and DESIGN.md § Built-in Functions): the 24-byte `{ptr, len, cap}` header,
+`cap()`/`make()`/`append()`/`pop()`, destination-typed `owned()`, the
+`free`/`dispose` terminal, and reslice-borrows. Ownership is tracked **coarsely**
+(any owned bit is one whole-binding obligation). Remaining:
 
-### Ownership in arrays and spans
-**Now designed in [`docs/proposed/PROPOSAL_owned_slices.md`](docs/proposed/PROPOSAL_owned_slices.md)** —
-construction, `append` (two-gate, allocation-free), `pop`/`swap`/`take`, the
-terminal `free`/`dispose` split, and why `Vec[T]` waits on generics. The notes
-below remain the short-form summary of the *enforcement* gaps.
-The type grammar is settled and correct (verified): position distinguishes the
-levels, exactly parallel to `mut`.
-- `owned []T` = the slice owns its backing (bit 0).
-- `[]owned T` = each element owned (bit 1). **This is the target feature.**
-- `owned [N]T` = whole array owned (bit 0).
-- `[N]owned T` = rejected (arrays have no element seam; parallel to `[N]mut T`).
+1. **Per-element (granular) ownership enforcement.** The flow checker collapses
+   any owned bit into a whole-binding obligation (discharged coarsely by
+   `dispose`/`free`, or drained via `pop`). It does not distinguish `owned []T`
+   (backing) from `[]owned T` (elements) or track per-slot obligations —
+   granular tracking would let a partially-drained slice be reasoned about
+   precisely, and is the prerequisite for the two gates the proposal describes.
+2. **`make([]owned T, n)` construction.** Element-owned `make` is gated (you
+   cannot instantiate `n` owned elements from nothing). Today `[]owned T` is
+   reached via `owned(...)` promotion + `append`. The natural constructible form
+   is a `make([]?*owned T, n)` nullable slot-map (all nil, filled by `swap`).
+3. **Memory-backed (struct / `>8`-byte) elements** in `make`/`append`/`pop` — and
+   in reslice, which panics on them. A broader slices-of-large-elements gap: the
+   element address `ptr + i*size` needs a scale x86 can't encode for `>8`, so it
+   wants an `imul`-offset path shared across the slice codegen.
+4. **`for owned x in s` drain sugar**, and `swap(i, x)` / `take(i)` for the
+   nullable slot-map (random-access move-in/out with representable holes).
+5. **Dedicated trap messages** for append-past-cap and pop-empty (both currently
+   reuse the bounds-check "Index Out Of Bounds" trap).
 
-What remains is *enforcement*, not spelling. Two gaps:
-
-1. **The flow checker collapses everything through `HasOwned()`** -- any owned
-   bit makes the whole binding one obligation, discharged coarsely by `dispose`.
-   It does not distinguish `owned []T` (backing) from `[]owned T` (elements), and
-   has no per-element notion. Needs the checker to track container-level vs
-   element-level obligations separately.
-2. **You cannot build or drain a `[]owned T` yet.** Needs dynamic slice
-   allocation (above), an `append` that *moves* an owned element in, and a
-   consuming drain -- the clean primitive is a `for owned x in s { ... }` loop
-   that binds each element as owned (must-consume) and consumes the slice,
-   decidable by construction. You never move an element out by raw index (`s[i]`
-   is a borrow); transfer happens only through operations, Rust-style.
-
-Reslicing an owned aggregate now correctly *borrows* rather than fabricating an
-obligation: `a[:]` on an `owned [N]T` (and `s[:]` on an `owned []T`) strips the
-owned bit and yields a non-owned `[]T` view rooted at the owner's flow origin, so
-disposing the owner invalidates the view and any `&s[i]` taken into it. (Before
-this fix the reslice propagated bit 0 and both the array and the slice were
-independently disposable -- one storage, two obligations.) See DESIGN.md
-§Ownership "Reslicing an owned aggregate borrows" and the
-`cov_owned_array_reslice_*` tests. This closes the *view* seam; building and
-draining a `[]owned T` (the two gaps above) is still open. The lvalue store path
-(`s[i] = v` via `compileLval`'s Index case) also now runs `checkReadable` on its
-base, so a store through a *stale* base errors instead of writing into freed
-storage — matching the rvalue read path and exercised by
-`cov_ptr_reslice_store_after_free_err`. (A store through a stale reslice of a
-stack `owned [N]T` is not yet reachable — such an array is immutable, `[]T` not
-`[]mut T`, so its reslice isn't writable — and gets its regression test when
-mutable owned arrays become constructible.)
-
-Driving use case: hold an unknown number of `owned FD`s in a slice, use them by
-borrow (`files[i].read(...)`), drain-close at the end. `dispose` stays the
-coarse "I got it" escape (it is designed that way, discharging all obligations
-on a binding at once, like `owned *owned i64`); the drain loop is the granular,
-checked path normally reached through a destructor.
+### Vec[T] — growable dynamic array (library, pending generics)
+A growable, amortized dynamic array written in ordinary Boson over generics —
+**not** a compiler builtin (a builtin Vec with methods and a constructor would be
+a second privileged object system nobody else can write). It composes the
+fixed-capacity slice primitives (`make`/`append`/`pop`) with explicit
+`alloc`/`free`: when full, Vec code allocates a bigger backing, moves the
+elements over, and frees the old one — all visible Boson at named sites, so
+growth's allocation is never hidden. Its constructor is the allocation-authority
+guarantee (a distinct type, never produced by `owned(existing)`), which is what
+makes its growth sound where a general `owned []owned T`'s would not be. Waits on
+generics; explicitly *not* part of the owned-slices feature.
 
 ### Native map
 A hash map type. Needs a hashing/equality contract and iteration-order

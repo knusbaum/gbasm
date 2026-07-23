@@ -2509,7 +2509,7 @@ func ownedAggregateRebindSource(c *Context, dstt ASTType, val AST) (*Symbol, boo
 // flow-state consume happens inside compileTop regardless of codegen
 // destination, so this reads correct state even where the RHS is compiled into
 // the target's own storage (the same-type into-lv path). See
-// docs/proposed/PROPOSAL_owned_slices.md § "Prerequisite bug: self-consuming
+// docs/implemented/PROPOSAL_owned_slices.md § "Prerequisite bug: self-consuming
 // reassignment".
 func checkOwnedTargetNotDropped(c *Context, a AST, targetIsSymbol bool, targetSym *Symbol, dstt ASTType) {
 	if targetIsSymbol && c.OwnedObligationLive(targetSym.Name, dstt) {

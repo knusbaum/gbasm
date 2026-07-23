@@ -410,18 +410,22 @@ Built-ins are split into two groups: **compiler intrinsics** (lowered by bosc it
 
 | Built-in | Type | Description |
 |----------|------|-------------|
-| `len(s)` | `([]T) i64` or `([N]T) i64` | Length of a slice (runtime load of the fat-pointer length word) or fixed array (compile-time constant `N`). |
+| `len(s)` | `([]T) i64` or `([N]T) i64` | Length of a slice (runtime load of the header length word) or fixed array (compile-time constant `N`). |
+| `cap(s)` | `([]T) i64` or `([N]T) i64` | Capacity of a slice (header capacity word — space from the pointer to the end of the backing) or fixed array (its length). |
+| `make([]T, len)` / `make([]T, len, cap)` | `owned []T` | Allocate a slice of `cap` (default `len`) zeroed elements from the heap and return an `owned []T` that owns the backing. Element `T` must be zero-initializable and scalar/pointer-sized (memory-backed/struct elements are not yet supported); `[]owned T` construction is not yet supported (build via `owned(...)` + `append`). |
+| `append(s, v)` | `(S, E) S` | Write element `v` into `s`'s spare capacity `[len, cap)` and return a header with `len+1`; **traps** if `len == cap` (non-allocating — no reallocation). Ownership-polymorphic: the result type is exactly `s`'s type `S`, so `append([]T,T)→[]T`, `append([]owned T, owned T)→[]owned T`, etc. Used as `s = append(s, v)`. |
+| `pop(s)` | `(S) (S, E)` | Remove the last element, returning `(shortened slice, element)`; **traps** if `s` is empty. Ownership-polymorphic like `append`. Used as `s, x = pop(s)`. |
 | `alloc(T)` | `owned *mut T` | Allocate writable storage for one `T`; consumes a type expression, not a runtime value. |
 | `new(expr)` | `owned *mut T` | Allocate writable storage for the expression's type, initialize with `expr`, return an owned pointer. |
-| `free(p)` | `void` | Free an `owned *T` / `owned *mut T` pointer and consume that pointer's obligation. |
+| `free(p)` | `void` | Free an `owned *T` pointer, or an `owned []T` slice's backing, and consume the obligation. |
 | `size_of(T)` | `i64` | Size in bytes of `T`'s representation. A compile-time constant; consumes a type expression, not a runtime value. |
 | `align_of(T)` | `i64` | Required alignment of `T` in bytes. A compile-time constant; consumes a type expression, not a runtime value. |
 | `dispose(x)` | `void` | Consume an `owned` binding with no runtime effect (see [Ownership](#ownership)). |
-| `owned(expr)` | `owned T` | Unsafe ownership promotion (see [Bring-your-own-memory](#bring-your-own-memory-byom)). |
+| `owned(expr)` | `owned T` | Unsafe ownership promotion; **destination-typed** — adopts the LHS's owned mask at every level (see [Bring-your-own-memory](#bring-your-own-memory-byom)). |
 | `unsafe_cast(T, e)` | `T` | Reinterpret a pointer or `uintptr` as exactly `T`. The one construct that can manufacture a pointer. |
 | `T(expr)` | `T` | Type cast (for any type `T`, including primitives and user-defined aliases). |
 
-`alloc`, `new`, and `free` lower to `_heap.alloc(size i64)` and `_heap.free(p *mut byte)`. `len` lowers inline — slice length is a `[ref+8]` load, fixed-array length is a literal. None of these are callable through a function-pointer value: passing `len` or `alloc` as a value is a compile error.
+`alloc`, `new`, `make`, and `free` lower to `_heap.alloc(size i64)` and `_heap.free(p *mut byte)` (`make` allocates `cap * sizeof(T)` bytes; `free` of a slice frees its backing pointer). `len`, `cap`, `append`, and `pop` lower inline — `len`/`cap` are `[ref+8]`/`[ref+16]` loads, and `append`/`pop` are header reads plus a bounds-checked element store/load. None of these are callable through a function-pointer value: passing `len` or `alloc` as a value is a compile error. A user may still declare an ordinary function named `make`/`append`/… reachable qualified (`pkg.make(...)`); the intrinsic only claims the bare, unqualified call site.
 
 `unsafe_cast(T, e)` reinterprets `e` — a pointer or a `uintptr` — as `T`. `T` is
 the **full result type**, not a pointee, so mut and nullable bits are stated at
@@ -777,14 +781,20 @@ it came from `new`, `alloc`, or a function returning `owned *T`. A value read
 *through a borrow* (`q *i64 := &p; x := *q`) yields a plain, non-owned value —
 the borrow stripped ownership — so that copy is correctly independent.
 
-**Implementation status.** The type *encoding* distinguishes all of the above
-(`owned []T` at bit 0, `[]owned T` at bit 1), and `[N]owned T` is rejected at
-parse time. Per-element enforcement is **not yet complete**: the flow checker
-currently treats any owned bit as a single whole-binding obligation (discharged
-coarsely by `dispose`), and there is no way to *build* a `[]owned T` yet
-(dynamic slice allocation, `append`, and a consuming drain are future work — see
-[`TODO.md`](TODO.md) § Roadmap). So `[]owned T` parses and encodes correctly but
-is not yet usable as element-granular ownership.
+**Implementation status.** Dynamic construction and the fill/drain cycle are
+built: `make([]T, len[, cap])` allocates an `owned []T`, `append`/`pop` fill and
+drain it, `s[i]` borrows, and `free`/`dispose` discharge it (the driving
+"collect N owned things, use by borrow, drain" case — see [Built-in
+Functions](#built-in-functions) and [`docs/implemented/PROPOSAL_owned_slices.md`](docs/implemented/PROPOSAL_owned_slices.md)).
+Ownership is tracked **coarsely**: the flow checker treats any owned bit as a
+single whole-binding obligation, so a `[]owned T` is discharged as a unit
+(`dispose` coarsely, or drained element-by-element through `pop`) rather than
+per-slot. `[N]owned T` is rejected at parse time. Remaining, in
+[`TODO.md`](TODO.md): per-element (granular) enforcement, `make([]owned T, n)`
+element-owned construction, memory-backed (struct) elements — a broader
+slices-of-`>8`-byte-elements gap that also affects reslice — the `for owned x in
+s` drain sugar, `swap`/`take` for the nullable slot-map, and a growable `Vec[T]`
+(a library, pending generics — explicitly *not* part of this feature).
 
 ### State machines
 
