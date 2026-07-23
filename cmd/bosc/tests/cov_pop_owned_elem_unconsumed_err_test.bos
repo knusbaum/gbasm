@@ -1,0 +1,14 @@
+package main
+
+// Popping from an element-owned slice yields an owned element that must be
+// consumed — ownership flows through pop like it does through append. Here the
+// popped `y` is never consumed, so the binding leaks.
+fn drop(v owned i64) { dispose(v) }
+fn main() {
+	var x [4]i64
+	var s owned []owned i64 := owned(x[:1])
+	var y owned i64 := 0
+	drop(y)
+	s, y = pop(s)
+	dispose(s)
+}

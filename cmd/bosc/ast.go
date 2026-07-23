@@ -1673,6 +1673,30 @@ func (t *ASTType) ElementType() ASTType {
 	return *t.Element
 }
 
+// sliceElemOwned returns a slice's element type with the owned/nil bits restored
+// that sliceWrap shifted onto the container — so []owned T yields owned T. This
+// is the type an element must have to be moved *in* (append's v) or *out* (pop's
+// result); it differs from ElementType(), which returns the bare (borrow-shaped)
+// element that raw indexing yields. `mut` is intentionally not restored: it is a
+// property of the slot, not of the moved element value.
+func sliceElemOwned(t ASTType) ASTType {
+	e := *t.Element
+	e.OwnedMask |= t.OwnedMask >> 1
+	e.NilMask |= t.NilMask >> 1
+	return e
+}
+
+// popResultType builds pop's multi-value return type `(S, E)`: the shortened
+// slice (the argument's own type S) and the popped element E. Same wire shape as
+// an anonymous two-field struct, flagged MultiReturn so the checker enforces
+// destructuring (`s, x = pop(s)`).
+func popResultType(s ASTType) ASTType {
+	return ASTType{
+		AnonFields:  []Binding{{Name: "_0", Type: s}, {Name: "_1", Type: sliceElemOwned(s)}},
+		MultiReturn: true,
+	}
+}
+
 // BaseType walks the Element chain down to the leaf (the type that is
 // neither a slice nor an array) and returns it. For a non-slice/non-array
 // type, returns the type itself.
@@ -2853,6 +2877,14 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 		// ownership from argument to result (the move/unmove is resolved by the
 		// call and assignment machinery, not by append).
 		return f.Args[0].ASTType(c)
+	}
+	if pkg == "" && name == "pop" {
+		if len(f.Args) != 1 {
+			CompileErrorF(f, "pop(s) requires exactly one argument")
+		}
+		// pop returns (S, E): the shortened slice (same type as the argument) and
+		// the popped element. Ownership flows through both like append's does.
+		return popResultType(f.Args[0].ASTType(c))
 	}
 	// Cast expression: type name used as a function. Works for both
 	// unqualified (FD(x)) and qualified (io.FD(x)) forms. When a

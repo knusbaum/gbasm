@@ -1,0 +1,12 @@
+package main
+
+import "fmt"
+
+// pop from an empty slice traps at runtime.
+fn main() {
+	var s := make([]mut i64, 0, 2)
+	fmt.print("start\n")
+	s, _ = pop(s)   // empty -> traps
+	fmt.print("unreached\n")
+	free(s)
+}

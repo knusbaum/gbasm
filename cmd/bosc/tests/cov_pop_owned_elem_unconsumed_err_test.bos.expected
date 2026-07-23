@@ -1,0 +1,2 @@
+Compiling tests/cov_pop_owned_elem_unconsumed_err_test.bos
+Fatal: Owned binding "y" goes out of scope without being consumed; call dispose() or pass it to a consuming function

@@ -2847,9 +2847,7 @@ func compileAppend(of io.Writer, c *Context, a AST, ast *Funcall, dest spot) spo
 	// The element the caller must supply: the base element with its owned/nil
 	// bits restored (a []owned T demands an owned T), but not `mut` — v is a
 	// value; the slot's mutability is a property of the slice, not of v.
-	elemOwned := elemBase
-	elemOwned.OwnedMask |= S.OwnedMask >> 1
-	elemOwned.NilMask |= S.NilMask >> 1
+	elemOwned := sliceElemOwned(S)
 	vt := vArg.ASTType(c)
 	if _, reason := coerceType(c, elemOwned, vt); reason != coerceOK {
 		reportCoerceFailure(vArg, elemOwned, vt, reason,
@@ -2903,6 +2901,75 @@ func compileAppend(of io.Writer, c *Context, a AST, ast *Funcall, dest spot) spo
 	// handled by the assignment's post-RHS drop check.
 	markMovedIfOwnedSource(of, c, S, sArg)
 	markMovedIfOwnedSource(of, c, elemOwned, vArg)
+	return dest
+}
+
+// compilePop lowers `s, x = pop(s)`: it removes the last element, returning the
+// shortened slice (same type as the argument) and the popped element as a
+// two-field multi-return struct {_0: slice, _1: element}. It traps if the slice
+// is empty. Like append, pop is ownership-polymorphic — the move of s and the
+// binding of the returned element/slice resolve through the standard call and
+// destructuring-assignment machinery (markMovedIfOwnedSource here).
+func compilePop(of io.Writer, c *Context, a AST, ast *Funcall, dest spot) spot {
+	if len(ast.Args) != 1 {
+		CompileErrorF(a, "pop(s) requires exactly one argument")
+	}
+	sArg := ast.Args[0]
+	S := sArg.ASTType(c)
+	if !S.IsSlice() {
+		CompileErrorF(a, "pop's argument must be a slice, got %s", S)
+	}
+	elemBase := *S.Element
+	if typeIsMemoryBacked(c, elemBase) {
+		CompileErrorF(a, "pop of memory-backed elements (%s) is not yet supported", elemBase)
+	}
+	elemSize := elemBase.Size(c)
+
+	retType := popResultType(S)
+	if dest.empty() {
+		dest = newSpot(of, c, c.Temp(), retType)
+	} else {
+		dest.t = retType
+	}
+	retDecl, _ := structDeclForType(c, retType)
+	elemOff, _ := retDecl.ByteOffset(c, "_1")
+
+	// Read the source header.
+	sSpot := compileTop(of, c, sArg, nullspot)
+	ptrT := elemBase
+	ptrT.Indirection++
+	ptr := newSpot(of, c, c.Temp(), ptrT)
+	fmt.Fprintf(of, "\tmov %s %s\n", ptr.ref, sliceHdrPtr(sSpot.ref))
+	lenS := newSpot(of, c, c.Temp(), numASTType())
+	fmt.Fprintf(of, "\tmov %s %s\n", lenS.ref, sliceHdrLen(sSpot.ref))
+	capS := newSpot(of, c, c.Temp(), numASTType())
+	fmt.Fprintf(of, "\tmov %s %s\n", capS.ref, sliceHdrCap(sSpot.ref))
+	sSpot.free(of)
+
+	// Empty slice -> trap. cmp/jne kept adjacent (bas does not model EFLAGS).
+	okl := c.Label("pop_ok")
+	fmt.Fprintf(of, "\tcmp %s 0\n", lenS.ref)
+	fmt.Fprintf(of, "\tjne %s\n", okl)
+	emitIndexOOBTrap(of, lenS.ref, false, lenS.ref)
+	fmt.Fprintf(of, "\tlabel %s\n", okl)
+
+	// new_len = len - 1; load the element there.
+	fmt.Fprintf(of, "\tsub %s 1\n", lenS.ref)
+	elemAddr := newSpot(of, c, c.Temp(), ptrT)
+	fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", elemAddr.ref, ptr.ref, lenS.ref, elemSize)
+	elemVal := newSpot(of, c, c.Temp(), elemBase)
+	fmt.Fprintf(of, "\t%s %s [%s]\n", scalarMov(c, elemBase), elemVal.ref, elemAddr.ref)
+	elemAddr.free(of)
+
+	// Result struct: _0 = shortened slice {ptr, new_len, cap}; _1 = the element.
+	emitSliceHeaderStore(of, dest.ref, ptr.ref, lenS.ref, capS.ref)
+	fmt.Fprintf(of, "\tmov [%s+%d] %s\n", dest.ref, elemOff, elemVal.ref)
+	ptr.free(of)
+	lenS.free(of)
+	capS.free(of)
+	elemVal.free(of)
+
+	markMovedIfOwnedSource(of, c, S, sArg)
 	return dest
 }
 
@@ -4222,10 +4289,22 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			} else {
 				fmt.Fprintf(of, "\t%s %s [%s+%d]\n", scalarMov(c, declType), sym.Name, srcSpot.ref, offset)
 			}
-			// Keep flow facts conservative: a freshly-assigned pointer is
-			// treated as a new local origin so later reads don't trip stale
-			// deref checks on a value we just produced from an assertion.
-			if c.ResolveUnderlying(declType).Indirection > 0 {
+			// Owned target: same re-init rule as single assignment. The RHS
+			// (compiled above) may have consumed this binding (e.g. `s, x =
+			// pop(s)` moves s); if its obligation is still live the store would
+			// drop it, otherwise this store re-initializes it.
+			if declType.HasOwned() {
+				checkOwnedTargetNotDropped(c, tgt, true, sym, declType)
+				c.Unmove(sym.Name)
+			}
+			// Keep flow facts conservative: a freshly-assigned pointer — or a
+			// re-initialized owned scalar (whose value-alias origin was
+			// invalidated when its prior value was consumed, e.g. a drain loop
+			// `s, y = pop(s)` reusing y) — is given a fresh local origin so later
+			// reads don't trip a stale deref check. Slices/arrays are excluded:
+			// they re-init correctly via the memory copy + Unmove above.
+			u := c.ResolveUnderlying(declType)
+			if u.Indirection > 0 || (declType.HasOwned() && !u.IsSliceOrArray()) {
 				pexpr := c.PointerFlow().NewLocalOrigin(flow.Binding(sym.Name))
 				c.PointerFlow().AssignPointer(flow.Binding(sym.Name), pexpr)
 			}
@@ -4368,6 +4447,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		if pkg == "" && fname == "append" {
 			return compileAppend(of, c, a, ast, dest)
+		}
+		if pkg == "" && fname == "pop" {
+			return compilePop(of, c, a, ast, dest)
 		}
 		// Cast expression: type name used as a single-argument function.
 		// Works for unqualified names (FD(x)) and qualified names (io.FD(x)).
