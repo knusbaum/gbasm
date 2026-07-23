@@ -2774,8 +2774,11 @@ func compileAlloc(of io.Writer, c *Context, ast *Alloc, dest spot) spot {
 func compileMake(of io.Writer, c *Context, ast *Make, dest spot) spot {
 	t := ast.Type
 	// Type shape (slice, non-owned-element) is validated in ToAST; here we only
-	// need the element type and its size.
-	elemT := *t.Element
+	// need the element type and its size. The zero-init check uses the element
+	// with its qualifier bits restored (sliceWrap shifted them onto the slice), so
+	// `make([]?*T, n)` correctly sees a *nullable* pointer (zero value nil) rather
+	// than the bare non-null `*T`.
+	elemT := sliceElemOwned(t)
 	if !elemT.ZeroInitializable(c) {
 		CompileErrorF(ast, "make([]%s, ...) requires a zero-initializable element type", elemT)
 	}

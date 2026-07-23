@@ -1,0 +1,21 @@
+package main
+
+import "fmt"
+
+// Slices of pointers work end-to-end: a pointer is an 8-byte scalar element, so
+// append/pop handle it, and make([]?*T) builds a zeroed (nil) buffer. This is
+// the "[]T can be []*something" case — nothing about append/pop cares what T is.
+fn main() {
+	var a i64 := 11
+	var b i64 := 22
+	var s := make([]?*i64, 0, 2)
+	s = append(s, &a)
+	s = append(s, &b)
+	fmt.print("%d\n", cap(s))    // 2
+	var p ?*i64 := &a
+	s, p = pop(s)
+	fmt.print("%d\n", *p?)       // 22
+	s, p = pop(s)
+	fmt.print("%d\n", *p?)       // 11
+	free(s)
+}
