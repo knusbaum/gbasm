@@ -1,0 +1,2 @@
+Compiling tests/cov_append_struct_elem_err_test.bos
+Fatal: append of memory-backed elements (pt) is not yet supported

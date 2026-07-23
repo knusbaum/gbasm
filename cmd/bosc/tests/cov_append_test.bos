@@ -1,0 +1,17 @@
+package main
+
+import "fmt"
+
+// append writes into spare capacity and returns a header with len+1; `s = append`
+// re-inits the owned slice (so the binding is `var`). Non-allocating: fills
+// [len, cap).
+fn main() {
+	var s := make([]mut i64, 0, 3)
+	fmt.print("%d %d\n", len(s), cap(s))       // 0 3
+	s = append(s, 10)
+	s = append(s, 20)
+	s = append(s, 30)
+	fmt.print("%d %d\n", len(s), cap(s))       // 3 3
+	fmt.print("%d %d %d\n", s[0], s[1], s[2])  // 10 20 30
+	free(s)
+}

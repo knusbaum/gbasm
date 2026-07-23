@@ -2822,6 +2822,90 @@ func compileMake(of io.Writer, c *Context, ast *Make, dest spot) spot {
 	return dest
 }
 
+// compileAppend lowers `s = append(s, v)`: a non-allocating append that writes v
+// into the slice's spare capacity `[len, cap)` and returns a header with len+1.
+// It traps if len == cap (no reallocation — growth is a library concern). append
+// is ownership-polymorphic: it returns exactly the slice argument's type, and the
+// move of s (if owned) and v (if the element is owned) plus the re-init of the
+// assignment target are handled by the standard call/assignment machinery
+// (markMovedIfOwnedSource here; the post-RHS drop check + Unmove at the store).
+func compileAppend(of io.Writer, c *Context, a AST, ast *Funcall, dest spot) spot {
+	if len(ast.Args) != 2 {
+		CompileErrorF(a, "append(s, v) requires exactly two arguments")
+	}
+	sArg, vArg := ast.Args[0], ast.Args[1]
+	S := sArg.ASTType(c)
+	if !S.IsSlice() {
+		CompileErrorF(a, "append's first argument must be a slice, got %s", S)
+	}
+	elemBase := *S.Element
+	if typeIsMemoryBacked(c, elemBase) {
+		CompileErrorF(a, "append of memory-backed elements (%s) is not yet supported", elemBase)
+	}
+	elemSize := elemBase.Size(c)
+
+	// The element the caller must supply: the base element with its owned/nil
+	// bits restored (a []owned T demands an owned T), but not `mut` — v is a
+	// value; the slot's mutability is a property of the slice, not of v.
+	elemOwned := elemBase
+	elemOwned.OwnedMask |= S.OwnedMask >> 1
+	elemOwned.NilMask |= S.NilMask >> 1
+	vt := vArg.ASTType(c)
+	if _, reason := coerceType(c, elemOwned, vt); reason != coerceOK {
+		reportCoerceFailure(vArg, elemOwned, vt, reason,
+			"append: cannot append a %s to %s", vt, S)
+	}
+
+	if dest.empty() {
+		dest = newSpot(of, c, c.Temp(), S)
+	} else {
+		dest.t = S
+	}
+
+	// Read the source header (ptr/len/cap) into temps before any store, so the
+	// RHS-into-lv case (`s = append(s, v)`, dest == s) reads a consistent header.
+	sSpot := compileTop(of, c, sArg, nullspot)
+	ptrT := elemBase
+	ptrT.Indirection++
+	ptr := newSpot(of, c, c.Temp(), ptrT)
+	fmt.Fprintf(of, "\tmov %s %s\n", ptr.ref, sliceHdrPtr(sSpot.ref))
+	lenS := newSpot(of, c, c.Temp(), numASTType())
+	fmt.Fprintf(of, "\tmov %s %s\n", lenS.ref, sliceHdrLen(sSpot.ref))
+	capS := newSpot(of, c, c.Temp(), numASTType())
+	fmt.Fprintf(of, "\tmov %s %s\n", capS.ref, sliceHdrCap(sSpot.ref))
+	sSpot.free(of)
+
+	// No spare capacity -> trap. cmp/jb kept adjacent (bas does not model EFLAGS);
+	// the trap is on the failing path only.
+	okl := c.Label("append_ok")
+	fmt.Fprintf(of, "\tcmp %s %s\n", lenS.ref, capS.ref)
+	fmt.Fprintf(of, "\tjb %s\n", okl)
+	emitIndexOOBTrap(of, lenS.ref, false, capS.ref)
+	fmt.Fprintf(of, "\tlabel %s\n", okl)
+
+	// Store v at ptr[len] (scalar element: base+index*scale addressing).
+	elemAddr := newSpot(of, c, c.Temp(), ptrT)
+	fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", elemAddr.ref, ptr.ref, lenS.ref, elemSize)
+	vSpot := compileTop(of, c, vArg, nullspot)
+	fmt.Fprintf(of, "\t%s [%s] %s\n", scalarMov(c, elemBase), elemAddr.ref, vSpot.ref)
+	vSpot.free(of)
+	elemAddr.free(of)
+
+	// New header: same ptr/cap, len+1.
+	fmt.Fprintf(of, "\tadd %s 1\n", lenS.ref)
+	emitSliceHeaderStore(of, dest.ref, ptr.ref, lenS.ref, capS.ref)
+	ptr.free(of)
+	lenS.free(of)
+	capS.free(of)
+
+	// Ownership resolves through the standard machinery: move s (if the slice is
+	// owned) and v (if the element is owned). The `s = append(...)` re-init is
+	// handled by the assignment's post-RHS drop check.
+	markMovedIfOwnedSource(of, c, S, sArg)
+	markMovedIfOwnedSource(of, c, elemOwned, vArg)
+	return dest
+}
+
 // newStructLiteralArg returns the struct literal X from `new(X)` (the heap
 // constructor applied to a struct literal), or nil. Used to record the heap
 // pointee's field provenance so a borrow constructed into heap is tracked.
@@ -4281,6 +4365,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			v.free(of)
 			return dest
+		}
+		if pkg == "" && fname == "append" {
+			return compileAppend(of, c, a, ast, dest)
 		}
 		// Cast expression: type name used as a single-argument function.
 		// Works for unqualified names (FD(x)) and qualified names (io.FD(x)).

@@ -2845,6 +2845,15 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 		}
 		return numASTType()
 	}
+	if pkg == "" && name == "append" {
+		if len(f.Args) != 2 {
+			CompileErrorF(f, "append(s, v) requires exactly two arguments")
+		}
+		// The return type is exactly the slice argument's type: append preserves
+		// ownership from argument to result (the move/unmove is resolved by the
+		// call and assignment machinery, not by append).
+		return f.Args[0].ASTType(c)
+	}
 	// Cast expression: type name used as a function. Works for both
 	// unqualified (FD(x)) and qualified (io.FD(x)) forms. When a
 	// function of the same name exists, the call form wins so that

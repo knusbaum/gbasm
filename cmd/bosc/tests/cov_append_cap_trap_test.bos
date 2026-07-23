@@ -1,0 +1,16 @@
+package main
+
+import "fmt"
+
+// Non-allocating append traps when there is no spare capacity (len == cap),
+// rather than reallocating. Reuses the bounds-check trap for now.
+fn main() {
+	var s := make([]mut i64, 0, 2)
+	s = append(s, 10)
+	fmt.print("%d\n", len(s))   // 1
+	s = append(s, 20)
+	fmt.print("%d\n", len(s))   // 2
+	s = append(s, 30)           // traps: len == cap == 2
+	fmt.print("unreached\n")
+	free(s)
+}
