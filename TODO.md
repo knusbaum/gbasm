@@ -12,13 +12,20 @@ design (see the docs convention in CLAUDE.md § Documentation and design docs).
 Recorded so they are not lost; each needs its own proposal before work starts.
 
 ### Dynamic span / array allocation
+**Now designed in [`docs/proposed/PROPOSAL_owned_slices.md`](docs/proposed/PROPOSAL_owned_slices.md).**
 `alloc(T)` and `new(expr)` take a *type* and allocate one T; there is no
 runtime-length allocation (`make([]T, n)`). The allocator (`_heap.alloc(size)`)
 already takes a byte count, so the runtime half exists -- what is missing is the
 language surface for "allocate n of T and hand back a `[]T`", including how the
-slice header is constructed and who owns the backing.
+slice header is constructed and who owns the backing. The proposal settles the
+header (3-word `{ptr, len, cap}`), the `make([]T, len, cap)` surface, and the
+ownership of the backing.
 
 ### Ownership in arrays and spans
+**Now designed in [`docs/proposed/PROPOSAL_owned_slices.md`](docs/proposed/PROPOSAL_owned_slices.md)** —
+construction, `append` (two-gate, allocation-free), `pop`/`swap`/`take`, the
+terminal `free`/`dispose` split, and why `Vec[T]` waits on generics. The notes
+below remain the short-form summary of the *enforcement* gaps.
 The type grammar is settled and correct (verified): position distinguishes the
 levels, exactly parallel to `mut`.
 - `owned []T` = the slice owns its backing (bit 0).
@@ -144,6 +151,30 @@ understood, deliberately deferred.
 ---
 
 ## Language
+
+### Bug: self-consuming reassignment `x = f(x)` rejected (breaks the state-machine idiom)
+Reassigning an `owned` binding from an expression that **consumes that same
+binding** is wrongly rejected. Repro:
+
+    fn transition(v owned i64) owned i64 { return v }
+    fn main() {
+        var x owned i64 := 5
+        x = transition(x)   // REJECTED: "Cannot assign to owned binding 'x'
+                            //            before consuming its current value"
+        dispose(x)
+    }
+
+`transition(x)` consumes `x` in the RHS, so by the assignment `x` is already
+moved and the store is a legal re-init (the same shape `dispose(x); x = 10`
+accepts). The checker tests LHS overwrite-safety **without crediting that the RHS
+already consumed the target**. This is the in-place typestate-update idiom the
+ownership system was explicitly designed for; DESIGN.md's state-machine examples
+only ever use fresh bindings (`process(start())`), so it was never exercised. Not
+a load-bearing restriction — a bug. **Fix: process the RHS's consume/flow effects
+before the LHS overwrite-safety check.** After the fix `x = f(x)` (RHS consumes
+`x`) is allowed while `x = g()` (RHS does not touch `x`) is still correctly
+rejected as an obligation drop. Prerequisite for the owned-slice `s = append(s,
+x)` shape — see [`docs/proposed/PROPOSAL_owned_slices.md`](docs/proposed/PROPOSAL_owned_slices.md) §Q3.
 
 ### Checked-arithmetic intrinsics
 Integer overflow wraps by default (defined two's-complement, both signs — see
