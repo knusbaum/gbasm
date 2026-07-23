@@ -2,6 +2,15 @@
 
 ## History
 
+- 2026-07-23 — Step 1 (the consolidation refactor) **landed**: the Go codegen
+  now routes slice-header access through `sliceOffPtr`/`sliceOffLen`/
+  `sliceHeaderBytes`, the read helpers `sliceHdrPtr`/`sliceHdrLen`, and the
+  constructor `emitSliceHeaderStore` (`cmd/bosc/compile.go`), plus the two
+  globals byte-encoders use the constants (`cmd/bosc/globals.go`). Pure refactor,
+  behavior unchanged, full suite + `go_test` green. The cap widening is now a
+  change to these definitions + the constructor + reslice cap-threading + the
+  runtime `.bs`, not a scattered literal hunt. The interface fat-pointer sites
+  were deliberately left at 16 (§D).
 - 2026-07-23 — Audit performed ahead of the owned-slices `cap` work
   ([`PROPOSAL_owned_slices.md`](../proposed/PROPOSAL_owned_slices.md)). Surveys
   every place that infers the 2-word `{ptr, len}` slice layout so the widening to
@@ -195,9 +204,13 @@ the language today; if/when added, `cap = max - lo`.
 
 ## Recommended implementation order
 
-1. **Decide layout + a named constant.** `cap@16`; introduce
-   `sliceHeaderBytes = 24` and route size decisions through it / `Size()` rather
-   than bare `16`s, to kill the interface/slice conflation at the source.
+1. **Decide layout + a named constant. — DONE.** `cap@16`; the Go codegen now
+   routes header access through `sliceOffPtr`/`sliceOffLen`/`sliceHeaderBytes`,
+   `sliceHdrPtr`/`sliceHdrLen`, and `emitSliceHeaderStore` (`compile.go`), with
+   the globals encoders on the constants. Adding `cap` is now: extend
+   `emitSliceHeaderStore` with a cap operand, add `sliceOffCap = 16`, bump
+   `sliceHeaderBytes` to 24. (The interface fat-pointer sites in §D were left at
+   16 and are untouched by these helpers.)
 2. **Bump `ast.go:1798` → 24 and fix `babi0_test.go:142`.** Build and run the
    suite: `Size()`-driven paths (§F) follow; the failures that remain are the
    hand-written and hardcoded sites — a live worklist confirming this audit.

@@ -380,6 +380,34 @@ func compileArrayLiteralInto(of io.Writer, c *Context, a AST, dest spot, lit *Ar
 	}
 }
 
+// Slice header layout: a fat pointer {ptr@0, len@8}, sliceHeaderBytes wide.
+// Centralized here so the planned cap widening (16 → 24, see
+// docs/reference/AUDIT_slice_representation.md) is a change to these definitions
+// and emitSliceHeaderStore rather than a scattered hunt for literal 16s and +8s
+// — and so a slice-header access is never confused with an interface fat pointer,
+// which is also 16 bytes but is {data@0, vtable@8} and must NOT widen.
+const (
+	sliceOffPtr      = 0
+	sliceOffLen      = 8
+	sliceHeaderBytes = 16
+)
+
+// sliceHdrPtr / sliceHdrLen return the memory operand for a slice header's
+// fields, given a ref that already holds the header's address.
+func sliceHdrPtr(hdr string) string { return fmt.Sprintf("[%s]", hdr) }
+func sliceHdrLen(hdr string) string { return fmt.Sprintf("[%s+%d]", hdr, sliceOffLen) }
+
+// emitSliceHeaderStore writes a complete slice header at hdr from operand
+// strings (register names or immediates). Routing every construction site
+// through one helper means no site can populate a partial header — the exact
+// failure mode the cap widening must avoid (a header with a garbage cap word).
+// qword[] forces 64-bit stores so an immediate length is not narrowed (see
+// CLAUDE.md "mov [mem] imm encodes narrow").
+func emitSliceHeaderStore(of io.Writer, hdr, ptr, length string) {
+	fmt.Fprintf(of, "\tmov qword%s %s\n", sliceHdrPtr(hdr), ptr)
+	fmt.Fprintf(of, "\tmov qword%s %s\n", sliceHdrLen(hdr), length)
+}
+
 func spot_memcpy(of io.Writer, c *Context, dst, src spot, bytes int) {
 	qwords := bytes / 8
 	singles := bytes % 8
@@ -3079,8 +3107,8 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 			t := vt
 			t.Indirection += 1
 			addr = newSpot(of, c, c.Temp(), t)
-			fmt.Fprintf(of, "\tmov %s [%s]\n", addr.ref, w.ref)
-			fmt.Fprintf(of, "\tmov %s [%s+8]\n", max.ref, w.ref)
+			fmt.Fprintf(of, "\tmov %s %s\n", addr.ref, sliceHdrPtr(w.ref))
+			fmt.Fprintf(of, "\tmov %s %s\n", max.ref, sliceHdrLen(w.ref))
 		} else {
 			addr = w
 			fmt.Fprintf(of, "\tmov %s %d\n", max.ref, w.t.ArraySize)
@@ -4129,7 +4157,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if v.t.IsArray() {
 				fmt.Fprintf(of, "\tmov %s %d\n", dest.ref, v.t.ArraySize)
 			} else {
-				fmt.Fprintf(of, "\tmov %s [%s+8]\n", dest.ref, v.ref)
+				fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, sliceHdrLen(v.ref))
 			}
 			v.free(of)
 			return dest
@@ -4597,8 +4625,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			t := vt
 			t.Indirection += 1
 			addr = newSpot(of, c, c.Temp(), t)
-			fmt.Fprintf(of, "\tmov %s [%s]\n", addr.ref, w.ref)
-			fmt.Fprintf(of, "\tmov %s [%s+8]\n", max.ref, w.ref)
+			fmt.Fprintf(of, "\tmov %s %s\n", addr.ref, sliceHdrPtr(w.ref))
+			fmt.Fprintf(of, "\tmov %s %s\n", max.ref, sliceHdrLen(w.ref))
 		} else {
 			addr = w
 			fmt.Fprintf(of, "\tmov %s %d\n", max.ref, w.t.ArraySize)
@@ -4719,7 +4747,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			addrt := baset
 			addrt.Indirection += 1
 			addr = newSpot(of, c, c.Temp(), addrt)
-			fmt.Fprintf(of, "\tmov %s [%s]\n", addr.ref, v.ref)
+			fmt.Fprintf(of, "\tmov %s %s\n", addr.ref, sliceHdrPtr(v.ref))
 		} else {
 			// Fixed array: materialize the array's address into a fresh
 			// register temp via `lea`. Reusing the bare array name as
@@ -4736,7 +4764,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// the reference for the high-bound check below.
 		length := newSpot(of, c, c.Temp(), numASTType())
 		if v.t.IsSlice() {
-			fmt.Fprintf(of, "\tmov %s [%s+8]\n", length.ref, v.ref)
+			fmt.Fprintf(of, "\tmov %s %s\n", length.ref, sliceHdrLen(v.ref))
 		} else {
 			// v.t is a fixed array; use its declared size.
 			fmt.Fprintf(of, "\tmov %s %d\n", length.ref, v.t.ArraySize)
@@ -4778,8 +4806,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			lower.free(of)
 		}
 		newslice := newSpot(of, c, c.Temp(), newt)
-		fmt.Fprintf(of, "\tmov [%s] %s\n", newslice.ref, addr.ref)
-		fmt.Fprintf(of, "\tmov [%s+8] %s\n", newslice.ref, upper.ref)
+		emitSliceHeaderStore(of, newslice.ref, addr.ref, upper.ref)
 		return newslice
 
 	case *Assignment:
@@ -5683,12 +5710,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		switch v := ast.Val.(type) {
 		case string:
 			// String literals have type byte[]: a fat pointer {data_ptr, length}.
-			// dest is a bytes slot (16 bytes). Use qword[] to force 64-bit stores.
 			s := c.String(v)
 			reg := regSpot(of, "r10")
 			fmt.Fprintf(of, "\tlea r10 %s\n", s)
-			fmt.Fprintf(of, "\tmov qword[%s] r10\n", dest.ref)
-			fmt.Fprintf(of, "\tmov qword[%s+8] %d\n", dest.ref, len(v))
+			emitSliceHeaderStore(of, dest.ref, "r10", fmt.Sprintf("%d", len(v)))
 			reg.free(of)
 		case uint64:
 			fmt.Fprintf(of, "\tmov %s %d\n", dest.ref, v)

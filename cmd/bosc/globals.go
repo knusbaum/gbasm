@@ -239,9 +239,9 @@ func encodeLiteralBytes(c *Context, dstt ASTType, l *Literal) ([]byte, []relocSp
 		// hold the length, encoded little-endian here at compile time.
 		if dstt.IsSlice() && dstt.Element != nil && dstt.Element.Name == "byte" {
 			sym := c.String(v) // existing string-constants machinery
-			out := make([]byte, 16)
-			binary.LittleEndian.PutUint64(out[8:], uint64(len(v)))
-			return out, []relocSpec{{Offset: 0, Symbol: sym, Addend: 0}}, nil
+			out := make([]byte, sliceHeaderBytes)
+			binary.LittleEndian.PutUint64(out[sliceOffLen:], uint64(len(v)))
+			return out, []relocSpec{{Offset: sliceOffPtr, Symbol: sym, Addend: 0}}, nil
 		}
 		return nil, nil, fmt.Errorf("cannot initialize %s with a string literal", dstt)
 	}
@@ -379,9 +379,9 @@ func encodeArrayLiteralBytes(c *Context, dstt ASTType, lit *ArrayLiteral) ([]byt
 		}
 		backingT := ASTType{Element: &elemT, ArraySize: len(lit.Elements)}
 		name := c.AddAnonGlobal(backingT.String(), backingBytes, backingRelocs)
-		out := make([]byte, 16)
-		binary.LittleEndian.PutUint64(out[8:], uint64(len(lit.Elements)))
-		return out, []relocSpec{{Offset: 0, Symbol: name, Addend: 0}}, nil
+		out := make([]byte, sliceHeaderBytes)
+		binary.LittleEndian.PutUint64(out[sliceOffLen:], uint64(len(lit.Elements)))
+		return out, []relocSpec{{Offset: sliceOffPtr, Symbol: name, Addend: 0}}, nil
 	default:
 		return nil, nil, fmt.Errorf("array literal cannot initialize %s (need a fixed-array or slice type)", dstt)
 	}
