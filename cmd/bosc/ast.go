@@ -4900,9 +4900,19 @@ func (n *Node) toASTTop(c *Context) AST {
 		// an ASTType with the one type builder, exactly like any annotation.
 		return &Alloc{Type: mkTypename(n.args[0]), p: n.p}
 	case n_make:
-		// args[0] is a type node (the slice type); args[1] is len; args[2], if
-		// present, is cap.
-		m := &Make{Type: mkTypename(n.args[0]), Len: n.args[1].toASTTop(c), p: n.p}
+		// args[0] is a type node parsed by parseTypeName; validate here that a
+		// valid make target was passed (a slice type). args[1] is len; args[2],
+		// if present, is cap.
+		t := mkTypename(n.args[0])
+		if !t.IsSlice() {
+			panic(&interpreterError{fmt.Sprintf("make requires a slice type []T, got %s", t), n.p})
+		}
+		if t.OwnedMask != 0 {
+			// Element-owned slices (`[]owned T`) need element-granular
+			// construction (append/drain), which is future work.
+			panic(&interpreterError{fmt.Sprintf("make of a slice with owned elements (%s) is not yet supported", t), n.p})
+		}
+		m := &Make{Type: t, Len: n.args[1].toASTTop(c), p: n.p}
 		if len(n.args) > 2 {
 			m.Cap = n.args[2].toASTTop(c)
 		}

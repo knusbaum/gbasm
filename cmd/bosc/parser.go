@@ -846,29 +846,23 @@ func (p *Parser) parsePostfix(v *Node) *Node {
 				p.expect(tok_rparen)
 				v = &Node{t: n_unsafecast, p: v.p, args: []*Node{tn, val}}
 			case v.t == n_symbol && v.sval == "make":
-				// The builtin `make([]T, len[, cap])` takes a slice TYPE first,
-				// so it is recognized only when `(` is followed by `[`. Anything
-				// else keeps `make` as an ordinary function name — a no-arg or
-				// scalar-arg constructor like `fn make() T`. (A qualified
-				// `pkg.make(...)` is an n_dot and never reaches this branch.)
+				// make([]T, len[, cap]): a HYBRID form like unsafe_cast — the
+				// first argument is always a TYPE (parseTypeName), the rest are
+				// ordinary expressions (length, optional capacity). `make` is thus
+				// a builtin at the bare-call site; that the type is actually a
+				// slice is validated in ToAST. A user's own `fn make` collides on
+				// the name like any other and is reachable qualified
+				// (`pkg.make(...)`, an n_dot that never enters this branch).
 				p.advance() // consume '('
-				if p.current().t == tok_lsquare {
-					// HYBRID like unsafe_cast: type via parseTypeName, then
-					// length and optional capacity as ordinary expressions.
-					tn := p.parseTypeName()
-					p.expect(tok_comma)
-					margs := []*Node{tn, p.parseExpression()}
-					if p.current().t == tok_comma {
-						p.advance()
-						margs = append(margs, p.parseExpression())
-					}
-					p.expect(tok_rparen)
-					v = &Node{t: n_make, p: v.p, args: margs}
-				} else {
-					args := p.parseArgs()
-					p.expect(tok_rparen)
-					v = &Node{t: n_funcall, p: v.p, sval: v.sval, args: args}
+				tn := p.parseTypeName()
+				p.expect(tok_comma)
+				margs := []*Node{tn, p.parseExpression()}
+				if p.current().t == tok_comma {
+					p.advance()
+					margs = append(margs, p.parseExpression())
 				}
+				p.expect(tok_rparen)
+				v = &Node{t: n_make, p: v.p, args: margs}
 			case v.t == n_symbol && (v.sval == "size_of" || v.sval == "align_of"):
 				// size_of(T) / align_of(T): like alloc(T), the argument is a
 				// TYPE run through parseTypeName, not the expression grammar.

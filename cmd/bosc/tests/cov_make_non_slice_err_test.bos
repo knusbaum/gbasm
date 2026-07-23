@@ -1,9 +1,8 @@
 package main
 
-// make constructs a slice; a fixed-array type has no separate backing to
-// allocate, so it is rejected. (`make` recognizes the builtin only when its
-// first argument is a `[`-type, so `make(i64, ...)` is instead an ordinary call.)
+// make constructs a slice; a non-slice type is rejected in ToAST. `make` always
+// parses its first argument as a type, so `make(i64, 3)` reaches this check.
 fn main() {
-	s := make([4]i64, 2)
+	s := make(i64, 3)
 	_ = s
 }

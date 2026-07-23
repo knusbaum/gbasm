@@ -1,2 +1,2 @@
 Compiling tests/cov_make_non_slice_err_test.bos
-Fatal: make requires a slice type []T, got [4]i64
+Failed to parse: make requires a slice type []T, got i64

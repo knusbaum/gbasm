@@ -2760,15 +2760,8 @@ func compileAlloc(of io.Writer, c *Context, ast *Alloc, dest spot) spot {
 // lives across the call; the ptr is written from rax after.
 func compileMake(of io.Writer, c *Context, ast *Make, dest spot) spot {
 	t := ast.Type
-	if !t.IsSlice() {
-		CompileErrorF(ast, "make requires a slice type []T, got %s", t)
-	}
-	// Element-owned slices (`[]owned T`) need element-granular construction
-	// (append/drain), which is not built yet. Gate on the *parsed* owned bits,
-	// before ASTType ORs in the backing bit.
-	if t.OwnedMask != 0 {
-		CompileErrorF(ast, "make of a slice with owned elements (%s) is not yet supported", t)
-	}
+	// Type shape (slice, non-owned-element) is validated in ToAST; here we only
+	// need the element type and its size.
 	elemT := *t.Element
 	if !elemT.ZeroInitializable(c) {
 		CompileErrorF(ast, "make([]%s, ...) requires a zero-initializable element type", elemT)
