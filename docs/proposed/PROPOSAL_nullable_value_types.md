@@ -2,6 +2,11 @@
 
 ## History
 
+- 2026-07-23 — Clarified the boolean status of `?T` (verified today): a `?T`/`?*T`
+  is **not** a `bool` and doesn't coerce to one (can't pass to a `bool` param);
+  `if (x)` is sugar for `if (x != nil)` (the condition is always a presence test),
+  and narrowing is a flow fact tied to the condition-position form, not carried by
+  any `bool` value (`b := x != nil; if (b)` does not narrow).
 - 2026-07-23 — Added the "`nil` is absence, not `0`" principle: presence is
   checked with `nil`/bare-boolean, never `p == 0`, and comparing a pointer (or a
   `?T`) to an integer literal should be a type mismatch. Resolves the
@@ -48,6 +53,19 @@ To the programmer there is **one `?`**. `?T` and `?*T` behave identically:
 - `if (x) { … }` narrows `x` to present in the true branch; `if (!x) {…} else
   {…}` narrows it in the else; postfix `x?` inserts a runtime presence check and
   yields the plain `T`, trapping if absent.
+
+**`?T` is not a boolean, and narrowing is a form, not a coercion.** A `?T` (like a
+`?*T` today) is *not* a `bool` and does not coerce to one — you cannot pass it to
+a `bool` parameter or assign it to a `bool` (verified: `?*i64` → `bool` is a type
+mismatch). `if (x)` is defined as sugar for `if (x != nil)`: the condition is
+always a *presence test* (a `bool` under the hood), never the nullable value
+itself. And narrowing is a **flow fact tied to that syntactic form in condition
+position** — it is not carried by any `bool` value. Storing the test in a
+variable (`b := x != nil`) yields a plain `bool` that has lost the correlation to
+`x`, so `if (b) { … use x … }` does *not* narrow (a `bool` cannot smuggle "…and
+`x` is present"). This is the "clearly typed, not special-cased" answer: the
+*type* of `?T` is always `?T`, and the narrowing surface is a fixed, recognized
+set of presence-test forms — not an implicit conversion to `bool`.
 - `?owned T` carries a **conditional** obligation: absent ⇒ nothing to discharge,
   present ⇒ the value must be consumed. Exactly as `?*owned T` works today.
 
