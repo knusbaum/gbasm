@@ -135,6 +135,16 @@ understood, deliberately deferred.
 
 ## Language
 
+### `?` on value types (nullable value types / optionals)
+**Designed in [`docs/proposed/PROPOSAL_nullable_value_types.md`](docs/proposed/PROPOSAL_nullable_value_types.md).**
+`?` is only sound on pointers/interfaces (which have a `0` niche); `?owned FD` /
+`?i64` compile today but are unsound (`0` is a valid FD, not an absence). The
+proposal makes `?` mean the same thing on any type — *maybe a value, checked
+before use* — with the representation hidden (a niche where one exists, a
+value-plus-present-flag where none does; no observable struct). Interim: either
+reject `?` on non-pointer/non-interface types, or leave it as the known bug this
+closes.
+
 ### Checked-arithmetic intrinsics
 Integer overflow wraps by default (defined two's-complement, both signs — see
 DESIGN.md §Expressions). That is cheap and keeps numeric loops vectorizable, but
