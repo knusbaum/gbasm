@@ -2,6 +2,12 @@
 
 ## History
 
+- 2026-07-23 — Added the "`nil` is absence, not `0`" principle: presence is
+  checked with `nil`/bare-boolean, never `p == 0`, and comparing a pointer (or a
+  `?T`) to an integer literal should be a type mismatch. Resolves the
+  absent-literal open question (single `nil`) and records the pointer-vs-`0`
+  cleanup as a small self-contained precursor. (`if (p)` / `if (p != nil)` /
+  narrowing were verified to work today; only `p == 0` is the leak.)
 - 2026-07-23 — Proposed. Grew out of noticing that `?owned FD` (and even `?i64`)
   compile today but are unsound — `?` is applied to any base type with no
   validation, and the pointer world's `0`-is-nil convention is wrong for a scalar
@@ -52,6 +58,22 @@ field, no `.value` field, no nominal type — `{ value, ok }` is only a convenie
 way to *describe* "a value together with a present-flag" for the value case; it
 never has struct semantics and is never nameable or accessible. The programmer
 writes `?T` and checks presence; nothing else is exposed.
+
+**`nil` is the concept of absence, not the integer `0`.** Presence is checked
+with `if (x)` or `if (x != nil)` — **never** by comparing to `0`. That a null
+pointer is represented as all-zero-bits is a representation coincidence, not its
+meaning; `p == 0` asks "is this pointer, reinterpreted as an integer, zero?",
+which is a category error, and it is exactly the legacy C conflation
+(`nil == NULL == 0`) that made `?owned FD` look plausible (`0` masquerading as
+both the number zero and absence). A pointer is never an integer — Boson already
+makes you go through `uintptr`/`unsafe_cast` to treat one as a number, and
+`p == 0` is the one remaining leak. This design closes it: **comparing a pointer
+(or a `?T`) to an integer literal is a type mismatch**; the null check is `nil`
+(or the bare boolean). This is also what makes `?*T` and `?T` identical at the
+surface — for a value `?T`, `x != 0` isn't even representationally a null check
+(it compares the contained value), so "presence is `nil`, never `0`" is the only
+coherent rule, and it holds uniformly. (For the rare case that genuinely wants a
+pointer's integer value, `uintptr(p) == 0` states that explicitly.)
 
 ---
 
@@ -144,9 +166,15 @@ reconciled.
 
 1. **Sum types first?** Whether to build `?T` standalone now or on a future
    sum-type foundation (see above). The answer gates the implementation shape.
-2. **Absent literal.** Reuse `nil` for the value-optional absent case, or a
-   distinct `none`? `nil` keeps `?` uniform; a distinct word disambiguates "null
-   pointer" from "absent value" for readers. Leaning `nil`.
+2. **Absent literal — RESOLVED: `nil`.** `nil` is the single absent literal for
+   every `?` type (pointer, interface, value), and presence is `nil`/bare-boolean
+   only — never a comparison to `0` (see "`nil` is the concept of absence" above).
+   A corollary cleanup falls out: **comparing a pointer to an integer literal
+   (`p == 0` / `p != 0`) should become a type mismatch** (it currently compiles,
+   narrowing like `!= nil`). Requiring `p == nil` — with `uintptr(p) == 0` for the
+   rare genuine integer question — removes the last pointer-as-integer leak and is
+   a small, self-contained change that could land ahead of the rest of this
+   proposal.
 3. **User-declared niches.** A later optimization: let a `type` declare an
    invalid value (`type FD i64 invalid -1`) so `?FD` reclaims the discriminant
    space by reusing the sentinel. Strictly additive on top of this design; not
