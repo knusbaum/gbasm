@@ -129,10 +129,10 @@ func ResolveSelector(c *Context, expr AST) ResolvedObject {
 // resolveRoot looks up a bare identifier in the context. Precedence
 // (preserved from the pre-resolver code):
 //
-//   1. local bindings (TypeForVar walks the context chain to globals)
-//   2. imported package names
-//   3. user-defined struct / typealias / interface names
-//   4. locally-defined functions
+//  1. local bindings (TypeForVar walks the context chain to globals)
+//  2. imported package names
+//  3. user-defined struct / typealias / interface names
+//  4. locally-defined functions
 //
 // Anything that doesn't match becomes a ResolvedRuntimeValue with an
 // undefined type; the caller (Symbol.ASTType, etc.) is responsible for
@@ -312,7 +312,7 @@ func stepSelector(c *Context, prev ResolvedObject, member string, dotExpr AST) R
 		for _, f := range decl.Fields {
 			if f.Name == member {
 				ft := fieldTypeForBase(t, f.Type)
-				if ft.Indirection > 0 && ft.NilMask&1 != 0 {
+				if (ft.Indirection > 0 || c.IsInterfaceType(ft)) && ft.NilMask&1 != 0 {
 					if path, ok := FlowPathForExpr(dotExpr); ok && c.NullFact(path) == NullKnownNonNull {
 						ft.NilMask &^= 1
 					}

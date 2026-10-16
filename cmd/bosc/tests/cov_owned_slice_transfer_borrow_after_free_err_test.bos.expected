@@ -1,0 +1,2 @@
+Compiling tests/cov_owned_slice_transfer_borrow_after_free_err_test.bos
+Fatal: cannot dereference pointer to "s": the allocation was freed

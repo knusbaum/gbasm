@@ -60,8 +60,10 @@ func (c *Context) captureState() *aliasCaptureState {
 // callee and computes precisely, no iteration needed).
 //
 // Worked example (DESIGN_return_alias_engine.md): mutual recursion
-//   fn a(x *mut i64) *mut i64 { if (*x < 10) { return b(x) } return x }
-//   fn b(x *mut i64) *mut i64 { *x = *x - 1; return a(x) }
+//
+//	fn a(x *mut i64) *mut i64 { if (*x < 10) { return b(x) } return x }
+//	fn b(x *mut i64) *mut i64 { *x = *x - 1; return a(x) }
+//
 // iter1: analyze(a): b consumes prov(a)=∅ → b=∅; a = {x} ∪ ∅ = {0}
 // iter2: analyze(a): b consumes prov(a)={0} → b={0}; a = {0} ∪ {0} = {0}
 // stable → a memoized [[0]]; b later computes [[0]] against memoized a.
@@ -365,7 +367,14 @@ func returnExprParamAliases(c *Context, f *FuncDecl, expr AST, slotType ASTType)
 				continue
 			}
 			borrowed := kind == flow.OriginBorrowed || c.IsBorrowedBinding(name)
-			if !borrowed {
+			// An owning slice result can carry a parameter's resource by transfer.
+			// Preserve its identity at the caller just as for a borrowed view;
+			// ownership checking separately retires the source binding.
+			resultType := c.ResolveUnderlying(slotType)
+			parameterType := c.ResolveUnderlying(f.Args[idx].Type)
+			transferred := resultType.IsSlice() && resultType.OwnedMask&1 != 0 &&
+				parameterType.OwnedMask&1 != 0
+			if !borrowed && !transferred {
 				continue
 			}
 			if paramIsVariadic(f, idx) {

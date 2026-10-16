@@ -313,7 +313,7 @@ func TestInvalidateOriginMovedBlocksDeref(t *testing.T) {
 
 func TestInvalidateOriginDeadBlocksDeref(t *testing.T) {
 	s := NewState()
-	ptr := s.NewAllocatedOrigin("p")
+	ptr := s.NewOwnedOrigin("p")
 	s.InvalidateOrigin(ptr.Origin, TargetDead)
 	ok, reason := s.CheckDerefValidity(ptr)
 	if ok {
@@ -331,11 +331,11 @@ func TestUnknownPointerAlwaysPassesValidity(t *testing.T) {
 	}
 }
 
-func TestNewAllocatedOriginRegistersAllocated(t *testing.T) {
+func TestNewOwnedOriginRegistersOwned(t *testing.T) {
 	s := NewState()
-	ptr := s.NewAllocatedOrigin("p")
-	if s.OriginKindOf(ptr.Origin) != OriginAllocated {
-		t.Fatalf("got kind %v, want OriginAllocated", s.OriginKindOf(ptr.Origin))
+	ptr := s.NewOwnedOrigin("p")
+	if s.OriginKindOf(ptr.Origin) != OriginOwned {
+		t.Fatalf("got kind %v, want OriginOwned", s.OriginKindOf(ptr.Origin))
 	}
 }
 
@@ -348,9 +348,9 @@ func TestOriginKindOfUnregistered(t *testing.T) {
 
 func TestMergePreservesWorstValidity(t *testing.T) {
 	a := NewState()
-	pa := a.NewAllocatedOrigin("p")
+	pa := a.NewOwnedOrigin("p")
 	b := NewState()
-	pb := b.NewAllocatedOrigin("p")
+	pb := b.NewOwnedOrigin("p")
 	b.InvalidateOrigin(pb.Origin, TargetDead)
 
 	merged := Merge(a, b)

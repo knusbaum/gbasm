@@ -1,0 +1,25 @@
+package main
+
+import "fmt"
+import "io"
+
+fn maybe_error(fail bool) ?error {
+ if (fail) { return io.io_err.ENOSPC }
+ return nil
+}
+
+fn main() {
+ success := maybe_error(false)
+ if (success != nil) {
+  fmt.print("unexpected error\n")
+ } else {
+  fmt.print("success\n")
+ }
+ failure := maybe_error(true)
+ if (failure != nil) {
+  message := failure.message()
+  fmt.print("error: %s\n", &message)
+ } else {
+  fmt.print("missing error\n")
+ }
+}

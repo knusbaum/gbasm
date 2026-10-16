@@ -1,0 +1,99 @@
+package main
+
+import "string"
+
+// A zero concrete value is a valid interface despite its zero data word.
+type Number struct { n i64 } {
+ get(v Number) i64 { return v.n }
+}
+interface Value { get(v self) i64 }
+interface Missing { absent(v self) i64 }
+type Holder struct { value ?Value }
+
+var calls i64
+fn next(value ?Value) ?Value {
+ calls += 1
+ return value
+}
+
+fn truth(value bool) {
+ if (value) { string.puts("T") } else { string.puts("F") }
+}
+
+fn describe(value ?Value) {
+ if (value) {
+  string.puts("live:")
+  string.puti(value.get())
+ } else {
+  string.puts("nil")
+ }
+ if (!value) {
+  string.puts("!\n")
+ } else {
+  // Negated truth tests must narrow the else branch too.
+  string.puts("+")
+  string.puti(value.get())
+  string.puts("\n")
+ }
+}
+
+fn main() {
+ missing ?Value := nil
+ zero Value := Number{n: 0}
+ nonzero Value := Number{n: 7}
+ pointer := &missing
+ if (pointer) { string.puts("pointer to nil interface is true\n") }
+ describe(missing)
+ describe(zero)
+ describe(nonzero)
+ if (zero) { string.puts("nonnullable zero is true\n") }
+
+ // A failed assertion retains the nonzero source data, but has no vtable.
+ failed := nonzero.(Missing)
+ if (failed) {
+  string.puts("unexpected assertion success\n")
+ } else {
+  string.puts("failed assertion is false\n")
+ }
+ truth(!missing)
+ truth(!!zero)
+ truth(!failed)
+ string.puts("\n")
+
+ // Both operand positions use interface truth and preserve short circuiting.
+ truth(missing && next(zero))
+ truth(zero || next(missing))
+ truth(zero && next(missing))
+ truth(missing || next(zero))
+ string.puts(" calls=")
+ string.puti(calls)
+ string.puts("\n")
+
+ // A call result is tested once, rather than separately for data and vtable.
+ if (next(zero)) { string.puts("call is true\n") }
+ string.puts("calls=")
+ string.puti(calls)
+ string.puts("\n")
+
+ var holder := Holder{value: zero}
+ if (holder.value) {
+  string.puts("field:")
+  string.puti(holder.value.get())
+  string.puts("\n")
+  holder.value = nil
+ }
+
+ if (!holder.value) { string.puts("field cleared\n") }
+
+ var loop_value ?Value := zero
+ var iterations i64 := 0
+ for (; loop_value; ) {
+  _ := loop_value.get()
+  iterations += 1
+  loop_value = nil
+ }
+ for (; missing; ) { iterations += 100 }
+ string.puts("iterations=")
+ string.puti(iterations)
+ string.puts("\n")
+}

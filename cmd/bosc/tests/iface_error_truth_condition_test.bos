@@ -1,0 +1,19 @@
+package main
+
+import "fmt"
+import "io"
+
+// Testing a nullable error must inspect its vtable. Testing the header's
+// address used to enter this branch even on success and dispatch nil.
+fn main() {
+ _, err := fmt.print("ok\n")
+ if (err) {
+  message := err.message()
+  fmt.print("%s\n", &message)
+ }
+ failure ?error := io.io_err.ENOSPC
+ if (failure) {
+  message := failure.message()
+  fmt.print("error: %s\n", &message)
+ }
+}

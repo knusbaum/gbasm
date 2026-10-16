@@ -1,0 +1,8 @@
+package main
+
+fn bad() owned []byte {
+ s := make([]mut byte, 8)
+ return s[1:]
+}
+
+fn main() {}

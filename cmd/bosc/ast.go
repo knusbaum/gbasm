@@ -177,28 +177,28 @@ type Context struct {
 
 func NewContext() *Context {
 	return &Context{
-		bindings:        make(map[string]ASTType),
-		checker:         NewCheckerState(nil),
-		prebound:        make(map[string]bool),
+		bindings:          make(map[string]ASTType),
+		checker:           NewCheckerState(nil),
+		prebound:          make(map[string]bool),
 		addressNames:      make(map[string]bool),
 		pointerHeldParams: make(map[string]bool),
-		constBindings:   make(map[string]bool),
-		mutCandidates:   make(map[string]position),
-		mutRelied:       make(map[string]bool),
-		usedCandidates:  make(map[string]position),
-		used:            make(map[string]bool),
-		bindingPos:      make(map[string]position),
-		structs:         make(map[string]*StructDecl),
-		funcs:           make(map[string]*FuncDecl),
-		imports:         make(map[string]map[string]*FuncDecl),
-		importedVars:    make(map[string]map[string]ASTType),
-		typeAliases:     make(map[string]ASTType),
-		interfaceDecls:  make(map[string]*InterfaceDecl),
-		valuesDecls:     make(map[string]*ValuesDecl),
-		typeMethods:     make(map[string][]*FuncDecl),
-		vtables:         make(map[string]vtableSpec),
-		strngs:          make(map[string]string),
-		strSliceHeaders: make(map[string]string),
+		constBindings:     make(map[string]bool),
+		mutCandidates:     make(map[string]position),
+		mutRelied:         make(map[string]bool),
+		usedCandidates:    make(map[string]position),
+		used:              make(map[string]bool),
+		bindingPos:        make(map[string]position),
+		structs:           make(map[string]*StructDecl),
+		funcs:             make(map[string]*FuncDecl),
+		imports:           make(map[string]map[string]*FuncDecl),
+		importedVars:      make(map[string]map[string]ASTType),
+		typeAliases:       make(map[string]ASTType),
+		interfaceDecls:    make(map[string]*InterfaceDecl),
+		valuesDecls:       make(map[string]*ValuesDecl),
+		typeMethods:       make(map[string][]*FuncDecl),
+		vtables:           make(map[string]vtableSpec),
+		strngs:            make(map[string]string),
+		strSliceHeaders:   make(map[string]string),
 	}
 }
 
@@ -2622,7 +2622,8 @@ func parentOwnsFields(t ASTType) bool {
 }
 
 func fieldTypeForBase(base ASTType, field ASTType) ASTType {
-	if parentOwnsFields(base) {
+	// A return tuple groups independent slots; ownership is declared per slot.
+	if base.MultiReturn || parentOwnsFields(base) {
 		return field
 	}
 	return field.StripOwned()
@@ -3428,12 +3429,16 @@ func (o *Op2) ASTType(c *Context) ASTType {
 	// TODO: this will be expanded as more types are added.
 	// For now, it's only num that can have operations.
 	switch o.Type {
-	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq, n_booland, n_boolor:
+	case n_booland, n_boolor:
+		checkZeroTestOperand(c, o.First, "Logical operator")
+		checkZeroTestOperand(c, o.Second, "Logical operator")
+		return boolASTType()
+	case n_lt, n_le, n_gt, n_ge, n_deq, n_neq:
 		// Comparison operators apply to scalars and pointers only; aggregates
 		// (struct/array/slice) have no defined comparison — equality would
 		// silently become memberwise/pointer-identity, ordering is undefined —
 		// so reject both `==`/`!=` and the relational operators in favor of an
-		// explicit function. (`&&`/`||` operate on bools and are not checked.)
+		// explicit function. Logical operands are checked separately above.
 		rejectAggregate := func(sym, verb string) {
 			for _, operand := range []AST{o.First, o.Second} {
 				if kind, bad := aggregateKindName(c, operand.ASTType(c)); bad {
@@ -3616,19 +3621,25 @@ type Not struct {
 }
 
 func (n *Not) ASTType(c *Context) ASTType {
-	t := n.Val.ASTType(c)
-	// Logical not requires a scalar zero/non-zero value: any pointer,
-	// integer, bool, or untyped integer literal. Slices, fixed arrays,
-	// structs, and function-pointer types have no meaningful zero test.
-	if t.Indirection == 0 {
-		if t.IsSliceOrArray() || t.FuncSig != nil {
-			CompileErrorF(n, "Logical not (!) requires scalar or pointer operand, got %s", t)
-		}
-		if _, ok := c.StructDeclForName(t.Name); ok {
-			CompileErrorF(n, "Logical not (!) requires scalar or pointer operand, got %s", t)
-		}
-	}
+	checkZeroTestOperand(c, n.Val, "Logical not (!)")
 	return boolASTType()
+}
+
+// Conditions and logical operators accept scalar zero tests and interface
+// validity tests. Interface truth is determined by its vtable, not its data
+// word or the address of its header; compileTruthTest implements that lowering.
+func checkZeroTestOperand(c *Context, value AST, operation string) {
+	t := c.ResolveUnderlying(value.ASTType(c))
+	if t.Indirection > 0 {
+		return
+	}
+	if c.IsInterfaceType(t) {
+		return
+	}
+	_, aggregate := aggregateKindName(c, t)
+	if aggregate || t.FuncSig != nil || isFloatType(c, t) || t.Same(floatlitASTType()) || t.Same(voidASTType()) {
+		CompileErrorF(value, "%s requires scalar, pointer, or interface operand, got %s", operation, t)
+	}
 }
 
 func (n *Not) Note() string {
@@ -4337,6 +4348,9 @@ type SliceOp struct {
 	Val   AST
 	Lower AST
 	Upper AST
+	// Set by destination checking, never by ordinary slicing. The named
+	// owner supplies the backing obligation for a prefix-slice transfer.
+	transferOwner string
 }
 
 // isLvalueMutable reports whether the lvalue expression a refers to writable
@@ -4374,18 +4388,12 @@ func isLvalueMutable(c *Context, a AST) bool {
 func (s *SliceOp) ASTType(c *Context) ASTType {
 	t := s.Val.ASTType(c)
 	if t.IsSlice() {
-		// Slice-of-slice: mut is already encoded in the slice type. A reslice
-		// is a borrowed view, never a transfer of the backing's ownership, so
-		// strip the backing-owned bit (bit 0). Element ownership (bit 1) is a
-		// separate axis and is left as-is.
-		//
-		// This branch is currently unreachable for a real `owned []T`: there is
-		// no way to build one at function scope (reslicing an owned array now
-		// yields a borrowed []T — see below — and no other construct mints an
-		// owned slice). It is kept for parity so that when dynamic owned-slice
-		// allocation lands, reslicing an owned slice already borrows rather than
-		// fabricating a second backing obligation.
+		// Reslicing normally borrows. Destination checking can select a
+		// checked prefix transfer without changing the element qualifiers.
 		t.OwnedMask &^= 1
+		if s.transferOwner != "" {
+			t.OwnedMask |= 1
+		}
 		return t
 	}
 	if t.IsArray() {
@@ -4400,6 +4408,9 @@ func (s *SliceOp) ASTType(c *Context) ASTType {
 		// SliceOp case), so disposing the array invalidates this view.
 		t.ArraySize = 0
 		t.OwnedMask &^= 1
+		if s.transferOwner != "" {
+			t.OwnedMask |= 1
+		}
 		if isLvalueMutable(c, s.Val) {
 			t.MutMask |= 1 << 1
 		} else {

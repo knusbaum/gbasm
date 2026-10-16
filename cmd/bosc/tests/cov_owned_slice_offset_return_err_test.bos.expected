@@ -1,0 +1,2 @@
+Compiling tests/cov_owned_slice_offset_return_err_test.bos
+Fatal: Cannot transfer slice backing ownership: source must be an owned slice or a zero-offset prefix of an owner

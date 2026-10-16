@@ -121,7 +121,7 @@ Three orthogonal qualifiers can apply to types:
 
 - **`mut`** — write-through mutability for pointers and slices. `*mut T` lets you write to T through the pointer; `*T` does not. Nests independently at each pointer level (`*mut *T`, `**mut T`).
 - **`?` on pointers** — nullability marker. `*T` is non-null; `?*T` may be `nil`. Non-null pointers can be used where nullable pointers are expected. Nullable pointers require a proof or assertion before non-null use: `if (p) { ... }` narrows `p` to non-null inside the true branch, `if (!p) { ... } else { ... }` narrows it in the else branch, and postfix `p?` inserts a runtime nil check and produces a non-null pointer.
-- **`?` on interfaces** — same marker. `T` (interface) is always valid; `?T` may be null (vtable = 0). A non-nullable interface can't be constructed null, so the *only* producer of a null interface is a fallible cast (see [type assertion](#interface-to-interface-assertion)), which yields `?T`. A `?T` must be narrowed before dispatch — `if (k != nil) { k.method() }` narrows `?T → T` in the true branch (a vtable-`!= 0` test) — and dispatching, or asserting/widening from, an un-narrowed `?T` is rejected, exactly like dereferencing a `?*` pointer.
+- **`?` on interfaces** — same marker. `T` (interface) is always valid; `?T` may be null (vtable = 0). A non-nullable interface can't be constructed null. A nullable interface can be initialized or returned as `nil`; a fallible cast (see [type assertion](#interface-to-interface-assertion)) also yields a nullable interface that is nil on failure. A `?T` must be narrowed before dispatch — `if (k != nil) { k.method() }` narrows `?T → T` in the true branch (a vtable-`!= 0` test) — and dispatching, or asserting/widening from, an un-narrowed `?T` is rejected, exactly like dereferencing a `?*` pointer. Interfaces also support truth testing in `if`, `for`, `!`, `&&`, and `||`: a zero vtable is false and a nonzero vtable is true, independently of the data word. `if (err)` narrows a nullable interface to non-null in the true branch; `if (!err)` narrows it in the else branch, just as for pointers. This does not implicitly convert an interface into a `bool` assignment or argument.
 - **`owned`** — compile-time ownership obligation that must be discharged before the variable goes out of scope. See [Ownership](#ownership).
 - **`:=` / `var`** — binding mutability: a binding is introduced with `:=` and is immutable; `var` makes it reassignable. Distinct from `mut`. Immutable is the default everywhere — bare `:=` locals and globals, and unmarked parameters; `var` is the opt-in for reassignment.
 
@@ -796,6 +796,44 @@ slices-of-`>8`-byte-elements gap that also affects reslice — the `for owned x 
 s` drain sugar, `swap`/`take` for the nullable slot-map, and a growable `Vec[T]`
 (a library, pending generics — explicitly *not* part of this feature).
 
+**Transferring slice backing ownership.** Slicing normally creates a borrow.
+When the destination requires `owned []T`, a prefix of an owned slice can
+instead transfer its backing obligation:
+
+```
+fn build() owned []byte {
+    buffer := make([]mut byte, 1024)
+    // Fill buffer and determine the written length n.
+    n := 12
+    return buffer[:n]
+}
+
+text := build()
+// Use text; len(text) is 12 and cap(text) is 1024.
+free(text)
+```
+
+This works for initialization, assignment, arguments, and return slots,
+including multiple returns. The source owner is moved; its backing resource
+remains live under the destination. Existing borrows continue to refer to that
+resource and become invalid when the destination owner is consumed. A helper
+that accepts and returns an owning slice preserves the resource dependency
+through its return-alias summary.
+
+The lower bound must be omitted or a compile-time expression equal to zero.
+Every prefix in a nested slice expression must satisfy that rule. An offset
+slice such as `buffer[1:]` cannot transfer ownership: the runtime header holds
+only `{ptr, len, cap}`, and `free` needs the original backing pointer. A
+borrowed binding cannot supply ownership, even if it happens to reference a
+prefix of an owner. An owning pointer to an array can transfer its obligation
+through `(*owner)[:n]`; an ordinary local array cannot.
+
+Slices with owned elements must be moved whole rather than transferred through
+slicing, so shortening cannot abandon element obligations. Checked prefix
+transfer preserves an existing obligation; it does not implicitly promote a
+borrow to ownership. Resource tracking follows ownership and scope dependencies,
+independently of whether construction used `make`, `alloc`, or a helper.
+
 ### State machines
 
 A consuming function can return a new owned value, encoding a state machine in the type system. The compiler forces callers to handle every state, because owned values cannot be silently dropped:
@@ -1075,7 +1113,7 @@ fn main() {
 
 `owned(expr)` is an unsafe built-in: it asserts that `expr` may be used wherever an owned obligation is required, without consuming any source variable. It is **destination-typed**, like a bare struct literal: it adopts the destination's owned mask verbatim, asserting whatever ownership the LHS demands at every level at once. So `owned(&r)` on a `*T` satisfies `*owned T`, `owned *T`, or `owned *owned T` according to the destination, and `owned(x[:0])` on a `[]T` view satisfies `[]owned T` (element-owned) or `owned []T` (backing-owned) as demanded — the escape hatch expresses exactly the ownership the destination wants. When there is no destination context (e.g. `:= owned(expr)` inferring its own type) it falls back to setting the single innermost-level bit. The compiler cannot verify the semantic correctness; the programmer is responsible for the aliasing invariant.
 
-Implicit ownership promotion is rejected: `var x owned T := some_non_owned_T` is a compile error. The only way to gain owned bits a source value doesn't have is `owned(expr)`. Integer literals are exempt (they can initialize an `owned T` directly, since there's no source value to alias).
+Implicit ownership promotion is rejected: `var x owned T := some_non_owned_T` is a compile error. The only way to assert ownership that the source does not carry is `owned(expr)`. Integer literals are exempt (they can initialize an `owned T` directly, since there's no source value to alias). A checked prefix-slice transfer, described above, moves the source owner's existing backing obligation instead of asserting a new one.
 
 For the common cases — stack-owned values and heap-owned values with bundled obligations — none of this complexity arises.
 

@@ -1,0 +1,7 @@
+package main
+
+fn bad(s []byte) owned []byte {
+ return s
+}
+
+fn main() {}

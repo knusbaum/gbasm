@@ -236,6 +236,7 @@ func regSpot(of io.Writer, name string) spot {
 //     address is the value it holds -> `mov`.
 //   - a memory-backed LOCAL or global IS the storage, so its address is taken
 //     with `lea`.
+//
 // Every site that needs a value's address -- `&x`, and materializing a base for
 // register-scaled indexing -- routes through here, so the distinction cannot be
 // re-derived (and re-gotten-wrong) per site.
@@ -1974,15 +1975,15 @@ func lvalueIsWritable(c *Context, a AST) (bool, string) {
 // It is defined by composing the operations, not by matching AST shapes:
 //   - `*p`      → the storage p points at, i.e. p's own flow link (Pointer(p)).
 //   - `e[i]`    → e's storage (an element aliases its aggregate). If e is a
-//                 pointer base (auto-deref, `arr[i]` on `*[N]T`), that resolves
-//                 through the Symbol arm to Pointer(arr).
+//     pointer base (auto-deref, `arr[i]` on `*[N]T`), that resolves
+//     through the Symbol arm to Pointer(arr).
 //   - `e.f`     → e's storage (a field aliases its struct).
 //   - `e[:]`    → e's storage.
 //   - a value binding → a synthesized frame-local origin (so `&a[i]` on a stack
-//                 array/struct is escape-restricted); an owned binding's
-//                 existing self-origin is preserved.
+//     array/struct is escape-restricted); an owned binding's
+//     existing self-origin is preserved.
 //   - a pointer/slice binding → its existing flow link (the pointee / backing);
-//                 no frame origin is synthesized (its storage is elsewhere).
+//     no frame origin is synthesized (its storage is elsewhere).
 //
 // This is deliberately separate from the value-read path (readProvenancePath /
 // the Symbol/Index/Dot arms of pointerExprForAST): reading `*p` as a value
@@ -2031,11 +2032,24 @@ func lvalueStorageOrigin(c *Context, e AST, assignedName string) flow.PointerExp
 
 // pointerExprForAST returns the binding-flow link for an expression: an Origin
 // or pointer-slot reference that downstream alias bookkeeping can record.
+// Fresh owning views receive a resource origin from their type, without
+// distinguishing allocation operations. Existing dependencies always win.
 // Despite the name, the link is not pointer-specific — a value-typed `owned`
 // binding also has an Origin (created at its declaration), and any non-owned
 // scalar derived from it carries the same Origin so c.Move on the source
 // invalidates the alias the same way TargetDead invalidates a borrowed *T.
 func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr {
+	ptr := pointerExprForASTRaw(c, a, assignedName)
+	if !ptr.KnownOrigin && !ptr.KnownSlot && assignedName != "" {
+		t := c.ResolveUnderlying(a.ASTType(c))
+		if t.OwnedMask&1 != 0 && (t.Indirection > 0 || t.IsSlice()) {
+			return c.PointerFlow().NewOwnedOrigin(flow.Binding(assignedName))
+		}
+	}
+	return ptr
+}
+
+func pointerExprForASTRaw(c *Context, a AST, assignedName string) flow.PointerExpr {
 	switch ast := a.(type) {
 	case *Symbol:
 		if c.IsGlobalBinding(ast.Name) {
@@ -2122,15 +2136,6 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 		// and it is deliberately not a new state: alloc's unassigned path
 		// already produces the same thing.
 		return c.PointerFlow().UnknownPointer()
-	case *Alloc:
-		// alloc always yields a fresh owned heap pointer. Register it as an
-		// allocated origin so free() and use-after-free tracking see it — the
-		// same origin the owned-pointer Funcall-result case below produced when
-		// alloc was still a Funcall.
-		if assignedName != "" {
-			return c.PointerFlow().NewAllocatedOrigin(flow.Binding(assignedName))
-		}
-		return c.PointerFlow().UnknownPointer()
 	case *Funcall:
 		// A type-cast Funcall (T(expr) where T is a type name) is structurally
 		// a Funcall but semantically a reinterpretation of expr. compileCast
@@ -2144,12 +2149,6 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 		if pkg == "" && len(ast.Args) == 1 {
 			if _, ok := c.TypeByName(name); ok {
 				return pointerExprForAST(c, ast.Args[0], assignedName)
-			}
-		}
-		if assignedName != "" {
-			retType := ast.ASTType(c)
-			if retType.Indirection > 0 && retType.OwnedMask&1 != 0 {
-				return c.PointerFlow().NewAllocatedOrigin(flow.Binding(assignedName))
 			}
 		}
 		// Borrowed-returning call: the result aliases one or more of the
@@ -2522,9 +2521,9 @@ func checkOwnedTargetNotDropped(c *Context, a AST, targetIsSymbol bool, targetSy
 // assignment to an owned binding). An owned scalar rebound from another owned
 // scalar binding is a *transfer*: the source binding dies but its origin stays
 // live under the destination, which adopts it — so outstanding borrows of the
-// source remain valid until the destination is consumed. Every other shape
-// (pointers, structs, non-binding sources) delegates to markMovedIfOwnedSource,
-// which consumes value sources as before.
+// source remain valid until the destination is consumed. Slice headers also
+// transfer their backing resource; other shapes delegate to the ordinary move
+// hook, which distinguishes resource transfer from value consumption.
 //
 // The bool result reports whether a transfer (origin kept live) happened. The
 // decl-init caller uses it to decide whether the destination may safely adopt
@@ -2537,7 +2536,8 @@ func moveOwnedSourceForLocalOwner(of io.Writer, c *Context, dstt ASTType, val AS
 		return true
 	}
 	markMovedIfOwnedSource(of, c, dstt, val)
-	return false
+	resolved := c.ResolveUnderlying(dstt)
+	return resolved.IsSlice() && dstt.OwnedMask&1 != 0
 }
 
 func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST) {
@@ -2553,15 +2553,18 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 		return
 	}
 	switch v := val.(type) {
+	case *SliceOp:
+		if v.transferOwner != "" {
+			checkOwnedSourceAvailable(c, &Symbol{Name: v.transferOwner, p: v.Pos()})
+			c.MoveTransfer(v.transferOwner)
+		}
 	case *Symbol:
 		checkOwnedSourceAvailable(c, val)
 		declared, _ := c.DeclaredTypeForVar(v.Name)
-		// Pointer-typed owned source moving into an owned destination is a
-		// *transfer*: the destination pointer becomes the new owner of the
-		// same allocation, the storage stays alive. Value-typed sources are
-		// a *consume*: the source's bits are conceptually moved out and
-		// any aliases reading those bits afterwards are stale.
-		if declared.Indirection > 0 {
+		// Owning pointers and slice headers transfer their resource rather
+		// than destroying it. Other value sources consume their own storage,
+		// invalidating aliases that refer to that storage.
+		if declared.Indirection > 0 || declared.IsSlice() {
 			c.MoveTransfer(v.Name)
 		} else {
 			c.MoveConsume(v.Name)
@@ -2631,6 +2634,7 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 			CompileErrorF(a, "No such struct member %q in struct %v", f.Name, lit.Type)
 		}
 		fieldType := fieldTypeForBase(ctxType, declaredType)
+		prepareSliceOwnership(c, f.Val, fieldType)
 		srcType := f.Val.ASTType(c)
 		// Capturing a whole inconsistent aggregate into a struct field (as a
 		// bare pointer `f` or `&f`) forms an alias that could read its
@@ -3526,7 +3530,9 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 		if a.Type.Indirection > 0 && !a.Type.HasOwned() {
 			c.SetBorrowedBinding(a.Name, true)
 		}
-		if a.Type.Indirection > 0 {
+		if a.Type.OwnedMask&1 != 0 && (a.Type.Indirection > 0 || a.Type.IsSlice()) {
+			c.PointerFlow().AssignPointer(flow.Binding(a.Name), c.PointerFlow().NewOwnedOrigin(flow.Binding(a.Name)))
+		} else if a.Type.Indirection > 0 {
 			c.PointerFlow().AssignPointer(flow.Binding(a.Name), c.PointerFlow().NewObject(flow.Binding(a.Name)))
 		} else if a.Type.IsSlice() && !a.Type.HasOwned() {
 			// Borrowed slice parameter: register an OriginBorrowed origin
@@ -3944,6 +3950,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if op, ok := ast.Init.(*OwnedPromotion); ok {
 			fillOwnedPromotionIfNeeded(op, ast.Type)
 		}
+		prepareSliceOwnership(c, ast.Init, ast.Type)
 		// Reject single-binding a multi-value return: must use destructuring.
 		if ast.Init != nil {
 			initT := ast.Init.ASTType(c)
@@ -3969,6 +3976,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// the same way `*p` would for a borrowed pointer to a moved
 			// binding.
 			pexpr := c.PointerFlow().NewLocalOrigin(flow.Binding(ast.Name))
+			if resolved := c.ResolveUnderlying(ast.Type); resolved.IsSlice() {
+				pexpr = c.PointerFlow().NewOwnedOrigin(flow.Binding(ast.Name))
+			}
 			c.PointerFlow().AssignPointer(flow.Binding(ast.Name), pexpr)
 		}
 		s := newSpot(of, c, ast.Name, ast.Type)
@@ -4209,6 +4219,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 					c.PointerFlow().DeclarePointer(flow.Binding(b.Name))
 				} else if bindType.HasOwned() {
 					pexpr := c.PointerFlow().NewLocalOrigin(flow.Binding(b.Name))
+					if resolved := c.ResolveUnderlying(bindType); resolved.IsSlice() {
+						pexpr = c.PointerFlow().NewOwnedOrigin(flow.Binding(b.Name))
+					}
 					c.PointerFlow().AssignPointer(flow.Binding(b.Name), pexpr)
 				}
 			}
@@ -5034,8 +5047,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		// baset is the element type; newt is the resulting slice type.
 		baset := *v.t.Element
-		elem := baset
-		newt := ASTType{Element: &elem}
+		newt := ast.ASTType(c)
 		if v.t.IsSlice() {
 			newt.MutMask = v.t.MutMask
 		} else if isLvalueMutable(c, ast.Val) {
@@ -5162,6 +5174,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if !ok {
 				CompileErrorF(ast.Target, "Variable \"%s\" undeclared.", targetSym.Name)
 			}
+		} else if declared, ok := declaredPathType(c, ast.Target); ok {
+			// Narrowing changes what can be read, not what the slot can hold.
+			// In particular a nullable interface field can be reset to nil
+			// inside the branch that proved its previous value non-null.
+			dstt = declared
 		}
 		// Mutability gate: walk the lval path and reject any link that
 		// blocks the write. Covers const-bound roots, non-mut pointer
@@ -5281,6 +5298,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if op, ok := ast.Val.(*OwnedPromotion); ok {
 			fillOwnedPromotionIfNeeded(op, dstt)
 		}
+		prepareSliceOwnership(c, ast.Val, dstt)
 		checkAddressOfOwnedForDest(c, ast.Val, dstt)
 		// Reject implicit ownership promotion: if the destination has owned bits
 		// that the source doesn't, the source must be wrapped in owned().
@@ -5472,11 +5490,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		updateFieldPointerFactsForAssignment(c, ast.Target, targetIsSymbol, targetSym, dstt, ast.Val)
 		return nullspot
 	case *IfStmt:
-		v := compileTop(of, c, ast.Cond, nullspot)
 		labelse := c.Label("else")
 		labend := c.Label("end")
-		fmt.Fprintf(of, "\ttest %s %s\n", v.ref, v.ref)
-		v.free(of)
+		compileTruthTest(of, c, ast.Cond)
 		fmt.Fprintf(of, "\tjz %s\n", labelse)
 
 		// Snapshot flow state before branches.
@@ -5495,7 +5511,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				}
 			}
 		}
-		v = compileTop(of, c, ast.Then, nullspot)
+		v := compileTop(of, c, ast.Then, nullspot)
 		if !v.empty() {
 			v.free(of)
 		}
@@ -5671,13 +5687,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		desugar := &Op2{Type: n_sub, First: inner, Second: &Literal{Val: uint64(1)}}
 		return compileTop(of, c, desugar, dest)
 	case *Not:
-		v := compileTop(of, c, ast.Val, nullspot)
+		ast.ASTType(c)
 		if dest.empty() {
 			dest = newSpot(of, c, c.Temp(), boolASTType())
 		}
-		fmt.Fprintf(of, "\ttest %s %s\n", v.ref, v.ref)
+		compileTruthTest(of, c, ast.Val)
 		fmt.Fprintf(of, "\tsete %s\n", dest.ref)
-		v.free(of)
 		return dest
 	case *Return:
 		retType := c.ReturnType()
@@ -5698,6 +5713,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if op, ok := ast.Val.(*OwnedPromotion); ok {
 			fillOwnedPromotionIfNeeded(op, retType)
 		}
+		prepareSliceOwnership(c, ast.Val, retType)
 		valType := ast.Val.ASTType(c)
 		// A partially-consumed aggregate cannot be returned: the caller's
 		// scope cannot see the local consistency facts.
@@ -5850,7 +5866,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			return nullspot
 		}
 		valCompat := c.ResolveUnderlying(valType)
-		if _, reason := coerceType(c, retCompat, valCompat); reason != coerceOK && !sameIgnoringOwned(retCompat, valCompat) {
+		if _, reason := coerceType(c, retCompat, valCompat); reason != coerceOK && (retCompat.IsSlice() || !sameIgnoringOwned(retCompat, valCompat)) {
 			reportCoerceFailure(a, retType, valType, reason,
 				"Cannot return %s from value of type %s", retType, valType)
 		}
@@ -6371,6 +6387,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) ([]string, int
 		if op, ok := arg.(*OwnedPromotion); ok {
 			fillOwnedPromotionIfNeeded(op, param)
 		}
+		prepareSliceOwnership(c, arg, param)
 		argt := arg.ASTType(c)
 		// A partially-consumed aggregate cannot cross the call boundary —
 		// borrow or owning — because the callee names the concrete shape and
@@ -7473,6 +7490,9 @@ func floatCompareOperandType(c *Context, o *Op2) (ASTType, bool) {
 }
 
 func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
+	if o.Type == n_booland || o.Type == n_boolor {
+		o.ASTType(c)
+	}
 	if ft, ok := floatCompareOperandType(c, o); ok {
 		fst := newSpot(of, c, c.Temp(), ft)
 		first := compileTop(of, c, o.First, fst)
@@ -7993,14 +8013,10 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		done := c.Label("andsc")
 		fmt.Fprintf(of, "\tmov %s 0\n", dest.ref)
-		first := compileTop(of, c, o.First, nullspot)
-		fmt.Fprintf(of, "\ttest %s %s\n", first.ref, first.ref)
+		compileTruthTest(of, c, o.First)
 		fmt.Fprintf(of, "\tjz %s\n", done)
-		first.free(of)
-		second := compileTop(of, c, o.Second, nullspot)
-		fmt.Fprintf(of, "\ttest %s %s\n", second.ref, second.ref)
+		compileTruthTest(of, c, o.Second)
 		fmt.Fprintf(of, "\tjz %s\n", done)
-		second.free(of)
 		fmt.Fprintf(of, "\tmov %s 1\n", dest.ref)
 		fmt.Fprintf(of, "\tlabel %s\n", done)
 		return dest
@@ -8012,14 +8028,10 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		}
 		done := c.Label("orsc")
 		fmt.Fprintf(of, "\tmov %s 1\n", dest.ref)
-		first := compileTop(of, c, o.First, nullspot)
-		fmt.Fprintf(of, "\ttest %s %s\n", first.ref, first.ref)
+		compileTruthTest(of, c, o.First)
 		fmt.Fprintf(of, "\tjnz %s\n", done)
-		first.free(of)
-		second := compileTop(of, c, o.Second, nullspot)
-		fmt.Fprintf(of, "\ttest %s %s\n", second.ref, second.ref)
+		compileTruthTest(of, c, o.Second)
 		fmt.Fprintf(of, "\tjnz %s\n", done)
-		second.free(of)
 		fmt.Fprintf(of, "\tmov %s 0\n", dest.ref)
 		fmt.Fprintf(of, "\tlabel %s\n", done)
 		return dest

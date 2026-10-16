@@ -36,12 +36,12 @@ type OriginKind int
 
 const (
 	OriginUnknown OriginKind = iota
-	// OriginLocal: storage tied to a stack frame's binding (a local `var`
-	// or a fixed-array root). Invalidated at scope exit.
+	// OriginLocal: storage whose validity depends on a local binding's
+	// scope (for example an inline array). Invalidated at scope exit.
 	OriginLocal
-	// OriginAllocated: heap-allocated storage owned by a binding; valid
+	// OriginOwned: a resource carried by an ownership obligation; valid
 	// until the owner is consumed (free / dispose / consume-move).
-	OriginAllocated
+	OriginOwned
 	// OriginBorrowed: a borrowed view's source — a function parameter
 	// whose lifetime is the caller's, opaque to the callee. The view
 	// must not outlive the call: escape gates treat it the same as
@@ -510,9 +510,9 @@ func (s *State) NewLocalOrigin(name Binding) PointerExpr {
 	return PointerExpr{Origin: o, KnownOrigin: true}
 }
 
-func (s *State) NewAllocatedOrigin(name Binding) PointerExpr {
+func (s *State) NewOwnedOrigin(name Binding) PointerExpr {
 	o := Origin(name)
-	s.origins[o] = originInfo{kind: OriginAllocated, validity: TargetLive}
+	s.origins[o] = originInfo{kind: OriginOwned, validity: TargetLive}
 	return PointerExpr{Origin: o, KnownOrigin: true}
 }
 

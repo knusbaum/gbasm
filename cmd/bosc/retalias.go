@@ -203,7 +203,11 @@ func recordMultiReturnSlotProvenance(c *Context, dest string, destType ASTType, 
 	clear := func() {
 		rt := c.ResolveUnderlying(destType)
 		if rt.Indirection > 0 || rt.IsSlice() {
-			c.PointerFlow().AssignPointer(flow.Binding(dest), c.PointerFlow().UnknownPointer())
+			ptr := c.PointerFlow().UnknownPointer()
+			if rt.OwnedMask&1 != 0 {
+				ptr = c.PointerFlow().NewOwnedOrigin(flow.Binding(dest))
+			}
+			c.PointerFlow().AssignPointer(flow.Binding(dest), ptr)
 		} else if _, isStruct := structDeclForType(c, rt); isStruct {
 			key := fmt.Sprintf("%s.%s", dest, structReturnAliasFieldKey)
 			c.PointerFlow().SetPathPointer(key, c.PointerFlow().UnknownPointer())

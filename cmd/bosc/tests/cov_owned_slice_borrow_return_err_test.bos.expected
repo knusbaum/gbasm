@@ -1,0 +1,2 @@
+Compiling tests/cov_owned_slice_borrow_return_err_test.bos
+Fatal: Cannot transfer slice backing ownership: source has no owned backing

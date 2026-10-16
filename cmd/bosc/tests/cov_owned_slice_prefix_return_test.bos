@@ -1,0 +1,57 @@
+package main
+
+import "fmt"
+import "io"
+
+// A builder borrows the backing while the function owns it. Returning its
+// written prefix transfers that backing obligation, including in a tuple.
+fn make_a_string() owned []byte, ?error {
+ mystring := make([]mut byte, 1024)
+ var b fmt.Builder := fmt.Builder{buf: mystring[:], pos: 0, err_: nil}
+ b.str("This is a string of text I'm writing.\n")
+ b.str("And here is a number: ")
+ b.uint(u64(1020394))
+ b.str("\n")
+ return mystring[:b.pos], b.error()
+}
+
+fn trim(s owned []mut byte) owned []byte {
+ return s[0:3]
+}
+
+fn capture_array() owned []byte {
+ p := alloc([16]byte)
+ (*p)[0] = 79
+ (*p)[1] = 75
+ (*p)[2] = 10
+ return (*p)[:3]
+}
+
+fn main() {
+ text, err := make_a_string()
+ if (err != nil) {
+  fmt.print("builder error\n")
+ } else {
+  fmt.str(&io.STDOUT, text)
+  fmt.print("length=%d capacity=%d\n", len(text), cap(text))
+ }
+ free(text)
+
+ // Transfer through initialization, reassignment, and a consuming helper.
+ // Keep a borrow across the local transfer to prove the backing stays live.
+ original := make([]mut byte, 16)
+ original[0] = 79
+ original[1] = 75
+ original[2] = 10
+ view := original[:3]
+ var moved owned []mut byte := original[:8]
+ moved = moved[:4]
+ fmt.str(&io.STDOUT, view)
+ result := trim(moved)
+ fmt.str(&io.STDOUT, result)
+ free(result)
+
+ array_text := capture_array()
+ fmt.str(&io.STDOUT, array_text)
+ free(array_text)
+}

@@ -1,0 +1,13 @@
+pointer to nil interface is true
+nil!
+live:0+0
+live:7+7
+nonnullable zero is true
+failed assertion is false
+TTT
+FTFT calls=2
+call is true
+calls=3
+field:0
+field cleared
+iterations=1
