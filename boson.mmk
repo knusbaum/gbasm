@@ -13,10 +13,10 @@
 # Configuration (env vars):
 #   BOSON_HOME      root of the boson toolchain (defaults to dir of bosc)
 #   BOSC, BAS, BLD  paths to toolchain binaries
-#   BOSONPATH       colon-separated package search path
-#                   (default: $BOSON_HOME/runtime:.)
+#   BOSONPATH       colon-separated project package roots (default: .)
+#                   $BOSON_HOME/runtime is always prepended automatically
 #
-# An import "foo/bar" in source code is resolved by walking BOSONPATH entries
+# An import "foo/bar" is resolved by walking the runtime and BOSONPATH entries
 # and selecting the first directory containing foo/bar/. That directory holds
 # .bos and/or .bs files. The package's compiled artifact lives at
 # target/foo/bar.bo.
@@ -26,19 +26,20 @@ BAS=${BAS:-bas}
 BLD=${BLD:-bld}
 BOSON_HOME=${BOSON_HOME:-$(dirname $(which $BOSC))}
 BDOC=${BDOC:-bdoc}
-BOSONPATH=${BOSONPATH:-$BOSON_HOME/runtime:.}
+# Project roots extend the standard library search path.
+__boson_search_path="$BOSON_HOME/runtime:${BOSONPATH:-.}"
 BDOC_ADDR=${BDOC_ADDR:-:8686}
 
 # ---- Helpers ---------------------------------------------------------------
 
 # resolve_pkg <import-path>: prints the source directory for the package, by
-# walking BOSONPATH and returning the first entry containing <import-path>/.
+# walking the effective search path and finding <import-path>/.
 # Returns nonzero (with no output) if not found.
 resolve_pkg() {
     local imp=$1
     local d
     local IFS=":"
-    for d in $BOSONPATH; do
+    for d in $__boson_search_path; do
         if [ -d "$d/$imp" ]; then
             echo "$d/$imp"
             return 0
@@ -136,7 +137,7 @@ pkg_resolve_and_deps() {
     local srcdir
     srcdir=$(resolve_pkg "$imp")
     if [ -z "$srcdir" ]; then
-        echo "boson.mmk: cannot find package '$imp' in BOSONPATH=$BOSONPATH" >&2
+        echo "boson.mmk: cannot find package '$imp' in search path $__boson_search_path" >&2
         exit 1
     fi
     pkg_sources "$srcdir"
@@ -221,7 +222,7 @@ defbody bos_pkg clean {
 # imports, depends on each as target/<path>.bo, and links the whole thing
 # together with the runtime init.
 
-deftype bos_exe {
+deftype bos_exe source= {
     stat -c %.Y "target/$target" 2>/dev/null || return 1
 }
 
@@ -286,7 +287,7 @@ defbody bos_exe clean {
     rm -rf "target/_exe_$target.work"
 }
 
-defbody bos_exe run {
+defbody bos_exe run : $target {
     target/$target
 }
 
@@ -297,7 +298,7 @@ defbody bos_exe run {
 
 ## Run the bdoc documentation server against the project's BOSONPATH.
 [docs all] : {
-    echo "BOSONPATH=$BOSONPATH"
+    echo "BOSONPATH=$__boson_search_path"
     echo "Serving on http://localhost${BDOC_ADDR}/"
-    BOSONPATH="$BOSONPATH" $BDOC -addr "$BDOC_ADDR"
+    BOSONPATH="$__boson_search_path" $BDOC -addr "$BDOC_ADDR"
 }

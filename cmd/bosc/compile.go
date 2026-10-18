@@ -3659,13 +3659,22 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 	for _, name := range c.UnconsumedOwned() {
 		errUnconsumedOwned(c, ast, name)
 	}
-	if ast.Name == "main" {
+	zeroMainReturn := func() {
 		note(of, "\n\t// default return 0 from main\n")
 		rax := regSpot(of, "rax")
 		fmt.Fprintf(of, "\tmov %s 0\n", rax.ref)
 		rax.free(of)
 	}
+	voidMain := ast.Name == "main" && ast.Return.Same(voidASTType())
+	if ast.Name == "main" && !voidMain {
+		zeroMainReturn()
+	}
 	fmt.Fprintf(of, "\n\tlabel %s\n", retlab)
+	// Bare returns jump to retlab. Void main must clear the process status
+	// here as well as on fallthrough; valued main retains explicit returns.
+	if voidMain {
+		zeroMainReturn()
+	}
 	fmt.Fprintf(of, "\tepilogue\n")
 	fmt.Fprintf(of, "\tret\n\n")
 }

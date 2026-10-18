@@ -2983,9 +2983,11 @@ The kernel-supplied stack at entry:
 header from the stack (cap = len at both levels), walks `argv` until the NULL
 terminator calling `strlen` on each entry, then calls `main.main` with the
 **address of the outer header**
-in RDI — the ordinary aggregate-argument convention. It zeroes RAX first, so a
-`main` that simply returns exits 0. On return it issues
-`exit(main's RAX)` via syscall 60.
+in RDI — the ordinary aggregate-argument convention. It zeroes RAX first for
+hand-written entry functions. The compiler also clears RAX in the common
+epilogue of a void `main`, so fallthrough and explicit bare `return` both exit
+0 regardless of preceding calls. An explicit value returned by a non-void
+`main` is preserved. Startup issues `exit(main's RAX)` via syscall 60.
 
 A `main` declared without parameters is called the same way; it simply ignores
 RDI. The argv slices live on the initial stack and remain valid for the
@@ -3158,13 +3160,28 @@ Beyond the toolchain itself, gbasm ships a build orchestrator integration with *
   3. Adds `target/_init.bo` as an implicit dep (the runtime entry code)
   4. At body time: builds the executable's own package into `target/_exe_<name>.work/`, then links the final executable to `target/<name>` along with all the `target/*.bo` deps plus init. The `_exe_` prefix on the workdir avoids a collision with `target/<name>.work/` from a same-named package.
 
+The `bos_exe` run verb declares `defbody bos_exe run : $target`, so `mmk run hello` builds `hello` and its dependencies before executing `target/hello`. This requires mmk support for named-verb defbody dependency clauses.
+
 All build artifacts — the executable, package `.bo`s, and per-package work directories holding intermediate `.bs` files — live under `target/`. Nothing is written to the project root.
 
 A package can be pure `.bos`, pure `.bs`, or mixed; `bos_pkg` handles all three uniformly by compiling any `.bos` files to `.bs` first and then passing every `.bs` (source or generated) to the assembler in a single invocation.
 
 ### Search path
 
-`BOSONPATH` is a colon-separated list of directories (default `$BOSON_HOME/runtime:.`). An import path `foo/bar` is resolved by walking `BOSONPATH` and selecting the first entry containing `foo/bar/`.
+`BOSONPATH` supplies a colon-separated list of project package roots (default `.`). `boson.mmk` automatically prepends `$BOSON_HOME/runtime`, so setting `BOSONPATH=shared` keeps runtime imports available and resolves project imports beneath `shared/`. An import path `foo/bar` selects the first search root containing `foo/bar/`. Relative roots use the build working directory, just like `source=...`; no directory name is special. Set `BOSONPATH` before including `boson.mmk`.
+
+Multiple binaries can share packages without declaring library targets:
+
+```bash
+BOSONPATH=shared
+include $BOSON_HOME/boson.mmk
+
+all : cat wc
+bos_exe cat source=src/cat :
+bos_exe wc source=src/wc :
+```
+
+Both binaries can `import "whatever"` to use the package in `shared/whatever/`, while imports such as `"fmt"` resolve from the automatically included runtime.
 
 ### Minimum user-facing mmkfile
 

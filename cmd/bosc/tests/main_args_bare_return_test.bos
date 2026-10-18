@@ -1,0 +1,9 @@
+package main
+import "fmt"
+fn main(args [][]byte) {
+ if (len(args) > 0) {
+  fmt.print("args return\n")
+  return
+ }
+ fmt.print("fallthrough\n")
+}
