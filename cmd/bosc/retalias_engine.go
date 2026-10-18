@@ -276,6 +276,7 @@ func analyzeFunctionAliases(c *Context, f *FuncDecl) [][]int {
 		root.checker.movedBindings = savedMoved
 	}()
 	fc := root.SubContext()
+	fc.useSourceFile(f.p.fname)
 	fc.aliasCapture = capture
 	retlab := fc.PushRetlabel(f.Return)
 	defer fc.PopRetlabel()

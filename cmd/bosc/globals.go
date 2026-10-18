@@ -176,7 +176,7 @@ func encodeStaticInit(c *Context, dstt ASTType, init AST) ([]byte, []relocSpec, 
 		if len(v.Args) == 1 {
 			pkg, name := v.PkgAndName()
 			castName := v.QualifiedName()
-			if _, ok := c.TypeByName(castName); ok {
+			if _, ok := c.sourceTypeByName(castName); ok {
 				if _, _, hasFn := c.FuncDeclForCall(pkg, name); !hasFn {
 					castType := ASTType{Name: castName}
 					underlying := c.ResolveUnderlying(castType)

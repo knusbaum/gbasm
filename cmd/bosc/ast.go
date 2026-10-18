@@ -23,6 +23,9 @@ func (e *interpreterError) Error() string {
 // Context holds types and bindings for the current lexical environment.
 type Context struct {
 	parent *Context
+	// File namespaces are separate from canonical imported type metadata.
+	fileScope  *sourceScope
+	fileScopes map[string]*sourceScope
 
 	// the name of the package being compiled. Used to qualify in-package
 	// calls so the linker sees unambiguous symbol names. Set at the root
@@ -1049,17 +1052,21 @@ func (c *Context) FuncDeclForCall(pkg, name string) (*FuncDecl, string, bool) {
 	if c == nil {
 		return nil, "", false
 	}
-	if pkgFuncs, ok := c.imports[pkg]; ok {
-		d, ok := pkgFuncs[name]
-		return d, pkg, ok
+	if canonical, ok := c.importedPackageName(pkg); ok {
+		for ctx := c; ctx != nil; ctx = ctx.parent {
+			if d, ok := ctx.imports[canonical][name]; ok {
+				return d, canonical, true
+			}
+		}
+		return nil, "", false
 	}
 	// Static method call: methods are registered as `TypeName.method` via
 	// DefineFunc, so `thingy.hello()` resolves to the locally-defined
 	// function `thingy.hello`.
-	if d, ok := c.funcs[pkg+"."+name]; ok {
+	if d, ok := c.FuncDeclForName(pkg + "." + name); ok {
 		return d, "", true
 	}
-	return c.parent.FuncDeclForCall(pkg, name)
+	return nil, "", false
 }
 
 // DefineImportedFunc registers a function from an imported package.
@@ -1097,13 +1104,8 @@ func (c *Context) ImportedVarType(pkg, name string) (ASTType, bool) {
 // IsImportedPackage reports whether the given name refers to an imported package
 // in this context chain. Used to distinguish qualified calls from struct accesses.
 func (c *Context) IsImportedPackage(name string) bool {
-	if c == nil {
-		return false
-	}
-	if _, ok := c.imports[name]; ok {
-		return true
-	}
-	return c.parent.IsImportedPackage(name)
+	_, ok := c.importedPackageName(name)
+	return ok
 }
 
 func (c *Context) Label(tag string) string {
@@ -2893,7 +2895,7 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 	// `pair(41)` for a `type pair struct ...` plus `fn pair ...`
 	// collision resolves as the call's return type instead of the
 	// struct cast's type. See compileTop's parallel guard.
-	if t, ok := c.TypeByName(f.QualifiedName()); ok {
+	if t, ok := c.sourceTypeByName(f.QualifiedName()); ok {
 		if _, _, hasFn := c.FuncDeclForCall(pkg, name); !hasFn {
 			return t
 		}

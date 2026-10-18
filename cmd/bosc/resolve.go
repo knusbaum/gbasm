@@ -146,10 +146,10 @@ func resolveRoot(c *Context, name string, sym *Symbol) ResolvedObject {
 			Expr: sym,
 		}
 	}
-	if c.IsImportedPackage(name) {
+	if canonical, ok := c.importedPackageName(name); ok {
 		return ResolvedObject{
 			Kind: ResolvedPackage,
-			Name: name,
+			Name: canonical,
 		}
 	}
 	if d, ok := c.ValuesDeclForName(name); ok {
@@ -220,8 +220,8 @@ func stepSelector(c *Context, prev ResolvedObject, member string, dotExpr AST) R
 				Expr: dotExpr,
 			}
 		}
-		if pkgFuncs, ok := c.imports[prev.Name]; ok {
-			if d, ok := pkgFuncs[member]; ok {
+		for ctx := c; ctx != nil; ctx = ctx.parent {
+			if d, ok := ctx.imports[prev.Name][member]; ok {
 				return ResolvedObject{
 					Kind: ResolvedFunction,
 					Name: member,

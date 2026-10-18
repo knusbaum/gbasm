@@ -58,11 +58,11 @@ const (
 	n_address
 	n_deref
 	n_dispose
-	n_alloc   // alloc(T) — arg is a type node (n_typename), not an expression
-	n_make        // make([]T, len[, cap]) — args[0] a type node, rest expressions
-	n_sizeof      // size_of(T) — likewise a type node; folds to a constant
-	n_alignof     // align_of(T) — likewise
-	n_unsafecast  // unsafe_cast(T, e) — args[0] is a type node, args[1] an expression
+	n_alloc      // alloc(T) — arg is a type node (n_typename), not an expression
+	n_make       // make([]T, len[, cap]) — args[0] a type node, rest expressions
+	n_sizeof     // size_of(T) — likewise a type node; folds to a constant
+	n_alignof    // align_of(T) — likewise
+	n_unsafecast // unsafe_cast(T, e) — args[0] is a type node, args[1] an expression
 	n_typedecl
 	n_ownedpromo
 	n_arrlit
@@ -1910,11 +1910,19 @@ func compoundAssignOp(t toktype) (nodetype, bool) {
 func (p *Parser) parseImport() *Node {
 	importpos := p.current().p
 	p.expect(tok_import)
+	var alias *Node
+	if p.current().t == tok_ident {
+		alias = p.parseTok()
+	}
 	path := p.parseTok()
 	if path.t != n_str {
 		panic(&interpreterError{fmt.Sprintf("Expected a string path, but found %#v\n", path), path.p})
 	}
-	return &Node{t: n_import, p: importpos, sval: path.sval}
+	n := &Node{t: n_import, p: importpos, sval: path.sval}
+	if alias != nil {
+		n.args = []*Node{alias}
+	}
+	return n
 }
 
 // parseMethodDef parses a method definition inside a type block:

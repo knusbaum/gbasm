@@ -633,6 +633,7 @@ func interfaceSatisfactionError(c *Context, typeName, ifaceName string, iface *I
 		return fmt.Sprintf("Type %s does not implement interface %s", typeName, ifaceName)
 	}
 	for _, isig := range iface.Methods {
+		found := false
 		for _, m := range methods {
 			if m.Name != isig.Name {
 				continue
@@ -657,8 +658,12 @@ func interfaceSatisfactionError(c *Context, typeName, ifaceName string, iface *I
 			if !methodAliasesSatisfy(c, m, isig.ReturnAliases) {
 				return interfaceBorrowMismatchError(c, typeName, ifaceName, m, isig)
 			}
+			found = true
+			break
 		}
-		return fmt.Sprintf("Type %s does not implement interface %s", typeName, ifaceName)
+		if !found {
+			return fmt.Sprintf("Type %s does not implement interface %s: missing method %s", typeName, ifaceName, isig.Name)
+		}
 	}
 	return fmt.Sprintf("Type %s does not implement interface %s", typeName, ifaceName)
 }
@@ -2009,6 +2014,9 @@ func lvalueStorageOrigin(c *Context, e AST, assignedName string) flow.PointerExp
 	case *Index:
 		return lvalueStorageOrigin(c, ast.Val, assignedName)
 	case *Dot:
+		if ResolveSelector(c, ast.Val).Kind == ResolvedPackage {
+			return c.PointerFlow().UnknownPointer()
+		}
 		return lvalueStorageOrigin(c, ast.Val, assignedName)
 	case *SliceOp:
 		return lvalueStorageOrigin(c, ast.Val, assignedName)
@@ -3279,12 +3287,12 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		// return dest
 	case *Dot:
 		// Cross-package variable lvalue: &pkg.varname → lea dest pkg.varname
-		if sym, ok := ast.Val.(*Symbol); ok && c.IsImportedPackage(sym.Name) {
-			vt, ok := c.ImportedVarType(sym.Name, ast.Member)
+		if parent := ResolveSelector(c, ast.Val); parent.Kind == ResolvedPackage {
+			vt, ok := c.ImportedVarType(parent.Name, ast.Member)
 			if !ok {
-				CompileErrorF(a, "package %q has no variable %q", sym.Name, ast.Member)
+				CompileErrorF(a, "package %q has no variable %q", parent.Name, ast.Member)
 			}
-			ref := sym.Name + "." + ast.Member
+			ref := parent.Name + "." + ast.Member
 			vt.Indirection++
 			vt.MutMask = (vt.MutMask << 1) | (1 << 1) // globals are var (mutable)
 			vt.OwnedMask <<= 1
@@ -4346,7 +4354,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		srcSpot.free(of)
 		return nullspot
 	case *FuncDecl:
+		// Function bodies share the root tracker, but their lifetime facts
+		// must not escape into later functions (which may reuse names).
+		savedFlow := c.PointerFlow().Clone()
+		defer c.RestorePointerFlow(savedFlow)
 		c := c.SubContext()
+		c.useSourceFile(ast.p.fname)
 		defer c.ForgetPointerBindings()
 		retlab := c.PushRetlabel(ast.Return)
 		defer c.PopRetlabel()
@@ -4495,7 +4508,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// makes it unambiguous that the call was meant.
 		{
 			castName := ast.QualifiedName()
-			if destType, ok := c.TypeByName(castName); ok {
+			if destType, ok := c.sourceTypeByName(castName); ok {
 				if _, _, hasFn := c.FuncDeclForCall(pkg, fname); !hasFn {
 					if len(ast.Args) != 1 {
 						CompileErrorF(a, "Type cast %s() requires exactly one argument", castName)
@@ -5715,6 +5728,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		prepareSliceOwnership(c, ast.Val, retType)
 		valType := ast.Val.ASTType(c)
+		// As with a typed initializer, new(expr) adopts the expected pointer
+		// type so owned pointee fields are checked during construction.
+		if fc, ok := ast.Val.(*Funcall); ok {
+			if inferred, ok := newBuiltinTypeForDest(c, fc, retType); ok {
+				valType = inferred
+			}
+		}
 		// A partially-consumed aggregate cannot be returned: the caller's
 		// scope cannot see the local consistency facts.
 		if name := aggregateBindingName(ast.Val); name != "" {

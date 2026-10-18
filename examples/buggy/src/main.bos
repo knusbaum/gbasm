@@ -4,38 +4,52 @@ import "io"
 import "fmt"
 import "src/subpkg"
 
-type strerr struct{ err []byte } {
-	message(e *strerr) []byte {
-		return e.err
-	}
-	destroy(e owned *strerr) {
-		free(e)
-	}
+// type strerr struct{ err []byte } {
+// 	new(err []byte) owned *strerr {
+// 		return new(strerr{err: err})
+// 	}
+// 	message(e *strerr) []byte {
+// 		return e.err
+// 	}
+// 	destroy(e owned *strerr) {
+// 		free(e)
+// 	}
+// }
+
+// fn do_a_thing() owned built_error {
+// 	return strerr.new("This Is An Error\n")
+// }
+
+// fn blowstack() {
+// 	var x [1024]i64
+
+// 	for(var i i64 := 0; i < 100; i = i + 1) {
+// 		x[i] = i
+// 	}
+// }
+
+fn file_reader(_ []byte) ?owned io.FD {
+	return 0
 }
 
-fn do_a_thing() owned built_error {
-	return new(strerr{err: "This Is An Error\n" })
-}
-
-fn blowstack() {
-	var x [1024]i64
-
-	for(var i i64 := 0; i < 100; i = i + 1) {
-		x[i] = i
+fn main(_ [][]byte) {
+	f := file_reader("hello")
+	if (f != 0) {
+		fmt.print("f is not nil\n")
+	} else {
+		fmt.print("f is nil\n")
 	}
-}
+	dispose(f)
+	// e := do_a_thing()
+	// fmt.str(&io.STDOUT, e.message())
+	// e.destroy()
 
-fn main(args [][]byte) {	
-	e := do_a_thing()
-	fmt.str(&io.STDOUT, e.message())
-	e.destroy()
-
-	subpkg.x = subpkg.x + 10
-	subpkg.do_something_else()
-	subpkg.do_something_else()
-	subpkg.do_something_else()
-	subpkg.do_something_else()
-	subpkg.do_something_else()
-	subpkg.do_something_else()
-	fmt.int(&io.STDOUT, subpkg.x) // why is this fine
+	// subpkg.x = subpkg.x + 10
+	// subpkg.do_something_else()
+	// subpkg.do_something_else()
+	// subpkg.do_something_else()
+	// subpkg.do_something_else()
+	// subpkg.do_something_else()
+	// subpkg.do_something_else()
+	// fmt.int(&io.STDOUT, subpkg.x) // why is this fine
 }

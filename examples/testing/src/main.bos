@@ -1,0 +1,22 @@
+package main
+
+import "fmt"
+import "io"
+
+type thing struct {
+	x i64
+} {
+	increment(self *mut thing) {
+		self.x += 1
+	}
+}
+
+fn main() {
+	var x := thing{x: 100}
+
+	for(var i := 0; i < 1000000000; i+=1) {
+		//x.x += 1
+		x.increment()
+	}
+	fmt.print("x.x: %v\n", x.x)
+}

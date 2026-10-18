@@ -165,6 +165,10 @@ pub type io_err values ([]byte) {
 	message(e io_err) []byte {
 		return []byte(e)
 	}
+	format(e io_err, w writer) ?error {
+		_, err := w.write([]byte(e))
+		return err
+	}
 }
 
 // err_from_code maps a positive Linux errno number to io_err. It also accepts
@@ -463,4 +467,19 @@ pub fn copy(dst writer, src reader) ?error {
 			return io_err.EIO
 		}
 	}
+}
+
+// error is the interface implemented by types that represent typical error conditions.
+pub interface error {
+	//message(e *self) []byte from(e)
+	format(self *self, w writer) ?error
+}
+
+// built_error is the interface implemented by types that represent complicated error
+// conditions. These error conditions contain owned resources such as allocations
+// and require destruction when they're no longer in use.
+pub interface built_error {
+	//message(e *mut self) []byte from(e)
+	format(e *self, w writer) ?error
+	destroy(e owned *self)
 }

@@ -352,6 +352,23 @@ fn main() {
 
 Each source file declares a package. The package name is what callers use in source code (`string.puts(...)`). The string in `import "..."` is an opaque key into the build system's importcfg.
 
+Pass all Boson files for a package to one compiler invocation:
+
+```sh
+bosc -importcfg=importcfg -o package.bs first.bos second.bos
+```
+
+Every input must declare the same package. Top-level declarations are shared across the files, including private declarations, and all declarations are registered before function bodies are compiled. Duplicate declarations are errors. The compiler emits one assembly file with shared package metadata; `boson.mmk` uses this mode for both library packages and executables.
+
+Imports and import aliases belong only to the file that declares them. An optional alias replaces the package's default source qualifier:
+
+```
+import stream "stdlib/io"
+// This file refers to io's writer interface as stream.writer.
+```
+
+Different files may use the same alias for different packages or different aliases for the same package. Types in shared signatures retain their canonical package identity, and each function body resolves imports in its defining file. A sibling file may use an inferred imported value through a shared declaration, but naming that package explicitly requires its own import. Aliases do not affect emitted linker symbols.
+
 **Visibility model.** The compiler is driven entirely by `import` declarations and the source-level package qualifier. The build system maintains an **importcfg** mapping import strings to `.bo` file locations:
 
 ```
@@ -2281,7 +2298,7 @@ The `Context` type carries name resolution state: variable bindings (with a muta
 
 ### Importcfg loading (`main.go`)
 
-Before parsing any source file, bosc reads the `-importcfg=<file>` flag to obtain a mapping from import keys to `.bo` paths. When source declares `import "X"`, bosc looks up `X` in this map, loads the `.bo`, reads its embedded `pkgname`, and registers that .bo's functions under that pkgname in the current Context.
+Before parsing any source file, bosc reads the `-importcfg=<file>` flag to obtain a mapping from import keys to `.bo` paths. The package driver (`package.go`) parses all input files, verifies their package declarations, and loads imported `.bo` metadata once into a shared package Context. Each file has a separate source namespace mapping its import names (or explicit aliases) to canonical package names. Type syntax is qualified in that namespace before AST conversion; function compilation and return-alias analysis use the defining file's namespace. Package declarations are registered across all files before code generation begins.
 
 A `-listimports` mode prints just the import keys declared by the input files and exits. Used by the build system to discover transitive dependencies before compiling.
 

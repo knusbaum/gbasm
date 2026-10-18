@@ -1,0 +1,114 @@
+package fmt
+
+import "io"
+
+pub type StringBuilder struct {
+	buf owned []mut byte
+	pos i64
+} {
+	new() owned *owned mut StringBuilder {
+		return new(StringBuilder{buf: make([]mut byte, 512)})
+	}
+
+	expand(b *mut StringBuilder, at_least i64) {
+		var target := cap(b.buf)
+		if(cap(b.buf) < 4096) {
+			target *= 2
+		} else {
+			target += 2048
+		}
+		if(cap(b.buf) - b.pos < at_least) {
+			target = cap(b.buf) + at_least
+		}
+		next := make([]mut byte, target)
+		fixed_copy(next, b.buf)
+		//free(b.buf)
+		b.buf = next
+		free(next)
+	}
+	
+
+	str(b *mut StringBuilder, s []byte) {
+		room i64 := len(b.buf) - b.pos
+		if (len(s) > room) {
+			b.expand(len(s))
+		}
+		var i i64 := 0
+		for (; i < len(s); i = i + 1) {
+			b.buf[b.pos] = s[i]
+			b.pos = b.pos + 1
+		}
+	}
+
+	int(b *mut StringBuilder, n i64) {
+		need i64 := n_digits(n)
+		room i64 := len(b.buf) - b.pos
+		if (need > room) {
+			b.expand(need)
+		}
+		write_decimal(b.buf[b.pos:], n, need)
+		b.pos = b.pos + need
+	}
+
+	uint(b *mut StringBuilder, n u64) {
+		need i64 := n_udigits(n)
+		room i64 := len(b.buf) - b.pos
+		if (need > room) {
+			b.expand(need)
+		}
+		write_udecimal(b.buf[b.pos:], n, need)
+		b.pos = b.pos + need
+	}
+
+	hex(b *mut StringBuilder, n u64) {
+		need i64 := 2 + n_hex_digits(n)
+		room i64 := len(b.buf) - b.pos
+		if (need > room) {
+			b.expand(need)
+		}
+		b.buf[b.pos] = 48          // '0'
+		b.buf[b.pos + 1] = 120     // 'x'
+		write_hex(b.buf[b.pos + 2:], n, need - 2)
+		b.pos = b.pos + need
+	}
+
+	char(b *mut StringBuilder, c byte) {
+		if (b.pos >= len(b.buf)) {
+			b.expand(1)
+		}
+		b.buf[b.pos] = c
+		b.pos = b.pos + 1
+	}
+
+	bool(b *mut StringBuilder, v bool) {
+		if (v) {
+			b.str("true")
+		} else {
+			b.str("false")
+		}
+	}
+	
+	write(b *mut StringBuilder, bs []byte) i64, ?io.error {
+		before i64 := b.pos
+		b.str(bs)
+		after i64 := b.pos
+		return after - before, nil
+	}
+
+	string(b *mut StringBuilder) owned []byte {
+		r := make([]mut byte, b.pos)
+		fixed_copy(r, b.buf[:b.pos])
+		return r
+	}
+
+	to_string(b owned *owned mut StringBuilder) owned []byte {
+		r := b.string()
+		b.destroy()
+		return r
+	}
+
+	destroy(b owned *owned mut StringBuilder) {
+		free(b.buf)
+		free(b)
+	}
+}

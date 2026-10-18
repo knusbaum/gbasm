@@ -1,0 +1,89 @@
+package main
+
+import "fmt"
+import "io"
+
+
+
+
+type my_error struct{ x i64, y i64, msg []byte} {
+	new(x i64, y i64, msg []byte) owned *my_error {
+		return new(my_error{x: x, y:y, msg: msg})
+	}
+	
+	format(self *my_error, w io.writer) ?io.error {
+		_, err := fmt.printf(w, "my_error{x: %d, y: %d, msg: %s}", self.x, self.y, &self.msg)
+		return err
+	}
+	// message(self *mut my_error) []byte {
+	// 	if(len(self.buffer) > 0) {
+	// 		return self.buffer
+	// 	}
+	// 	self.buffer = make([]mut byte, 1024)
+	// 	var b := fmt.Builder{buf: self.buffer, pos: 0, err_: nil}
+	// 	w := fmt.BuilderWriter{b:&b}
+	// 	err := self.format(&w)
+	// 	if (err) {
+	// 		fmt.print("FAILED TO FORMAT ERROR MESSAGE\n")
+	// 	}
+	// 	self.buffer = self.buffer[:b.pos]
+	// 	return ""
+	// }
+	destroy(self owned *my_error) {
+		fmt.print("Destroyed my_error\n")
+		free(self)
+	}
+}
+
+fn main() {
+	x := boo()
+	fmt.print("X: %v\n", x)
+	x.destroy()
+}
+
+fn boo() owned io.built_error {
+	//a owned *mut my_error := new(my_error{x: 10, y: 100, buffer: make([]mut byte, 0) })
+	a := my_error.new(10, 100, "what's up?")
+	return a
+}
+
+type foo struct { x owned i64 }
+
+fn other() {
+	var a owned foo := {x: 10}
+	b owned i64 := a.x
+	a.x = 100
+
+	fmt.print("a: %v\n", &a)
+	fmt.print("b: %v\n", b)
+	dispose(a)
+	dispose(b)
+
+	var c := cats.RED{lives: 10}
+	c = cats.BLUE{claws: true}
+	fmt.print("Cat: %v\n", &c)
+}
+
+type cats values {
+	RED{lives i64},
+	BLUE{claws bool},
+} {
+	format(self *cats, w io.writer) ?io.error {		
+		switch s := *self {
+			case RED {
+				_, err := fmt.printf(w, "Red cat with %d lives.", s.lives)
+				return err
+			}
+			case BLUE {
+				if (s.claws) {
+					_, err := fmt.printf(w, "Bue cat with no claws")
+					return err
+				} else {
+					_, err := fmt.printf(w, "Bue cat with no claws")
+					return err
+				}
+			}
+		}
+		//return nil
+	}
+}

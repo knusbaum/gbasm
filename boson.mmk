@@ -172,12 +172,17 @@ build_package() {
 
     local asm_files=()
     local src bs
+    local bos_files
+    bos_files=()
     for src in "$srcdir"/*.bos; do
         [ -e "$src" ] || continue
-        bs="$workdir/$(basename $src .bos).bs"
-        $BOSC -importcfg=$cfg -o $bs "$src"
-        asm_files+=("$bs")
+        bos_files+=("$src")
     done
+    if [ "${#bos_files[@]}" -gt 0 ]; then
+        bs="$workdir/package.bs"
+        $BOSC -importcfg="$cfg" -o "$bs" "${bos_files[@]}"
+        asm_files+=("$bs")
+    fi
     for src in "$srcdir"/*.bs; do
         [ -e "$src" ] || continue
         asm_files+=("$src")
@@ -237,12 +242,16 @@ defbody bos_exe : $(bos_exe_deps "$source") {
     write_importcfg "$cfg" "${dep[@]}"
 
     asm_files=()
+    bos_files=()
     for src in "$source"/*.bos; do
         [ -e "$src" ] || continue
-        bs="$workdir/$(basename $src .bos).bs"
-        $BOSC -importcfg=$cfg -o $bs "$src"
-        asm_files+=("$bs")
+        bos_files+=("$src")
     done
+    if [ "${#bos_files[@]}" -gt 0 ]; then
+        bs="$workdir/package.bs"
+        $BOSC -importcfg="$cfg" -o "$bs" "${bos_files[@]}"
+        asm_files+=("$bs")
+    fi
     for src in "$source"/*.bs; do
         [ -e "$src" ] || continue
         asm_files+=("$src")

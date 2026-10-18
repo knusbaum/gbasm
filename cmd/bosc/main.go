@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"strings"
@@ -161,143 +160,18 @@ func main() {
 		imports = m
 	}
 
-	var pkgname string
-	var of *os.File
-	var wrotePkg bool
-
-	if out != nil && *out != "" {
-		f, err := os.OpenFile(*out, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0755)
-		if err != nil {
-			log.Fatalf("Failed to create file %s: %s", *out, err)
-		}
-		defer f.Close()
-		//fmt.Printf("WRITING FILE %s\n", out)
-		of = f
+	var assembly bytes.Buffer
+	for _, name := range flag.Args() {
+		fmt.Printf("Compiling %s\n", name)
 	}
-
-	for fi := 0; fi < flag.NArg(); fi++ {
-		fmt.Printf("Compiling %s\n", flag.Arg(fi))
-		file, err := os.Open(flag.Arg(fi))
-		if err != nil {
-			fmt.Printf("Fatal: %s", err)
-		}
-		defer file.Close()
-
-		reader := bufio.NewReader(file)
-
-		var ln []byte
-		var linesConsumed uint
-		var isPrefix bool
-		for ln, isPrefix, err = reader.ReadLine(); err == nil; ln, isPrefix, err = reader.ReadLine() {
-			if !isPrefix {
-				linesConsumed++
-			}
-			//fmt.Printf("LINE: %s\n", ln)
-			line := strings.TrimSpace(string(ln))
-			if line == "" {
-				continue
-			}
-			if strings.HasPrefix(line, "//") {
-				continue
-			}
-			if strings.HasPrefix(line, "package") {
-				pn := strings.TrimSpace(strings.TrimPrefix(line, "package"))
-				if pkgname != "" && pkgname != pn {
-					log.Fatalf("Found more than one package in input file: %s, %s\n", pkgname, pn)
-				}
-				pkgname = pn
-				if of == nil {
-					out := pn + ".bs"
-					f, err := os.OpenFile(out, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0755)
-					if err != nil {
-						log.Fatalf("Failed to create file %s: %s", out, err)
-					}
-					defer f.Close()
-					//fmt.Printf("WRITING FILE %s\n", out)
-					of = f
-				}
-				break
-			}
-			log.Fatalf("bosc files must start with a package name, but found %s\n", line)
-		}
-		if of == nil {
-			log.Fatalf("No out file.\n")
-		}
-		if !wrotePkg {
-			fmt.Fprintf(of, "package %s\n\n", pkgname)
-		}
-		// The builtin package is the single home for the primitive scalar
-		// typedescs (__typedesc_i64, __typedesc_byte, ...). Every other
-		// package that coerces a primitive into an interface relocates
-		// against these shared symbols.
-		if pkgname == "builtin" {
-			emitBuiltinScalarTypedescs(of)
-		}
-		p := NewParserAt(flag.Arg(fi), reader, linesConsumed+1)
-		//c := NewVContext()
-		//ctx := NewCompileContext()
-		var bs bytes.Buffer
-		var asts []AST
-		actx := NewContext()
-		actx.SetPkgname(pkgname)
-		// Auto-import builtin into every package except builtin itself.
-		// This makes builtin's symbols (e.g. the error interface) available
-		// without an explicit import statement.
-		if pkgname != "builtin" {
-			if builtinPath, ok := imports["builtin"]; ok {
-				if err := actx.Import("builtin", builtinPath); err != nil {
-					log.Fatalf("auto-import builtin: %v\n", err)
-				}
-			}
-		}
-		for {
-			n, err := p.Next()
-			if err != nil {
-				fatalCtx("Parse Error: %v", err)
-			}
-			if n == nil {
-				break
-			}
-			if n.t == n_import {
-				// n.sval is the package name from `import "name"`. Look up its
-				// .bo path in the importcfg.
-				pkgName := n.sval
-				path, ok := imports[pkgName]
-				if !ok {
-					log.Fatalf("import %q: not found in importcfg\n", pkgName)
-				}
-				err = actx.Import(pkgName, path)
-				if err != nil {
-					log.Fatalf("%v\n", err)
-				}
-				continue
-			}
-			a, err := n.ToAST(actx)
-			if err != nil {
-				fatalCtx("Failed to parse: %v", err)
-			}
-			asts = append(asts, a)
-		}
-
-		for _, a := range asts {
-			err := Compile(&bs, actx, a)
-			if err != nil {
-				fatalCtx("Fatal: %v", err)
-			}
-		}
-
-		// for name, b := range actx.bindings {
-		// 	fmt.Printf("var %v: %#v\n", name, b)
-		// }
-		// for name, s := range actx.structs {
-		// 	fmt.Printf("struct %v: %#v\n", name, s)
-		// }
-		// for name, f := range actx.funcs {
-		// 	fmt.Printf("func %v: %#v\n", name, f)
-		// }
-		actx.WriteVtables(of)
-		actx.WriteStrings(of)
-		actx.WriteStrSliceHeaders(of)
-		io.Copy(of, &bs)
+	if err := compilePackageFiles(&assembly, flag.Args(), imports); err != nil {
+		fatalCtx("Fatal: %v", err)
+	}
+	name := *out
+	if name == "" {
+		name = strings.Fields(assembly.String())[1] + ".bs"
+	}
+	if err := os.WriteFile(name, assembly.Bytes(), 0755); err != nil {
+		log.Fatalf("Failed to write %s: %v", name, err)
 	}
 }

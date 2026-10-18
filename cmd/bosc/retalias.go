@@ -323,7 +323,7 @@ func resolveCalleeForAlias(ic *Context, call *Funcall) (*FuncDecl, []AST) {
 	// A type-cast Funcall (T(expr)) carries no alias set. The call form
 	// wins when a function of the same name also exists, so only treat it
 	// as a cast when no matching function is declared.
-	if _, ok := ic.TypeByName(call.QualifiedName()); ok {
+	if _, ok := ic.sourceTypeByName(call.QualifiedName()); ok {
 		if _, _, hasFn := ic.FuncDeclForCall(pkg, fname); !hasFn {
 			return nil, nil
 		}
