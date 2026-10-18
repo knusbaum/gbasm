@@ -691,6 +691,13 @@ func (p *Parser) parseFnTypeNode() *Node {
 }
 
 func (p *Parser) parseValue() *Node {
+	if p.current().t == tok_question {
+		tn := p.parseTypeName()
+		p.expect(tok_lparen)
+		args := p.parseArgs()
+		p.expect(tok_rparen)
+		return p.parsePostfix(&Node{t: n_funcall, p: tn.p, sval: tn.prebuilt.String(), args: args})
+	}
 	// An '[' at value-start position is an array literal '[e1, e2, ...]'.
 	// (An '[' after a value is the postfix index/slice form, handled by
 	// parsePostfix.) The two contexts don't overlap because parseValue

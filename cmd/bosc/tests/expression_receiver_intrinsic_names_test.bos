@@ -1,0 +1,29 @@
+package main
+import "string"
+
+type Counter struct { x i64 } {
+ new(c *Counter) i64 { return c.x }
+ free(c *Counter) i64 { return c.x + 1 }
+ len(c *Counter) i64 { return c.x + 2 }
+ cap(c *Counter) i64 { return c.x + 3 }
+ append(c *Counter) i64 { return c.x + 4 }
+ pop(c *Counter) i64 { return c.x + 5 }
+}
+
+fn identity(c *Counter) *Counter { return c }
+
+fn main() {
+ c Counter := Counter{x: 10}
+ string.puti(identity(&c).new())
+ string.putc(10)
+ string.puti(identity(&c).free())
+ string.putc(10)
+ string.puti(identity(&c).len())
+ string.putc(10)
+ string.puti(identity(&c).cap())
+ string.putc(10)
+ string.puti(identity(&c).append())
+ string.putc(10)
+ string.puti(identity(&c).pop())
+ string.putc(10)
+}

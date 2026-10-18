@@ -1,0 +1,2 @@
+Compiling tests/mutable_borrow_owned_field_restore_err_test.bos
+Fatal: Cannot return while borrowed owned field "b.buf" is moved out; re-initialize it first

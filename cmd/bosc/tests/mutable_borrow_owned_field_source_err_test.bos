@@ -1,0 +1,9 @@
+package main
+type Buffer struct { buf owned []mut byte }
+fn bad(b *mut Buffer) {
+ next := make([]mut byte, 2)
+ free(b.buf)
+ b.buf = next
+ free(next)
+}
+fn main() {}

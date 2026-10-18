@@ -1,20 +1,22 @@
 package main
 
-import "string"
+import "io"
 
-// myError implements the builtin error interface.
+import "fmt"
+
+// myError implements the standard io.error interface.
 type myError i64 {
-    message(_ *myError) []byte {
-        return "something went wrong"
+    format(_ *myError, w io.writer) ?io.error {
+        _, err := w.write("something went wrong")
+        return err
     }
     destroy(e owned *myError) {
         dispose(e)
     }
 }
 
-fn showError(err error) {
-    string.puts(err.message())
-    string.puts("\n")
+fn showError(err io.error) {
+    fmt.print("%v\n", err)
 }
 
 fn main(_ [][]byte) {

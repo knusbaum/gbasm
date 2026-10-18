@@ -8,7 +8,7 @@ import "string"
 // negation, so it is TRUE when x is nil. The compiler emits the nil guard
 // automatically when the operand is not already narrowed.
 
-fn err_or_nil(fail bool) ?error {
+fn err_or_nil(fail bool) ?io.error {
 	if (fail) {
 		return io.io_err.ENOSPC
 	}

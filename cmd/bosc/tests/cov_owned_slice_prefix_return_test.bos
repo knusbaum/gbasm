@@ -5,7 +5,7 @@ import "io"
 
 // A builder borrows the backing while the function owns it. Returning its
 // written prefix transfers that backing obligation, including in a tuple.
-fn make_a_string() owned []byte, ?error {
+fn make_a_string() owned []byte, ?io.error {
  mystring := make([]mut byte, 1024)
  var b fmt.Builder := fmt.Builder{buf: mystring[:], pos: 0, err_: nil}
  b.str("This is a string of text I'm writing.\n")

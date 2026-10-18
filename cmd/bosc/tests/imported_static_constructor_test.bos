@@ -1,0 +1,12 @@
+package main
+import "fmt"
+import "string"
+
+fn main() {
+ b := fmt.StringBuilder.new()
+ b.str("constructor works")
+ text := b.to_string()
+ string.puts(text)
+ string.putc(10)
+ free(text)
+}

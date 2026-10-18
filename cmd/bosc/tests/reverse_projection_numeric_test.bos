@@ -1,0 +1,22 @@
+package main
+import "fmt"
+
+type small values (i8) { NEG: -7; POS: 100 }
+type wide values (u64) { MAX: 18446744073709551615; ZERO: 0 }
+type real values (f32) { ZERO: 0.0; FRACTION: 1.25 }
+type truth values (bool) { YES: true; NO: false }
+
+fn main() {
+	a := ?small(i8(-7))
+	b := ?wide(u64(18446744073709551615))
+	c := ?real(f32(1.25))
+	d := ?truth(false)
+	fmt.print("%v %v %v %v\n", a == small.NEG, b == wide.MAX, c == real.FRACTION, d == truth.NO)
+	zero := ?real(f32(-0.0))
+	fmt.print("signed zero: %v\n", zero == real.ZERO)
+	missing := ?real(f32(2.5))
+	nan := f32(0.0) / f32(0.0)
+	missing_nan := ?real(nan)
+	fmt.print("missing floats: %v %v\n", missing == nil, missing_nan == nil)
+	fmt.print("asserted: %d\n", i64(i8(a?)))
+}

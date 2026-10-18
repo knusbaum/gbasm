@@ -1,0 +1,2 @@
+Compiling tests/mutable_borrow_owned_field_source_err_test.bos
+Fatal: Use of "next" after it was moved

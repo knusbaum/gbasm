@@ -69,6 +69,18 @@ func (s *sourceScope) typeName(name string) (string, error) {
 // sourceTypeByName is for an explicit source cast. Internal type lookups use
 // TypeByName directly, since canonical types can travel across file scopes.
 func (c *Context) sourceTypeByName(name string) (ASTType, bool) {
+	if strings.HasPrefix(name, "?") {
+		t, err := parseTypeString(name)
+		if err != nil {
+			return ASTType{}, false
+		}
+		base, ok := c.TypeByName(t.Name)
+		if !ok {
+			return ASTType{}, false
+		}
+		t.Name = base.Name
+		return t, true
+	}
 	// Prefix slice casts were already qualified and checked in qualifyNode.
 	if strings.HasPrefix(name, "[]") {
 		return c.TypeByName(name)
@@ -136,7 +148,7 @@ func (s *sourceScope) qualifyNode(n *Node) error {
 		n.sval, n.typeIdent = name, nil
 	}
 	// Slice projection casts have a complete type spelling in sval.
-	if n.t == n_funcall && strings.HasPrefix(n.sval, "[]") {
+	if n.t == n_funcall && (strings.HasPrefix(n.sval, "[]") || strings.HasPrefix(n.sval, "?")) {
 		t, err := parseTypeString(n.sval)
 		if err != nil {
 			return fail(err)
@@ -193,7 +205,7 @@ func parsePackageSource(src packageSource) (*parsedSource, error) {
 	for {
 		n, err := parser.Next()
 		if err != nil {
-			return nil, err
+			return nil, &packageCompileError{phase: "Parse Error", err: err}
 		}
 		if n == nil {
 			break
@@ -240,7 +252,9 @@ func compilePackage(out io.Writer, sources []packageSource, imports map[string]s
 	ctx.SetPkgname(files[0].pkg)
 	ctx.fileScopes = make(map[string]*sourceScope)
 	loaded := make(map[string]string)
-	load := func(key string) (string, error) {
+	loading := make(map[string]bool)
+	var load func(string) (string, error)
+	load = func(key string) (string, error) {
 		path, ok := imports[key]
 		if !ok {
 			return "", fmt.Errorf("import %q: not found in importcfg", key)
@@ -248,9 +262,32 @@ func compilePackage(out io.Writer, sources []packageSource, imports map[string]s
 		if pkg, ok := loaded[path]; ok {
 			return pkg, nil
 		}
+		if loading[path] {
+			return "", fmt.Errorf("cyclic metadata dependency through import %q", key)
+		}
+		loading[path] = true
+		defer delete(loading, path)
 		obj, err := gbasm.ReadOFile(path)
 		if err != nil {
 			return "", err
+		}
+		for _, dep := range metadataDependencies(obj) {
+			depKey := dep
+			if _, ok := imports[depKey]; !ok {
+				for candidate, candidatePath := range imports {
+					metadata, err := gbasm.ReadOFile(candidatePath)
+					if err != nil {
+						return "", err
+					}
+					if metadata.Pkgname == dep {
+						depKey = candidate
+						break
+					}
+				}
+			}
+			if _, err := load(depKey); err != nil {
+				return "", fmt.Errorf("import %q requires metadata for %q: %w", key, dep, err)
+			}
 		}
 		if err := ctx.Import(key, path); err != nil {
 			return "", err
@@ -303,7 +340,7 @@ func compilePackage(out io.Writer, sources []packageSource, imports map[string]s
 			}
 			a, err := n.ToAST(ctx)
 			if err != nil {
-				return err
+				return &packageCompileError{phase: "Failed to parse", err: err}
 			}
 			file.asts = append(file.asts, a)
 		}

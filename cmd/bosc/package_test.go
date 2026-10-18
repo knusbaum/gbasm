@@ -194,3 +194,46 @@ import dep "beta"`,
 		})
 	}
 }
+
+func TestImportedSignatureDependenciesStayHidden(t *testing.T) {
+	alpha := packageImportFixture(t, "alpha")
+	provider := filepath.Join(t.TempDir(), "provider.bo")
+	obj, err := gbasm.NewOFile(provider, "provider")
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj.Funcs["get"] = &gbasm.Function{Name: "get", IsPub: true, Type: "fn() alpha.Item"}
+	if err := obj.Output(); err != nil {
+		t.Fatal(err)
+	}
+	imports := map[string]string{"provider": provider, "hidden/alpha": alpha}
+	for _, tt := range []struct{ name, body, want string }{
+		{"inferred dependency type", `fn use() i64 { return provider.get().x }`, ""},
+		{"hidden dependency qualifier", `fn use() i64 { return alpha.get() }`, `No such function "alpha.get"`},
+		{"hidden dependency type name", `fn use(x *alpha.Item) i64 { return x.x }`, `package "alpha" is not imported in this file`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := compilePackageForTest([]string{"package sample\nimport \"provider\"\n" + tt.body}, imports)
+			if tt.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("want %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
+
+func TestPackageDiagnosticPhases(t *testing.T) {
+	for _, tt := range []struct{ body, phase string }{
+		{"fn f( {", "Parse Error"},
+		{"fn f() { 1 }", "Failed to parse"},
+	} {
+		_, err := compilePackageForTest([]string{"package sample\n" + tt.body}, nil)
+		stage, ok := err.(*packageCompileError)
+		if !ok || stage.phase != tt.phase {
+			t.Fatalf("want phase %q, got %v", tt.phase, err)
+		}
+	}
+}

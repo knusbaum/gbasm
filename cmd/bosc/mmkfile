@@ -244,8 +244,8 @@ io=io.bo
 EOF
 }
 
-file fmt.bs : bosc fmt.importcfg io.bo $RUNTIME/fmt/fmt.bos {
-    ./bosc -importcfg=fmt.importcfg -o fmt.bs $RUNTIME/fmt/fmt.bos >/dev/null 2>&1
+file fmt.bs : bosc fmt.importcfg io.bo $(ls $RUNTIME/fmt/*.bos) {
+    ./bosc -importcfg=fmt.importcfg -o fmt.bs $RUNTIME/fmt/*.bos
 }
 
 file fmt.bo : bas fmt.bs {
@@ -281,8 +281,10 @@ go_tests {
     go test ./...
 }
 
+## Boson-language tests
 bosc_tests : $(ls tests/*_test.bos)
 
+## Boson Compiler complete test suite
 test: go_tests bosc_tests {
     mmk clean
 }

@@ -618,15 +618,20 @@ pub interface Formatter {
 	format(self *self, w io.writer) ?io.error
 }
 
-pub type errstr struct { msg owned []byte } {
-	new(format []byte, args ...any) owned errstr {
+// strerr is an error type useful for constructing error messages at runtime.
+pub type strerr struct { msg owned []byte } {
+	new(format []byte, args ...any) owned *mut strerr {
 		s := StringBuilder.new()
 		printf(s, format, args...) // ignoring error, StringBuilder doesn't fail
-		return errstr{msg: s.to_string()}
+		return new(strerr{msg: s.to_string()})
 	}
-	destroy(e owned errstr) {
+	format(e *strerr, w io.writer) ?io.error {
+		_, err := w.write(e.msg)
+		return err
+	}
+	destroy(e owned *mut strerr) {
 		free(e.msg)
-		dispose(e)
+		free(e)
 	}
 }
 

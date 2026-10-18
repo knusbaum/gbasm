@@ -26,6 +26,9 @@ type Context struct {
 	// File namespaces are separate from canonical imported type metadata.
 	fileScope  *sourceScope
 	fileScopes map[string]*sourceScope
+	// Mutable aggregate parameters borrow field obligations and must restore
+	// consumed fields before returning unless they own the whole struct.
+	borrowedAggregateParams map[string]bool
 
 	// the name of the package being compiled. Used to qualify in-package
 	// calls so the linker sees unambiguous symbol names. Set at the root
@@ -998,7 +1001,7 @@ func (c *Context) TypeForVar(name string) (ASTType, bool) {
 		// A nullable pointer (`*?`) or nullable interface (`?T`) narrowed to
 		// non-null by flow reads as its non-nullable form.
 		if t.NilMask&1 != 0 && c.NullFact(VarFlowPath(name)) == NullKnownNonNull &&
-			(t.Indirection > 0 || c.IsInterfaceType(t)) {
+			(t.Indirection > 0 || c.IsInterfaceType(t) || isNullableValues(c, t)) {
 			t.NilMask &^= 1
 		}
 		return t, true
@@ -1862,6 +1865,9 @@ func (t *ASTType) Size(c *Context) int {
 		// (i64 in v1). A payload-bearing type is a tagged union of structs:
 		// the tag followed by enough bytes for the largest variant payload.
 		if vd, ok := c.ValuesDeclForName(t.Name); ok {
+			if t.NilMask&1 != 0 && vd.IsPayloadBearing() {
+				panic(&interpreterError{"nullable payload-bearing values types are not supported", t.p})
+			}
 			return vd.TagType.Size(c) + vd.PayloadMaxSize(c)
 		}
 	}
@@ -2267,7 +2273,7 @@ func coerceType(c *Context, dst, src ASTType) (effective ASTType, reason coerceR
 		// A nullable interface (`?I`, Indirection 0) also accepts nil: it is
 		// the interface's null value (a zeroed fat pointer). Non-nullable
 		// interfaces do not.
-		if dst.NilMask&1 != 0 && c != nil && c.IsInterfaceType(dst) {
+		if dst.NilMask&1 != 0 && c != nil && (c.IsInterfaceType(dst) || isNullableValues(c, dst)) {
 			return dst, coerceOK
 		}
 		return ASTType{}, coerceTypeMismatch
@@ -2623,9 +2629,19 @@ func parentOwnsFields(t ASTType) bool {
 	return t.OwnedMask&(1<<uint(t.Indirection)) != 0
 }
 
+// Mutable pointers may consume and replace owned fields without owning the
+// struct itself. Read-only pointers expose borrowed fields even when they
+// carry responsibility for the pointee's obligations.
+func canAccessFieldObligations(t ASTType) bool {
+	if t.Indirection > 0 {
+		return canWriteImmediatePointee(t)
+	}
+	return parentOwnsFields(t)
+}
+
 func fieldTypeForBase(base ASTType, field ASTType) ASTType {
 	// A return tuple groups independent slots; ownership is declared per slot.
-	if base.MultiReturn || parentOwnsFields(base) {
+	if base.MultiReturn || canAccessFieldObligations(base) {
 		return field
 	}
 	return field.StripOwned()
@@ -2750,8 +2766,61 @@ func (b *Block) Pos() position {
 // and FName fields.
 type Funcall struct {
 	Callee AST
-	Args   []AST
-	p      position
+	// Compiler-generated calls may refer to canonical imported symbols even
+	// when that package is visible only through another file or an alias.
+	resolvedDecl *FuncDecl
+	resolvedPkg  string
+	Args         []AST
+	p            position
+}
+
+// A missing flat qualifier is not evidence of a bare call: expression
+// receivers and nested selectors such as pkg.Type.new also have no PkgName.
+func (f *Funcall) isBareCall(name string) bool {
+	symbol, ok := f.Callee.(*Symbol)
+	return ok && symbol.Name == name
+}
+
+// directCallee resolves calls without an implicit runtime receiver. Qualified
+// type selectors must be resolved as namespaces before trying instance methods.
+func (f *Funcall) directCallee(c *Context) (*FuncDecl, string, bool) {
+	if f.resolvedDecl != nil {
+		return f.resolvedDecl, f.resolvedPkg, true
+	}
+	if receiver := f.ReceiverExpr(); receiver != nil {
+		root := receiver
+		for {
+			dot, ok := root.(*Dot)
+			if !ok {
+				break
+			}
+			root = dot.Val
+		}
+		if _, ok := root.(*Symbol); !ok {
+			return nil, "", false
+		}
+		namespace := ResolveSelector(c, root)
+		if namespace.Kind != ResolvedPackage && namespace.Kind != ResolvedType && namespace.Kind != ResolvedValuesType {
+			return nil, "", false
+		}
+		resolved := ResolveSelector(c, receiver)
+		if resolved.Kind != ResolvedType && resolved.Kind != ResolvedValuesType {
+			return nil, "", false
+		}
+		typeName := resolved.Type.Name
+		if dot := strings.LastIndexByte(typeName, '.'); dot >= 0 {
+			pkg, name := typeName[:dot], typeName[dot+1:]+"."+f.FName()
+			for ctx := c; ctx != nil; ctx = ctx.parent {
+				if decl, ok := ctx.imports[pkg][name]; ok {
+					return decl, pkg, true
+				}
+			}
+			return nil, "", false
+		}
+		decl, ok := c.FuncDeclForName(typeName + "." + f.FName())
+		return decl, "", ok
+	}
+	return c.FuncDeclForCall(f.PkgAndName())
 }
 
 // FName returns the leaf function or method name.
@@ -2841,7 +2910,7 @@ func isBareTypeNameExpr(c *Context, a AST) bool {
 
 func (f *Funcall) ASTType(c *Context) ASTType {
 	pkg, name := f.PkgAndName()
-	if pkg == "" && name == "new" {
+	if f.isBareCall("new") {
 		if len(f.Args) != 1 {
 			CompileErrorF(f, "new(expr) requires exactly one argument")
 		}
@@ -2857,22 +2926,22 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 		t.MutMask |= 1 << 1
 		return t
 	}
-	if pkg == "" && name == "free" {
+	if f.isBareCall("free") {
 		return voidASTType()
 	}
-	if pkg == "" && name == "len" {
+	if f.isBareCall("len") {
 		if len(f.Args) != 1 {
 			CompileErrorF(f, "len() requires exactly one argument")
 		}
 		return numASTType()
 	}
-	if pkg == "" && name == "cap" {
+	if f.isBareCall("cap") {
 		if len(f.Args) != 1 {
 			CompileErrorF(f, "cap() requires exactly one argument")
 		}
 		return numASTType()
 	}
-	if pkg == "" && name == "append" {
+	if f.isBareCall("append") {
 		if len(f.Args) != 2 {
 			CompileErrorF(f, "append(s, v) requires exactly two arguments")
 		}
@@ -2881,7 +2950,7 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 		// call and assignment machinery, not by append).
 		return f.Args[0].ASTType(c)
 	}
-	if pkg == "" && name == "pop" {
+	if f.isBareCall("pop") {
 		if len(f.Args) != 1 {
 			CompileErrorF(f, "pop(s) requires exactly one argument")
 		}
@@ -2899,6 +2968,9 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 		if _, _, hasFn := c.FuncDeclForCall(pkg, name); !hasFn {
 			return t
 		}
+	}
+	if decl, _, ok := f.directCallee(c); ok {
+		return decl.Return
 	}
 	// (expr).method(args) — receiver is an expression, not a named variable.
 	if recv := f.ReceiverExpr(); recv != nil {
@@ -2921,9 +2993,6 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 			msg: fmt.Sprintf("no method %q on type %s", name, rt.Name),
 			p:   f.p,
 		})
-	}
-	if decl, _, ok := c.FuncDeclForCall(pkg, name); ok {
-		return decl.Return
 	}
 	// Fall back to an indirect call through a function-pointer
 	// value:
@@ -3060,9 +3129,9 @@ func (n *NonNullAssert) ASTType(c *Context) ASTType {
 	if path, ok := FlowPathForExpr(n.Val); ok && c.NullFact(path) == NullKnownNull {
 		CompileErrorF(n, "Postfix ? asserts \"%s\" is non-null, but it is known to be nil", path.Key())
 	}
-	if t.Indirection == 0 || t.NilMask&1 == 0 {
+	if (t.Indirection == 0 && !isNullableValues(c, t)) || t.NilMask&1 == 0 {
 		if sym, ok := n.Val.(*Symbol); ok {
-			if declared, ok := c.DeclaredTypeForVar(sym.Name); ok && declared.Indirection > 0 && declared.NilMask&1 != 0 {
+			if declared, ok := c.DeclaredTypeForVar(sym.Name); ok && (declared.Indirection > 0 || isNullableValues(c, declared)) && declared.NilMask&1 != 0 {
 				return t
 			}
 		}
@@ -3632,6 +3701,9 @@ func (n *Not) ASTType(c *Context) ASTType {
 // word or the address of its header; compileTruthTest implements that lowering.
 func checkZeroTestOperand(c *Context, value AST, operation string) {
 	t := c.ResolveUnderlying(value.ASTType(c))
+	if isNullableValues(c, t) {
+		CompileErrorF(value, "%s on nullable values type %s requires an explicit comparison with nil", operation, t)
+	}
 	if t.Indirection > 0 {
 		return
 	}
@@ -4335,7 +4407,11 @@ func (i *Index) ASTType(c *Context) ASTType {
 	if !t.IsSliceOrArray() {
 		panic(fmt.Sprintf("CANNOT INDEX INTO NON-ARRAY TYPE %v", t))
 	}
-	return t.ElementType()
+	e := t.ElementType()
+	if t.IsSlice() {
+		e.NilMask |= t.NilMask >> 1
+	}
+	return e
 }
 
 func (i *Index) Note() string {
@@ -5030,36 +5106,18 @@ func (n *Node) toASTTop(c *Context) AST {
 				if mn.t != n_fn {
 					ParseErrorF(mn, "Expected method definition in type block, got %v", mn.t)
 				}
-				var fn FuncDecl
-				fn.Name = mn.sval
+				// Share function lowering so method parameters retain variadic flags.
+				fn := *mn.toASTTop(NewContext()).(*FuncDecl)
 				fn.IsPub = n.isPub
-				fn.p = mn.p
-				nargs := int(mn.ival)
-				margs := mn.args
-				for i := 0; i < nargs; i++ {
-					a := margs[0]
-					fn.Args = append(fn.Args, Binding{
-						Name:    a.sval,
-						Type:    mkTypename(a.args[0]),
-						IsConst: a.ival == 0,
-						p:       a.p,
-					})
-					margs = margs[1:]
-				}
-				fn.Return = mkTypename(margs[0])
-				body := margs[1]
-				if body.t != n_block {
-					ParseErrorF(body, "Expected a block for method body, got %v", body.t)
-				}
-				fn.Body = body.toASTTop(NewContext()).(*Block)
 				qualName := n.sval + "." + fn.Name
 				c.DefineFunc(qualName, &FuncDecl{
-					Name:   qualName,
-					IsPub:  n.isPub,
-					Args:   fn.Args,
-					Return: fn.Return,
-					Body:   fn.Body,
-					p:      fn.p,
+					Name:     qualName,
+					IsPub:    n.isPub,
+					Args:     fn.Args,
+					Variadic: fn.Variadic,
+					Return:   fn.Return,
+					Body:     fn.Body,
+					p:        fn.p,
 				})
 				methods = append(methods, &fn)
 			}
@@ -5077,36 +5135,19 @@ func (n *Node) toASTTop(c *Context) AST {
 			if mn.t != n_fn {
 				ParseErrorF(mn, "Expected method definition in type block, got %v", mn.t)
 			}
-			var fn FuncDecl
-			fn.Name = mn.sval // bare method name
+			// Share function lowering so method parameters retain variadic flags.
+			fn := *mn.toASTTop(NewContext()).(*FuncDecl)
 			fn.IsPub = n.isPub
-			fn.p = mn.p
-			nargs := int(mn.ival)
-			margs := mn.args
-			for i := 0; i < nargs; i++ {
-				a := margs[0]
-				fn.Args = append(fn.Args, Binding{
-					Name:    a.sval,
-					Type:    mkTypename(a.args[0]),
-					IsConst: a.ival == 0,
-				})
-				margs = margs[1:]
-			}
-			fn.Return = mkTypename(margs[0])
-			body := margs[1]
-			if body.t != n_block {
-				ParseErrorF(body, "Expected a block for method body, got %v", body.t)
-			}
-			fn.Body = body.toASTTop(NewContext()).(*Block)
 			// Register method under qualified name so FuncDeclForCall can find it.
 			qualName := n.sval + "." + fn.Name
 			c.DefineFunc(qualName, &FuncDecl{
-				Name:   qualName,
-				IsPub:  n.isPub,
-				Args:   fn.Args,
-				Return: fn.Return,
-				Body:   fn.Body,
-				p:      fn.p,
+				Name:     qualName,
+				IsPub:    n.isPub,
+				Args:     fn.Args,
+				Variadic: fn.Variadic,
+				Return:   fn.Return,
+				Body:     fn.Body,
+				p:        fn.p,
 			})
 			methods = append(methods, &fn)
 		}
@@ -5205,35 +5246,18 @@ func (n *Node) toASTTop(c *Context) AST {
 			if mn.t != n_fn {
 				ParseErrorF(mn, "Expected method definition in values block, got %v", mn.t)
 			}
-			var fn FuncDecl
-			fn.Name = mn.sval
+			// Share function lowering so method parameters retain variadic flags.
+			fn := *mn.toASTTop(NewContext()).(*FuncDecl)
 			fn.IsPub = n.isPub
-			fn.p = mn.p
-			nargs := int(mn.ival)
-			margs := mn.args
-			for i := 0; i < nargs; i++ {
-				a := margs[0]
-				fn.Args = append(fn.Args, Binding{
-					Name:    a.sval,
-					Type:    mkTypename(a.args[0]),
-					IsConst: a.ival == 0,
-				})
-				margs = margs[1:]
-			}
-			fn.Return = mkTypename(margs[0])
-			body := margs[1]
-			if body.t != n_block {
-				ParseErrorF(body, "Expected a block for method body, got %v", body.t)
-			}
-			fn.Body = body.toASTTop(NewContext()).(*Block)
 			qualName := n.sval + "." + fn.Name
 			c.DefineFunc(qualName, &FuncDecl{
-				Name:   qualName,
-				IsPub:  n.isPub,
-				Args:   fn.Args,
-				Return: fn.Return,
-				Body:   fn.Body,
-				p:      fn.p,
+				Name:     qualName,
+				IsPub:    n.isPub,
+				Args:     fn.Args,
+				Variadic: fn.Variadic,
+				Return:   fn.Return,
+				Body:     fn.Body,
+				p:        fn.p,
 			})
 			methods = append(methods, &fn)
 		}

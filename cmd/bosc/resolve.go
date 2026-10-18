@@ -312,7 +312,7 @@ func stepSelector(c *Context, prev ResolvedObject, member string, dotExpr AST) R
 		for _, f := range decl.Fields {
 			if f.Name == member {
 				ft := fieldTypeForBase(t, f.Type)
-				if (ft.Indirection > 0 || c.IsInterfaceType(ft)) && ft.NilMask&1 != 0 {
+				if (ft.Indirection > 0 || c.IsInterfaceType(ft) || isNullableValues(c, ft)) && ft.NilMask&1 != 0 {
 					if path, ok := FlowPathForExpr(dotExpr); ok && c.NullFact(path) == NullKnownNonNull {
 						ft.NilMask &^= 1
 					}

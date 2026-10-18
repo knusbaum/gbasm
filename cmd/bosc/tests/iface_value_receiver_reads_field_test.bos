@@ -12,7 +12,7 @@ import "string"
 // the value passed by dispatch. Exercised via %v (Formatter), a named
 // interface, and a direct call.
 type point struct{ x i64 } {
-	format(self point, w io.writer) ?error {
+	format(self point, w io.writer) ?io.error {
 		_, err := fmt.printf(w, "point(%d)", self.x)
 		return err
 	}

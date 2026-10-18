@@ -1044,13 +1044,17 @@ fn make_box() owned box {
 }
 ```
 
-Borrowing an owned struct as a plain parameter strips field ownership inside the callee, just like borrowing any other owned value:
+Borrowing an owned struct as a plain by-value parameter strips field ownership inside the callee, just like borrowing any other owned value:
 
 ```
 fn inspect(b box) {
     use(b.x)       // b.x is i64 here, not owned i64
 }
 ```
+
+Pointer views separate access to field obligations from responsibility for the whole struct. A `*mut box` exposes `x` as `owned i64`, allowing the callee to consume and replace that field without taking ownership of the struct. A `*box` exposes a borrowed `i64` and cannot consume the field: consuming it is a write. An ownership qualifier on the pointee (`*owned box`) carries responsibility for the whole struct but does not grant mutation. It cannot hide live field obligations from raw-free checks.
+
+A mutable borrow must restore every consumed non-nullable owned field before any explicit return or fallthrough. Assigning to a live owned field is rejected; assigning a replacement after consumption moves its ownership into the field. Consumption facts follow tracked aliases and nested fields. Distinct backing-allocation origins let freeing an owned buffer invalidate outstanding borrowed views without invalidating the enclosing struct.
 
 `owned(expr)` remains an explicit assertion escape hatch: it promotes the expression to an owned type without proving that every owned field came from an owned source. This is useful for construction patterns that the compiler does not yet track precisely.
 
@@ -1881,7 +1885,7 @@ Selector resolution (`io_error.NOT_FOUND`, `errors.io_error.NOT_FOUND`, `pkg.Typ
 
 ### Runtime representation
 
-A values type is represented at runtime as its private tag — `i64` in v1, dense from 0 in declaration order. The tag itself is unreachable from user code: there is no operation that exposes the raw bits, and conversion to an integer always goes through a declared integer projection.
+A values type is represented at runtime as its private tag — `i64` in v1, dense from 0 in declaration order. For tag-only and projection-bearing types, `?V` uses the same one-word representation, reserving tag `-1` for `nil`; ordinary case tags remain `0..N-1`. The sentinel is independent of projection values, which may themselves contain `-1`. The tag itself is unreachable from user code: there is no operation that exposes the raw bits, and conversion to an integer always goes through a declared integer projection.
 
 Projection data lives in compiler-generated static tables, one per declared projection type, indexed by tag. For the `io_error` declaration above, codegen emits two table symbols (`__projection_io_error__0` for the `i64` projection, `__projection_io_error__1` for the `[]byte` projection) plus the method functions.
 
@@ -1903,7 +1907,7 @@ The cast path handles scalar and memory-backed projection element types uniforml
 
 ### Closed symbolic set
 
-Values types are closed: the only way to produce a values-typed value is to reference a declared case. Casting from any other type into a values type is rejected:
+Values types are closed: construction always selects a declared case. Unchecked casts from another type into a non-nullable values type are rejected:
 
 ```
 io_error(999)              // error: integer-to-values cast not allowed
@@ -1911,6 +1915,30 @@ io_error(some_other_v)     // error: cross-values-type cast not allowed
 ```
 
 The same rule blocks integer literals coercing into a values destination at file scope, in struct fields, in function arguments, in returns, and in array elements — every site where a `var x io_error := 999` shape could otherwise sneak through. Identity casts (`io_error(e)` where `e` is already `io_error`) are accepted as a no-op.
+
+### Checked reverse projections
+
+`?V(value)` reverses a declared projection and returns `?V`. A matching projected value produces its case; an unmapped value produces `nil` (internal tag `-1`). This is an explicit, compiler-generated conversion, not an implicit assignment coercion.
+
+```
+type status values (i64, []byte) {
+    MISSING: 404, "not found"
+    BUSY:    503, "busy"
+}
+
+s := ?status(404)
+if (s != nil) {
+    code := i64(s)             // 404: the check narrows ?status to status
+}
+text_case := ?status("busy")   // status.BUSY
+unknown := ?status(999)        // nil
+```
+
+The source type selects the projection. Untyped numeric literals adopt the sole compatible numeric projection; if several match, the caller must supply an explicit argument type. The selected projection must be injective: duplicate projected values reject reverse conversion, naming the conflicting cases for a local declaration. Forward projections with duplicates remain legal. This works across package boundaries and file-local import aliases; the producer exports a generated lookup function for each reversible projection, with no object-format extension.
+
+Reverse conversion supports integer, floating-point, boolean, and `[]byte` projections. Numbers use numeric equality (including equal positive and negative zero); byte strings use content equality, independent of backing pointer and capacity. NaN cannot be matched. Other projection types require an explicit mapping function: aggregate projections have no language-defined equality, and pointer/function identity is not a reverse-conversion contract. Lookup currently performs a linear search without allocating.
+
+Nullable tag-only and projection-bearing values can be stored, passed, returned, compared with `nil` or cases, and initialized with `nil`. Default initialization uses `nil`, including nested struct/array fields and `alloc`/`make` storage. An explicit `if (s != nil)` or `if (s == nil) ... else ...` narrows the tracked binding or field. Projection, conversion to a non-nullable value or interface, method calls, and variant switches require a non-null value. Postfix `s?` checks tag `-1` at runtime and yields `V`, trapping on nil. Nullable values require an explicit nil comparison for truth tests. Nullable payload-bearing variants and values conversions in static initializers are not supported.
 
 Equality is defined only between values of the same values type:
 
@@ -3256,6 +3284,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Boson source string and character literal escapes: `\n`, `\r`, `\t`, `\0`, `\\`, `\"`, `\'`, `\xHH`
 - Type-alias casts as file-scope static initializers (`var fd FD := FD(3)`, qualified form `io.FD(3)`)
 - Position tracking through a leading file-level doc comment preamble (errors point at the correct source line even when the file begins with comments)
+- Checked reverse projections (`?V(value)`) for injective numeric, boolean, and byte-string projections, with one-word nullable values types using tag `-1` for nil
 - `values` types (`type Name values { ... }`): closed symbolic case sets with compiler-private dense `i64` tags, scoped case access (`T.CASE`, `pkg.T.CASE`), declared static projections with explicit projection casts (`i64(e)`, `[]byte(e)`, struct projections, function-pointer projections), optional value-receiver methods, value-backed interface satisfaction without heap allocation, and cross-package use through a `.bo` `values` directive
 - Value-receiver methods (`name(e T)` rather than `name(e *T)`) on `i64`-sized type aliases and `values` types; recognized at call-site dispatch and accepted as the receiver shape for value-backed interface coercion
 - Shared selector resolver (`cmd/bosc/resolve.go`) classifying `Dot` chains into `ResolvedRuntimeValue` / `ResolvedPackage` / `ResolvedType` / `ResolvedValuesType` / `ResolvedValuesCase` / `ResolvedStructField` / `ResolvedFunction`; `Funcall.Callee` carries the resolved chain, so qualified calls, methods, function pointers, and values cases reach codegen through the same path

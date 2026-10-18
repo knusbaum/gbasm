@@ -64,7 +64,7 @@ checks belong in those code paths, not in a phase that doesn't exist.
 
 | File | Purpose |
 |------|---------|
-| `main.go` | Driver. Reads `-importcfg=<file>`, handles `-listimports`, drives one file at a time through lex/parse/AST/compile. |
+| `main.go`, `package.go` | Driver. Reads `-importcfg=<file>`, handles `-listimports`, registers declarations across all files in a package before compiling their bodies, and preserves file-local imports and aliases. |
 | `lexer.go` | Tokenizer. Performs Go-style automatic `;` insertion (DESIGN.md §Statements). Records `position{fname,lineoff,linecharoff}` on every token. |
 | `parser.go` | Recursive-descent. `parseAddSub` / `parseUnary` / `parseSubexpr` / `parsePostfix` for expression precedence. `parsePostfix` handles `.member`, `[i]`, `[lo:hi]`, `(args)`, `{fields}` uniformly. |
 | `ast.go` | AST node definitions, `ASTType` (with `MutMask`/`OwnedMask` bitfields, plus a `p` position for diagnostics), `Context` (name resolution + flow facts + import state, including interface declarations and per-type method tables), `ToAST` for converting parse nodes to typed AST. |
@@ -384,6 +384,15 @@ aliases do not block re-init. If you're adding a new pointer source
 or alias kind, plumb it through `AliasesOf` or this check goes
 silently unsound.
 
+#### Nullable values and reverse projections
+
+Tag-only and projection-bearing `values` types use `-1` for `nil` in `?V`;
+zero is the first valid case. Keep this separate from pointer/interface null
+representations. `reverse_projection.go` owns lookup generation, injectivity
+checks, and nullable default initialization, including nested fields and
+allocated storage. `?V(value)` calls the producer's generated helper; generated
+calls carry canonical resolution so file-local import aliases do not hide it.
+
 #### Bare struct literals are context-typed
 
 `{ field: val }` with no leading type name only parses when the
@@ -406,6 +415,13 @@ Cross-package calls in `.bs` use the explicit form: `call other.func`.
 For bosc, the compiler always emits fully-qualified call symbols
 itself; the auto-qualification path in bas is mostly there for
 hand-written runtime code.
+
+Builtin dispatch must check the callee's syntax with `isBareCall`, not
+whether `PkgName()` is empty. Nested selectors (`fmt.StringBuilder.new()`)
+and expression receivers (`factory().new()`) also have no flat package
+qualifier. `directCallee` resolves type namespaces before instance-method
+dispatch; type checking, codegen, and return-alias inference use that same
+lookup so a namespaced method never becomes an allocation intrinsic.
 
 #### `mov [mem] imm` encodes narrow
 

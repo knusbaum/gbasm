@@ -2,6 +2,7 @@ package main
 
 import (
 	"io"
+	"strings"
 
 	"github.com/knusbaum/gbasm/cmd/bosc/flow"
 )
@@ -363,6 +364,16 @@ func returnExprParamAliases(c *Context, f *FuncDecl, expr AST, slotType ASTType)
 				CompileErrorF(expr, "Borrowed slice escapes through return")
 			}
 			idx := paramIndexOf(f, name)
+			// An owned field has a resource origin distinct from the struct
+			// (so replacing it invalidates its views). A returned borrow still
+			// depends on the parameter that supplies that field.
+			if idx < 0 {
+				if root, _, field := strings.Cut(name, "."); field {
+					if i := paramIndexOf(f, root); i >= 0 {
+						name, idx = root, i
+					}
+				}
+			}
 			if idx < 0 {
 				// Not a param (global/heap/intermediate): records nothing.
 				continue

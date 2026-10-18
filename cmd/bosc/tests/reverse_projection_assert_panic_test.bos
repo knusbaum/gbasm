@@ -1,0 +1,7 @@
+package main
+type code values (i64) { ONE: 1 }
+fn require(n i64) code {
+	x := ?code(n)
+	return x?
+}
+fn main() { _ := require(2) }

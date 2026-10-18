@@ -1,0 +1,21 @@
+package main
+import "string"
+
+type Buffer struct { buf owned []mut byte }
+
+fn grow(b *mut Buffer) {
+ next := make([]mut byte, 2)
+ next[0] = b.buf[0]
+ free(b.buf)
+ b.buf = next
+}
+
+fn main() {
+ b owned *mut owned Buffer := new(Buffer{buf: make([]mut byte, 1)})
+ b.buf[0] = 42
+ grow(b)
+ string.puti(i64(b.buf[0]))
+ string.putc(10)
+ free(b.buf)
+ free(b)
+}

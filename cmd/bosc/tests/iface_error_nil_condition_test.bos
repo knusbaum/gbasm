@@ -3,7 +3,7 @@ package main
 import "fmt"
 import "io"
 
-fn maybe_error(fail bool) ?error {
+fn maybe_error(fail bool) ?io.error {
  if (fail) { return io.io_err.ENOSPC }
  return nil
 }
@@ -17,8 +17,7 @@ fn main() {
  }
  failure := maybe_error(true)
  if (failure != nil) {
-  message := failure.message()
-  fmt.print("error: %s\n", &message)
+  fmt.print("error: %v\n", failure)
  } else {
   fmt.print("missing error\n")
  }

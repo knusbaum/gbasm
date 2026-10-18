@@ -165,6 +165,9 @@ func main() {
 		fmt.Printf("Compiling %s\n", name)
 	}
 	if err := compilePackageFiles(&assembly, flag.Args(), imports); err != nil {
+		if stage, ok := err.(*packageCompileError); ok {
+			fatalCtx(stage.phase+": %v", stage.err)
+		}
 		fatalCtx("Fatal: %v", err)
 	}
 	name := *out

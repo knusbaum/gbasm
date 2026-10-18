@@ -317,7 +317,7 @@ func recordStructCallResultAtPath(c *Context, destPath string, destType ASTType,
 func resolveCalleeForAlias(ic *Context, call *Funcall) (*FuncDecl, []AST) {
 	pkg, fname := call.PkgAndName()
 	// Builtins and casts carry no alias set.
-	if pkg == "" && (fname == "new" || fname == "free" || fname == "len" || fname == "cap" || fname == "append" || fname == "pop") {
+	if call.isBareCall("new") || call.isBareCall("free") || call.isBareCall("len") || call.isBareCall("cap") || call.isBareCall("append") || call.isBareCall("pop") {
 		return nil, nil
 	}
 	// A type-cast Funcall (T(expr)) carries no alias set. The call form
@@ -327,6 +327,9 @@ func resolveCalleeForAlias(ic *Context, call *Funcall) (*FuncDecl, []AST) {
 		if _, _, hasFn := ic.FuncDeclForCall(pkg, fname); !hasFn {
 			return nil, nil
 		}
+	}
+	if decl, _, ok := call.directCallee(ic); ok {
+		return decl, call.Args
 	}
 	// Expression-receiver method call: (expr).method(args).
 	if recv := call.ReceiverExpr(); recv != nil {
@@ -341,10 +344,6 @@ func resolveCalleeForAlias(ic *Context, call *Funcall) (*FuncDecl, []AST) {
 			return method, args
 		}
 		return nil, nil
-	}
-	decl, _, ok := ic.FuncDeclForCall(pkg, fname)
-	if ok {
-		return decl, call.Args
 	}
 	// v.method(args) where v is a variable with a concrete method.
 	if pkg != "" {

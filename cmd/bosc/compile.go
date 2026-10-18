@@ -804,7 +804,7 @@ func nullablePointerPathForIf(c *Context, cond AST) (FlowPath, ASTType, bool, bo
 	}
 	// A nullable pointer (`*?`) or a nullable interface (`?T`, Indirection 0)
 	// can be narrowed by an `if (x != nil)` / `if (x == nil)` test.
-	if t.Indirection == 0 && !c.IsInterfaceType(t) {
+	if t.Indirection == 0 && !c.IsInterfaceType(t) && !isNullableValues(c, t) {
 		return FlowPath{}, ASTType{}, false, false
 	}
 	return path, t, nonNullOnThen, true
@@ -882,13 +882,16 @@ func pointeeType(t ASTType) ASTType {
 }
 
 func checkOwnedFieldsConsumedBeforeRawFree(c *Context, a AST, path FlowPath, ptrType ASTType) {
+	if !parentOwnsFields(ptrType) {
+		return
+	}
 	pointee := pointeeType(ptrType)
-	def, ok := c.StructDeclForName(pointee.Name)
+	def, ok := structDeclForType(c, pointee)
 	if !ok {
 		return
 	}
 	for _, field := range def.Fields {
-		fieldType := fieldTypeForBase(pointee, field.Type)
+		fieldType := field.Type
 		if !fieldType.HasOwned() {
 			continue
 		}
@@ -957,7 +960,16 @@ func checkOwnedSourceAvailable(c *Context, val AST) {
 	case *Dot:
 		baseType := v.Val.ASTType(c)
 		fieldType := v.ASTType(c)
-		if parentOwnsFields(baseType) && fieldType.HasOwned() {
+		if canAccessFieldObligations(baseType) && fieldType.HasOwned() {
+			path, tracked := FlowPathForExpr(val)
+			if !tracked {
+				CompileErrorF(val, "Cannot consume owned field %s through an untracked expression; bind the receiver first", v.Member)
+			}
+			if fieldType.Indirection == 0 {
+				if field, bad := inconsistentOwnedField(c, path, fieldType); bad {
+					CompileErrorF(val, "Cannot move %q while owned field %q is moved out", path.Key(), path.Key()+"."+field)
+				}
+			}
 			if fieldType.OwnedMask&1 == 0 {
 				// The field's *outermost* level is not owned (e.g. a
 				// `*owned i64` field: the pointee is owned, the pointer is
@@ -975,8 +987,11 @@ func checkOwnedSourceAvailable(c *Context, val AST) {
 			// partially-consume an aliased aggregate. (Nullable fields are
 			// exempt: the alias would read nil and must narrow.)
 			if fieldType.NilMask&1 == 0 {
-				if base, ok := v.Val.(*Symbol); ok && c.HasLiveAlias(base.Name) {
-					CompileErrorF(val, "Cannot move owned field %s out of \"%s\" while it is aliased; the alias could read the moved-out field", v.Member, base.Name)
+				if path, ok := FlowPathForExpr(val); ok {
+					root := c.ownedFieldPath(path).Root
+					if c.HasLiveAlias(root) {
+						CompileErrorF(val, "Cannot move owned field %s out of \"%s\" while it is aliased; the alias could read the moved-out field", v.Member, root)
+					}
 				}
 			}
 			// A non-null owned field (pointer, scalar, or struct value) MAY be
@@ -1001,25 +1016,22 @@ func checkOwnedSourceAvailable(c *Context, val AST) {
 // consumed *nullable* field does not count — nil is a safe, representable
 // state that keeps the aggregate passable.
 func inconsistentOwnedField(c *Context, path FlowPath, t ASTType) (string, bool) {
-	pointee := t
-	if t.Indirection > 0 {
-		pointee = pointeeType(t)
-	}
-	def, ok := structDeclForType(c, pointee)
-	if !ok {
+	if _, ok := structDeclForType(c, t); !ok {
 		return "", false
 	}
-	for _, field := range def.Fields {
-		fieldType := fieldTypeForBase(pointee, field.Type)
-		// A moved-out non-nullable owned field makes the aggregate
-		// inconsistent, whether the field is a pointer or a value (scalar or
-		// struct). Nullable fields are exempt: nil is a representable
-		// placeholder that keeps the aggregate passable.
-		if !fieldType.HasOwned() || fieldType.NilMask&1 != 0 {
-			continue
+	path = c.ownedFieldPath(path)
+	prefix := path.Key() + "."
+	var consumed []string
+	for p, moved := range c.OwnedFieldFactsSnapshot() {
+		if moved && strings.HasPrefix(p.Key(), prefix) {
+			consumed = append(consumed, strings.TrimPrefix(p.Key(), prefix))
 		}
-		if c.OwnedFieldConsumed(path.Append(field.Name)) {
-			return field.Name, true
+	}
+	sort.Strings(consumed)
+	for _, fields := range consumed {
+		ft, ok := walkLeafType(c, t, fields)
+		if ok && ft.HasOwned() && ft.NilMask&1 == 0 {
+			return fields, true
 		}
 	}
 	return "", false
@@ -1375,6 +1387,14 @@ func readProvenancePath(c *Context, a AST) flow.PointerExpr {
 		return existing
 	}
 	if rootT.Indirection > 0 {
+		// Materialize a distinct origin for a declared owned field on first
+		// access, including through a read-only view. This works for nested
+		// pointer fields without eagerly expanding recursive struct types.
+		if ft, ok := walkLeafType(c, rootT, path.Fields); ok && ft.HasOwned() && (ft.Indirection > 0 || ft.IsSlice()) {
+			ptr := c.PointerFlow().NewOwnedOrigin(flow.Binding(lookupKey))
+			c.PointerFlow().SetPathPointer(lookupKey, ptr)
+			return ptr
+		}
 		return c.PointerFlow().UnknownPointer()
 	}
 	// Reading the VALUE of an owned member copies storage that belongs to the
@@ -2153,9 +2173,8 @@ func pointerExprForASTRaw(c *Context, a AST, assignedName string) flow.PointerEx
 		// the source's origin and validity, not be treated as an opaque new
 		// pointer. Recurse into the cast argument so escape checks, deref
 		// validity, and alias bookkeeping see the source's PointerExpr.
-		pkg, name := ast.PkgAndName()
-		if pkg == "" && len(ast.Args) == 1 {
-			if _, ok := c.TypeByName(name); ok {
+		if symbol, bare := ast.Callee.(*Symbol); bare && len(ast.Args) == 1 {
+			if _, ok := c.TypeByName(symbol.Name); ok {
 				return pointerExprForAST(c, ast.Args[0], assignedName)
 			}
 		}
@@ -2522,6 +2541,21 @@ func checkOwnedTargetNotDropped(c *Context, a AST, targetIsSymbol bool, targetSy
 	if targetIsSymbol && c.OwnedObligationLive(targetSym.Name, dstt) {
 		CompileErrorF(a, "Cannot assign to owned binding \"%s\" before consuming its current value", targetSym.Name)
 	}
+	if assignment, ok := a.(*Assignment); ok && !targetIsSymbol && dstt.HasOwned() {
+		if dot, ok := assignment.Target.(*Dot); ok {
+			if canAccessFieldObligations(dot.Val.ASTType(c)) {
+				path, tracked := FlowPathForExpr(dot)
+				if !tracked || !c.OwnedFieldConsumed(path) {
+					name := dot.Member
+					if tracked {
+						name = path.Key()
+					}
+					CompileErrorF(a, "Cannot assign to owned field %q before consuming its current value", name)
+				}
+				c.SetOwnedFieldConsumed(path, false)
+			}
+		}
+	}
 }
 
 // moveOwnedSourceForLocalOwner performs the owned-source move at a site that
@@ -2600,7 +2634,7 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 	case *Dot:
 		baseType := v.Val.ASTType(c)
 		fieldType := v.ASTType(c)
-		if parentOwnsFields(baseType) && fieldType.HasOwned() {
+		if canAccessFieldObligations(baseType) && fieldType.HasOwned() {
 			checkOwnedSourceAvailable(c, val)
 			// Scrub the slot on move-out as defense-in-depth. Only register-
 			// sized fields get the scalar zero; a memory-backed struct value
@@ -2742,6 +2776,13 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 			if !ft.ZeroInitializable(c) {
 				CompileErrorF(a, "Missing non-zero-initializable field %v.%s in struct literal", lit.Type, field.Name)
 			}
+			if len(nullableValuesOffsets(c, ft, 0)) != 0 {
+				off, _ := def.ByteOffset(c, field.Name)
+				addr := newSpot(of, c, c.Temp(), numASTType())
+				fmt.Fprintf(of, "\tlea %s [%s+%d]\n", addr.ref, dest.ref, off)
+				emitNullableValuesDefaults(of, c, ft, addr.ref)
+				addr.free(of)
+			}
 		}
 	}
 
@@ -2775,6 +2816,7 @@ func compileAlloc(of io.Writer, c *Context, ast *Alloc, dest spot) spot {
 	move(of, c, dest, rax)
 	rax.t = regtype
 	rax.free(of)
+	emitNullableValuesDefaults(of, c, t, dest.ref)
 	return dest
 }
 
@@ -2834,6 +2876,17 @@ func compileMake(of io.Writer, c *Context, ast *Make, dest spot) spot {
 	rax := regSpot(of, "rax")
 	fmt.Fprintf(of, "\tmov qword%s %s\n", sliceHdrPtr(dest.ref), rax.ref)
 	rax.free(of)
+	if len(nullableValuesOffsets(c, elemT, 0)) != 0 {
+		ptr := newSpot(of, c, c.Temp(), numASTType())
+		count := newSpot(of, c, c.Temp(), numASTType())
+		fmt.Fprintf(of, "\tmov %s %s\n\tmov %s %s\n", ptr.ref, sliceHdrPtr(dest.ref), count.ref, sliceHdrCap(dest.ref))
+		loop, done := c.Label("make_nullable"), c.Label("make_nullable_done")
+		fmt.Fprintf(of, "\tlabel %s\n\tcmp %s 0\n\tje %s\n", loop, count.ref, done)
+		emitNullableValuesDefaults(of, c, elemT, ptr.ref)
+		fmt.Fprintf(of, "\tadd %s %d\n\tdec %s\n\tjmp %s\n\tlabel %s\n", ptr.ref, elemSize, count.ref, loop, done)
+		ptr.free(of)
+		count.free(of)
+	}
 	return dest
 }
 
@@ -2996,8 +3049,7 @@ func newStructLiteralArg(ast AST) *StructLiteral {
 	if !ok {
 		return nil
 	}
-	pkg, name := fc.PkgAndName()
-	if pkg != "" || name != "new" || len(fc.Args) != 1 {
+	if !fc.isBareCall("new") || len(fc.Args) != 1 {
 		return nil
 	}
 	sl, _ := fc.Args[0].(*StructLiteral)
@@ -3005,8 +3057,7 @@ func newStructLiteralArg(ast AST) *StructLiteral {
 }
 
 func newBuiltinTypeForDest(c *Context, ast *Funcall, dst ASTType) (ASTType, bool) {
-	pkg, name := ast.PkgAndName()
-	if pkg != "" || name != "new" || len(ast.Args) != 1 || dst.Indirection == 0 {
+	if !ast.isBareCall("new") || len(ast.Args) != 1 || dst.Indirection == 0 {
 		return ASTType{}, false
 	}
 	exprType := ast.Args[0].ASTType(c)
@@ -3134,7 +3185,7 @@ func compileFreeBuiltin(of io.Writer, c *Context, a AST, ast *Funcall) spot {
 		pointee := pointeeType(argt)
 		if def, ok := structDeclForType(c, pointee); ok {
 			for _, field := range def.Fields {
-				if fieldTypeForBase(pointee, field.Type).HasOwned() {
+				if parentOwnsFields(argt) && field.Type.HasOwned() {
 					CompileErrorF(arg, "free(%s) would leak owned fields", argt)
 				}
 			}
@@ -3150,6 +3201,9 @@ func compileFreeBuiltin(of io.Writer, c *Context, a AST, ast *Funcall) spot {
 	fmt.Fprintf(of, "\tcall _heap.free\n")
 	fmt.Fprintf(of, "\trelease rdi\n")
 	rdi.free(of)
+	if path, ok := FlowPathForExpr(arg); ok {
+		retireFreedFieldFacts(c, path, pointeeType(argt))
+	}
 	markMovedIfOwnedSource(of, c, argt, arg)
 	{
 		ptrExpr := pointerExprForAST(c, arg, "")
@@ -3535,6 +3589,14 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 		}
 		c.BindVar(ast, a.Name, a.Type, a.IsConst)
 		c.recordUsedCandidate(a.Name, a.p)
+		if a.Type.Indirection > 0 {
+			if _, ok := structDeclForType(c, a.Type); ok && canWriteImmediatePointee(a.Type) && !parentOwnsFields(a.Type) {
+				if c.borrowedAggregateParams == nil {
+					c.borrowedAggregateParams = make(map[string]bool)
+				}
+				c.borrowedAggregateParams[a.Name] = true
+			}
+		}
 		if a.Type.Indirection > 0 && !a.Type.HasOwned() {
 			c.SetBorrowedBinding(a.Name, true)
 		}
@@ -3590,6 +3652,9 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 		fmt.Fprintf(of, "\n")
 	}
 	compileTop(of, c, ast.Body, nullspot)
+	if fallsThrough(ast.Body) {
+		checkBorrowedFieldsRestored(c, ast)
+	}
 	c.reportUnused() // parameters live in the function context, not the body block
 	for _, name := range c.UnconsumedOwned() {
 		errUnconsumedOwned(c, ast, name)
@@ -3707,6 +3772,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	switch ast := a.(type) {
 	case *PreboundSpot:
 		return ast.S
+	case *reverseProjectionSearch:
+		return compileReverseProjectionSearch(of, c, ast, dest)
 	case *TypeAssert:
 		return compileTypeAssert(of, c, ast, dest)
 	case *TypeSwitch:
@@ -3844,6 +3911,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			for _, ag := range c.DrainAnonGlobals() {
 				c.MarkAddress(ag.Name)
 				emitVarBlock(of, ag.Name, ag.Type, ag.Bytes, ag.Relocs, false)
+			}
+		}
+		for i := range ast.Projections {
+			if reverseProjectionProblem(c, ast, i) == "" {
+				helper := reverseProjectionDecl(ast, i)
+				if _, exists := c.FuncDeclForName(helper.Name); !exists {
+					c.DefineFunc(helper.Name, helper)
+				}
+				compileTop(of, c, helper, nullspot)
 			}
 		}
 		// Value-receiver methods land alongside the projection tables,
@@ -3990,6 +4066,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			c.PointerFlow().AssignPointer(flow.Binding(ast.Name), pexpr)
 		}
 		s := newSpot(of, c, ast.Name, ast.Type)
+		if ast.Init == nil {
+			if isNullableValues(c, ast.Type) {
+				fmt.Fprintf(of, "\tmov %s -1\n", s.ref)
+			} else if s.nameIsAddress {
+				emitNullableValuesDefaults(of, c, ast.Type, s.ref)
+			}
+		}
 		if ast.Init != nil {
 			// (The bare struct literal's type was threaded above, before the
 			// multi-return ASTType query.)
@@ -4118,7 +4201,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if ownedValueDest {
 				if dot, ok := srcExpr.(*Dot); ok {
 					if baseSym, ok := dot.Val.(*Symbol); ok {
-						if bt, isVar := c.TypeForVar(baseSym.Name); isVar && parentOwnsFields(bt) && dot.ASTType(c).HasOwned() {
+						if bt, isVar := c.TypeForVar(baseSym.Name); isVar && canAccessFieldObligations(bt) && dot.ASTType(c).HasOwned() {
 							srcIsOwnedFieldMove = true
 						}
 					}
@@ -4441,13 +4524,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return compileTypeConstant(of, c, ast, int64(ast.Type.Alignment(c)), dest)
 	case *Funcall:
 		pkg, fname := ast.PkgAndName()
-		if pkg == "" && fname == "new" {
+		if ast.isBareCall("new") {
 			return compileNewBuiltin(of, c, a, ast, dest)
 		}
-		if pkg == "" && fname == "free" {
+		if ast.isBareCall("free") {
 			return compileFreeBuiltin(of, c, a, ast)
 		}
-		if pkg == "" && fname == "len" {
+		if ast.isBareCall("len") {
 			if len(ast.Args) != 1 {
 				CompileErrorF(a, "len() requires exactly one argument")
 			}
@@ -4466,7 +4549,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			v.free(of)
 			return dest
 		}
-		if pkg == "" && fname == "cap" {
+		if ast.isBareCall("cap") {
 			if len(ast.Args) != 1 {
 				CompileErrorF(a, "cap() requires exactly one argument")
 			}
@@ -4487,10 +4570,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			v.free(of)
 			return dest
 		}
-		if pkg == "" && fname == "append" {
+		if ast.isBareCall("append") {
 			return compileAppend(of, c, a, ast, dest)
 		}
-		if pkg == "" && fname == "pop" {
+		if ast.isBareCall("pop") {
 			return compilePop(of, c, a, ast, dest)
 		}
 		// Cast expression: type name used as a single-argument function.
@@ -4521,7 +4604,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// (expr).method(args) — receiver is an arbitrary expression.
 		// Evaluate it, look up the method by type, and delegate to the
 		// concrete method call path.
-		if recv := ast.ReceiverExpr(); recv != nil {
+		decl, resolvedPkg, ok := ast.directCallee(c)
+		if recv := ast.ReceiverExpr(); !ok && recv != nil {
 			rt := recv.ASTType(c)
 			typeName := rt.Name
 			if c.IsInterfaceType(rt.StripOwned()) {
@@ -4537,7 +4621,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			CompileErrorF(a, "no method %q on type %s", fname, typeName)
 		}
 
-		decl, resolvedPkg, ok := c.FuncDeclForCall(pkg, fname)
 		if !ok {
 			// Fall back to an indirect call through a function-pointer
 			// value. Two shapes:
@@ -5278,33 +5361,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				CompileErrorF(a, "Cannot overwrite owned storage through a non-trivial pointer expression; assign through a named pointer or consume the obligation first")
 			}
 		}
-		if dot, ok := ast.Target.(*Dot); ok {
-			// Route through the selector so a package root (`pkg.x = …`)
-			// doesn't trip Symbol.ASTType. Only value-typed parents can
-			// be an owned aggregate; everything else (packages, types,
-			// values cases) skips the check.
-			parent := ResolveSelector(c, dot.Val)
-			if parent.Kind == ResolvedRuntimeValue || parent.Kind == ResolvedStructField {
-				if parentOwnsFields(parent.Type) && dstt.HasOwned() {
-					// Assigning to an owned field is legal only to
-					// re-initialize one whose previous value was already
-					// moved out; assigning to a live field would drop its
-					// obligation (a leak). Mirrors the owned-binding rule.
-					path, hasPath := FlowPathForExpr(dot)
-					if hasPath && c.OwnedFieldConsumed(path) {
-						// Re-init: the slot was zeroed on the prior move; the
-						// store below re-establishes it. Field is live again.
-						c.SetOwnedFieldConsumed(path, false)
-					} else {
-						target := dot.Member
-						if hasPath {
-							target = path.Key()
-						}
-						CompileErrorF(a, "Cannot assign to owned field %q before consuming its current value", target)
-					}
-				}
-			}
-		}
 		if sl, ok := ast.Val.(*StructLiteral); ok {
 			fillAnonymousLiteralIfNeeded(sl, dstt)
 		}
@@ -5714,6 +5770,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if !retType.Same(voidASTType()) {
 				CompileErrorF(a, "bare return in non-void function (return type is %s)", retType)
 			}
+			checkBorrowedFieldsRestored(c, a)
 			for _, name := range c.UnconsumedOwnedVisible() {
 				errUnconsumedOwned(c, a, name)
 			}
@@ -5865,6 +5922,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if retType.HasOwned() {
 				markMovedIfOwnedSource(of, c, retType, ast.Val)
 			}
+			checkBorrowedFieldsRestored(c, a)
 			for _, name := range c.UnconsumedOwnedVisible() {
 				errUnconsumedOwned(c, a, name)
 			}
@@ -5879,6 +5937,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if retType.HasOwned() {
 				markMovedIfOwnedSource(of, c, retType, ast.Val)
 			}
+			checkBorrowedFieldsRestored(c, a)
 			for _, name := range c.UnconsumedOwnedVisible() {
 				errUnconsumedOwned(c, a, name)
 			}
@@ -5937,6 +5996,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if retType.HasOwned() {
 			markMovedIfOwnedSource(of, c, retType, ast.Val)
 		}
+		checkBorrowedFieldsRestored(c, a)
 		for _, name := range c.UnconsumedOwnedVisible() {
 			errUnconsumedOwned(c, a, name)
 		}
@@ -6005,6 +6065,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		move(of, c, dest, s)
 		return dest
 	case *NonNullAssert:
+		if dest.empty() && isNullableValues(c, ast.Val.ASTType(c)) {
+			dest = newSpot(of, c, c.Temp(), ast.Val.ASTType(c))
+		}
 		s := compileTop(of, c, ast.Val, dest)
 		knownNonNull := false
 		if path, ok := FlowPathForExpr(ast.Val); ok && c.NullFact(path) == NullKnownNonNull {
@@ -6012,7 +6075,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		if !knownNonNull {
 			l := c.Label("nonnull")
-			fmt.Fprintf(of, "\tcmp %s 0\n", s.ref)
+			fmt.Fprintf(of, "\tcmp %s %d\n", s.ref, nilRepresentation(c, ast.Val.ASTType(c)))
 			fmt.Fprintf(of, "\tjne %s\n", l)
 			fmt.Fprintf(of, "\tcall _init.nil_assert\n")
 			fmt.Fprintf(of, "\tlabel %s\n", l)
@@ -6040,6 +6103,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if ast.Val == nil {
 			if dest.empty() {
 				CompileErrorF(a, "nil requires pointer context")
+			}
+			if isNullableValues(c, dest.t) {
+				fmt.Fprintf(of, "\tmov %s -1\n", dest.ref)
+				return dest
 			}
 			if c.IsInterfaceType(dest.t) {
 				// Nullable interface: nil is the null value — a zeroed 16-byte
@@ -6781,6 +6848,9 @@ func projectionSymbolName(typeName string, projIndex int) string {
 // 16-byte slice-header element, for example) needs an explicit
 // multiply.
 func compileProjectionCast(of io.Writer, c *Context, src AST, srcType ASTType, projIdx int, projType ASTType, dest spot) spot {
+	if srcType.NilMask&1 != 0 {
+		CompileErrorF(src, "Cannot project nullable values type %s; check for nil first", srcType)
+	}
 	// Cross-package values: srcType.Name is "pkg.typename" (the
 	// importer qualified it during Context.Import). The producer
 	// emitted the projection table under the unqualified key
@@ -6793,7 +6863,7 @@ func compileProjectionCast(of io.Writer, c *Context, src AST, srcType ASTType, p
 	if pkg != "" {
 		symName = pkg + "." + symName
 	}
-	tagSpot := compileTop(of, c, src, nullspot)
+	tagSpot := compileTop(of, c, src, newSpot(of, c, c.Temp(), srcType))
 	base := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
 	fmt.Fprintf(of, "\tlea %s %s\n", base.ref, symName)
 	elemSize := projType.Size(c)
@@ -6875,17 +6945,23 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 	}
 
 	srcType := src.ASTType(c)
+	if destType.NilMask&1 != 0 && destType.Indirection == 0 && !isNullableValues(c, destType) && !c.IsInterfaceType(destType) {
+		CompileErrorF(src, "Checked conversion requires a values type, got %s", destType)
+	}
 
-	// Values types are closed symbolic sets (proposal §215–222): the only
-	// way to land a values-typed value is through a declared case. Reject
-	// any cast that targets a values type from a source that isn't the
-	// same values type — including integer literals, integer-typed
-	// runtime values, and other values types.
-	if _, dstIsValues := c.ValuesDeclForName(destType.Name); dstIsValues {
-		if _, srcIsValues := c.ValuesDeclForName(srcType.Name); srcIsValues && srcType.Name == destType.Name {
+	// Unchecked conversions cannot manufacture case tags. A checked nullable
+	// destination instead selects a declared case through a reverse projection.
+	if vd, dstIsValues := c.ValuesDeclForName(destType.Name); dstIsValues && destType.Indirection == 0 {
+		if _, srcIsValues := c.ValuesDeclForName(srcType.Name); srcIsValues && srcType.Indirection == 0 && srcType.Name == destType.Name {
+			if !destType.NilCompatible(srcType) {
+				CompileErrorF(src, "Cannot cast %s to %s; check for nil first", srcType, destType)
+			}
 			// Identity cast: compile straight into dest so we don't end
 			// up with an un-forgetted temp from compileTop(..., nullspot).
 			return compileTop(of, c, src, dest)
+		}
+		if destType.NilMask&1 != 0 {
+			return compileReverseProjectionCast(of, c, src, vd, destType, dest)
 		}
 		CompileErrorF(src, "Cannot cast %s to %s: values cases must be constructed from declared cases", srcType, destType)
 	}
@@ -6895,7 +6971,7 @@ func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot)
 	// from the corresponding static table (emitted at values-decl
 	// compile time). Anything else is rejected with the
 	// no-such-projection diagnostic.
-	if vd, srcIsValues := c.ValuesDeclForName(srcType.Name); srcIsValues && srcType.Name != destType.Name {
+	if vd, srcIsValues := c.ValuesDeclForName(srcType.Name); srcIsValues && srcType.Indirection == 0 && srcType.Name != destType.Name {
 		projIdx := -1
 		for i, pt := range vd.Projections {
 			if pt.Same(destType) {
@@ -7215,6 +7291,9 @@ func checkValuesComparisonCompat(c *Context, o *Op2, isOrdering bool) {
 	if fIsValues && sIsValues && ft.Name == st.Name {
 		return
 	}
+	if (isNullableValues(c, ft) && litIsNil(o.Second)) || (isNullableValues(c, st) && litIsNil(o.First)) {
+		return
+	}
 	CompileErrorF(o.First, "Cannot compare values of types %s and %s", ft, st)
 }
 
@@ -7510,6 +7589,26 @@ func floatCompareOperandType(c *Context, o *Op2) (ASTType, bool) {
 }
 
 func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
+	if (o.Type == n_deq || o.Type == n_neq) && (litIsNil(o.First) || litIsNil(o.Second)) {
+		val := o.First
+		if litIsNil(val) {
+			val = o.Second
+		}
+		if isNullableValues(c, val.ASTType(c)) {
+			s := compileTop(of, c, val, newSpot(of, c, c.Temp(), val.ASTType(c)))
+			if dest.empty() {
+				dest = newSpot(of, c, c.Temp(), boolASTType())
+			}
+			fmt.Fprintf(of, "\tcmp %s -1\n", s.ref)
+			if o.Type == n_deq {
+				fmt.Fprintf(of, "\tsete %s\n", dest.ref)
+			} else {
+				fmt.Fprintf(of, "\tsetne %s\n", dest.ref)
+			}
+			s.free(of)
+			return dest
+		}
+	}
 	if o.Type == n_booland || o.Type == n_boolor {
 		o.ASTType(c)
 	}
@@ -8858,6 +8957,9 @@ func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch, dest spo
 	// into the one typed dest enforces that they agree. A statement switch
 	// passes nullspot down (block bodies ignore it).
 	scrutType := ast.Scrutinee.ASTType(c)
+	if isNullableValues(c, scrutType) {
+		CompileErrorF(ast.Scrutinee, "Cannot switch on nullable values type %s; check for nil first", scrutType)
+	}
 	vd, ok := c.ValuesDeclForName(scrutType.Name)
 	if !ok {
 		CompileErrorF(ast.Scrutinee, "switch scrutinee has type %s, which is not a values type", scrutType)
@@ -9201,6 +9303,9 @@ func interfaceVtableSymbol(c *Context, errNode AST, dstt, srct ASTType) (vtableN
 }
 
 func emitInterfaceFatPtr(of io.Writer, c *Context, errNode AST, dstt, srct ASTType, valAST AST, destRef, destBinding string) {
+	if isNullableValues(c, srct) {
+		CompileErrorF(errNode, "Cannot convert nullable values type %s to an interface; check for nil first", srct)
+	}
 	// Interface → interface widening rebuilds the vtable at runtime from the
 	// source's concrete typedesc (it has no static __vtable_T__I); delegate.
 	if c.IsInterfaceType(srct) {

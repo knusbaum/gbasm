@@ -9,6 +9,8 @@ type box struct {
 	child owned ?*owned mut leaf
 }
 
+// A mutable borrowed view exposes child's ownership; overwriting it must
+// discharge its current obligation even when the pointee alias is unknown.
 var saved ?*mut box
 
 fn destroy(b owned *owned mut box) {

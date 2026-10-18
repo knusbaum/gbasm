@@ -546,6 +546,7 @@ func (c *Context) SetNullFact(path FlowPath, state NullState) {
 }
 
 func (c *Context) SetOwnedFieldConsumed(path FlowPath, consumed bool) {
+	path = c.ownedFieldPath(path)
 	for ctx := c; ctx != nil; ctx = ctx.parent {
 		if _, ok := ctx.bindings[path.Root]; ok {
 			key := path.Key()
@@ -560,6 +561,7 @@ func (c *Context) SetOwnedFieldConsumed(path FlowPath, consumed bool) {
 }
 
 func (c *Context) OwnedFieldConsumed(path FlowPath) bool {
+	path = c.ownedFieldPath(path)
 	for ctx := c; ctx != nil; ctx = ctx.parent {
 		if consumed, ok := ctx.checker.ownedFieldFacts[path.Key()]; ok {
 			return consumed
@@ -591,6 +593,15 @@ func (c *Context) InvalidateFlowFacts(path FlowPath) {
 				delete(ctx.checker.nullFacts, key)
 			}
 		}
+		break
+	}
+	if path.Fields != "" {
+		path = c.ownedFieldPath(path)
+	}
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		if _, ok := ctx.bindings[path.Root]; !ok {
+			continue
+		}
 		for key := range ctx.checker.ownedFieldFacts {
 			if flowPathIsOrDescendsFrom(FlowPathFromKey(key), path) {
 				delete(ctx.checker.ownedFieldFacts, key)
@@ -604,6 +615,9 @@ func (c *Context) InvalidateOwnedFieldFactsByPointerInvalidation(inv flow.Invali
 	for ctx := c; ctx != nil; ctx = ctx.parent {
 		for key := range ctx.checker.ownedFieldFacts {
 			path := FlowPathFromKey(key)
+			if c.borrowedAggregateRoot(path.Root) {
+				continue
+			}
 			// Bindings that are not pointer-typed and whose address was
 			// never taken cannot be reached through any external pointer
 			// write, so invalidation through an unknown pointer cannot

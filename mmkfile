@@ -68,6 +68,7 @@ playground: bplayd bplay-runner playground-runtime
 ## separate tour bundle.
 tour: btourd bplay-runner playground-runtime
 
+## Run the full Boson test suite
 test: go_test cmd/bas/test cmd/bosc/test
 
 # `go test ./...` includes the tour and bpipeline tests, which run real

@@ -43,8 +43,11 @@ func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
 		if !ast.Type.ZeroInitializable(c) {
 			CompileErrorF(a, "Variable \"%s\" of type %s requires an initializer", ast.Name, ast.Type)
 		}
-		// Zero-init form: bas allocates `size` zero bytes.
-		fmt.Fprintf(of, "%svar %s %s %d\n", pubPrefix(ast.IsPub), ast.Name, ast.Type, size)
+		if len(nullableValuesOffsets(c, ast.Type, 0)) != 0 {
+			emitVarBlock(of, ast.Name, ast.Type.String(), defaultValueBytes(c, ast.Type), nil, ast.IsPub)
+		} else {
+			fmt.Fprintf(of, "%svar %s %s %d\n", pubPrefix(ast.IsPub), ast.Name, ast.Type, size)
+		}
 		return
 	}
 
@@ -122,6 +125,9 @@ func pubPrefix(isPub bool) string {
 //   - *Address with Val=Symbol — produces an 8-byte pointer slot with a
 //     relocation pointing at the symbol
 func encodeStaticInit(c *Context, dstt ASTType, init AST) ([]byte, []relocSpec, error) {
+	if litIsNil(init) && isNullableValues(c, dstt) {
+		return defaultValueBytes(c, dstt), nil, nil
+	}
 	switch v := init.(type) {
 	case *Literal:
 		return encodeLiteralBytes(c, dstt, v)
@@ -176,9 +182,11 @@ func encodeStaticInit(c *Context, dstt ASTType, init AST) ([]byte, []relocSpec, 
 		if len(v.Args) == 1 {
 			pkg, name := v.PkgAndName()
 			castName := v.QualifiedName()
-			if _, ok := c.sourceTypeByName(castName); ok {
+			if castType, ok := c.sourceTypeByName(castName); ok {
 				if _, _, hasFn := c.FuncDeclForCall(pkg, name); !hasFn {
-					castType := ASTType{Name: castName}
+					if _, isValues := c.ValuesDeclForName(castType.Name); isValues {
+						return nil, nil, fmt.Errorf("values conversions are not supported in static initializers")
+					}
 					underlying := c.ResolveUnderlying(castType)
 					underlying.MutMask = 0
 					underlying.OwnedMask = 0
@@ -478,7 +486,7 @@ func encodeStructLiteralBytes(c *Context, dstt ASTType, lit *StructLiteral) ([]b
 			if !fld.Type.ZeroInitializable(c) {
 				return nil, nil, fmt.Errorf("struct literal is missing field %q of %s", fld.Name, dstt)
 			}
-			out = append(out, make([]byte, fld.Type.Size(c))...)
+			out = append(out, defaultValueBytes(c, fld.Type)...)
 			continue
 		}
 		fbytes, frelocs, err := encodeStaticInit(c, fld.Type, val)

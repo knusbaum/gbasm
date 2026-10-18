@@ -1,0 +1,20 @@
+package main
+
+import "fmt"
+
+fn main() {
+	b := fmt.StringBuilder.new()
+	for (var i := 0; i < 513; i += 1) {
+		b.char(65)
+	}
+	// A small write must preserve the larger growth target.
+	fmt.print("capacity: %d\n", cap(b.buf))
+	large := make([]mut byte, 3000)
+	large[2999] = 90
+	// A write larger than that target must still fit in one expansion.
+	b.str(large)
+	free(large)
+	text := b.to_string()
+	fmt.print("length: %d, ends: %d %d\n", len(text), text[0], text[3512])
+	free(text)
+}

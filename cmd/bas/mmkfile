@@ -18,7 +18,7 @@ go_tests {
     go test ./...
 }
 
-## test runs the go tests and the assembly tests
+## Boson Assembler complete test suite
 test: go_tests bas_tests {
     mmk clean
 }

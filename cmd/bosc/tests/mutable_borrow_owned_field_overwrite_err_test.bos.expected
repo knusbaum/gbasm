@@ -1,0 +1,2 @@
+Compiling tests/mutable_borrow_owned_field_overwrite_err_test.bos
+Fatal: Cannot assign to owned field "b.buf" before consuming its current value

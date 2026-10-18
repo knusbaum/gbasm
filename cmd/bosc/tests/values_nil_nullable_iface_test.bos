@@ -1,13 +1,15 @@
 package main
 
+import "io"
+
 import "string"
 
-fn f() ?error {
+fn f() ?io.error {
 	return nil
 }
 
 fn main() {
-	x ?error := nil
+	x ?io.error := nil
 	if (x != nil) { string.puts("has\n") } else { string.puts("none\n") }
 	e := f()
 	if (e != nil) { string.puts("err\n") } else { string.puts("ok\n") }

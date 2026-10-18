@@ -15,20 +15,7 @@ type my_error struct{ x i64, y i64, msg []byte} {
 		_, err := fmt.printf(w, "my_error{x: %d, y: %d, msg: %s}", self.x, self.y, &self.msg)
 		return err
 	}
-	// message(self *mut my_error) []byte {
-	// 	if(len(self.buffer) > 0) {
-	// 		return self.buffer
-	// 	}
-	// 	self.buffer = make([]mut byte, 1024)
-	// 	var b := fmt.Builder{buf: self.buffer, pos: 0, err_: nil}
-	// 	w := fmt.BuilderWriter{b:&b}
-	// 	err := self.format(&w)
-	// 	if (err) {
-	// 		fmt.print("FAILED TO FORMAT ERROR MESSAGE\n")
-	// 	}
-	// 	self.buffer = self.buffer[:b.pos]
-	// 	return ""
-	// }
+
 	destroy(self owned *my_error) {
 		fmt.print("Destroyed my_error\n")
 		free(self)
@@ -36,18 +23,44 @@ type my_error struct{ x i64, y i64, msg []byte} {
 }
 
 fn main() {
-	x := boo()
+	x := something_that_errors()
 	fmt.print("X: %v\n", x)
 	x.destroy()
+
+	b := fmt.StringBuilder.new()
+	for(var i := 0; i < 1000; i += 1) {
+		fmt.printf(b, "Hello, this is a bunch of shit: %v %v %v %v\n", i, foo{}, 3, 4)
+	}
+	s := b.to_string()
+	fmt.print("Stringbuilder built this: '%v'\n", &s)
+	free(s)
+
+	err := strerr_tester()
+	if(err) {
+		fmt.print("Error: %v\n", err)
+		err.destroy()
+	}
+	
 }
 
-fn boo() owned io.built_error {
-	//a owned *mut my_error := new(my_error{x: 10, y: 100, buffer: make([]mut byte, 0) })
+fn something_that_errors() owned io.built_error {
 	a := my_error.new(10, 100, "what's up?")
 	return a
 }
 
-type foo struct { x owned i64 }
+fn strerr_tester() ?owned io.built_error {
+	e := something_that_errors()
+	e2 := fmt.strerr.new("Testing out an error string: %v %v", e, 10)
+	e.destroy()
+	return e2
+}
+
+type foo struct { x owned i64 } {
+	format(self foo, w io.writer) ?io.error {
+		_, err := fmt.printf(w, "foo{x: %d}", self.x)
+		return err
+	}
+}
 
 fn other() {
 	var a owned foo := {x: 10}

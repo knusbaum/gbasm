@@ -1,0 +1,53 @@
+package main
+import "fmt"
+import os "io"
+
+type code values (i64, []byte) {
+	FIRST: -1, "first"
+	SECOND: 42, "second"
+	EMPTY: 0, ""
+}
+
+type holder struct { value ?code }
+var global_value ?code
+var global_holder holder
+
+fn main() {
+	x := ?code(42)
+	if (x != nil) {
+		text := []byte(x)
+		fmt.print("%d %s\n", i64(x), &text)
+	}
+	y := ?code(-1)
+	fmt.print("negative: %v, non-null: %v\n", y == code.FIRST, y != nil)
+	missing := ?code(100)
+	fmt.print("missing: %v\n", missing == nil)
+	s := ?code("first")
+	fmt.print("string: %v\n", s == code.FIRST)
+	var empty ?code
+	fmt.print("default: %v\n", empty == nil)
+	empty = code.SECOND
+	fmt.print("assigned: %v\n", empty == code.SECOND)
+	h := holder{}
+	fmt.print("defaults: %v %v %v\n", h.value == nil, global_value == nil, global_holder.value == nil)
+	p := alloc(holder)
+	fmt.print("allocated default: %v\n", p.value == nil)
+	free(p)
+	items := make([]mut ?code, 2, 3)
+	fmt.print("slice defaults: %v %v\n", items[0] == nil, items[1] == nil)
+	free(items)
+	text := "xsecond!"
+	from_slice := ?code(text[1:7])
+	fmt.print("substring: %v\n", from_slice == code.SECOND)
+	from_empty := ?code("")
+	fmt.print("empty string: %v\n", from_empty == code.EMPTY)
+	var array [2]?code
+	array[0] = code.FIRST
+	fmt.print("array: %v %v\n", array[0] == code.FIRST, array[1] == nil)
+	imported := ?os.io_err(42)
+	if (imported != nil) {
+		fmt.print("imported: %d %v\n", i64(imported), imported == os.io_err.ENOMSG)
+	}
+	gap := ?os.io_err(41)
+	fmt.print("gap: %v\n", gap == nil)
+}

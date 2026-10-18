@@ -10,7 +10,7 @@ import "io"
 // consuming method. Regression: the return-alias engine treated the value
 // source as a borrowed local escaping ("Borrowed slice escapes through return").
 type foo struct{ x owned i64 } {
-	format(self foo, w io.writer) ?error {
+	format(self foo, w io.writer) ?io.error {
 		_, err := fmt.printf(w, "foo(%d)", self.x)
 		return err
 	}
@@ -23,13 +23,13 @@ type foo struct{ x owned i64 } {
 	}
 }
 
-fn boo() owned built_error {
+fn boo() owned io.built_error {
 	a owned foo := {x: 10}
 	return a
 }
 
 fn main() {
-	x owned built_error := boo()
+	x owned io.built_error := boo()
 	fmt.print("X: %v\n", x)
 	x.destroy()
 }

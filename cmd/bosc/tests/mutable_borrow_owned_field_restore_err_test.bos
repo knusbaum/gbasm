@@ -1,0 +1,4 @@
+package main
+type Buffer struct { buf owned []mut byte }
+fn bad(b *mut Buffer) { free(b.buf) }
+fn main() {}

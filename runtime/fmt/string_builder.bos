@@ -17,16 +17,14 @@ pub type StringBuilder struct {
 		} else {
 			target += 2048
 		}
-		if(cap(b.buf) - b.pos < at_least) {
-			target = cap(b.buf) + at_least
+		if(target - b.pos < at_least) {
+			target = b.pos + at_least
 		}
 		next := make([]mut byte, target)
-		fixed_copy(next, b.buf)
-		//free(b.buf)
+		fixed_copy(next, b.buf[:b.pos])
+		free(b.buf)
 		b.buf = next
-		free(next)
 	}
-	
 
 	str(b *mut StringBuilder, s []byte) {
 		room i64 := len(b.buf) - b.pos
@@ -95,6 +93,10 @@ pub type StringBuilder struct {
 		return after - before, nil
 	}
 
+	borrow(b *StringBuilder) []byte {
+		return b.buf[:b.pos]
+	}
+	
 	string(b *mut StringBuilder) owned []byte {
 		r := make([]mut byte, b.pos)
 		fixed_copy(r, b.buf[:b.pos])

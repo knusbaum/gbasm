@@ -6,7 +6,7 @@ import "io"
 // Formatter constructs its rendering on its own stack (here via a Builder)
 // and writes it to the supplied writer.
 type point struct { x i64, y i64 } {
-	format(p *point, w io.writer) ?error {
+	format(p *point, w io.writer) ?io.error {
 		var buf [64]byte
 		var b fmt.Builder := fmt.Builder{buf: buf[:], pos: 0, err_: nil}
 		b.str("(")

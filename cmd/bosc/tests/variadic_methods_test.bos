@@ -1,0 +1,28 @@
+package main
+import "fmt"
+
+type counter struct { marker i64 } {
+	count(xs ...i64) i64 { return len(xs) }
+	instance(self counter, xs ...i64) i64 { _ = self; return len(xs) }
+}
+
+type number i64 {
+	count(xs ...i64) i64 { return len(xs) }
+}
+
+type choice values { ONE; TWO } {
+	count(self choice, xs ...i64) i64 { _ = self; return len(xs) }
+}
+
+fn main() {
+	c := counter{}
+	fmt.print("%d %d %d %d\n", counter.count(), counter.count(1, 2, 3), c.instance(1, 2), number.count(1))
+	var xs [2]i64
+	fmt.print("forwarded: %d\n", c.instance(xs[:]...))
+	v := choice.ONE
+	fmt.print("values: %d\n", v.count(1, 2, 3))
+	// Exercise imported static methods, boxing, and forwarding in the body.
+	e := fmt.strerr.new("%v %v", 10, true)
+	e.destroy()
+	fmt.print("imported constructor works\n")
+}

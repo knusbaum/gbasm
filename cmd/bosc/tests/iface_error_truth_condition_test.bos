@@ -8,12 +8,10 @@ import "io"
 fn main() {
  _, err := fmt.print("ok\n")
  if (err) {
-  message := err.message()
-  fmt.print("%s\n", &message)
+  fmt.print("%v\n", err)
  }
- failure ?error := io.io_err.ENOSPC
+ failure ?io.error := io.io_err.ENOSPC
  if (failure) {
-  message := failure.message()
-  fmt.print("error: %s\n", &message)
+  fmt.print("error: %v\n", failure)
  }
 }
