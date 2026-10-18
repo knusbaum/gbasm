@@ -3701,9 +3701,6 @@ func (n *Not) ASTType(c *Context) ASTType {
 // word or the address of its header; compileTruthTest implements that lowering.
 func checkZeroTestOperand(c *Context, value AST, operation string) {
 	t := c.ResolveUnderlying(value.ASTType(c))
-	if isNullableValues(c, t) {
-		CompileErrorF(value, "%s on nullable values type %s requires an explicit comparison with nil", operation, t)
-	}
 	if t.Indirection > 0 {
 		return
 	}

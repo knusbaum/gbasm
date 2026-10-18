@@ -1,0 +1,7 @@
+package main
+type code values (i64) { FIRST: 10 }
+fn require(p ?*?code) code { return (*p?)? }
+fn main() {
+ value ?code := nil
+ _ := require(&value)
+}

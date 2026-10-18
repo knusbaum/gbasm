@@ -1,0 +1,13 @@
+first: 10
+narrowed still true
+missing is false
+else: 10
+logical: true false true false
+field: 10
+global is false
+global pointer is false
+live global pointer: -2
+loop: 10
+pointer states: 0 -2 -1 42
+nested assertions: -1
+allocated inner nil: -2

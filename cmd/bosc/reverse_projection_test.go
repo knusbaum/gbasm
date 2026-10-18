@@ -16,12 +16,14 @@ func TestReverseProjectionDiagnostics(t *testing.T) {
 		{"unchecked forward", `type E values (i64) { A: 1 }`, `fn f(n i64) i64 { x := ?E(n); return i64(x) }`, "check for nil first"},
 		{"unchecked return", `type E values (i64) { A: 1 }`, `fn f(n i64) E { return ?E(n) }`, "Cannot return"},
 		{"unchecked identity", `type E values (i64) { A: 1 }`, `fn f(n i64) E { x := ?E(n); return E(x) }`, "check for nil first"},
-		{"truthiness", `type E values (i64) { A: 1 }`, `fn f(n i64) i64 { x := ?E(n); if(x) { return 1 }; return 0 }`, "explicit comparison with nil"},
+		{"truthiness", `type E values (i64) { A: 1 }`, `fn f(n i64) i64 { x := ?E(n); if(x) { return i64(x) }; return 0 }`, ""},
 		{"assignment loses narrowing", `type E values (i64) { A: 1 }`, `fn f(n i64) i64 { var x := ?E(n); if(x != nil) { x = ?E(2); return i64(x) }; return 0 }`, "check for nil first"},
 		{"forward duplicates remain valid", `type E values (i64) { A: 1; B: 1 }`, `fn f() i64 { return i64(E.B) }`, ""},
 		{"narrowed", `type E values (i64) { A: 1 }`, `fn f(n i64) i64 { x := ?E(n); if(x != nil) { return i64(x) }; return 0 }`, ""},
 		{"asserted", `type E values (i64) { A: 1 }`, `fn f(n i64) i64 { x := ?E(n); return i64(x?) }`, ""},
 		{"nullable identity", `type E values (i64) { A: 1 }`, `fn f(n i64) ?E { x := ?E(n); return ?E(x) }`, ""},
+		{"pointer check preserves nullable pointee", `type E values (i64) { A: 1 }`, `fn f(p ?*?E) i64 { if(p) { return i64(*p) }; return 0 }`, "check for nil first"},
+		{"both nullable levels checked", `type E values (i64) { A: 1 }`, `fn f(p ?*?E) i64 { if(p) { x := *p; if(x) { return i64(x) } }; return 0 }`, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

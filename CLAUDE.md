@@ -387,8 +387,9 @@ silently unsound.
 #### Nullable values and reverse projections
 
 Tag-only and projection-bearing `values` types use `-1` for `nil` in `?V`;
-zero is the first valid case. Keep this separate from pointer/interface null
-representations. `reverse_projection.go` owns lookup generation, injectivity
+zero is the first valid case and must be true in conditions, even after
+narrowing. Keep this separate from pointer/interface null representations.
+`?*?V` uses independent nullability bits: outer address 0, inner tag -1. `reverse_projection.go` owns lookup generation, injectivity
 checks, and nullable default initialization, including nested fields and
 allocated storage. `?V(value)` calls the producer's generated helper; generated
 calls carry canonical resolution so file-local import aliases do not hide it.

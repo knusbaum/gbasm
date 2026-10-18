@@ -1,0 +1,48 @@
+package main
+import "fmt"
+import "io"
+
+type code values (i64) { FIRST: 10; SECOND: 20 }
+type holder struct { value ?code }
+var global ?code
+var global_pointer ?*?io.io_err
+var global_inner ?io.io_err
+var live_global_pointer ?*?io.io_err := &global_inner
+
+fn classify(p ?*?io.io_err) i64 {
+ if (!p) { return 0 }
+ e := *p
+ if (e) {
+  return i64(e)
+ }
+ return -2
+}
+
+fn require(p ?*?io.io_err) io.io_err { return (*p?)? }
+
+fn main() {
+ first := ?code(10)
+ missing := ?code(99)
+ if (first) {
+  fmt.print("first: %d\n", i64(first))
+  if (first) { fmt.print("narrowed still true\n") }
+ }
+ if (!missing) { fmt.print("missing is false\n") }
+ if (!first) { fmt.print("wrong first\n") } else { fmt.print("else: %d\n", i64(first)) }
+ fmt.print("logical: %v %v %v %v\n", first && true, missing && true, missing || first, !first)
+ h := holder{value: first}
+ if (h.value) { fmt.print("field: %d\n", i64(h.value)) }
+ if (global) { fmt.print("wrong global\n") } else { fmt.print("global is false\n") }
+ if (global_pointer) { fmt.print("wrong global pointer\n") } else { fmt.print("global pointer is false\n") }
+ if (live_global_pointer) { fmt.print("live global pointer: %d\n", classify(live_global_pointer)) }
+ var loop := first
+ for (; loop; loop = nil) { fmt.print("loop: %d\n", i64(loop?)) }
+ inner_nil ?io.io_err := nil
+ inner_zero ?io.io_err := io.io_err.UNKNOWN
+ inner_case ?io.io_err := io.io_err.ENOMSG
+ fmt.print("pointer states: %d %d %d %d\n", classify(nil), classify(&inner_nil), classify(&inner_zero), classify(&inner_case))
+ fmt.print("nested assertions: %d\n", i64(require(&inner_zero)))
+ p := alloc(?io.io_err)
+ fmt.print("allocated inner nil: %d\n", classify(p))
+ free(p)
+}

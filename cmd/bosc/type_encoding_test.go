@@ -99,6 +99,9 @@ var typeEncodingCases = []struct {
 	{"owned *owned mut node", ASTType{Name: "node", Indirection: 1, MutMask: 0b10, OwnedMask: 0b11}},
 	{"?*i64", ASTType{Name: "i64", Indirection: 1, NilMask: 0b1, Signed: true}},
 	{"?**i64", ASTType{Name: "i64", Indirection: 2, NilMask: 0b1, Signed: true}},
+	{"?*?io_err", ASTType{Name: "io_err", Indirection: 1, NilMask: 0b11}},
+	{"*?io_err", ASTType{Name: "io_err", Indirection: 1, NilMask: 0b10}},
+	{"?*io_err", ASTType{Name: "io_err", Indirection: 1, NilMask: 0b01}},
 	{"owned ?*owned mut node", ASTType{Name: "node", Indirection: 1, MutMask: 0b10, OwnedMask: 0b11, NilMask: 0b1}},
 
 	// Arrays of pointers: a leading `owned` on the array (`owned [N]...`) lands
