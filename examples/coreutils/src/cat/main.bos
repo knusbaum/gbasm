@@ -13,23 +13,6 @@ var conf struct{
 	showNonprinting bool
 }
 
-fn scmp(a []byte, b []byte) i64 {
-	if (len(a) < len(b)) {
-		return -1
-	} else if (len(a) > len(b)) {
-		return 1
-	}
-	// same length
-	for(var i := 0; i < len(a); i+=1) {
-		if (a[i] < b[i]) {
-			return -1
-		} else if (a[i] > b[i]) {
-			return 1
-		}
-	}
-	return 0
-}
-
 fn main(args [][]byte) i64 {
 	p := gnu.Parser.new(args, "AbeEnstTuv", [
 		gnu.Option{name: "show-all", value: i64('A')},
@@ -112,7 +95,6 @@ fn main(args [][]byte) i64 {
 	}
 	var ret := 0
 	for(var i i64 := 0; i < len(ops); i += 1) {
-		//if (scmp(ops[i], "-") == 0) {
 		if (ops[i][0] == '-') {
 			err := io.copy(&out, &io.STDIN)
 			if(err != nil) {
