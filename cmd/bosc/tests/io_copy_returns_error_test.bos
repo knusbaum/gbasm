@@ -10,11 +10,9 @@ import "string"
 // or pass the error onward as the generic interface.
 
 fn main() {
-	f, openerr := io.open("/dev/null", io.O_RDONLY, 0)
-	if (openerr != nil) {
-		string.puts("open failed\n")
-		dispose(f)
-		return
+	f := switch (r := io.open("/dev/null", io.O_RDONLY, 0)) {
+		case ERR { string.puts("open failed\n"); return }
+		case FD r.fd
 	}
 	err := io.copy(&io.STDOUT, &f)
 	if (err == nil) {

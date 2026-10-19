@@ -290,9 +290,9 @@ var q2 i64, rem2 i64 := divide(100, 7)         // explicit types, q2 mutable, re
 A name in the bind list may already exist in the enclosing scope — the existing binding is reused (re-assigned). This is how the `(value, err)` pattern composes across calls without forcing fresh names every time (the reused target must be `var`):
 
 ```
-var f, var err := io.open(path1, io.O_RDONLY, 0)
-if (err != 0) { ... }
-f, err = io.open(path2, io.O_RDONLY, 0)             // err re-binds the existing variable
+var n, var err := source.read(buf)
+if (err != nil) { ... }
+n, err = source.read(buf)             // reassign both existing variables
 ```
 
 A single-name bind to a multi-return function is rejected — the count of binds must match the count of returns.
@@ -502,14 +502,15 @@ File IO lives in the `io` package, built on the raw syscall wrappers in `sys`. T
 | Function/Method | Signature | Description |
 |------|------|------|
 | `io.O_RDONLY`, `O_WRONLY`, `O_RDWR`, `O_CREAT`, `O_EXCL`, `O_TRUNC`, `O_APPEND`, `O_NONBLOCK`, `O_CLOEXEC` | `i64` | File-mode flag constants matching Linux `<fcntl.h>`. Combine with bitwise `|`. |
-| `io.open` | `(path []byte, flags i64, mode i64) owned FD, i64` | Open a file. Returns `(fd, err)` where `err` is `0` on success or a positive errno on failure. On failure the returned `FD` is invalid and must be `dispose`d rather than `close`d. |
-| `io.FD.read` | `(fd *FD, buf []mut byte) i64, i64` | Read up to `len(buf)` bytes. Returns `(n, err)` — `n=0` on EOF; partial reads with `err=0` may be retried. |
-| `io.FD.write` | `(fd *FD, buf []byte) i64, i64` | Write `buf`. Returns `(n, err)`; short writes with `err=0` are not errors. |
-| `io.FD.close` | `(fd *owned FD) i64` | Close the fd and consume the owned obligation. Returns `0` on success or a positive errno. |
+| `io.open` | `(path []byte, flags i64, mode i64) owned open_result` | Returns `FD{fd owned FD}` on success or `ERR{err error}` on failure. Extract the descriptor through a consuming switch, or destroy an unused result. |
+| `io.open_result.destroy` | `(r owned open_result) void` | Closes a successful result; consumes either variant. |
+| `io.FD.read` | `(fd *FD, buf []mut byte) i64, ?error` | Read up to `len(buf)` bytes. Returns `(n, err)` — `n=0` on EOF; `err=nil` on success. |
+| `io.FD.write` | `(fd *FD, buf []byte) i64, ?error` | Write `buf`. Returns `(n, err)`; short writes with `err=nil` are not errors. |
+| `io.FD.close` | `(fd *owned FD) ?error` | Close the fd and consume the owned obligation. Returns `nil` on success or an error. |
 | `io.STDIN`/`STDOUT`/`STDERR` | `FD` | Standard file descriptors (0, 1, 2). Borrowed — must not be `close`d. |
-| `io.reader` | `interface { read(r *self, buf []mut byte) i64, i64 }` | Anything readable; `FD` satisfies it. |
-| `io.writer` | `interface { write(w *self, buf []byte) i64, i64 }` | Anything writable; `FD` satisfies it. |
-| `io.copy` | `(dst writer, src reader) i64` | Copy bytes from `src` to `dst` until EOF; returns total bytes copied (or a negative errno on a read/write error). |
+| `io.reader` | `interface { read(r *self, buf []mut byte) i64, ?error }` | Anything readable; `FD` satisfies it. |
+| `io.writer` | `interface { write(w *self, buf []byte) i64, ?error }` | Anything writable; `FD` satisfies it. |
+| `io.copy` | `(dst writer, src reader) ?error` | Copy until EOF; returns `nil` on success or a read/write error. |
 
 The raw syscall wrappers `io` is built on live in `sys` alongside the rest of
 the syscall surface: `sys.read(i64, []mut byte) i64`, `sys.write(i64, []byte)
@@ -3381,7 +3382,7 @@ The runtime lives at `runtime/<pkg>/*.bs` under `BOSON_HOME` and is shared by ev
 | `_init`    | `init_linux.bs` | Process entry (`start`) calling `main.main`. Bounds-check trap (`index_oob`). |
 | `_heap`    | `heap.bos` | The Boson memory allocator: `alloc`, `free` (the targets of `alloc`/`new`/`free`), plus mallinfo-style introspection. Three tiers over 4MiB chunks carved from 1GiB reserves. |
 | `string`   | `string.bs`, `puts_linux.bs` | String formatting and stdout primitives: `puts`, `puti`, `putb`, `putc`, `exit`, plus internal `strlen`, `itoa`, `uitoa`. File IO is no longer here; see `sys` and `io`. |
-| `io`       | `io.bos` | Typed file IO: `type FD i64` with `read`/`write`/`close` methods; `fn open([]byte, i64, i64) owned FD, i64`; `STDIN`/`STDOUT`/`STDERR` globals; `reader`/`writer` interfaces; `fn copy(writer, reader) i64`. Built on `sys`. |
+| `io`       | `io.bos` | Typed file IO: `type FD i64` with `read`/`write`/`close` methods; `fn open([]byte, i64, i64) owned open_result`; `STDIN`/`STDOUT`/`STDERR` globals; `reader`/`writer` interfaces; `fn copy(writer, reader) ?error`. Built on `sys`. |
 | `pair`     | `pair.bos` | Minimal cross-package struct used only by tests. |
 | `builtin`  | `builtin.bos` | Auto-imported into every package. Currently holds the `error` interface and acts as the home for documentation of compiler intrinsics. |
 

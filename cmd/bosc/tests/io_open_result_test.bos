@@ -1,0 +1,40 @@
+package main
+
+import "io"
+import "string"
+
+fn main() i64 {
+    fd := switch (r := io.open("/dev/null", io.O_RDONLY, 0)) {
+        case ERR { return 1 }
+        case FD r.fd
+    }
+    var buf [1]byte
+    n, err := fd.read(buf[:])
+    fd.close()
+    if (n != 0 || err != nil) { return 2 }
+
+    // A non-directory path component guarantees failure without relying
+    // on an absent filename in the test environment.
+    switch (r := io.open("/dev/null/child", io.O_RDONLY, 0)) {
+        case ERR {
+            if (r.err != io.io_err.ENOTDIR) { return 3 }
+        }
+        case FD { r.fd.close(); return 4 }
+    }
+
+    var long_path [4096]byte
+    switch (r := io.open(long_path[:], io.O_RDONLY, 0)) {
+        case ERR {
+            if (r.err != io.io_err.ENAMETOOLONG) { return 5 }
+        }
+        case FD { r.fd.close(); return 6 }
+    }
+
+    // The result destructor must accept and discharge either variant.
+    unused := io.open("/dev/null", io.O_RDONLY, 0)
+    unused.destroy()
+    failed := io.open("/dev/null/child", io.O_RDONLY, 0)
+    failed.destroy()
+    string.puts("ok\n")
+    return 0
+}
