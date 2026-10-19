@@ -1,0 +1,575 @@
+// Package gnu reads command-line options such as -v and --verbose. You tell
+// it which options your program accepts, then ask for one option at a time.
+// Your program decides what each option does. The parser does not print help
+// or errors, or exit your program.
+//
+// ## Start with one short flag
+//
+// Suppose your program accepts -v to enable extra output. This complete program
+// records whether -v appeared, then prints a message if it did:
+//
+// ```boson
+// package main
+// import "flags/gnu"
+// import "fmt"
+//
+// fn main(args [][]byte) {
+//     var verbose := false
+//     p := gnu.Parser.new(args, "v", [])
+//     for (var code := p.next(); code != -1; code = p.next()) {
+//         if (p.error != gnu.Error.NONE) {
+//             message := []byte(p.error)
+//             fmt.print("%s: %s\n", &p.token, &message)
+//             p.destroy()
+//             return
+//         }
+//         if (code == i64('v')) { verbose = true }
+//     }
+//     if (verbose) { fmt.print("Verbose output enabled\n") }
+//     p.destroy()
+// }
+// ```
+//
+// Parser.new takes three arguments. args is the full argument list passed to
+// main, including the program name at index zero; do not slice that name off.
+// The string "v" declares that -v is accepted and takes no extra value.
+// The final [] says that there are no long options yet.
+//
+// Each p.next() call reads one option and returns its identifying integer.
+// For -v, that integer is i64('v'). It returns -1 when there are no more
+// options to read. The loop's update calls next() again, so repeated flags
+// are handled too. Run this program with -v to enable verbose output; run it
+// without options to leave verbose false.
+//
+// Check p.error before using the returned code. For example, -x is an error
+// because we only declared v. p.token is the offending command-line word;
+// []byte(p.error) gives a description. This example stops on the first error.
+// The parser owns memory, so call p.destroy() both on that early return and
+// when you finish using it normally.
+//
+// ## Add another short flag
+//
+// Change "v" to "vq" to accept both -v and -q. Add a variable such as
+// var quiet := false, and another branch in the same loop:
+//
+// ```boson
+// if (code == i64('v')) { verbose = true }
+// if (code == i64('q')) { quiet = true }
+// ```
+//
+// Users can write -v -q or combine them as -vq. next() still returns one
+// code per call: first 'v', then 'q'. Letters are case-sensitive: -V is a
+// different option and must be declared separately. Your program decides
+// what happens if conflicting options such as verbose and quiet both appear.
+//
+// ## Give a flag a long name
+//
+// To also accept --verbose, declare a long-option array before creating the
+// parser, and replace the constructor call with these lines:
+//
+// ```boson
+// options := [gnu.Option{name: "verbose", value: i64('v')}]
+// p := gnu.Parser.new(args, "v", options[:])
+// ```
+//
+// name is written without the dashes. value is the integer next() returns
+// when that name appears. Using i64('v') makes --verbose and -v return the
+// same code, so the original loop handles both without any changes.
+// The short specification and long definitions are independent: a long entry
+// does not automatically declare a short spelling. options[:] passes the
+// array as a slice; its length determines how many definitions are present.
+//
+// ## Read an option's value
+//
+// Now add -o FILE and --output FILE to select an output file. In the short
+// specification, a colon after a letter means that option requires a value.
+// In the long definition, use Argument.REQUIRED. Here is the full program
+// with both verbose and output options:
+//
+// ```boson
+// package main
+// import "flags/gnu"
+// import "fmt"
+//
+// fn main(args [][]byte) {
+//     var verbose := false
+//     var output []byte := "stdout"
+//     options := [
+//         gnu.Option{name: "verbose", value: i64('v')},
+//         gnu.Option{name: "output", argument: gnu.Argument.REQUIRED, value: i64('o')}
+//     ]
+//     p := gnu.Parser.new(args, "vo:", options[:])
+//     for (var code := p.next(); code != -1; code = p.next()) {
+//         if (p.error != gnu.Error.NONE) {
+//             message := []byte(p.error)
+//             fmt.print("%s: %s\n", &p.token, &message)
+//             p.destroy()
+//             return
+//         }
+//         if (code == i64('v')) { verbose = true }
+//         if (code == i64('o')) { output = p.optarg }
+//     }
+//     if (verbose) { fmt.print("Verbose output enabled\n") }
+//     fmt.print("Output: %s\n", &output)
+//     files := p.operands()
+//     for (var i i64 := 0; i < len(files); i += 1) {
+//         fmt.print("Input: %s\n", &files[i])
+//     }
+//     p.destroy()
+// }
+// ```
+//
+// The specification "vo:" means v takes no value and o requires one.
+// When next() returns 'o', p.optarg holds that option's value as []byte.
+// Read it inside the loop: the next call replaces the result fields.
+// Saving that slice in output is fine while the original argument bytes live.
+// If -o occurs more than once, this example keeps the last value.
+//
+// All of -o result.txt, -oresult.txt, --output result.txt, and
+// --output=result.txt select the same value. -voresult.txt enables verbose
+// output and selects result.txt. A required value consumes the next word even
+// if it starts with '-'; a trailing -o with no next word reports an error.
+//
+// ## Read file names and other ordinary arguments
+//
+// Words that are not options are called operands. In the complete example,
+// p.operands() returns those words after the parsing loop has finished.
+// For example, running tool first.txt -v -o result.txt second.txt prints:
+//
+// ```text
+// Verbose output enabled
+// Output: result.txt
+// Input: first.txt
+// Input: second.txt
+// ```
+//
+// By default, options can appear before, between, or after file names.
+// Their values, such as result.txt, are not included in operands(). The
+// remaining words keep their original relative order. The parser rearranges
+// its own copy of the argument headers; it does not change the caller's args.
+// Use the operands view before destroying the parser.
+//
+// To pass a file name beginning with '-', put -- before it: tool -v -- -notes
+// makes -notes a file name. Every word after -- is an operand, even -v.
+// A lone '-' and an empty word are also operands.
+//
+// ## Add a long option without a short spelling
+//
+// For an option such as --help, choose an unused integer code and add a table
+// entry. A code above the byte range avoids colliding with short letters:
+//
+// ```boson
+// gnu.Option{name: "help", value: 256}
+// ```
+//
+// Then handle code == 256 in the parsing loop and print your own help text.
+// There is no corresponding letter to add to the short specification. Long
+// options with no argument setting default to Argument.NONE; --help=value is an
+// error. The parser does not generate usage text or implement help for you.
+//
+// ## Optional values and empty values
+//
+// Use c:: in the short specification and Argument.OPTIONAL in the long entry
+// to allow an option with or without a value. For example, if c is named color,
+// -cblue and --color=blue supply blue. Bare -c and --color supply no value;
+// they do not consume the next word. Long optional values must use '='.
+//
+// After that option is returned, p.has_argument tells you whether a value was
+// provided. --color= provides an explicitly empty value: has_argument is true
+// and len(p.optarg) is zero. With --color alone, has_argument is false.
+//
+// ## Other parsing rules
+//
+// Long names can be abbreviated if the prefix identifies one option: --verb
+// matches --verbose. An exact name always wins. Multiple prefix matches are
+// an error unless they all have identical argument modes, values, and flag
+// pointers; in long_only mode multiple matches are always an error.
+//
+// For different treatment of ordinary arguments, put '+' or '-' at the start
+// of the short specification. "+vo:" stops option parsing at the first
+// operand. "-vo:" returns each operand from next() as code 1, with its text
+// in optarg, instead of leaving those words for operands().
+//
+// Parser.configured(args, "vo:", options[:], gnu.Config{long_only: true})
+// also accepts single-dash long names such as -verbose. A recognized single
+// short letter wins for -v. Longer words try long names first, then fall back
+// to grouped short flags if the first letter is a declared short option.
+//
+// Config{posixly_correct: true} stops at the first operand unless a leading
+// '+' or '-' overrides it. This is an explicit setting: the package does not
+// read the POSIXLY_CORRECT environment variable.
+//
+// The advanced short specification W; makes -Wname and -W name look up name
+// in the long-option table, including name=value forms.
+//
+// Errors normally return '?' (63). A leading ':' after any ordering prefix
+// changes missing-value errors to ':' (58). Always check p.error, since those
+// integers can also be actual option codes. The parser can continue after
+// errors if your application chooses to do so. See Error and Parser.next
+// for result-field details.
+//
+// ## Lifetime and reuse
+//
+// Keep the original argument list and bytes, short specification, long-option
+// array and names, and any flag destinations alive while using the parser.
+// It owns only its own allocation and a copy of the argument headers. Calling
+// p.reset() restarts with the original arguments and definitions; it does not
+// reset your variables such as verbose or output. Treat parser fields as
+// read-only and use reset() rather than assigning optind.
+//
+// Parsing allocates no memory per option. Long-option lookup scans the table.
+// Reordering headers can take quadratic time when many options and operands
+// alternate. The implementation has no libc dependency or shared parser state.
+package gnu
+
+// Argument specifies whether a long option takes an argument. NONE is the
+// default. REQUIRED accepts --name=value or --name value. OPTIONAL accepts only
+// --name=value; --name leaves the argument absent and --name= supplies an empty
+// argument. Parser.has_argument distinguishes these last two cases.
+pub type Argument values { NONE; REQUIRED; OPTIONAL }
+
+// Error describes the last parsing failure. NONE indicates success.
+// []byte(p.error) provides a static diagnostic description; the parser never
+// prints it. Inspect error before interpreting a next() result because '?' and
+// ':' can also be application-defined option values. Parsing may continue
+// after an error.
+pub type Error values ([]byte) {
+ NONE: ""
+ UNKNOWN_OPTION: "unrecognized option"
+ AMBIGUOUS_OPTION: "ambiguous option"
+ MISSING_ARGUMENT: "option requires an argument"
+ UNEXPECTED_ARGUMENT: "option does not allow an argument"
+}
+
+// Option describes a long option. A nil flag returns value; otherwise next
+// stores value through flag and returns zero. No terminating sentinel is used.
+pub type Option struct {
+ // Long name without leading dashes.
+ name []byte
+ // Argument requirement; omitted means NONE.
+ argument Argument
+ // Optional destination for value. A successful write returns code zero.
+ flag ?*mut i64
+ // Result code when flag is nil, or the value written through flag.
+ value i64
+}
+
+// Config enables getopt_long_only and POSIXLY_CORRECT semantics explicitly.
+// Leading '+' / '-' in short_options takes precedence over posixly_correct.
+// The parser does not read the environment; Boson has no process-environment
+// API yet, so callers select POSIXLY_CORRECT behavior explicitly.
+pub type Config struct {
+ // Accept single-dash long options. A recognized one-character short option
+ // wins for -f. Longer words try long names first, then fall back to a short
+ // group if the first character is a valid short option.
+ long_only bool
+ // Stop at the first operand unless an explicit ordering prefix overrides it.
+ posixly_correct bool
+}
+
+// Parser borrows argument bytes and option definitions. Its argv is an owned
+// shallow copy of the input headers: GNU permutation never changes the caller's
+// argv. Keep input bytes, short_options, long_options, and flag slots alive
+// until destroy. Input argv includes the program name at index zero.
+//
+// Parsing allocates nothing per option. Long-option lookup is linear in the
+// definition table. Stable in-place header rotation can take quadratic time
+// when many operands and options alternate. Treat parser fields as read-only;
+// use reset() to restart instead of assigning optind or internal cursors.
+pub type Parser struct {
+ // Private argument headers, reordered during GNU option scanning.
+ argv owned []mut []byte
+ input [][]byte
+ short_options []byte
+ long_options []Option
+ config Config
+ // After next() returns -1, index of the first remaining operand in argv.
+ optind i64
+ // Borrowed argument bytes; empty when absent or explicitly empty.
+ optarg []byte
+ // True when an argument was supplied, including an explicitly empty one.
+ has_argument bool
+ // On error, offending short code or matched long option value; zero for
+ // unmatched or ambiguous long options. Meaningful only when error != NONE.
+ optopt i64
+ // Successful long-option table index, otherwise -1.
+ longindex i64
+ // Failure from the current call, or NONE.
+ error Error
+ // Original argv word for the current event.
+ token []byte
+ // Internal cursor and stable-partition boundary. In permutation mode,
+ // [operand_start, optind) contains operands already passed by the scanner.
+ operand_start i64
+ character i64
+ short_start i64
+ order i64
+ colon_errors bool
+ finished bool
+} {
+ // new creates a parser with default GNU ordering and long-option syntax.
+ // argv includes the program name. The parser owns its allocation and a shallow
+ // copy of argv headers, while borrowing argv, its bytes, the specification,
+ // option definitions, and flag slots until destroy().
+ new(argv [][]byte, short_options []byte, long_options []Option) owned *owned mut Parser {
+  return Parser.configured(argv, short_options, long_options, Config{})
+ }
+
+ // configured creates a parser with explicit long-only and POSIX settings.
+ // Its arguments and lifetime requirements are the same as new().
+ configured(argv [][]byte, short_options []byte, long_options []Option, config Config) owned *owned mut Parser {
+  copy := make([]mut []byte, len(argv))
+  for (var i i64 := 0; i < len(argv); i += 1) { copy[i] = argv[i] }
+  var start i64 := 0
+  var order i64 := 0 // 0 permutation, 1 POSIX, 2 return operands as code 1
+  if (config.posixly_correct) { order = 1 }
+  if (len(short_options) > 0) {
+   if (short_options[0] == '+') { order = 1; start = 1 } else if (short_options[0] == '-') { order = 2; start = 1 }
+  }
+  var colon := false
+  if (start < len(short_options)) {
+   if (short_options[start] == ':') { colon = true; start += 1 }
+  }
+  var first i64 := 0
+  if (len(argv) > 0) { first = 1 }
+  return new(Parser{argv: copy, input: argv, short_options: short_options,
+   long_options: long_options, config: config, optind: first, operand_start: first,
+   short_start: start, order: order, colon_errors: colon, longindex: -1})
+ }
+
+ // reset restarts with the original argv order and the same definitions.
+ // It clears result fields and cursors but does not reset application flag
+ // variables. Use this method rather than changing optind.
+ reset(p *mut Parser) {
+  for (var i i64 := 0; i < len(p.input); i += 1) { p.argv[i] = p.input[i] }
+  p.optind = 0
+  if (len(p.argv) > 0) { p.optind = 1 }
+  p.operand_start = p.optind
+  p.character = 0
+  p.finished = false
+  p.error = Error.NONE
+  p.optarg = []
+  p.token = []
+  p.has_argument = false
+  p.optopt = 0
+  p.longindex = -1
+ }
+
+ // operands is valid after next() returns -1. It borrows the parser's header
+ // array and input strings, so consume it before destroying the parser.
+ operands(p *Parser) [][]byte { return p.argv[p.optind:] }
+
+ // destroy releases the parser and its private header array. Borrowed argument
+ // bytes, option definitions, and application flag slots remain caller-owned.
+ // Views returned by operands() must be consumed before this call.
+ destroy(p owned *owned mut Parser) {
+  free(p.argv)
+  free(p)
+ }
+
+ // short_slot returns the option character's location, skipping argument
+ // modifiers so ':' and ';' cannot accidentally become options.
+ short_slot(p *Parser, ch byte) i64 {
+  if (ch == ':' || ch == ';') { return -1 }
+  var i := p.short_start
+  for (; i < len(p.short_options); i += 1) {
+   if (p.short_options[i] == ch) { return i }
+  }
+  return -1
+ }
+
+ fail(p *mut Parser, error Error, option i64) i64 {
+  p.error = error
+  p.optopt = option
+  if (error == Error.MISSING_ARGUMENT && p.colon_errors) { return 58 }
+  return 63
+ }
+
+ // Rotate a newly consumed option and its separate argument before all
+ // skipped operands, preserving the relative order of each group.
+ permute(p *mut Parser, start i64, end i64) {
+  if (p.order != 0) { return }
+  count := end - start
+  for (var j i64 := 0; j < count; j += 1) {
+   saved := p.argv[start+j]
+   var k := start+j
+   for (; k > p.operand_start+j; k -= 1) { p.argv[k] = p.argv[k-1] }
+   p.argv[p.operand_start+j] = saved
+  }
+  p.operand_start += count
+ }
+
+ // long_option returns -2 only for a permitted long_only short-option
+ // fallback, without consuming input. Everything else consumes the token.
+ long_option(p *mut Parser, text_index i64, text_offset i64, fallback bool) i64 {
+  text := p.argv[text_index][text_offset:]
+  var name_end i64 := 0
+  for (; name_end < len(text); name_end += 1) { if (text[name_end] == '=') { break } }
+  name := text[:name_end]
+  var match i64 := -1
+  var ambiguous := false
+  // Exact names always win, even when they prefix another name.
+  for (var i i64 := 0; i < len(p.long_options); i += 1) {
+   if (equal(name, p.long_options[i].name)) { match = i; break }
+  }
+  if (match < 0) {
+   for (var i i64 := 0; i < len(p.long_options); i += 1) {
+    candidate := p.long_options[i]
+    if (prefix(candidate.name, name)) {
+     if (match < 0) { match = i } else {
+      previous := p.long_options[match]
+      if (p.config.long_only || candidate.argument != previous.argument || candidate.value != previous.value || candidate.flag != previous.flag) {
+       ambiguous = true
+      }
+     }
+    }
+   }
+  }
+  if (match < 0 && fallback) { return -2 }
+  p.character = 0
+  p.optind += 1
+  if (ambiguous) { return p.fail(Error.AMBIGUOUS_OPTION, 0) }
+  if (match < 0) { return p.fail(Error.UNKNOWN_OPTION, 0) }
+  option := p.long_options[match]
+  if (name_end < len(text)) {
+   if (option.argument == Argument.NONE) { return p.fail(Error.UNEXPECTED_ARGUMENT, option.value) }
+   p.optarg = text[name_end+1:]
+   p.has_argument = true
+  } else if (option.argument == Argument.REQUIRED) {
+   if (p.optind >= len(p.argv)) { return p.fail(Error.MISSING_ARGUMENT, option.value) }
+   p.optarg = p.argv[p.optind]
+   p.has_argument = true
+   p.optind += 1
+  }
+  p.longindex = match
+  flag := option.flag
+  if (flag != nil) { *flag = option.value; return 0 }
+  return option.value
+ }
+
+ short_option(p *mut Parser) i64 {
+  word := p.argv[p.optind]
+  ch := word[p.character]
+  p.character += 1
+  slot := p.short_slot(ch)
+  if (slot < 0) {
+   if (p.character == len(word)) { p.character = 0; p.optind += 1 }
+   return p.fail(Error.UNKNOWN_OPTION, i64(ch))
+  }
+  // GNU -W; redirects its required argument through the long-option table.
+  if (ch == 'W' && slot+1 < len(p.short_options) && p.short_options[slot+1] == ';') {
+   var offset := p.character
+   if (p.character == len(word)) {
+    p.optind += 1
+    if (p.optind >= len(p.argv)) { p.character = 0; return p.fail(Error.MISSING_ARGUMENT, i64(ch)) }
+    offset = 0
+   }
+   return p.long_option(p.optind, offset, false)
+  }
+  var takes_argument := false
+  var optional := false
+  if (slot+1 < len(p.short_options)) {
+   if (p.short_options[slot+1] == ':') {
+    takes_argument = true
+    if (slot+2 < len(p.short_options)) { optional = p.short_options[slot+2] == ':' }
+   }
+  }
+  if (takes_argument) {
+   if (p.character < len(word)) {
+    p.optarg = word[p.character:]
+    p.has_argument = true
+    p.optind += 1
+   } else {
+    p.optind += 1
+    if (!optional) {
+     if (p.optind >= len(p.argv)) { p.character = 0; return p.fail(Error.MISSING_ARGUMENT, i64(ch)) }
+     p.optarg = p.argv[p.optind]
+     p.has_argument = true
+     p.optind += 1
+    }
+   }
+   p.character = 0
+  } else if (p.character == len(word)) { p.character = 0; p.optind += 1 }
+  return i64(ch)
+ }
+
+ // next returns a short option byte/code, long Option.value, 0 for a flag-slot
+ // write, 1 for an operand in '-' mode, '?' / ':' for errors, or -1 at end.
+ // Check error before interpreting the code; real option values can also be
+ // '?' or 1. A leading ':' after any ordering prefix changes missing-argument
+ // results from '?' (63) to ':' (58). Parsing can continue after an error.
+ //
+ // Error, optarg, has_argument, longindex, and token are reset for every call.
+ // An empty supplied argument has has_argument=true and len(optarg)==0.
+ // After -1, operands() returns the remaining operand suffix.
+ next(p *mut Parser) i64 {
+  p.error = Error.NONE
+  p.optarg = []
+  p.has_argument = false
+  p.longindex = -1
+  p.token = []
+  if (p.finished) { return -1 }
+  if (p.character > 0) {
+   p.token = p.argv[p.optind]
+   start := p.optind
+   code := p.short_option()
+   if (p.character == 0) { p.permute(start, p.optind) }
+   return code
+  }
+  for (; p.optind < len(p.argv); p.optind += 1) {
+   word := p.argv[p.optind]
+   if (len(word) > 1) {
+    if (word[0] == '-') { break }
+   }
+   if (p.order == 1) { p.finished = true; return -1 }
+   if (p.order == 2) {
+    p.optarg = word
+    p.has_argument = true
+    p.token = word
+    p.optind += 1
+    return 1
+   }
+  }
+  if (p.optind == len(p.argv)) {
+   if (p.order == 0) { p.optind = p.operand_start }
+   p.finished = true
+   return -1
+  }
+  word := p.argv[p.optind]
+  p.token = word
+  start := p.optind
+  if (equal(word, "--")) {
+   p.optind += 1
+   p.permute(start, p.optind)
+   if (p.order == 0) { p.optind = p.operand_start }
+   p.finished = true
+   return -1
+  }
+  if (word[1] == '-') {
+   code := p.long_option(p.optind, 2, false)
+   p.permute(start, p.optind)
+   return code
+  }
+  if (p.config.long_only) {
+   if (len(word) > 2 || p.short_slot(word[1]) < 0) {
+    code := p.long_option(p.optind, 1, p.short_slot(word[1]) >= 0)
+    if (code != -2) { p.permute(start, p.optind); return code }
+   }
+  }
+  p.character = 1
+  code := p.short_option()
+  if (p.character == 0) { p.permute(start, p.optind) }
+  return code
+ }
+}
+
+fn equal(a []byte, b []byte) bool {
+ if (len(a) != len(b)) { return false }
+ return prefix(a, b)
+}
+
+fn prefix(a []byte, b []byte) bool {
+ if (len(b) > len(a)) { return false }
+ for (var i i64 := 0; i < len(b); i += 1) { if (a[i] != b[i]) { return false } }
+ return true
+}

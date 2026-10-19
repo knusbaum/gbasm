@@ -107,8 +107,12 @@ tables) in human form. Useful when debugging linker problems.
 
 Walks `BOSONPATH`, scans each package's `.bos`/`.bs` files for top-
 level declarations and their doc comments, serves HTML on
-`:8686`. Independent of the toolchain proper. Files: `main.go`,
-`discover.go`, `scan.go`, `server.go`.
+`:8686`. Independent of the toolchain proper. CLI: `cmd/bdoc/main.go`;
+discovery, scanning, and HTML rendering live in `internal/bdoc/`. Package docs precede `package`, and API docs precede
+declarations or methods in continuous `//` comment blocks. Use bare `//`
+lines between paragraphs: real blank lines detach the comment. bdoc renders
+plain paragraphs, `##` section headings, and fenced code examples
+(```boson or ```text). Code indentation and blank comment lines inside fences are preserved.
 
 ### `runtime/` — the runtime library
 
@@ -123,6 +127,7 @@ Every linked program pulls in some subset of these.
 | `string`   | `string.bs`, `puts_linux.bs` | String formatting and stdout output: `puts`, `puti`, `putb`, `putc`, `lenb`, `lenn`, `lenbb`, `exit`. Internal: `strlen`, `itoa`, `uitoa`, `ucountdigits`. File-IO syscalls live in `sys` (`sys.read/write/open/close`); the `io` package wraps them with a typed FD. |
 | `_iface`   | `iface.bos` | Runtime support for interface-to-interface assertion: `assert_to` plus the typedesc/iface_desc method matcher and the lazy per-typedesc itab cache. Not a source-level import — the compiler emits a bare `call _iface.assert_to`. Written in Boson against the raw-memory primitives (`uintptr`, `unsafe_cast`); the record layouts are struct declarations, so the compiler computes the offsets. |
 | `io`       | `io.bos` | Typed file IO: `type FD i64` with `read`/`write`/`close` methods, `fn open(path, flags, mode) owned FD`, and `STDIN`/`STDOUT`/`STDERR` globals. Wraps the raw `sys` syscall wrappers. |
+| `flags/gnu` | `gnu.bos` | Reentrant GNU short/long option parsing, argument modes, abbreviations, ordering, and typed errors. Package and API doc comments in `gnu.bos` are rendered by bdoc. |
 | `pair`     | `pair.bos` | A tiny exported struct used only by the cross-package-struct tests under `cmd/bosc/tests/`. Exists so the import path for Boson-source packages is exercised end-to-end. |
 
 ### `examples/` — runnable example projects

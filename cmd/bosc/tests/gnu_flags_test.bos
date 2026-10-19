@@ -1,0 +1,46 @@
+package main
+import "flags/gnu"
+import "fmt"
+
+fn dump(argv [][]byte, spec []byte, options []gnu.Option, config gnu.Config) {
+ p := gnu.Parser.configured(argv, spec, options, config)
+ for (var code := p.next(); code != -1; code = p.next()) {
+  message := []byte(p.error)
+  fmt.print("%d:%v:%s:%d:%s\n", code, p.has_argument, &p.optarg, p.longindex, &message)
+ }
+ rest := p.operands()
+ for (var i i64 := 0; i < len(rest); i += 1) { fmt.print("operand:%s\n", &rest[i]) }
+ p.destroy()
+}
+
+fn main() {
+ var flag i64 := 0
+ options := [
+  gnu.Option{name: "alpha", value: i64('a')},
+  gnu.Option{name: "beta", argument: gnu.Argument.REQUIRED, value: i64('b')},
+  gnu.Option{name: "color", argument: gnu.Argument.OPTIONAL, value: i64('c')},
+  gnu.Option{name: "verbose", flag: &flag, value: 1},
+  gnu.Option{name: "version", value: 300}
+ ]
+ argv := ["prog", "left", "-tFVu", "--bet=", "--color", "--color=", "--verb", "--version", "-b", "--", "tail", "--", "-a"]
+ dump(argv[:], "tFVuab:c::", options[:], gnu.Config{})
+ fmt.print("flag:%d original:%s\n", flag, &argv[1])
+ errors := ["prog", "-z", "--ver", "--alpha=x", "--beta"]
+ dump(errors[:], ":a", options[:], gnu.Config{})
+ posix := ["prog", "first", "-a"]
+ dump(posix[:], "a", options[:], gnu.Config{posixly_correct: true})
+ dump(posix[:], "-a", options[:], gnu.Config{posixly_correct: true})
+ single_dash := ["prog", "-beta=x", "-a"]
+ dump(single_dash[:], "ab:", options[:], gnu.Config{long_only: true})
+ reset_args := ["prog", "file", "-a"]
+ p := gnu.Parser.new(reset_args[:], "a", [])
+ fmt.print("reset:%d\n", p.next())
+ fmt.print("end:%d\n", p.next())
+ p.reset()
+ fmt.print("reset:%d\n", p.next())
+ fmt.print("end:%d\n", p.next())
+ p.destroy()
+ empty := gnu.Parser.new([], "", [])
+ fmt.print("empty:%d:%d\n", empty.next(), len(empty.operands()))
+ empty.destroy()
+}

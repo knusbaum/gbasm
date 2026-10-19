@@ -1,0 +1,29 @@
+116:false::-1:
+70:false::-1:
+86:false::-1:
+117:false::-1:
+98:true::1:
+99:false::2:
+99:true::2:
+0:false::3:
+300:false::4:
+98:true:--:-1:
+operand:left
+operand:tail
+operand:-a
+flag:1 original:left
+63:false::-1:unrecognized option
+63:false::-1:ambiguous option
+63:false::-1:option does not allow an argument
+58:false::-1:option requires an argument
+operand:first
+operand:-a
+1:true:first:-1:
+97:false::-1:
+98:true:x:1:
+97:false::-1:
+reset:97
+end:-1
+reset:97
+end:-1
+empty:-1:0

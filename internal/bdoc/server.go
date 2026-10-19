@@ -3,6 +3,7 @@ package bdoc
 import (
 	_ "embed"
 	"fmt"
+	"html"
 	"html/template"
 	"net/http"
 	"os"
@@ -502,16 +503,59 @@ func firstParagraph(doc string) string {
 	return strings.ReplaceAll(doc, "\n", " ")
 }
 
-// splitDoc breaks a doc comment into paragraphs separated by blank lines.
+// splitDoc keeps fenced examples intact while joining prose into paragraphs.
 func splitDoc(s string) []string {
 	var out []string
-	for _, para := range strings.Split(s, "\n\n") {
-		para = strings.TrimSpace(para)
-		if para != "" {
-			out = append(out, strings.ReplaceAll(para, "\n", " "))
+	var lines []string
+	fenced := false
+	flush := func() {
+		if len(lines) == 0 {
+			return
+		}
+		if strings.HasPrefix(lines[0], "```") {
+			out = append(out, strings.Join(lines, "\n"))
+		} else {
+			out = append(out, strings.Join(lines, " "))
+		}
+		lines = nil
+	}
+	for _, line := range strings.Split(s, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			if !fenced {
+				flush()
+			}
+			lines = append(lines, trimmed)
+			if fenced {
+				flush()
+			}
+			fenced = !fenced
+		} else if fenced {
+			lines = append(lines, line)
+		} else if trimmed == "" {
+			flush()
+		} else {
+			lines = append(lines, trimmed)
 		}
 	}
+	flush()
 	return out
+}
+
+// docBlock emits only fixed HTML tags around escaped source text.
+func docBlock(s string) template.HTML {
+	if strings.HasPrefix(s, "```") {
+		lines := strings.Split(s, "\n")
+		lines = lines[1:]
+		if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "```" {
+			lines = lines[:len(lines)-1]
+		}
+		return template.HTML("<pre><code>" + html.EscapeString(strings.Join(lines, "\n")) + "</code></pre>")
+	}
+	if strings.HasPrefix(s, "## ") {
+		return template.HTML("<h2>" + html.EscapeString(strings.TrimPrefix(s, "## ")) + "</h2>")
+	}
+	return template.HTML("<p>" + html.EscapeString(s) + "</p>")
 }
 
 // -----------------------------------------------------------------------------
@@ -521,6 +565,7 @@ func splitDoc(s string) []string {
 var tmplFuncs = template.FuncMap{
 	"highlight":  highlight,
 	"paragraphs": splitDoc,
+	"docBlock":   docBlock,
 	// hasTypeBody reports whether a type decl has a body block worth
 	// rendering verbatim under the signature. Today that's struct
 	// bodies and values blocks (Stage 6 added the latter); both reach
@@ -757,7 +802,7 @@ var pkgTmpl = template.Must(template.New("pkg").Funcs(tmplFuncs).Parse(chromeBlo
       </div>
       {{if .DocParas}}
       <div class="overview">
-        {{range .DocParas}}<p>{{.}}</p>{{end}}
+        {{range .DocParas}}{{docBlock .}}{{end}}
       </div>
       {{end}}
     </section>
@@ -962,7 +1007,7 @@ var pkgTmpl = template.Must(template.New("pkg").Funcs(tmplFuncs).Parse(chromeBlo
 </body>
 </html>
 
-{{define "doc"}}{{if .}}<div class="doc">{{range paragraphs .}}<p>{{.}}</p>{{end}}</div>{{end}}{{end}}
+{{define "doc"}}{{if .}}<div class="doc">{{range paragraphs .}}{{docBlock .}}{{end}}</div>{{end}}{{end}}
 
 {{define "meta"}}<div class="meta">
   <span>{{.SrcFile}}:{{.SrcLine}}</span>
@@ -971,7 +1016,7 @@ var pkgTmpl = template.Must(template.New("pkg").Funcs(tmplFuncs).Parse(chromeBlo
 
 {{define "assocFn"}}<div class="decl" id="{{.Anchor}}">
   <div class="sig fn-sig">{{highlight .Signature}}</div>
-  {{if .DocParas}}<div class="doc">{{range .DocParas}}<p>{{.}}</p>{{end}}</div>{{end}}
+  {{if .DocParas}}<div class="doc">{{range .DocParas}}{{docBlock .}}{{end}}</div>{{end}}
   <div class="meta">
     <span>{{.SrcFile}}:{{.SrcLine}}</span>
     <a href="#{{.Anchor}}" class="anchor">#{{.Anchor}}</a>
@@ -980,7 +1025,7 @@ var pkgTmpl = template.Must(template.New("pkg").Funcs(tmplFuncs).Parse(chromeBlo
 
 {{define "assocMethod"}}<div class="decl" id="{{.Anchor}}">
   <div class="sig method-sig">{{highlight .Signature}}</div>
-  {{if .DocParas}}<div class="doc">{{range .DocParas}}<p>{{.}}</p>{{end}}</div>{{end}}
+  {{if .DocParas}}<div class="doc">{{range .DocParas}}{{docBlock .}}{{end}}</div>{{end}}
   <div class="meta">
     {{if .SrcFile}}<span>{{.SrcFile}}:{{.SrcLine}}</span>{{end}}
     <a href="#{{.Anchor}}" class="anchor">#{{.Anchor}}</a>

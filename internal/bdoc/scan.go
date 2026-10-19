@@ -199,7 +199,7 @@ func lineKind(line string) lineClass {
 }
 
 func commentText(line string) string {
-	return strings.TrimSpace(strings.TrimPrefix(line, "//"))
+	return strings.TrimPrefix(strings.TrimPrefix(line, "//"), " ")
 }
 
 // tryBosDecl recognizes top-level .bos declarations.

@@ -546,6 +546,33 @@ Because a slice (24 bytes) cannot be coerced into an interface by value, `[]byte
 
 `free` consumes only allocation ownership (`owned *T`); it does not recursively dispose a pointee obligation such as `*owned T`. If the pointee is a struct with owned fields, those fields must already have been consumed before `free` is allowed.
 
+### GNU-style option parsing (`flags/gnu`)
+
+`flags/gnu` supplies independent `Parser` objects implementing GNU
+`getopt_long` and `getopt_long_only` parsing rules. `Parser.new(argv,
+short_options, long_options)` accepts argv including the program name,
+a GNU option string (`a`, `b:`, `c::`, `W;`), and a slice of `Option`
+records (`name`, `argument`, `flag`, `value`). `Parser.configured` also accepts
+`Config{long_only: ..., posixly_correct: ...}`. `next()` returns option codes,
+zero for explicit flag-slot writes, code 1 for operands in return-in-order
+mode, error codes `?` / `:`, or -1 at end. Fields expose argument presence,
+long-option index, original token, and typed errors; no diagnostics are
+printed automatically.
+
+Default GNU ordering scans past operands and stably permutes a private
+shallow copy of argument headers. Leading `+` stops at the first operand;
+leading `-` returns operands in encounter order. `--` ends option processing.
+`operands()` borrows the final operand suffix; `reset()` restores the original
+order. `destroy()` releases the parser and its header copy. Input bytes,
+option definitions, and flag slots remain borrowed. There is no per-option
+allocation. The POSIXLY_CORRECT setting is explicit because the runtime has
+no environment API. See the [package and API doc comments](runtime/flags/gnu/gnu.bos), also
+available through `bdoc`, for a tutorial from a single short flag through
+long names, option values, and operands, followed by advanced parsing rules.
+Documentation comments support plain paragraphs, `##` section headings, and
+fenced code examples;
+`bdoc` preserves example indentation and escapes their contents as text.
+
 ### Struct Literals
 
 ```
@@ -3433,6 +3460,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Prefix pointer-to-slice / pointer-to-array types (`*[]byte`, `*mut []byte`, `*[8]byte`), distinct from slices/arrays of pointers (`[]*byte`, `[8]*byte`)
 - Cross-package struct methods: a struct's method set rides the `struct` directive (method-name list) into the `.bo` and is reconstructed on import, so methods on imported structs resolve at compile time (parallel to type-alias methods)
 - The `fmt` runtime package (five-layer formatting: raw conversions, writer helpers, `Builder`, `stringer`/`Formatter`, `print`/`printf`)
+- The `flags/gnu` runtime package: independent GNU short/long option parsers, required/optional arguments, abbreviations, operand ordering, long-only mode, `-W`, structured errors, and reset; verified against GNU libc.
 - Register-scaled indexing into globals via `lea` materialization (no `[symbol + reg*scale]` SIB form exists on x86-64; bosc emits an `lea` to materialize the base, then `[reg + idx*scale]`)
 - Postfix chains compose: `a.b[i].c[lo:hi]` parses and codegens uniformly
 - Go-style automatic semicolon insertion (newline after a statement-ending token; suppressed inside `(...)` and `[...]`)

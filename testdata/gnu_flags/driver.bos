@@ -1,0 +1,30 @@
+package main
+import "flags/gnu"
+import "fmt"
+fn main(args [][]byte) {
+ var flag i64 := 0
+ options := [
+  gnu.Option{name: "alpha", value: i64('a')},
+  gnu.Option{name: "alpine", value: 300},
+  gnu.Option{name: "beta", argument: gnu.Argument.REQUIRED, value: i64('b')},
+  gnu.Option{name: "color", argument: gnu.Argument.OPTIONAL, value: i64('c')},
+  gnu.Option{name: "verbose", flag: &flag, value: 1},
+  gnu.Option{name: "version", value: 301},
+  gnu.Option{name: "synonym", value: 302},
+  gnu.Option{name: "synonyms", value: 302},
+  gnu.Option{name: "f", value: 303},
+  gnu.Option{name: "foo", value: 304},
+  gnu.Option{name: "optional", argument: gnu.Argument.OPTIONAL, value: i64('o')},
+  gnu.Option{name: "required", argument: gnu.Argument.REQUIRED, value: i64('r')}
+ ]
+ p := gnu.Parser.configured(args[4:], args[1], options[:], gnu.Config{long_only: args[2][0] == '1', posixly_correct: args[3][0] == '1'})
+ for (var code := p.next(); code != -1; code = p.next()) {
+  var optopt i64 := 0
+  if (p.error != gnu.Error.NONE) { optopt = p.optopt }
+  fmt.print("%d|%v|%s|%d|%d|%d\n", code, p.has_argument, &p.optarg, optopt, p.longindex, flag)
+ }
+ fmt.print("end|%d|%d\n", p.optind, flag)
+ rest := p.operands()
+ for (var i i64 := 0; i < len(rest); i += 1) { fmt.print("rest|%s\n", &rest[i]) }
+ p.destroy()
+}

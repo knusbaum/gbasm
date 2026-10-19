@@ -252,8 +252,21 @@ file fmt.bo : bas fmt.bs {
     ./bas -o fmt.bo fmt.bs >/dev/null 2>&1
 }
 
+# GNU option parsing has no runtime dependencies beyond builtin.
+file flags_gnu.importcfg : builtin.bo {
+    echo builtin=builtin.bo > flags_gnu.importcfg
+}
+
+file flags_gnu.bs : bosc flags_gnu.importcfg $RUNTIME/flags/gnu/gnu.bos {
+    ./bosc -importcfg=flags_gnu.importcfg -o flags_gnu.bs $RUNTIME/flags/gnu/gnu.bos
+}
+
+file flags_gnu.bo : bas flags_gnu.bs {
+    ./bas -o flags_gnu.bo flags_gnu.bs >/dev/null 2>&1
+}
+
 # Generate a project-wide importcfg.
-file test.importcfg : builtin.bo string.bo pair.bo io.bo sys.bo syspkg.bo heap.bo errors.bo visibility.bo iface.bo geom.bo ifaces.bo fmt.bo retalias_pkg.bo {
+file test.importcfg : flags_gnu.bo builtin.bo string.bo pair.bo io.bo sys.bo syspkg.bo heap.bo errors.bo visibility.bo iface.bo geom.bo ifaces.bo fmt.bo retalias_pkg.bo {
     cat > test.importcfg <<EOF
 builtin=builtin.bo
 string=string.bo
@@ -269,12 +282,13 @@ geom=geom.bo
 ifaces=ifaces.bo
 fmt=fmt.bo
 retalias_pkg=retalias_pkg.bo
+flags/gnu=flags_gnu.bo
 EOF
 }
 
 clean : {
     rm -f tests/*.bos.o tests/*.bos.bo tests/*.bs tests/*.out tests/*.stdout *.importcfg
-    rm -f bosc bas bld string.bo init.bo heap.bo iface.bo iface.bs iface.importcfg sys.bo syspkg.bo syspkg.bs syspkg.importcfg heap.bs heap.importcfg builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs errors.bo errors.bs visibility.bo visibility.bs geom.bo geom.bs ifaces.bo ifaces.bs fmt.bo fmt.bs fmt.importcfg test.importcfg retalias_pkg.bo retalias_pkg.bs retalias_pkg.importcfg
+    rm -f flags_gnu.bo flags_gnu.bs flags_gnu.importcfg bosc bas bld string.bo init.bo heap.bo iface.bo iface.bs iface.importcfg sys.bo syspkg.bo syspkg.bs syspkg.importcfg heap.bs heap.importcfg builtin.bo builtin.bs pair.bo pair.bs io.bo io.bs errors.bo errors.bs visibility.bo visibility.bs geom.bo geom.bs ifaces.bo ifaces.bs fmt.bo fmt.bs fmt.importcfg test.importcfg retalias_pkg.bo retalias_pkg.bs retalias_pkg.importcfg
 }
 
 go_tests {
@@ -363,6 +377,9 @@ test: go_tests bosc_tests {
     fi
     if grep -q '^import "retalias_pkg"' "$target"; then
         extra_bo="$extra_bo retalias_pkg.bo"
+    fi
+    if grep -q '^import "flags/gnu"' "$target"; then
+        extra_bo="$extra_bo flags_gnu.bo"
     fi
     if grep -q '^import "fmt"' "$target"; then
         extra_bo="$extra_bo fmt.bo"
