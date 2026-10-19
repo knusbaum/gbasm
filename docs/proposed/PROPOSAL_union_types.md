@@ -2,6 +2,10 @@
 
 ## History
 
+- 2026-10-18 — Settled exact-first injection, identical-union forwarding, initial return/parameter/initialized-local scope, type precedence, and alias identity; deferred widening, composite storage, and nominal wrappers.
+
+- 2026-10-18 — Recorded flat unordered identity, canonical tag ordering, exact cases without default, qualifier restrictions, non-addressable union containers, and addressable narrowed payloads; retained only unresolved choices as open questions.
+
 - 2026-10-18 — Recorded the union-type design discussion, agreed syntax and matching rules, reuse of the values ADT representation, and questions to resolve before implementation.
 
 ## 1. Motivation
@@ -42,28 +46,43 @@ success/failure results receive special language treatment.
 The following decisions were settled in discussion:
 
 1. Write alternatives with `|`: `T | U | error`. There is no two-alternative
-   limit and no new keyword.
-2. A function returning a union may return a value belonging to one of its
-   alternatives, without an explicit named wrapper construction.
-3. Reuse `switch` to select an alternative. Switch heads require parentheses;
+   limit and no new keyword. Unions belong in the shared type syntax rather
+   than a separate function-return grammar. Initially support return types,
+   parameters, and initialized locals (§9).
+2. Union identity is flat and unordered: `T | U` and `U | T` are identical,
+   as are `T | (U | V)` and `T | U | V`. Grouping does not create another
+   runtime union layer. Canonical ordering determines tags (§6).
+3. A function returning a union may return a value belonging to one of its
+   alternatives, without an explicit named wrapper construction. An exact type
+   match wins; otherwise exactly one compatible alternative must exist (§3).
+4. Reuse `switch` to select an alternative. Switch heads require parentheses;
    a local head binding uses the normal `:=` declaration syntax.
-4. Union cases match exact types, including ownership, mutability, pointer
+5. Union cases match exact types, including ownership, mutability, pointer
    structure, and nullability. They do not implicitly strip qualifiers.
-5. Reject alternatives that differ only in ownership or mutability. Ownership
-   and mutability are not outcome discriminators, even though a tag could
-   technically distinguish those alternatives.
-6. Narrow the switched value to the complete payload type in each case.
+6. Reject alternatives that differ only in ownership, mutability, or
+   nullability. These qualifiers are not outcome discriminators.
+7. Narrow the switched value to the complete payload type in each case.
    Ownership remains checked; selecting a case does not itself consume it.
-7. A `default` with exactly one remaining alternative narrows to that type.
-   This is useful for the common result pattern but is not the general answer
-   to selecting alternatives.
-8. Qualifier inference in case patterns is deferred. `infer` was considered
-   a reasonable name, but adding a keyword is not justified for the initial
-   design. Start with exact matching and evaluate sugar through actual use.
+   Consumption versus inspection follows the existing ADT branch rules.
+8. Union switches have no `default`. Consuming and expression switches name
+   every alternative explicitly. Inspecting statement switches may omit cases.
+   There are no residual-union defaults or special last-alternative shortcuts.
+9. Union containers are non-addressable and cannot have indirection or
+   qualifiers applied to them. There are no borrowed views of union
+   containers. Individual alternatives can still be pointers or carry
+   ownership, mutability, and nullability where those are otherwise legal.
+10. The narrowed payload is addressable. Its address denotes that payload,
+    not the union container, and follows existing payload-borrow rules (§5).
+11. Reuse the `values` ADT tagged-union representation and applicable payload
+    operations. There is no separate union runtime or ownership metadata.
+12. Qualifier inference in case patterns is deferred. `infer` was considered
+    a reasonable name, but adding a keyword is not justified for the initial
+    design. Start with exact matching and evaluate sugar through actual use.
 
 The sections below describe how these decisions fit existing Boson semantics.
-Specific choices not settled in discussion are identified as proposed or open.
-All union examples describe proposed syntax, not an implemented feature.
+The language decisions below are agreed; remaining work is compiler integration
+and validation (§11). All union examples describe proposed syntax, not an
+implemented feature.
 
 ## 3. Function signatures and return construction
 
@@ -95,20 +114,32 @@ Here, `owned` belongs to `*mut Resource`; it does not qualify every alternative
 or introduce a separately owned wrapper. This distinction needs to be explicit
 in the type grammar and checker representation.
 
-**Proposed construction rule:** apply existing assignment/return compatibility
-rules to each alternative. Exactly one alternative must accept the expression.
-Reject no matches and ambiguous matches; do not choose an alternative based on
-declaration order. Exact-match preference and explicit disambiguation syntax
-remain open (§11).
+**Construction rule:** select an exact
+resolved type match first. If there is no exact match, apply existing
+assignment/return compatibility rules to each alternative and require exactly
+one compatible alternative. Reject no matches and ambiguous matches.
 
-For example, a union may contain both a concrete type and an interface that
-the concrete type implements. The union declaration can be meaningful, but
-injecting the concrete value may be ambiguous under ordinary compatibility
-rules. A union tag must identify the selected alternative, not ask the runtime
-to guess which interface or numeric conversion the producer intended.
+For example, returning a `T` into `T | error` chooses `T` even if `T`
+implements `error`. A concrete value implementing two interface alternatives
+is ambiguous if neither is an exact match. This uses a small, explicit
+rule instead of a general hierarchy of "most specific" types.
 
-Untyped literals need contextual checking. The explicit `i64(42)` above avoids
-assuming a resolution rule for a return type such as `i32 | i64`.
+Leftmost-compatible selection is incompatible with unordered union identity:
+reordering the same type must not change which outcome a returned value selects.
+Canonical storage order must not become a conversion-preference order either.
+
+Explicitly disambiguate through existing conversions or typed intermediate
+bindings, subject to their existing ownership checks. No new union-selection
+keyword is introduced. For example, a binding explicitly typed as an interface
+selects that exact interface alternative when injected into the union.
+Untyped literals use existing contextual compatibility checking: `i64(42)`
+selects an exact alternative, while `42` in a return type such as `i32 | i64`
+is rejected if more than one alternative accepts it.
+
+Forwarding a value with the same canonical union type preserves its tag,
+payload, and obligations. Source ordering is irrelevant: forwarding `U | T`
+to `T | U` is identical-union forwarding. Implicit widening to a different
+union, such as `T | U` to `T | U | error`, is deferred and rejected initially.
 
 ## 4. Selecting and unpacking alternatives
 
@@ -178,17 +209,16 @@ The success arm yields the payload and transfers its obligations into `p`.
 The error arm exits the enclosing function and contributes no result type.
 The destination acquires no obligation on a path where its initializer exits.
 
-When there is only one remaining alternative, the success case can instead be
-written as `default v`. For `T | U | error`, handling only `error` leaves two
-alternatives: `default` cannot pretend that either one is uniquely selected.
-Whether that arm receives a residual `T | U` type is an open question (§11).
+There is no `default`, even if only one alternative would remain. The caller
+writes its exact type. This avoids residual union types and makes each branch
+identify the outcome it handles.
 
 ### Exhaustiveness
 
 Reuse the existing distinction between inspecting and consuming switches:
 
-- Expression switches must cover every alternative, explicitly or through
-  `default`, and every continuing arm must yield a compatible result.
+- Expression switches must explicitly cover every alternative, and every
+  continuing arm must yield a compatible result.
 - Consuming switches must cover every alternative and discharge each active
   payload's obligations on every relevant path.
 - Inspecting statement switches may omit alternatives. An unmatched path
@@ -211,23 +241,55 @@ switch keyword:
   returns can coexist with a success arm that moves an owned resource out.
 - Partial consumption or disagreement between consuming and preserving paths
   is rejected, following existing variant-switch rules.
-- Borrowing a union must not grant ownership of the original payload. Exact
-  case selection must not become a way to manufacture ownership from a view.
 
-The last point requires a precise separation between the declared alternative
-used for selection and the permissions of a borrowed payload view. The spelling
-of cases over such views needs to be settled before implementation (§11).
+### Non-addressable containers; addressable payloads
 
-Derived borrows must preserve their source dependencies through injection,
-narrowing, extraction, and branch merges. Moving or replacing the union cannot
-leave a usable borrow into a former payload. An implementation should build on
-the existing flow paths and alias/borrow invalidation machinery.
+A union binding cannot be addressed or exposed through a borrowed union view.
+For example, taking `&result` before selecting an alternative is rejected.
+`*(T | U)`, `[](T | U)`, and qualifiers on `(T | U)` are not supported. An
+array of union elements would likewise expose union container locations and is
+excluded from the initial design. These restrictions concern the union itself;
+`*T | U`, `[]T | U`, and `owned *mut T | error` have ordinary payload types.
+
+The union needs no outer `owned` annotation: its active payload supplies its
+obligations. Transferring a union that can carry an owned alternative transfers
+those conditional obligations and invalidates the source as required by the
+tracker. This differs from granting a non-owning union view: such views are
+not available.
+
+After narrowing, address-taking accesses the selected payload in place:
+
+```boson
+switch (v := open_resource()) {
+    case owned FD {
+        io.copy(&io.STDOUT, &v)
+        v.close()
+    }
+    case error { report(v) }
+}
+```
+
+Here `&v` points to the `FD` payload and `close` consumes that payload. Neither
+operation takes the address of the tag-plus-payload container. Inspecting a
+payload does not itself consume it. The payload remains addressable even when
+it is an owned scalar needing an address for a method receiver.
+
+The payload's declared permissions and existing ADT borrow rules govern that
+address; narrowing does not add mutability. The tag cannot change while the
+value is narrowed, and moving or replacing the union must invalidate derived
+borrows under the existing tracker rules. Returning or storing a payload borrow
+must satisfy existing lifetime/dependency checks; non-addressable containers
+do not make their payload storage immortal.
+
+Reuse flow paths, alias invalidation, and consuming-versus-inspecting branch
+merges. No separate qualifier-matching rule for borrowed union containers is
+needed because those views are forbidden.
 
 ## 6. Alternative identity and rejected unions
 
-For duplicate detection, compare alternative types after removing ownership
-and mutability qualifiers at every level. Keep nominal type identity and the
-rest of the type structure. This comparison is only a declaration-validity
+For duplicate detection, compare alternative types after removing ownership,
+mutability, and nullability qualifiers at every level. Keep nominal type identity
+and the rest of the type structure. This comparison is only a declaration-validity
 rule; it is not the case-matching rule.
 
 Reject, for example:
@@ -235,6 +297,7 @@ Reject, for example:
 ```boson
 *T | owned *T
 *T | *mut T
+T | ?T
 owned *owned *T | owned **T
 ```
 
@@ -242,11 +305,74 @@ The same rule rejects exact duplicate alternatives. Aliases must not evade it.
 Distinct nominal resource types remain useful even if their storage types are
 identical; `File | Socket` can describe distinct outcomes.
 
-The handling of alternatives that differ only in nullability remains open.
-It should not be implicitly decided by implementing the ownership/mutability
-duplicate rule. Likewise, overlapping interfaces are different from duplicate
-alternatives: matching a selected union alternative is exact, while injecting
-a concrete value may require disambiguation.
+A nullable individual alternative is allowed wherever its payload type supports
+nullability, for example `?*T | error`. The union itself is never nullable;
+`?(T | U)` is rejected. `T | ?T` is rejected by duplicate-shape checking, not
+because all nullable alternatives are forbidden. Existing restrictions still
+apply: this proposal does not independently make `?i64` or nullable slices legal.
+
+Overlapping interfaces are different from duplicate alternatives: matching a
+selected union alternative is exact, while injecting a concrete value may
+require disambiguation.
+
+### Canonical identity and tag ordering
+
+Normalize each union as follows:
+
+1. Resolve types using existing type identity rules. Import aliases and source
+   spelling do not affect identity; distinct nominal types remain distinct.
+2. Flatten union alternatives recursively. Parentheses do not preserve an
+   alternative group or introduce another tag.
+3. Reject duplicate alternatives, including equal shapes after recursively
+   removing ownership, mutability, and nullability. Do not silently deduplicate
+   repeated alternatives introduced by flattening.
+4. Compute the canonical encoding of each complete alternative, retaining all
+   its qualifiers, and sort encodings lexicographically as unsigned bytes.
+5. Assign tags `0` through `N-1` in that order. Use the same ordering for type
+   comparison, code generation, and exported metadata.
+
+This makes `T | U` and `U | T` identical in both type identity and tag mapping.
+It does not expose tag values as source-level constants. Registration order,
+source order, machine addresses, and hashes must not determine ordering.
+
+### Canonical encoding
+
+The following encoding defines a deterministic order, not a new public ABI or
+source type spelling. Use version `1` consistently across metadata producers
+and consumers; a future change requires coordinated versioning.
+
+Define `L(x)` as the ASCII decimal length in bytes of byte string `x`, followed
+by `:` and then `x`, with no leading zeros in the length except `0`. A node
+consists of `L(kind)`, three ASCII flags (`owned`, `mut`, `nullable`, each `0`
+or `1`), and zero or more `L(field)` entries in the order below. Strings use
+UTF-8; unsigned numbers use ASCII decimal without leading zeros. Child nodes
+are encoded recursively and length-prefixed as fields. The top-level encoding
+is ASCII `1:` followed by the node encoding.
+
+| Kind | Fields, in encoding order |
+|---|---|
+| `named` | Canonical defining package/import identity, declared type name |
+| `pointer` | Pointee node |
+| `slice` | Element node |
+| `array` | Length, element node |
+| `struct` | Field count, then each field's name and type node in declaration order |
+| `function` | Variadic flag, parameter count, parameter type nodes in order, return count, return type nodes in order |
+| `union` | Alternative count, then the flattened, sorted alternative nodes |
+
+Builtin types use their canonical builtin identity and name. Named types are
+encoded by identity, without expanding their definitions; this preserves
+nominal distinctions and terminates recursion through named types. Genuine
+aliases resolve according to existing alias rules before encoding. Anonymous
+structs and function signatures are structural; parameter variable names and
+source positions are excluded. Each qualifier appears at the node/level it
+qualifies, independently of the compiler's internal bit-mask representation.
+Multi-return signatures use the ordered return list, not a union node.
+
+A union node has all three qualifier flags zero. Its alternatives retain their
+own flags. Nested unions inside otherwise supported structural types use the
+same canonical encoding; forbidden direct wrappers remain invalid regardless
+of whether they could be encoded. Any additional type form admitted later
+must define an unambiguous canonical node before it can be a union alternative.
 
 ## 7. Relationship to existing results and values types
 
@@ -281,10 +407,10 @@ writes the payload and selects its tag; switching tests that tag. The feature
 does not inherently require boxing, allocation, runtime ownership metadata,
 or a runtime search through interface implementations.
 
-The exact layout and ABI are not settled here. Cross-package type metadata must
-carry the full alternative types and an agreed tag mapping. Different source
-orderings must not accidentally disagree about the representation of what the
-type checker considers the same union.
+Use existing ADT layout and calling-convention rules for the canonical ordered
+alternatives, each with one payload. Cross-package metadata must carry the full
+alternative types and use the canonical tag mapping in §6. Source order cannot
+change the ABI of otherwise identical unions.
 
 Implementation touches type parsing and identity, return/assignment checking,
 switch narrowing and flow merges, payload layout/code generation, and exported
@@ -296,11 +422,73 @@ new language behavior.
 
 ## 9. Scope and deferred syntax
 
-The primary use is function results, but results must at least be inferable
-into local bindings and passable onward. Whether explicit union types are
-immediately allowed in every type position is open. There is no implicit
-error propagation operator, automatic destructor, boolean success test, or
-special designation of one alternative as an error.
+The primary use is function results, and `|` is part of the common type grammar.
+There is no separate union runtime or return-only internal representation.
+Initially, unions are allowed in function return types, parameters, and
+initialized local declarations, including explicitly typed locals:
+
+```boson
+fn obtain() T | U
+fn accept(value T | U)
+
+x := obtain()
+y T | U := obtain()
+var z T | U := obtain()
+accept(x)
+```
+
+The binding's `var` controls reassignment; it does not apply `mut` to the union
+type. Passing a union carrying owned obligations transfers those obligations;
+it does not create a borrowed union container.
+
+Uninitialized union declarations are rejected. There is no default alternative
+or implicit zero-tag initialization. Fields, global union storage, arrays/slices
+of unions, and other composite storage are deferred. The longer-term aspiration
+is to admit unions wherever an ordinary type can be named, subject to the
+non-addressability and qualifier restrictions above.
+
+### Precedence and grouping
+
+`|` joins complete alternative types. Prefix qualifiers and constructors bind
+within an alternative; grouping unions flattens them rather than creating a
+nested union:
+
+```text
+owned *T | error       union of owned *T and error
+T | (U | V)           same union as T | U | V
+*(T | U)              rejected: pointer to a union container
+owned (T | U)         rejected: qualifier on a union container
+```
+
+A function type's return clause absorbs `|`. Parentheses distinguish a
+function-valued alternative from a function returning a union:
+
+```text
+fn() T | U            function returning T | U
+(fn() T) | U          union of a function returning T and U
+```
+
+Commas separate multiple results, and `|` joins the alternatives within each
+result. A return clause `T | error, U` declares two results: the first is
+`T | error`, and the second is `U`. Parentheses around a complete function type
+terminate that function's return clause before an enclosing union separator.
+These rules apply equally to source types and imported type descriptions.
+
+### Aliases
+
+Any alias of a union preserves its canonical alternative-set identity and tag
+mapping. Aliasing does not make the union nominal, permit forbidden qualifiers
+or wrappers, or evade the initial type-position restrictions. Distinct nominal
+wrappers around anonymous unions are deferred. Existing named payload types
+continue to retain their own nominal identities (§6).
+
+There is no implicit error propagation operator, automatic destructor, boolean
+success test, or special designation of an alternative as an error. Applicable
+operations follow payload-bearing `values` semantics: layout, moves, borrows
+of selected payloads, and mutation/flow restrictions. Anonymous unions do not
+gain case names, constant projections, arithmetic, or numeric conversions merely
+because an alternative provides those operations. Do not add a new operation
+solely for anonymous unions when the corresponding ADT operation is unsupported.
 
 Exact case matching is deliberately the initial design, even when verbose:
 
@@ -325,15 +513,24 @@ plus real language tests for generated code and ownership flow. Cover at least:
 - Two and three alternatives, with every tag exercised at runtime.
 - Resource and error paths, including an error alternative with its own
   owned obligation and early exits from expression initializers.
-- Exact qualifier matching; duplicates differing at outer and inner ownership
-  or mutability levels; aliases and package-qualified types.
+- Exact qualifier matching; duplicates differing at outer and inner ownership,
+  mutability, or nullability levels; aliases and package-qualified types.
 - Missing and duplicate cases; non-member case types; exhaustive expressions
   and consuming switches; inspecting switches that omit alternatives.
 - Payload movement, reuse after move, partial consumption, branch disagreement,
-  borrowed scrutinees, and borrow invalidation after replacement.
-- Single-alternative `default` narrowing and handling of multiple remaining
-  alternatives under the rule selected before implementation.
-- Ambiguous numeric/interface injection and contextual literal checking.
+  payload addressability, and borrow invalidation after replacement.
+- Rejection of `default`, union address-taking, direct pointer/slice/array
+  wrappers, qualifiers on unions, and uninitialized union bindings.
+- Identical layouts and tags for reordered and flattened unions across
+  packages, including import aliases and nominally distinct payload types.
+- Exact-match priority over interface coercion, ambiguous numeric/interface
+  injection, contextual literals, and explicit disambiguation through typed
+  intermediate values.
+- Identical-union forwarding, rejection of implicit widening, union parameters,
+  inferred and explicitly typed initialized locals, and rejection of deferred
+  storage positions.
+- Function-return versus function-alternative precedence, multi-return commas,
+  grouping, and aliases preserving canonical identity.
 - Cross-package calls with differently sized/aligned payloads, including
   interfaces, pointers, slices, and composites where supported.
 - `continue` and `break` in initializer arms, including `for` increments.
@@ -342,33 +539,30 @@ Run the root Go, assembler, and language integration suites through the normal
 `mmk` workflow. Do not overlap separate bosc test invocations that share runtime
 fixtures.
 
-## 11. Questions to settle before implementation
+## 11. Implementation obligations
 
-These details were not resolved by the design discussion:
+The language decisions needed for the initial implementation are settled. In
+particular, implementation must preserve:
 
-1. **Type grammar and scope:** precedence of `|` relative to function types,
-   pointer/slice modifiers, and multi-return commas; grouping syntax; supported
-   type positions, aliases, and named wrappers around unions.
-2. **Identity and nesting:** whether order matters, whether nested unions
-   flatten, and how canonical identity determines exported tag mappings.
-3. **Injection:** exact-match preference versus rejecting all multiple matches;
-   explicit selection when interface or numeric conversions overlap; contextual
-   untyped literals and `nil`; forwarding the same or a different union.
-4. **Borrowed views:** which exact case spelling selects an owned declared
-   alternative through a non-owning view without granting ownership, and how
-   narrowing retains addressability and mutability permissions.
-5. **Residual defaults:** whether multiple unmatched alternatives form a
-   residual union inside `default`, or remain inaccessible as individual
-   payloads until another switch.
-6. **Nullability and initialization:** `T | ?T`, `?T | U`, nullable union syntax
-   if any, default initialization, and definite assignment for a union whose
-   alternatives have different initialization requirements.
-7. **Other operations and ABI:** equality, assertions/conversions, interface
-   participation, recursive layouts, global initialization, and the concrete
-   layout/calling convention. Unsupported operations need directed diagnostics.
+- Flat unordered identity, the canonical encoding and tag order in §6, and
+  aliases that preserve that identity.
+- Exact-first injection, unique-compatible fallback, ambiguity rejection,
+  identical-union forwarding, and no implicit widening.
+- Return types, parameters, and initialized locals as the initial supported
+  positions, with the grammar and grouping rules in §9.
+- Exact cases without `default`, existing ADT branch-consumption rules,
+  non-addressable union containers, and addressable narrowed payloads.
+- Rejection of qualifier-only alternatives, qualifiers/indirection on union
+  containers, uninitialized bindings, and deferred composite/global storage.
+- Reuse of ADT representation and applicable operations rather than a new
+  runtime union model.
 
-These questions should be resolved against representative callers before
-implementation, without treating undocumented compiler behavior as the spec.
+Remaining work is to map these rules onto the shared type parser, structural
+type identity, existing ADT layout/ABI helpers, metadata, narrowing, and the
+ownership tracker, and to validate the cases in §10. Unsupported operations
+need directed diagnostics. Qualifier-inference syntax, widening, composite
+storage, and nominal wrappers remain future extensions rather than blockers
+for this implementation.
 
 ## References
 
@@ -379,4 +573,5 @@ implementation, without treating undocumented compiler behavior as the spec.
   design; current consuming-switch behavior is documented in `DESIGN.md`.
 - [Nullable value types proposal](PROPOSAL_nullable_value_types.md), for the
   related proposal to represent absence for types without a spare bit pattern.
-  Its interaction with anonymous unions needs to be resolved alongside §11.
+  Anonymous unions in this proposal are not nullable; qualifying individual
+  alternatives remains subject to existing nullable-type rules.
