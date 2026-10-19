@@ -2,6 +2,8 @@
 
 ## History
 
+- 2026-10-18 — Implemented nullable primitives and structs using tagged storage, explicit payload/nil returns, presence narrowing, conditional ownership, independent pointer layers, and cross-package metadata; moved to `docs/implemented/`. Pointer/interface/values null representations are preserved. Slices, nullable union containers, and nullable payload-bearing values are outside the initial extension; the historical broader design below remains aspirational where it exceeds that scope. Current behavior is specified in `DESIGN.md`.
+
 - 2026-07-23 — Clarified the boolean status of `?T` (verified today): a `?T`/`?*T`
   is **not** a `bool` and doesn't coerce to one (can't pass to a `bool` param);
   `if (x)` is sugar for `if (x != nil)` (the condition is always a presence test),

@@ -1,0 +1,2 @@
+Compiling tests/nullable_value_overwrite_err_test.bos
+Fatal: Cannot assign to owned binding "n" before consuming its current value

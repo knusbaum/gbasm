@@ -1,0 +1,13 @@
+package main
+import "string"
+type P struct{x i64} {
+ add(p *mut P){p.x+=1}
+}
+fn get() ?P{return P{x:37}}
+fn main(){
+ var p ?P:=get()
+ if(p){p.x+=1;p.add();string.puti(p.x);string.puts("\n");p=nil}
+ if(!p){string.puts("cleared\n")}
+ var n ?i64:=0
+ if(n){q:=&n;*q=37;string.puti(n);string.puts("\n")}
+}

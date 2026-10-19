@@ -839,7 +839,7 @@ func nullablePointerPathForIf(c *Context, cond AST) (FlowPath, ASTType, bool, bo
 	}
 	// A nullable pointer (`*?`) or a nullable interface (`?T`, Indirection 0)
 	// can be narrowed by an `if (x != nil)` / `if (x == nil)` test.
-	if t.Indirection == 0 && !c.IsInterfaceType(t) && !isNullableValues(c, t) {
+	if t.Indirection == 0 && !c.IsInterfaceType(t) && !isNullableValues(c, t) && !isTaggedNullable(c, t) {
 		return FlowPath{}, ASTType{}, false, false
 	}
 	return path, t, nonNullOnThen, true
@@ -886,7 +886,11 @@ func declaredPathType(c *Context, a AST) (ASTType, bool) {
 }
 
 func updateNullFactForAssignment(c *Context, path FlowPath, dst ASTType, val AST, src ASTType) {
-	if dst.Indirection == 0 {
+	if v, ok := val.(*nullableInjection); ok {
+		val = v.Val
+		src = val.ASTType(c)
+	}
+	if dst.Indirection == 0 && !isTaggedNullable(c, dst) {
 		c.SetNullFact(path, NullMaybe)
 		return
 	}
@@ -898,7 +902,7 @@ func updateNullFactForAssignment(c *Context, path FlowPath, dst ASTType, val AST
 		c.SetNullFact(path, NullKnownNull)
 		return
 	}
-	if src.Indirection > 0 && src.NilMask&1 == 0 {
+	if (src.Indirection > 0 || isTaggedNullable(c, dst)) && src.NilMask&1 == 0 {
 		c.SetNullFact(path, NullKnownNonNull)
 		return
 	}
@@ -937,7 +941,8 @@ func checkOwnedFieldsConsumedBeforeRawFree(c *Context, a AST, path FlowPath, ptr
 	}
 }
 
-func mergeOwnedFieldFactsExact(c *Context, a AST, thenFacts, elseFacts map[FlowPath]bool) map[FlowPath]bool {
+func mergeOwnedFieldFacts(c *Context, a AST, thenState, elseState FlowSnapshot) map[FlowPath]bool {
+	thenFacts, elseFacts := thenState.OwnedFields, elseState.OwnedFields
 	out := make(map[FlowPath]bool)
 	seen := make(map[FlowPath]bool)
 	for path := range thenFacts {
@@ -950,6 +955,16 @@ func mergeOwnedFieldFactsExact(c *Context, a AST, thenFacts, elseFacts map[FlowP
 		thenConsumed := thenFacts[path]
 		elseConsumed := elseFacts[path]
 		if thenConsumed != elseConsumed {
+			if root, ok := c.DeclaredTypeForVar(path.Root); ok {
+				if ft, ok := walkLeafType(c, root, path.Fields); ok && isTaggedNullable(c, ft) {
+					// A consumed tagged optional is physically nil. Preserve a discharged
+					// fact only when both arms are empty; otherwise require another check.
+					if (thenConsumed || thenState.Null[path] == NullKnownNull) && (elseConsumed || elseState.Null[path] == NullKnownNull) {
+						out[path] = true
+					}
+					continue
+				}
+			}
 			CompileErrorF(a, "Owned field \"%s\" is consumed on one branch but not the other", path.Key())
 		}
 		if thenConsumed {
@@ -968,13 +983,17 @@ func mergeFlowSnapshots(c *Context, a AST, x, y FlowSnapshot) FlowSnapshot {
 	return FlowSnapshot{
 		Owned:       x.Owned,
 		Null:        MergeNullFacts(x.Null, y.Null),
-		OwnedFields: mergeOwnedFieldFactsExact(c, a, x.OwnedFields, y.OwnedFields),
+		OwnedFields: mergeOwnedFieldFacts(c, a, x, y),
 		Borrowed:    MergeBorrowedBindings(x.Borrowed, y.Borrowed),
 		Pointer:     flow.Merge(x.Pointer, y.Pointer),
 	}
 }
 
 func checkOwnedSourceAvailable(c *Context, val AST) {
+	if v, ok := val.(*nullableInjection); ok {
+		checkOwnedSourceAvailable(c, v.Val)
+		return
+	}
 	if nn, ok := val.(*NonNullAssert); ok {
 		checkOwnedSourceAvailable(c, nn.Val)
 		return
@@ -1233,7 +1252,7 @@ func recordStructLiteralFieldFacts(c *Context, base FlowPath, lit *StructLiteral
 		// to overwrite this field's bytes specifically.
 		c.PointerFlow().ForgetFieldPointersUnder(fieldPath.Key())
 		c.PointerFlow().SetPathPointer(fieldPath.Key(), c.PointerFlow().UnknownPointer())
-		if nested, ok := f.Val.(*StructLiteral); ok {
+		if nested, ok := unwrapReturnExpr(f.Val).(*StructLiteral); ok {
 			recordStructLiteralFieldFacts(c, fieldPath, nested)
 			continue
 		}
@@ -1525,6 +1544,9 @@ func isDirectStructFieldTarget(c *Context, target AST) (binding string, field st
 }
 
 func updateFieldPointerFactsForAssignment(c *Context, target AST, targetIsSymbol bool, targetSym *Symbol, dstt ASTType, val AST) {
+	if v, ok := val.(*nullableInjection); ok {
+		val = v.Val
+	}
 	if targetIsSymbol && dstt.Indirection == 0 {
 		if dstt.IsUnion() {
 			if sym, ok := val.(*Symbol); ok && sym.Name == targetSym.Name {
@@ -2142,6 +2164,10 @@ func pointerExprForASTRaw(c *Context, a AST, assignedName string) flow.PointerEx
 	switch ast := a.(type) {
 	case *unionView:
 		return pointerExprForAST(c, ast.Val, assignedName)
+	case *nullableInjection:
+		return pointerExprForAST(c, ast.Val, assignedName)
+	case *nullableStorage:
+		return pointerExprForAST(c, ast.Val, assignedName)
 	case *unionInjection:
 		return pointerExprForAST(c, ast.Val, assignedName)
 	case *VariantSwitch:
@@ -2667,6 +2693,10 @@ func moveOwnedSourceForLocalOwner(of io.Writer, c *Context, dstt ASTType, val AS
 	if sym, ok := ownedScalarRebindSource(c, dstt, val); ok {
 		checkOwnedSourceAvailable(c, sym)
 		c.MoveTransfer(sym.Name)
+		if declared, ok := c.DeclaredTypeForVar(sym.Name); ok && isTaggedNullable(c, declared) {
+			fmt.Fprintf(of, "\tmov qword[%s] -1\n", sym.Name)
+			c.SetNullFact(VarFlowPath(sym.Name), NullKnownNull)
+		}
 		return true
 	}
 	markMovedIfOwnedSource(of, c, dstt, val)
@@ -2675,6 +2705,10 @@ func moveOwnedSourceForLocalOwner(of io.Writer, c *Context, dstt ASTType, val AS
 }
 
 func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST) {
+	if v, ok := val.(*nullableInjection); ok {
+		markMovedIfOwnedSource(of, c, nullablePayloadType(expected), v.Val)
+		return
+	}
 	if !expected.HasOwned() {
 		return
 	}
@@ -2702,6 +2736,10 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 			c.MoveTransfer(v.Name)
 		} else {
 			c.MoveConsume(v.Name)
+		}
+		if isTaggedNullable(c, declared) {
+			fmt.Fprintf(of, "\tmov qword[%s] -1\n", v.Name)
+			c.SetNullFact(VarFlowPath(v.Name), NullKnownNull)
 		}
 		if declared.Indirection > 0 && declared.NilMask&1 != 0 {
 			fmt.Fprintf(of, "\tmov %s 0\n", v.Name)
@@ -2740,7 +2778,14 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 			// field would need a wider store, and the scrub is not load-bearing
 			// (safety is the consumed-fact tracking plus the alias and escape
 			// gates), so it is simply skipped there.
-			if !typeIsMemoryBacked(c, fieldType) {
+			if declared, ok := declaredPathType(c, val); ok && isTaggedNullable(c, declared) {
+				lv := compileLval(of, c, val, nullspot)
+				fmt.Fprintf(of, "\tmov qword[%s] -1\n", lv.ref)
+				if path, ok := FlowPathForExpr(val); ok {
+					c.SetNullFact(path, NullKnownNull)
+				}
+				lv.free(of)
+			} else if !typeIsMemoryBacked(c, fieldType) {
 				lv := compileLval(of, c, val, nullspot)
 				fmt.Fprintf(of, "\tmov [%s] 0\n", lv.ref)
 				lv.free(of)
@@ -3013,8 +3058,8 @@ func compileAppend(of io.Writer, c *Context, a AST, ast *Funcall, dest spot) spo
 	if !S.IsSlice() {
 		CompileErrorF(a, "append's first argument must be a slice, got %s", S)
 	}
-	elemBase := *S.Element
-	if typeIsMemoryBacked(c, elemBase) {
+	elemBase := sliceElemOwned(S).StripOwned()
+	if typeIsMemoryBacked(c, elemBase) && !isTaggedNullable(c, elemBase) {
 		CompileErrorF(a, "append of memory-backed elements (%s) is not yet supported", elemBase)
 	}
 	elemSize := elemBase.Size(c)
@@ -3057,11 +3102,14 @@ func compileAppend(of io.Writer, c *Context, a AST, ast *Funcall, dest spot) spo
 	fmt.Fprintf(of, "\tlabel %s\n", okl)
 
 	// Store v at ptr[len] (scalar element: base+index*scale addressing).
-	elemAddr := newSpot(of, c, c.Temp(), ptrT)
-	fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", elemAddr.ref, ptr.ref, lenS.ref, elemSize)
-	vSpot := compileTop(of, c, vArg, nullspot)
-	fmt.Fprintf(of, "\t%s [%s] %s\n", scalarMov(c, elemBase), elemAddr.ref, vSpot.ref)
-	vSpot.free(of)
+	elemAddr := sliceElementAddress(of, c, ptr, lenS, elemSize)
+	if isTaggedNullable(c, elemBase) {
+		compileTop(of, c, vArg, spot{ref: elemAddr.ref, t: elemBase, nameIsAddress: true})
+	} else {
+		vSpot := compileTop(of, c, vArg, nullspot)
+		fmt.Fprintf(of, "\t%s [%s] %s\n", scalarMov(c, elemBase), elemAddr.ref, vSpot.ref)
+		vSpot.free(of)
+	}
 	elemAddr.free(of)
 
 	// New header: same ptr/cap, len+1.
@@ -3094,8 +3142,8 @@ func compilePop(of io.Writer, c *Context, a AST, ast *Funcall, dest spot) spot {
 	if !S.IsSlice() {
 		CompileErrorF(a, "pop's argument must be a slice, got %s", S)
 	}
-	elemBase := *S.Element
-	if typeIsMemoryBacked(c, elemBase) {
+	elemBase := sliceElemOwned(S).StripOwned()
+	if typeIsMemoryBacked(c, elemBase) && !isTaggedNullable(c, elemBase) {
 		CompileErrorF(a, "pop of memory-backed elements (%s) is not yet supported", elemBase)
 	}
 	elemSize := elemBase.Size(c)
@@ -3130,15 +3178,25 @@ func compilePop(of io.Writer, c *Context, a AST, ast *Funcall, dest spot) spot {
 
 	// new_len = len - 1; load the element there.
 	fmt.Fprintf(of, "\tsub %s 1\n", lenS.ref)
-	elemAddr := newSpot(of, c, c.Temp(), ptrT)
-	fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", elemAddr.ref, ptr.ref, lenS.ref, elemSize)
+	elemAddr := sliceElementAddress(of, c, ptr, lenS, elemSize)
 	elemVal := newSpot(of, c, c.Temp(), elemBase)
-	fmt.Fprintf(of, "\t%s %s [%s]\n", scalarMov(c, elemBase), elemVal.ref, elemAddr.ref)
+	if isTaggedNullable(c, elemBase) {
+		spot_memcpy(of, c, elemVal, elemAddr, elemSize)
+	} else {
+		fmt.Fprintf(of, "\t%s %s [%s]\n", scalarMov(c, elemBase), elemVal.ref, elemAddr.ref)
+	}
 	elemAddr.free(of)
 
 	// Result struct: _0 = shortened slice {ptr, new_len, cap}; _1 = the element.
 	emitSliceHeaderStore(of, dest.ref, ptr.ref, lenS.ref, capS.ref)
-	fmt.Fprintf(of, "\tmov [%s+%d] %s\n", dest.ref, elemOff, elemVal.ref)
+	if isTaggedNullable(c, elemBase) {
+		slot := newSpot(of, c, c.Temp(), ASTType{Name: "uintptr"})
+		fmt.Fprintf(of, "\tlea %s [%s+%d]\n", slot.ref, dest.ref, elemOff)
+		spot_memcpy(of, c, slot, elemVal, elemSize)
+		slot.free(of)
+	} else {
+		fmt.Fprintf(of, "\tmov [%s+%d] %s\n", dest.ref, elemOff, elemVal.ref)
+	}
 	ptr.free(of)
 	lenS.free(of)
 	capS.free(of)
@@ -3422,6 +3480,9 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		result.t = ast.Type
 		return result
 	case *Symbol:
+		if declared, ok := c.DeclaredTypeForVar(ast.Name); ok && isTaggedNullable(c, declared) && ast.ASTType(c).NilMask&1 == 0 {
+			return nullablePayloadLval(of, c, ast, declared)
+		}
 		t := ast.ASTType(c)
 		s := spot{ref: ast.Name, t: t, nameIsAddress: c.NameIsAddress(ast.Name)}
 		if dest.same(&nullspot) {
@@ -3516,6 +3577,11 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 		// We're just going to return the pointer.
 		return v
 	case *NonNullAssert:
+		if t, ok := nullableValueType(c, ast.Val); ok {
+			tmp := compileNullablePayload(of, c, ast.Val, t, nullspot, true)
+			tmp.free(of)
+			return nullablePayloadLval(of, c, ast.Val, t)
+		}
 		v := compileTop(of, c, ast, dest)
 		return v
 	case *Index:
@@ -3851,6 +3917,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	}
 	defer note(of, "\t// end %#v\n", a.Note())
 
+	// Contexts such as array elements and append slots also inject a present
+	// payload. This must precede literal folding, which otherwise writes a
+	// scalar into the nullable container's address register.
+	if !dest.empty() && isTaggedNullable(c, dest.t) && !isTaggedNullable(c, a.ASTType(c)) {
+		return compileNullableInjection(of, c, &nullableInjection{Val: a, Type: dest.t}, dest)
+	}
 	// Integer literal expressions are evaluated at compile time and emitted
 	// as a single immediate mov into whatever concrete type the context provides.
 	if a.ASTType(c).Same(intlitASTType()) {
@@ -3902,6 +3974,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	}
 
 	switch ast := a.(type) {
+	case *nullableStorage:
+		return compileNullableStorage(of, c, ast, dest)
+	case *nullableInjection:
+		return compileNullableInjection(of, c, ast, dest)
 	case *unionDispose:
 		t := ast.Val.ASTType(c)
 		if !t.HasOwned() {
@@ -4415,6 +4491,16 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if !ast.Type.IsUnion() && !ownedValueDestNoTransfer && (pexpr.KnownOrigin || pexpr.KnownSlot) {
 				checkedAssignPointer(c, flow.Binding(ast.Name), pexpr, a)
 			}
+			if injection, ok := ast.Init.(*nullableInjection); ok {
+				switch v := injection.Val.(type) {
+				case *Symbol:
+					c.PointerFlow().CopyFieldPointers(flow.Binding(v.Name), flow.Binding(ast.Name))
+				case *StructLiteral:
+					recordStructLiteralFieldFacts(c, VarFlowPath(ast.Name), v)
+				case *Funcall:
+					recordStructReturnCallFieldFacts(c, ast.Name, dstt, v)
+				}
+			}
 			// Propagate field pointer facts on struct copy.
 			if sym, ok := ast.Init.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) && dstt.Indirection == 0 {
 				c.PointerFlow().CopyFieldPointers(flow.Binding(sym.Name), flow.Binding(ast.Name))
@@ -4437,6 +4523,8 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 		} else if !ast.Type.ZeroInitializable(c) {
 			CompileErrorF(a, "Variable \"%s\" of type %s requires an initializer", ast.Name, ast.Type)
+		} else if isTaggedNullable(c, ast.Type) {
+			c.SetNullFact(VarFlowPath(ast.Name), NullKnownNull)
 		} else if ast.Type.Indirection > 0 && ast.Type.NilMask&1 != 0 {
 			// `var p *?T` (with or without `owned`) is sugar for `= nil`:
 			// zero the storage so runtime reads see nil, and record the
@@ -4932,6 +5020,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		rax.free(of)
 		return ret
 	case *Dot:
+		if t, ok := nullableValueType(c, ast); ok && ast.ASTType(c).NilMask&1 == 0 {
+			return compileNullablePayload(of, c, ast, t, dest, false)
+		}
 		// Route the selector through the shared resolver. Cross-package
 		// variable reads land as ResolvedRuntimeValue with Pkg set; struct
 		// field access lands as ResolvedStructField; values case references
@@ -5244,6 +5335,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// A by-address parameter already holds the value's address, so `&name`
 		// is that held pointer -- a load, not an lea of the slot. No volatile
 		// spill: the value lives in the caller's frame, not this name's slot.
+		if declared, ok := c.DeclaredTypeForVar(name); ok && isTaggedNullable(c, declared) && c.NullFact(VarFlowPath(name)) == NullKnownNonNull {
+			fmt.Fprintf(of, "\tlea %s [%s+8]\n", dest.ref, name)
+			return dest
+		}
 		if c.NameHoldsPointer(name) {
 			c.MarkAddress(name)
 			fmt.Fprintf(of, "\tmov %s %s\n", dest.ref, name)
@@ -5627,7 +5722,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				}
 			}
 		}
-		lv := compileLval(of, c, ast.Target, nullspot)
+		var lv spot
+		if targetIsSymbol && isTaggedNullable(c, dstt) {
+			lv = spot{ref: targetSym.Name, t: dstt, nameIsAddress: true}
+		} else {
+			lv = compileLval(of, c, ast.Target, nullspot)
+		}
 		if targetIsSymbol {
 			lv.t = dstt
 		}
@@ -5866,7 +5966,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			c.RestoreFlowSnapshot(FlowSnapshot{
 				Owned:       snapAfterThen.Owned,
 				Null:        MergeNullFacts(snapAfterThen.Null, snapAfterElse.Null),
-				OwnedFields: mergeOwnedFieldFactsExact(c, a, snapAfterThen.OwnedFields, snapAfterElse.OwnedFields),
+				OwnedFields: mergeOwnedFieldFacts(c, a, snapAfterThen, snapAfterElse),
 				Borrowed:    MergeBorrowedBindings(snapAfterThen.Borrowed, snapAfterElse.Borrowed),
 				Pointer:     flow.Merge(snapAfterThen.Pointer, snapAfterElse.Pointer),
 			})
@@ -6271,6 +6371,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			CompileErrorF(a, "dispose: \"%s\" is statically known to be nil; no obligation to discharge", ast.Var)
 		}
 		c.MoveConsume(ast.Var)
+		if isTaggedNullable(c, declared) {
+			fmt.Fprintf(of, "\tmov qword[%s] -1\n", ast.Var)
+			c.SetNullFact(VarFlowPath(ast.Var), NullKnownNull)
+		}
 		note(of, "\t// dispose %s — obligation satisfied, no runtime effect\n", ast.Var)
 		return nullspot
 	case *Continue:
@@ -6288,6 +6392,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		c.Break(of)
 		return nullspot
 	case *Symbol:
+		if declared, ok := c.DeclaredTypeForVar(ast.Name); ok && isTaggedNullable(c, declared) && ast.ASTType(c).NilMask&1 == 0 {
+			return compileNullablePayload(of, c, ast, declared, dest, false)
+		}
 		c.markUsed(ast.Name)
 		if t, ok := c.TypeForVar(ast.Name); ok && t.IsUnion() {
 			if _, narrowed := c.VariantNarrow(ast.Name); !narrowed {
@@ -6320,6 +6427,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		move(of, c, dest, s)
 		return dest
 	case *NonNullAssert:
+		if t, ok := nullableValueType(c, ast.Val); ok {
+			return compileNullablePayload(of, c, ast.Val, t, dest, true)
+		}
 		if dest.empty() && isNullableValues(c, ast.Val.ASTType(c)) {
 			dest = newSpot(of, c, c.Temp(), ast.Val.ASTType(c))
 		}
@@ -6368,6 +6478,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if ast.Val == nil {
 			if dest.empty() {
 				CompileErrorF(a, "nil requires pointer context")
+			}
+			if isTaggedNullable(c, dest.t) {
+				emitNullableNil(of, c, dest)
+				return dest
 			}
 			if isNullableValues(c, dest.t) {
 				fmt.Fprintf(of, "\tmov %s -1\n", dest.ref)
@@ -6963,7 +7077,7 @@ func jumpOp(of io.Writer, c *Context, o *Op2, label string) {
 // returns floating-point values in XMM0, not RAX — a separate register file,
 // so the name alone carries the class.
 func raxForType(t ASTType) string {
-	if t.Indirection > 0 || t.IsSliceOrArray() {
+	if t.Indirection > 0 || t.IsSliceOrArray() || t.NilMask&1 != 0 {
 		return "rax"
 	}
 	switch t.Name {
@@ -7217,6 +7331,9 @@ func log2PowerOf2(n int) (int, bool) {
 }
 
 func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot) spot {
+	if isTaggedNullable(c, src.ASTType(c)) {
+		CompileErrorF(src, "Cannot cast nullable value %s; check for nil first", src.ASTType(c))
+	}
 	if destType.IsUnion() {
 		CompileErrorF(src, "Union injection requires a return, assignment, or argument context; use a typed binding")
 	}
@@ -7875,6 +7992,21 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 		if litIsNil(val) {
 			val = o.Second
 		}
+		if t, ok := nullableValueType(c, val); ok {
+			o.ASTType(c)
+			tag := compileNullableTag(of, c, val, t)
+			if dest.empty() {
+				dest = newSpot(of, c, c.Temp(), boolASTType())
+			}
+			fmt.Fprintf(of, "\tcmp %s -1\n", tag.ref)
+			if o.Type == n_deq {
+				fmt.Fprintf(of, "\tsete %s\n", dest.ref)
+			} else {
+				fmt.Fprintf(of, "\tsetne %s\n", dest.ref)
+			}
+			tag.free(of)
+			return dest
+		}
 		if isNullableValues(c, val.ASTType(c)) {
 			s := compileTop(of, c, val, newSpot(of, c, c.Temp(), val.ASTType(c)))
 			if dest.empty() {
@@ -8442,6 +8574,9 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 // Method calls use the same address-of operation as an explicit &field or
 // &element. Temporary value receivers remain non-addressable.
 func methodReceiverArg(c *Context, call *Funcall, recv AST, t ASTType, wantsPointer bool) AST {
+	if isTaggedNullable(c, t) {
+		CompileErrorF(call, "Cannot call method on nullable value %s; check for nil first", t)
+	}
 	if !wantsPointer || t.Indirection > 0 {
 		return recv
 	}

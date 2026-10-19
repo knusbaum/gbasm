@@ -1,0 +1,2 @@
+Compiling tests/nullable_value_arithmetic_err_test.bos
+Fatal: Cannot use nullable value ?i64 with this operator; check for nil first

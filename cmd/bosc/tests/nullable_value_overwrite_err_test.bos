@@ -1,0 +1,3 @@
+package main
+fn f(){var n ?owned i64:=owned(i64(37));n=nil}
+fn main(){f()}

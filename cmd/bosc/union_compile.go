@@ -387,7 +387,7 @@ func unionAlternativeAccepts(c *Context, dst, src ASTType) bool {
 // Inferred switches still require their arms to agree; they do not invent
 // union types merely because two arms yield different payload types.
 func prepareUnionExpression(c *Context, value AST, target ASTType, returning bool) AST {
-	if value == nil || !target.IsUnion() {
+	if value == nil || (!target.IsUnion() && !isTaggedNullable(c, target)) {
 		return value
 	}
 	switch s := value.(type) {
@@ -399,6 +399,15 @@ func prepareUnionExpression(c *Context, value AST, target ASTType, returning boo
 		s.Switch.ResultType = &target
 		s.Switch.ReturnContext = returning
 		return value
+	}
+	if isTaggedNullable(c, target) {
+		if isTaggedNullable(c, value.ASTType(c)) {
+			return value
+		}
+		if sl, ok := value.(*StructLiteral); ok {
+			fillAnonymousLiteralIfNeeded(sl, nullablePayloadType(target))
+		}
+		return &nullableInjection{Val: value, Type: target, Returning: returning}
 	}
 	if sameUnionInContext(c, value.ASTType(c), target) {
 		return value

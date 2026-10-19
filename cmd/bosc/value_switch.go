@@ -619,7 +619,7 @@ func mergeSwitchFlows(c *Context, a AST, before FlowSnapshot, after []FlowSnapsh
 			}
 			merged.OwnedFields = fields
 		} else {
-			merged.OwnedFields = mergeOwnedFieldFactsExact(c, a, merged.OwnedFields, s.OwnedFields)
+			merged.OwnedFields = mergeOwnedFieldFacts(c, a, merged, s)
 		}
 		merged.Null = MergeNullFacts(merged.Null, s.Null)
 		merged.Borrowed = MergeBorrowedBindings(merged.Borrowed, s.Borrowed)

@@ -16,7 +16,7 @@ func isNullableValues(c *Context, t ASTType) bool {
 }
 
 func nilRepresentation(c *Context, t ASTType) int {
-	if isNullableValues(c, t) {
+	if isNullableValues(c, t) || isTaggedNullable(c, t) {
 		return -1
 	}
 	return 0
@@ -217,7 +217,7 @@ func nullableValuesOffsets(c *Context, t ASTType, base int) []int {
 	if t.Indirection != 0 || t.IsSlice() || t.FuncSig != nil {
 		return nil
 	}
-	if isNullableValues(c, t) {
+	if isNullableValues(c, t) || isTaggedNullable(c, t) {
 		return []int{base}
 	}
 	if t.IsArray() {

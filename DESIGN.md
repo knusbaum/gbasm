@@ -121,6 +121,7 @@ Three orthogonal qualifiers can apply to types:
 
 - **`mut`** — write-through mutability for pointers and slices. `*mut T` lets you write to T through the pointer; `*T` does not. Nests independently at each pointer level (`*mut *T`, `**mut T`).
 - **`?` on pointers** — nullability marker. `*T` is non-null; `?*T` may be `nil`. Non-null pointers can be used where nullable pointers are expected. Nullable pointers require a proof or assertion before non-null use: `if (p) { ... }` narrows `p` to non-null inside the true branch, `if (!p) { ... } else { ... }` narrows it in the else branch, and postfix `p?` inserts a runtime nil check and produces a non-null pointer.
+- **`?` on primitive values and structs** — `?T` holds either a `T` or `nil`. Return, assign, or pass `T` directly to construct the present alternative; use `nil` for absence. `if (v)`, nil comparisons, and postfix `v?` select the payload. Truth tests presence, so present `0`, `false`, and zero-valued structs are true.
 - **`?` on interfaces** — same marker. `T` (interface) is always valid; `?T` may be null (vtable = 0). A non-nullable interface can't be constructed null. A nullable interface can be initialized or returned as `nil`; a fallible cast (see [type assertion](#interface-to-interface-assertion)) also yields a nullable interface that is nil on failure. A `?T` must be narrowed before dispatch — `if (k != nil) { k.method() }` narrows `?T → T` in the true branch (a vtable-`!= 0` test) — and dispatching, or asserting/widening from, an un-narrowed `?T` is rejected, exactly like dereferencing a `?*` pointer. Interfaces also support truth testing in `if`, `for`, `!`, `&&`, and `||`: a zero vtable is false and a nonzero vtable is true, independently of the data word. `if (err)` narrows a nullable interface to non-null in the true branch; `if (!err)` narrows it in the else branch, just as for pointers. This does not implicitly convert an interface into a `bool` assignment or argument.
 - **`owned`** — compile-time ownership obligation that must be discharged before the variable goes out of scope. See [Ownership](#ownership).
 - **`:=` / `var`** — binding mutability: a binding is introduced with `:=` and is immutable; `var` makes it reassignable. Distinct from `mut`. Immutable is the default everywhere — bare `:=` locals and globals, and unmarked parameters; `var` is the opt-in for reassignment.
@@ -242,6 +243,59 @@ If flow analysis already knows the pointer is non-null, `p?` emits no runtime ch
 Array indexing: `arr[i]`. Slice/array bounds checking is inserted by the compiler; out-of-range indices call `_init.index_oob` which prints a diagnostic and exits.
 
 Slice operations: `s[lo:hi]`, `s[lo:]`, `s[:hi]` produce new slice headers without copying data.
+
+### Nullable primitive values and structs
+
+`?T` is available for primitive values (including numeric aliases) and structs,
+using the existing nullable syntax and flow analysis:
+
+```boson
+fn find(found bool) ?i64 {
+    if (found) { return 0 }
+    return nil
+}
+
+n := find(true)
+if (n) {
+    use_number(n) // narrowed to i64; zero is a present value
+}
+```
+
+Functions returning `?T` must explicitly return a value or `nil`; bare `return`
+is allowed only in void functions. The same implicit construction applies to
+initialized locals, assignments, function arguments, and fields. Compatible
+nullable values can be forwarded unchanged. A declared nullable result also
+provides context for expression-switch arms yielding a payload or `nil`.
+Default initialization yields `nil`, including struct fields, array elements,
+globals, and allocated storage.
+
+A direct binding or field condition (`if (n)`, `if (!n)`, or comparison with
+`nil`) narrows the appropriate branch to `T`. Postfix `n?` asserts presence at
+runtime and yields `T`. Arithmetic, field access, method calls, and conversion
+to a non-nullable type require narrowing or assertion first. Equality with
+`nil` checks presence; direct operations on two un-narrowed optional payloads
+are not provided. Presence tests on a tracked nullable binding remain presence
+tests even inside a non-null branch; compare a narrowed boolean payload with
+`false` or copy it into a plain boolean to test its contents.
+
+New nullable values use an eight-byte tag (`-1` for nil, `0` for present),
+followed by the payload at offset eight. The total size is rounded to eight-byte
+alignment. This is a tagged optional value, without allocation or an exposed
+`void` alternative. Existing nullable pointer, interface, and tag-only values
+representations are unchanged. `?*?i64` has two independent null states: a null
+outer pointer and a live pointer to a nil inner slot.
+
+`?owned T` has an ownership obligation only when present. Consuming the payload
+moves the source binding and clears its tag to nil. Overwriting a live owned
+payload is rejected; nullable payloads retain the ordinary owned-field cleanup
+and borrowed-field lifetime rules. Narrowed payloads can be addressed and
+mutated when the original storage permits it. Replacing a narrowed binding
+still assigns its full nullable slot, so `n = nil` clears it.
+
+Slices, nullable union containers, and nullable payload-bearing `values` types
+remain outside this extension. Arrays may contain nullable elements; an array
+itself is not an optional container. No new implicit bare return or public unit
+value is introduced.
 
 ### Statements
 
@@ -3552,6 +3606,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Anonymous struct types (`struct { quot i64, rem i64 }`) as parameter, return, and var types
 - Bare struct literals (`{ field: val }`) with shape inferred from the surrounding context (return, typed initializer, assignment lvalue, argument position)
 - `x := expr` / `var x := expr` type inference from the initializer (`<intlit>` resolves to `i64`; void/nil sources rejected)
+- Nullable primitive values and structs (`?T`) with tagged storage, presence narrowing, owned payloads, and explicit nil returns
 - Nullable pointers (`?*T`), non-null pointers (`*T`), boolean narrowing for nullable pointers, and postfix `?` non-null assertions
 - Nested slices/arrays (`[][]byte`, `[N]T[M]`, etc.)
 - Immutable and `var` bindings with declaration initializers (`x i64 := 42`)

@@ -1,0 +1,14 @@
+package main
+import "string"
+type P struct{x i64}
+var n ?i64
+var zero ?i64:=0
+var point ?P:=P{x:37}
+fn main(){
+ if(n==nil && zero!=nil){string.puts("globals\n")}
+ if(point){string.puti(point.x);string.puts("\n")}
+ var a [2]?i64
+ if(a[0]==nil && a[1]==nil){string.puts("array nil\n")}
+ a[1]=0
+ string.puti(a[1]?);string.puts("\n")
+}

@@ -51,3 +51,6 @@ pub fn union_forward(v owned *mut union_resource | bool) bool | owned *mut union
     return v
 }
 pub fn union_borrow(s []byte) bool | []byte {return s}
+
+pub fn optional_number(ok bool) ?i64 {if(ok){return 0};return nil}
+pub fn optional_resource(ok bool) ?union_resource {if(ok){return union_resource{n:37}};return nil}

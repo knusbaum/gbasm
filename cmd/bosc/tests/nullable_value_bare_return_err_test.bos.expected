@@ -1,0 +1,2 @@
+Compiling tests/nullable_value_bare_return_err_test.bos
+Fatal: bare return in non-void function (return type is ?i64)

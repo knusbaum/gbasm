@@ -1,0 +1,4 @@
+package main
+fn use(n i64){_ = n}
+fn f(n ?i64){use(n)}
+fn main(){}

@@ -1,0 +1,4 @@
+package main
+type B struct{buf []byte}
+fn f() ?B {var a [2]byte;return B{buf:a[:]}}
+fn main(){}

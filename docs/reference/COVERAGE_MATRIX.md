@@ -2,6 +2,8 @@
 
 ## History
 
+- 2026-10-18 — Added nullable primitive/struct storage, presence narrowing, explicit returns, ownership transfer, and lifetime coverage.
+
 - 2026-10-18 — Audited union declaration, return, and argument tests; added indirect-call and ordinary-method argument coverage.
 
 - 2026-10-18 — Added anonymous-union injection, canonical package identity, and payload ownership/provenance equivalence classes.
@@ -290,6 +292,7 @@ audit watches.
 | CL-ADDR | `&`-of-projection mutability (`&x.f`, `&arr[i]`) | `&value-field` of mutable vs immutable container; `&pointer-field` | `Address.ASTType` projection branch ~2755 (vs named ~2710) | value-field vs pointer-field; container mut (**under-implemented → #7**) |
 | CL-EQ | `==`/`!=` lowering | struct `==` (must reject) | comparison lowering / type check | aggregate vs scalar/pointer |
 | **CL-OBLIG** | **obligation handling that forks owned vs non-owned** (caller call-result, VarDecl, return) | a **mixed** value: owned aggregate **with** a borrowed field | `recordStructCallResultAtPath` / owned-result VarDecl fork | **the owned branch dropping an orthogonal fact** (borrow alias, null) — forked → `#18`. Test the co-occurrence, not each obligation alone |
+| CL-NULLABLE-VALUE | tagged primitive/struct optionals: injection, payload projection, presence tests, and ownership | `nullable_value`, `nullable_value_storage`, `nullable_value_owned`, `nullable_value_widths`, `nullable_value_mutation`, `nullable_value_global_array`, `nullable_value_cross_package`, `nullable_value_switch`, `nullable_value_*_err` | `nullable_value.go`, `truth.go`, null-flow and return-alias machinery | existing pointer/interface/values representations vs tagged values; present zero vs nil; borrowed payload vs owning container |
 | CL-UNION-INJECT | scalar, interface, function, array, and owned-resource alternative injection | `union_scalar`, `union_interface_selection`, `union_function_alternative`, `union_array_alternative`, `union_io_result`, `union_argument_paths` | `union_compile.go`: `selectUnionAlternative` / `compileUnionInjection` | exact identity vs contextual conversion; register vs memory payload |
 | CL-UNION-IDENTITY | reordered/flattened union signatures, aliases, and import qualification | `union_types_test.go`, `union_three`, `union_cross_package` | `union_types.go`: canonical encoding; `package.go` qualification | local vs imported names; qualifiers; function-return precedence |
 | CL-UNION-FLOW | inspection, consuming extraction, payload addresses, branch exits, and stored borrow validity | `union_inspect`, `union_owned`, `union_payload_address`, `union_continue`, `union_borrow_lifetime_err`, `union_mut_call_borrow_err` | typed-case lowering into `compileVariantSwitch`; `CheckFieldPointerValidity` | container storage vs payload resource identity; scalar vs nested payload |

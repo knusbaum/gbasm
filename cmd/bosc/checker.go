@@ -675,7 +675,7 @@ func (c *Context) OwnedObligationLive(name string, t ASTType) bool {
 	if c.IsMoved(name) {
 		return false
 	}
-	if t.Indirection > 0 && t.NilMask&1 != 0 &&
+	if (t.Indirection > 0 || isTaggedNullable(c, t)) && t.NilMask&1 != 0 &&
 		c.NullFact(VarFlowPath(name)) == NullKnownNull {
 		return false
 	}
@@ -732,7 +732,7 @@ func (c *Context) OwnedObligationLiveInSnap(snap FlowSnapshot, name string) bool
 	if snap.Owned[name] {
 		return false
 	}
-	if t.Indirection > 0 && t.NilMask&1 != 0 &&
+	if (t.Indirection > 0 || isTaggedNullable(c, t)) && t.NilMask&1 != 0 &&
 		snap.Null[VarFlowPath(name)] == NullKnownNull {
 		return false
 	}
@@ -760,7 +760,7 @@ func (c *Context) SameObligationLiveAcross(a, b FlowSnapshot, name string) bool 
 	if !ok {
 		return true
 	}
-	if t.Indirection > 0 && t.NilMask&1 != 0 {
+	if (t.Indirection > 0 || isTaggedNullable(c, t)) && t.NilMask&1 != 0 {
 		return true
 	}
 	return c.OwnedObligationLiveInSnap(a, name) == c.OwnedObligationLiveInSnap(b, name)

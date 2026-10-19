@@ -1,0 +1,2 @@
+Compiling tests/nullable_value_argument_err_test.bos
+Fatal: For argument 0, expected type i64 but got ?i64

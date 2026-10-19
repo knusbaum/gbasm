@@ -1,0 +1,4 @@
+package main
+type P struct{x i64}
+fn f(p ?P) i64{return p.x}
+fn main(){}

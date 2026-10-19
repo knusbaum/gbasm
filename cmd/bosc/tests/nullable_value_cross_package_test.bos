@@ -1,0 +1,10 @@
+package main
+import "retalias_pkg"
+import "string"
+fn main(){
+ n:=retalias_pkg.optional_number(true)
+ if(n){string.puti(n);string.puts("\n")}
+ r:=retalias_pkg.optional_resource(true)
+ if(r){string.puti(r.n);string.puts("\n")}
+ if(!retalias_pkg.optional_resource(false)){string.puts("nil\n")}
+}

@@ -12,6 +12,12 @@ import (
 // types test against tag -1, so tag zero remains true after narrowing.
 func compileTruthTest(of io.Writer, c *Context, value AST) {
 	checkZeroTestOperand(c, value, "Condition")
+	if t, ok := nullableValueType(c, value); ok {
+		tag := compileNullableTag(of, c, value, t)
+		fmt.Fprintf(of, "\tcmp %s -1\n", tag.ref)
+		tag.free(of)
+		return
+	}
 	t := c.ResolveUnderlying(value.ASTType(c))
 	var v spot
 	if _, values := c.ValuesDeclForName(t.Name); values && t.Indirection == 0 && !t.IsSliceOrArray() {

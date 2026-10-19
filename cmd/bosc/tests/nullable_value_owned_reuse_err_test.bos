@@ -1,0 +1,4 @@
+package main
+fn take(n ?owned i64){if(n){dispose(n)}}
+fn f(n ?owned i64){take(n);take(n)}
+fn main(){}

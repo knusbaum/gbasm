@@ -557,6 +557,9 @@ qualsDone:
 		t.MutMask |= 1
 	}
 	if qNil {
+		if t.Indirection == 0 && t.IsArray() {
+			panic(&interpreterError{"arrays cannot be nullable; use nullable elements or a nullable pointer to an array", nilPos})
+		}
 		if t.Indirection == 0 && t.IsSlice() {
 			panic(&interpreterError{"slices cannot be nullable; use an empty slice or a nullable pointer to a slice (?*[]T)", nilPos})
 		}

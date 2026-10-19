@@ -1,0 +1,10 @@
+package main
+import "string"
+fn choose(ok bool) ?i64{return switch(ok){case true 0 case false nil}}
+fn main(){
+ x:=choose(true)
+ if(x){if(x){string.puts("zero present twice\n")}}
+ y:=choose(false)
+ if(y==nil){string.puts("nil\n")}
+ string.puti(choose(true)?);string.puts("\n")
+}

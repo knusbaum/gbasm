@@ -130,6 +130,25 @@ func pubPrefix(isPub bool) string {
 //   - *Address with Val=Symbol — produces an 8-byte pointer slot with a
 //     relocation pointing at the symbol
 func encodeStaticInit(c *Context, dstt ASTType, init AST) ([]byte, []relocSpec, error) {
+	if isTaggedNullable(c, dstt) {
+		data := defaultValueBytes(c, dstt)
+		if litIsNil(init) {
+			return data, nil, nil
+		}
+		bytes, rels, err := encodeStaticInit(c, nullablePayloadType(dstt), init)
+		if err != nil {
+			return nil, nil, err
+		}
+		for i := 0; i < 8; i++ {
+			data[i] = 0
+		}
+		copy(data[8:], bytes)
+		for i := range rels {
+			rels[i].Offset += 8
+		}
+		return data, rels, nil
+	}
+
 	if litIsNil(init) && isNullableValues(c, dstt) {
 		return defaultValueBytes(c, dstt), nil, nil
 	}

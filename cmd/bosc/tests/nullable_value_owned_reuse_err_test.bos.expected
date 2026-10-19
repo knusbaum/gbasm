@@ -1,0 +1,2 @@
+Compiling tests/nullable_value_owned_reuse_err_test.bos
+Fatal: Cannot move "n": it was already moved

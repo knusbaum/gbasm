@@ -115,6 +115,9 @@ func retireFreedFieldFacts(c *Context, path FlowPath, t ASTType) {
 // across that boundary.
 func checkAggregateExprMayEscape(c *Context, e AST, verb string) {
 	source := e
+	if v, ok := source.(*nullableInjection); ok {
+		source = v.Val
+	}
 	if address, ok := e.(*Address); ok {
 		if name, named := address.NamedTarget(); named {
 			source = &Symbol{Name: name, p: address.Pos()}

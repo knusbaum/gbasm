@@ -218,7 +218,7 @@ func NewContext() *Context {
 // the codegen sites that ask "is this name addressing memory" can't
 // drift apart.
 func typeIsMemoryBacked(c *Context, t ASTType) bool {
-	if t.IsUnion() {
+	if t.IsUnion() || isTaggedNullable(c, t) {
 		return true
 	}
 	if t.Indirection > 0 {
@@ -951,6 +951,9 @@ func (c *Context) ResolveUnderlying(t ASTType) ASTType {
 // pointers, slices, arrays, structs, and function pointers are not integers.
 // The <intlit> pending-literal type is handled separately by callers.
 func isIntegerType(c *Context, t ASTType) bool {
+	if isTaggedNullable(c, t) {
+		return false
+	}
 	if t.Indirection > 0 || t.IsSliceOrArray() || t.FuncSig != nil || t.AnonFields != nil {
 		return false
 	}
@@ -967,6 +970,9 @@ func isIntegerType(c *Context, t ASTType) bool {
 // Only the operators that are genuinely defined on both classes consult
 // isNumericType.
 func isFloatType(c *Context, t ASTType) bool {
+	if isTaggedNullable(c, t) {
+		return false
+	}
 	if t.Indirection > 0 || t.IsSliceOrArray() || t.FuncSig != nil || t.AnonFields != nil {
 		return false
 	}
@@ -1021,7 +1027,7 @@ func (c *Context) TypeForVar(name string) (ASTType, bool) {
 		// A nullable pointer (`*?`) or nullable interface (`?T`) narrowed to
 		// non-null by flow reads as its non-nullable form.
 		if t.NilMask&1 != 0 && c.NullFact(VarFlowPath(name)) == NullKnownNonNull &&
-			(t.Indirection > 0 || c.IsInterfaceType(t) || isNullableValues(c, t)) {
+			(t.Indirection > 0 || c.IsInterfaceType(t) || isNullableValues(c, t) || isTaggedNullable(c, t)) {
 			t.NilMask &^= 1
 		}
 		return t, true
@@ -1765,6 +1771,9 @@ func alignUp(n, a int) int {
 // See DESIGN.md § The Boson ABI (BABI-0) / Alignment. Scalars align to their
 // own width, aggregates to the strictest alignment among their members.
 func (t *ASTType) Alignment(c *Context) int {
+	if isTaggedNullable(c, *t) {
+		return PTR_SIZE
+	}
 	if t.IsUnion() {
 		return PTR_SIZE
 	}
@@ -1850,6 +1859,10 @@ func fieldLayout(c *Context, fields []Binding) (offsets []int, size int, align i
 // For instance, arrays and structs are held in registers
 // as pointers.
 func (t *ASTType) Size(c *Context) int {
+	if isTaggedNullable(c, *t) {
+		p := nullablePayloadType(*t)
+		return PTR_SIZE + alignUp(p.Size(c), PTR_SIZE)
+	}
 	if t.IsUnion() {
 		d, _ := unionLayout(c, *t)
 		return d.TagType.Size(c) + d.PayloadMaxSize(c)
@@ -2052,6 +2065,9 @@ func (t ASTType) HasOwned() bool {
 }
 
 func (t ASTType) ZeroInitializable(c *Context) bool {
+	if isTaggedNullable(c, t) {
+		return true
+	}
 	if t.IsUnion() {
 		return false
 	}
@@ -2357,7 +2373,7 @@ func coerceType(c *Context, dst, src ASTType) (effective ASTType, reason coerceR
 		// A nullable interface (`?I`, Indirection 0) also accepts nil: it is
 		// the interface's null value (a zeroed fat pointer). Non-nullable
 		// interfaces do not.
-		if dst.NilMask&1 != 0 && c != nil && (c.IsInterfaceType(dst) || isNullableValues(c, dst)) {
+		if dst.NilMask&1 != 0 && c != nil && (c.IsInterfaceType(dst) || isNullableValues(c, dst) || isTaggedNullable(c, dst)) {
 			return dst, coerceOK
 		}
 		return ASTType{}, coerceTypeMismatch
@@ -2512,7 +2528,7 @@ func mkTypename(n *Node) ASTType {
 	// Anonymous struct type sentinel: parseTypeName packs `struct { f T, ... }`
 	// into an n_typename with sval="<struct>" and args = n_stfield nodes.
 	if n.sval == "<struct>" {
-		var fields []Binding
+		fields := make([]Binding, 0, len(n.args))
 		for _, fn := range n.args {
 			ft := mkTypename(fn.args[0])
 			fields = append(fields, Binding{Name: fn.sval, Type: ft})
@@ -3159,7 +3175,12 @@ func (d *Dot) ASTType(c *Context) ASTType {
 	}
 	r := ResolveSelector(c, d)
 	switch r.Kind {
-	case ResolvedRuntimeValue, ResolvedStructField, ResolvedValuesCase:
+	case ResolvedStructField:
+		if isTaggedNullable(c, d.Val.ASTType(c)) {
+			CompileErrorF(d, "Cannot access field of nullable value %s; check for nil first", d.Val.ASTType(c))
+		}
+		return r.Type
+	case ResolvedRuntimeValue, ResolvedValuesCase:
 		return r.Type
 	case ResolvedUnknown:
 		// Reproduce the pre-resolver diagnostics: distinguish the
@@ -3232,9 +3253,12 @@ func (n *NonNullAssert) ASTType(c *Context) ASTType {
 	if path, ok := FlowPathForExpr(n.Val); ok && c.NullFact(path) == NullKnownNull {
 		CompileErrorF(n, "Postfix ? asserts \"%s\" is non-null, but it is known to be nil", path.Key())
 	}
-	if (t.Indirection == 0 && !isNullableValues(c, t)) || t.NilMask&1 == 0 {
+	if (t.Indirection == 0 && !isNullableValues(c, t) && !isTaggedNullable(c, t)) || t.NilMask&1 == 0 {
+		if declared, ok := declaredPathType(c, n.Val); ok && isTaggedNullable(c, declared) && t.NilMask&1 == 0 {
+			return t
+		}
 		if sym, ok := n.Val.(*Symbol); ok {
-			if declared, ok := c.DeclaredTypeForVar(sym.Name); ok && (declared.Indirection > 0 || isNullableValues(c, declared)) && declared.NilMask&1 != 0 {
+			if declared, ok := c.DeclaredTypeForVar(sym.Name); ok && (declared.Indirection > 0 || isNullableValues(c, declared) || isTaggedNullable(c, declared)) && declared.NilMask&1 != 0 {
 				return t
 			}
 		}
@@ -3636,6 +3660,23 @@ func opSym(t nodetype) string {
 }
 
 func (o *Op2) ASTType(c *Context) ASTType {
+	if (o.Type == n_deq || o.Type == n_neq) && (litIsNil(o.First) || litIsNil(o.Second)) {
+		val := o.First
+		if litIsNil(val) {
+			val = o.Second
+		}
+		if _, ok := nullableValueType(c, val); ok {
+			return boolASTType()
+		}
+	}
+	if o.Type != n_booland && o.Type != n_boolor {
+		for _, operand := range []AST{o.First, o.Second} {
+			if isTaggedNullable(c, operand.ASTType(c)) {
+				CompileErrorF(operand, "Cannot use nullable value %s with this operator; check for nil first", operand.ASTType(c))
+			}
+		}
+	}
+
 	// TODO: this will be expanded as more types are added.
 	// For now, it's only num that can have operations.
 	switch o.Type {
@@ -3839,6 +3880,9 @@ func (n *Not) ASTType(c *Context) ASTType {
 // validity tests. Interface truth is determined by its vtable, not its data
 // word or the address of its header; compileTruthTest implements that lowering.
 func checkZeroTestOperand(c *Context, value AST, operation string) {
+	if _, ok := nullableValueType(c, value); ok {
+		return
+	}
 	t := c.ResolveUnderlying(value.ASTType(c))
 	if t.Indirection > 0 {
 		return

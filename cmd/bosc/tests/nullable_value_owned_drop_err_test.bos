@@ -1,0 +1,3 @@
+package main
+fn f() ?i64{n owned i64:=owned(i64(1));return n}
+fn main(){}

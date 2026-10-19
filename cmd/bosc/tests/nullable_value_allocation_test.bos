@@ -1,0 +1,20 @@
+package main
+import "string"
+type P struct{x i64}
+fn main(){
+ p:=alloc(?i64)
+ if(*p==nil){string.puts("alloc nil\n")}
+ *p=37
+ string.puti((*p)?);string.puts("\n");free(p)
+ var s:=make([]mut ?i64,1,3)
+ if(s[0]==nil){string.puts("make nil\n")}
+ s=append(s,0)
+ string.puti(s[1]?);string.puts("\n");rest,last:=pop(s);string.puti(last?);string.puts("\n");free(rest)
+ a [2]?i64:=[nil,0]
+ if(a[0]==nil){string.puts("literal nil\n")}
+ string.puti(a[1]?);string.puts("\n")
+ q:=alloc(?P)
+ if(*q==nil){string.puts("struct nil\n")}
+ *q=P{x:38}
+ string.puti((*q)?.x);string.puts("\n");free(q)
+}

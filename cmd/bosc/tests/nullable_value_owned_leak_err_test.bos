@@ -1,0 +1,3 @@
+package main
+fn f(n ?owned i64){_ = n}
+fn main(){}

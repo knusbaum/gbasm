@@ -1,0 +1,11 @@
+package main
+import "string"
+type Box struct {buf owned []mut byte} {
+ destroy(b owned Box){free(b.buf);dispose(b)}
+}
+fn create(ok bool) ?owned Box {
+ if(!ok){return nil}
+ return Box{buf:make([]mut byte,1)}
+}
+fn consume(b ?owned Box){if(b){b.destroy()}}
+fn main(){consume(create(false));consume(create(true));consume(nil);string.puts("ok\n")}

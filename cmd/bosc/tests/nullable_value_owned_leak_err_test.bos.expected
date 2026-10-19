@@ -1,0 +1,2 @@
+Compiling tests/nullable_value_owned_leak_err_test.bos
+Fatal: cannot discard an owned value into `_`; consume it explicitly

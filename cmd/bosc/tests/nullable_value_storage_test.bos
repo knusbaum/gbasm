@@ -1,0 +1,22 @@
+package main
+import "string"
+type P struct {x i64,y i64}
+type Holder struct {n ?i64,p ?P}
+fn forward(n ?i64) ?i64{return n}
+fn pair() ?i64, ?P {return 0,P{x:37,y:4}}
+fn main(){
+ var h Holder:=Holder{}
+ if(h.n==nil && h.p==nil){string.puts("empty\n")}
+ h.n=0
+ h.p=P{x:37,y:4}
+ if(h.n){string.puti(h.n);string.puts("\n")}
+ if(h.p){string.puti(h.p.x+h.p.y);string.puts("\n")}
+ var n ?i64:=forward(nil)
+ p ?*?i64:=&n
+ if(p){if(*p==nil){string.puts("inner nil\n")}}
+ n=forward(0)
+ if(p){string.puti((*p)?);string.puts("\n")}
+ a,b:=pair()
+ if(a){string.puti(a);string.puts("\n")}
+ if(b){string.puti(b.x);string.puts("\n")}
+}

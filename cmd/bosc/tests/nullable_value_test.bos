@@ -1,0 +1,21 @@
+package main
+import "string"
+type Point struct {x i64,y i64}
+fn number(ok bool) ?i64 {if(ok){return 0};return nil}
+fn point(ok bool) ?Point {if(ok){return Point{x:37,y:4}};return nil}
+fn show(n ?i64) {if(n){string.puti(n);string.puts(" present\n")}else{string.puts("nil\n")}}
+fn main(){
+ show(number(true));show(number(false));show(i64(38));show(nil)
+ p:=point(true)
+ if(p){string.puti(p.x+p.y);string.puts("\n")}
+ var n ?i64
+ if(n==nil){string.puts("default nil\n")}
+ n=0
+ if(n){string.puti(n);string.puts(" assigned\n")}
+ n=nil
+ if(!n){string.puts("cleared\n")}
+ b ?bool:=false
+ if(b){string.puts("false present\n")}
+ f ?f64:=0.0
+ if(f){string.puts("float present\n")}
+}

@@ -1,0 +1,11 @@
+package main
+import "string"
+fn byteval(ok bool) ?u8{if(ok){return u8(255)};return nil}
+fn boolean(ok bool) ?bool{if(ok){return false};return nil}
+fn floatval(ok bool) ?f64{if(ok){return 3.5};return nil}
+fn main(){
+ b:=byteval(true);if(b){string.puti(i64(b));string.puts("\n")}
+ f:=floatval(true);if(f){if(f==3.5){string.puts("float\n")}}
+ v:=boolean(true);if(v){if(v==false){string.puts("false payload\n")}}
+ if(!byteval(false) && !boolean(false) && !floatval(false)){string.puts("all nil\n")}
+}

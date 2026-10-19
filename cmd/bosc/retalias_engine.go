@@ -351,6 +351,9 @@ func captureReturnAliases(c *Context, ret *Return) {
 // error; locals are rejected by the Return case's own escape checks;
 // globals/heap/unknown record nothing.
 func returnExprParamAliases(c *Context, f *FuncDecl, expr AST, slotType ASTType) []int {
+	if injection, ok := expr.(*nullableInjection); ok {
+		return returnExprParamAliases(c, f, injection.Val, nullablePayloadType(injection.Type))
+	}
 	if injection, ok := expr.(*unionInjection); ok {
 		vd, _ := unionLayout(c, injection.Type)
 		index := selectUnionAlternative(c, injection, injection.Type, injection.Val.ASTType(c))
@@ -558,6 +561,8 @@ func returnExprParamAliases(c *Context, f *FuncDecl, expr AST, slotType ASTType)
 func unwrapReturnExpr(expr AST) AST {
 	for {
 		switch v := expr.(type) {
+		case *nullableInjection:
+			expr = v.Val
 		case *OwnedPromotion:
 			expr = v.Val
 		case *NonNullAssert:

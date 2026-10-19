@@ -1,0 +1,2 @@
+Compiling tests/nullable_value_owned_drop_err_test.bos
+Fatal: Cannot return owned i64 as non-owned ?i64; ownership would be dropped

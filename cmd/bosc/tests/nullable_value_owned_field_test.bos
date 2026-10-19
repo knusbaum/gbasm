@@ -1,0 +1,15 @@
+package main
+import "string"
+type Holder struct{n ?owned i64}
+fn take(n owned i64){string.puti(n);string.puts("\n");dispose(n)}
+fn destroy(h owned Holder){if(h.n){take(h.n)};dispose(h)}
+fn main(){
+ h owned Holder:=Holder{n:owned(i64(37))}
+ if(h.n){take(h.n)}
+ destroy(h)
+ empty owned Holder:=Holder{n:nil};destroy(empty)
+ var n ?owned i64
+ n=owned(i64(38))
+ if(n){v owned i64:=n;take(v)}
+ string.puts("ok\n")
+}

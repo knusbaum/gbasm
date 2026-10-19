@@ -1,0 +1,2 @@
+Compiling tests/nullable_value_field_err_test.bos
+Fatal: Cannot access field of nullable value ?P; check for nil first

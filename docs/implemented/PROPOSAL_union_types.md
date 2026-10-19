@@ -572,7 +572,7 @@ for this implementation.
 - [Payload-bearing values and variant-switch proposal](../implemented/PROPOSAL_adts_and_switch.md),
   for the original representation and narrowing rationale. It is a historical
   design; current consuming-switch behavior is documented in `DESIGN.md`.
-- [Nullable value types proposal](../proposed/PROPOSAL_nullable_value_types.md), for the
+- [Nullable value types proposal](PROPOSAL_nullable_value_types.md), for the
   related proposal to represent absence for types without a spare bit pattern.
   Anonymous unions in this proposal are not nullable; qualifying individual
   alternatives remains subject to existing nullable-type rules.
