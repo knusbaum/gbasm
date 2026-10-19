@@ -6,5 +6,5 @@ fn make_result(ok bool) owned Result {
  return Result.ERR{code:1}
 }
 fn main() {
- switch r:=make_result(true) {case FD r.fd case ERR {return}}
+ switch (r:=make_result(true)) {case FD r.fd case ERR {return}}
 }

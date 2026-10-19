@@ -3,7 +3,7 @@ import "string"
 
 fn show(args ...any) {
 	for (var i i64 := 0; i < len(args); i = i + 1) {
-		switch (v args[i].(type)) {
+		switch (v := args[i].(type)) {
 			case i64 { string.puti(v) }
 			case *mut i64 { string.puti(*v) }
 			default { string.puti(0) }

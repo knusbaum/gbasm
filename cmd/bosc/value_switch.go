@@ -477,7 +477,7 @@ func compileValueSwitch(of io.Writer, c *Context, s *VariantSwitch, dest spot) s
 	if t.OwnedMask&1 != 0 {
 		switch s.Scrutinee.(type) {
 		case *Funcall, *Alloc, *OwnedPromotion:
-			CompileErrorF(s.Scrutinee, "Owned temporary in switch head requires a head binding: use `switch x := expr`")
+			CompileErrorF(s.Scrutinee, "Owned temporary in switch head requires a head binding: use `switch (x := expr)`")
 		}
 	}
 	labels := make([]AST, len(s.Cases))

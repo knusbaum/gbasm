@@ -6,7 +6,7 @@ fn make_result(ok bool) owned Result {
  return Result.ERR{code:1}
 }
 fn use(ok bool) {
- fd := switch r := make_result(ok) {
+ fd := switch (r := make_result(ok)) {
   case ERR {string.puts("error\n");return}
   case FD r.fd
  }

@@ -5,6 +5,6 @@ fn inner() owned Inner {return Inner{a:owned(i64(1)),b:owned(i64(2))}}
 fn drop(x owned i64) {dispose(x)}
 fn main() {
  r owned V:=V.A{inner:inner()}
- switch r {case A {drop(r.inner.a)}}
+ switch (r) {case A {drop(r.inner.a)}}
  dispose(r)
 }

@@ -8,6 +8,6 @@ fn make_result(ok bool) owned Result {
 type P values {FAIL;OK{p owned *mut i64}}
 fn create() owned P {return P.OK{p:new(i64(13))}}
 fn main() {
- p:=switch r:=create() {case FAIL {return} case OK r.p}
+ p:=switch (r:=create()) {case FAIL {return} case OK r.p}
  string.puti(*p);string.puts("\n");free(p)
 }

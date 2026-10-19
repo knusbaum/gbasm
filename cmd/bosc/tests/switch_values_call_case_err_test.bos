@@ -3,5 +3,5 @@ package main
 type choice values { A; B }
 fn main() {
  t choice := choice.A
- switch t { case i64('A') {} default {} }
+ switch (t) { case i64('A') {} default {} }
 }

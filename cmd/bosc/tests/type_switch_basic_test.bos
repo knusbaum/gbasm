@@ -2,7 +2,7 @@ package main
 import "string"
 
 fn describe(x any) {
-	switch (v x.(type)) {
+	switch (v := x.(type)) {
 		case i64 { string.puti(v); string.putc(10) }
 		case *mut i64 { string.puti(*v); string.putc(10) }
 		default { string.puti(999); string.putc(10) }

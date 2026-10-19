@@ -10,7 +10,7 @@ type file_info values {
 }
 
 fn describe(e file_info) {
-	switch e {
+	switch (e) {
 		case FILE_INFO { string.puts("fileinfo\n") }
 		case CLOSED    { string.puts("closed\n") }
 	}

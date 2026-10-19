@@ -3818,12 +3818,32 @@ func rewriteContinuesForStep(a AST, step AST) AST {
 	switch ast := a.(type) {
 	case *Continue:
 		return &Continue{Step: step, p: ast.p}
+	case *VarDecl:
+		out := *ast
+		out.Init = rewriteContinuesForStep(ast.Init, step)
+		return &out
+	case *MultiBindDecl:
+		out := *ast
+		out.Init = rewriteContinuesForStep(ast.Init, step)
+		return &out
+	case *MultiAssign:
+		out := *ast
+		out.Init = rewriteContinuesForStep(ast.Init, step)
+		return &out
+	case *Assignment:
+		out := *ast
+		out.Val = rewriteContinuesForStep(ast.Val, step)
+		return &out
+	case *Return:
+		out := *ast
+		out.Val = rewriteContinuesForStep(ast.Val, step)
+		return &out
 	case *Block:
 		body := make([]AST, len(ast.Body))
 		for i, st := range ast.Body {
 			body[i] = rewriteContinuesForStep(st, step)
 		}
-		return &Block{Body: body}
+		return &Block{Body: body, p: ast.p}
 	case *IfStmt:
 		out := *ast
 		out.Then = rewriteContinuesForStep(ast.Then, step)
@@ -4225,7 +4245,7 @@ type TypeCase struct {
 	p         position
 }
 
-// TypeSwitch is `switch (v x.(type)) { case T {...} ... default {...} }`.
+// TypeSwitch is `switch (v := x.(type)) { case T {...} ... default {...} }`.
 type TypeSwitch struct {
 	BindName string // the `v` binding narrowed inside each case body
 	Val      AST    // the interface value being switched on

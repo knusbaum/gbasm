@@ -3,7 +3,7 @@ import "string"
 fn main() {
  var sum i64 := 0
  for (var i i64 := 0;i<5;i+=1) {
-  switch i%2 {case 0 {continue} default {sum+=i}}
+  switch (i%2) {case 0 {continue} default {sum+=i}}
  }
  string.puti(sum);string.puts("\n")
 }

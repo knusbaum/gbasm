@@ -2,7 +2,7 @@ package main
 type V values {A{a owned i64};B{b owned i64}}
 fn main() {
  v owned V:=V.A{a:owned(i64(1))}
- switch v {case A {observe(v.a)} case B {drop(v.b)}}
+ switch (v) {case A {observe(v.a)} case B {drop(v.b)}}
  dispose(v)
 }
 

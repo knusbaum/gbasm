@@ -7,7 +7,7 @@ type Handle i64 {
 type Result values {OPEN{h owned Handle}; EMPTY}
 fn main() {
  r owned Result := Result.OPEN{h:owned(Handle(37))}
- switch r {
+ switch (r) {
   case OPEN {r.h.destroy();r.h.destroy()}
   case EMPTY {}
  }

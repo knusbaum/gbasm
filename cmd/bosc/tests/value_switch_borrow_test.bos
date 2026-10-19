@@ -4,8 +4,8 @@ fn main() {
  p:=new(i64(10))
  q:=new(i64(20))
  flag:=false
- r *mut i64 := switch flag {case true p case false q}
+ r *mut i64 := switch (flag) {case true p case false q}
  string.puti(*r);string.puts("\n")
  free(p);free(q)
- switch false {case 1 < 2 {string.puts("wrong\n")} case false {string.puts("false\n")}}
+ switch (false) {case 1 < 2 {string.puts("wrong\n")} case false {string.puts("false\n")}}
 }

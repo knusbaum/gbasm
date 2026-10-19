@@ -1,2 +1,2 @@
 package main
-fn main() { switch f64(0) { case -0.0 {} case 0.0 {} } }
+fn main() { switch (f64(0)) { case -0.0 {} case 0.0 {} } }

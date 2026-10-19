@@ -1,21 +1,21 @@
 package main
 import "string"
 fn pointer(p ?*i64) i64 {
- switch p { case nil { return 0 } default { return *p } }
+ switch (p) { case nil { return 0 } default { return *p } }
 }
 fn consume(n i64) {
  x owned i64 := 3
- switch n { case 1 { dispose(x); return } default {} }
+ switch (n) { case 1 { dispose(x); return } default {} }
  dispose(x)
 }
 fn moved(flag bool,p owned *mut i64) owned *mut i64 {
- return switch flag { case true p case false p }
+ return switch (flag) { case true p case false p }
 }
 fn select_ptr(flag bool,a *i64,b *i64) *i64 {
- return switch flag { case true a case false b }
+ return switch (flag) { case true a case false b }
 }
 fn clean(p owned ?*mut i64) {
- switch p {case nil {} default {free(p)}}
+ switch (p) {case nil {} default {free(p)}}
 }
 fn main() {
  clean(nil)
@@ -23,7 +23,7 @@ fn main() {
  n i64 := 31
  string.puti(pointer(&n)); string.puts("\n")
  string.puti(pointer(nil)); string.puts("\n")
- string.puti(switch i64(2) { case 2 25 default 0 }); string.puts("\n")
+ string.puti(switch (i64(2)) { case 2 25 default 0 }); string.puts("\n")
  consume(1); consume(2)
  p:=new(i64(27))
  q:=moved(true,p)
@@ -32,5 +32,5 @@ fn main() {
  other i64 := 41
  v:=select_ptr(false,&n,&other)
  string.puti(*v);string.puts("\n")
- switch x := new(i64(1)) { default { free(x) } }
+ switch (x := new(i64(1))) { default { free(x) } }
 }

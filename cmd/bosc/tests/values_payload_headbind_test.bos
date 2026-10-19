@@ -12,7 +12,7 @@ fn make_evt() evt {
 }
 
 fn main() {
-	switch x := make_evt() {
+	switch (x := make_evt()) {
 		case OPENED { string.puts("fd="); string.puti(x.fd); string.puts(" "); string.puts(x.path); string.puts("\n") }
 		case CLOSED { string.puts("closed\n") }
 	}

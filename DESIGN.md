@@ -2106,6 +2106,9 @@ c file_info := file_info.CLOSED
 
 ### Ordinary value switches
 
+Every switch requires parentheses around its head, like `if` and `for`. A
+head declaration uses `:=`, including type switches: `switch (v := x.(type))`.
+
 A switch over an ordinary comparable value selects the first matching constant
 case using the same equality rules as `==`. The head is evaluated exactly once;
 case bodies do not fall through into following cases. Cases may be scalar
@@ -2117,14 +2120,14 @@ comparison type, including equivalent arithmetic and floating-point signed zero.
 NaN cannot be a case because it never compares equal with `==`.
 
 ```
-switch code {
+switch (code) {
     case i64('v') { verbose = true }
     case i64('o') { output = parser.optarg }
     case 256     { show_help() }
     default      { handle_other(code) }
 }
 
-answer := switch n {
+answer := switch (n) {
     case 1 10
     case 2 20
     default 0
@@ -2136,7 +2139,7 @@ Expression switches must produce a value on every path: they require `default`,
 except that a boolean switch covering both `true` and `false` is exhaustive
 without one. All result arms must agree on their type; untyped literal results
 default to `i64` or `f64` when inferring a switch expression's type. A head binding
-(`switch x := expr` or `switch var x := expr`) is scoped to the switch and works
+(`switch (x := expr)` or `switch (var x := expr)`) is scoped to the switch and works
 for statements and expressions.
 
 The usual ownership, borrowed-storage, nullability, and pointer-validity branch
@@ -2154,7 +2157,7 @@ scope. A consuming switch or an expression switch must cover every variant or ha
 preserved:
 
 ```
-switch e {
+switch (e) {
     case FILE_INFO { puti(e.fd); puts(e.path) }   // e narrowed to FILE_INFO
     case CLOSED    { puts("closed") }
 }
@@ -2192,7 +2195,7 @@ example, a result type with `ERR{err error}` and `FD{fd owned FD}` can be unpack
 without an extraction method or manual wrapper cleanup:
 
 ```
-fd := switch r := open(path, flags, mode) {
+fd := switch (r := open(path, flags, mode)) {
     case ERR {
         report(r.err)
         return
@@ -2217,10 +2220,10 @@ alias is not narrowed, so a field access cannot read the wrong payload.
 ### What is not in v1
 
 - The variant `switch` works as both a statement and an **expression**
-  (`y := switch e { case A e.x  case B 0 }`, with value-producing
+  (`y := switch (e) { case A e.x  case B 0 }`, with value-producing
   arms agreeing on their type and exiting arms contributing no value). Payload variants cross package
-  boundaries, and a head-bound scrutinee (`switch x := expr`,
-  `switch var x := …`) is supported. Remaining follow-ons: or-patterns and
+  boundaries, and a head-bound scrutinee (`switch (x := expr)`,
+  `switch (var x := …)`) is supported. Remaining follow-ons: or-patterns and
   guards.
 - No exposed raw tag value. The compiler may encode tags as a different representation in the future without changing surface semantics; users observing the tag must declare an integer projection.
 - No or-patterns, guards, or field access in a `default` case.
@@ -2332,7 +2335,7 @@ its body. Cases are top-down, first match wins, no fallthrough; `default` is
 optional, and a no-match with no default is a no-op.
 
 ```
-switch (v args[i].(type)) {
+switch (v := args[i].(type)) {
     case i64       { use_int(v) }
     case *mut i64  { use_ptr(*v) }
     default        { use_unknown() }
@@ -3445,7 +3448,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Alias-aware consumed struct fields, replacement recovery, field reads and call/copy/return guards, with known branch alternatives retained.
 - Invalidation of derived `from(X)` borrows across opaque mutable calls, with fresh-loan recovery, same-call argument validation, interface/alias support, backing-allocation dependencies, and conservative branch joins.
 - Ordinary value switches with constant cases and `==` comparison semantics, no fallthrough, single head evaluation, duplicate-case checking, exhaustive expression results, and shared branch tracking with variant switches.
-- Concrete-type assertion (`x.(T)` → `multiretu{T, bool}`, bound via the two-value declaration form) lowering to an inline two-compare check (typedesc identity + exact shape-word equality), and a type switch (`switch (v x.(type)) { case T {...} default {...} }`) with first-match-wins flow-narrowed case binding
+- Concrete-type assertion (`x.(T)` → `multiretu{T, bool}`, bound via the two-value declaration form) lowering to an inline two-compare check (typedesc identity + exact shape-word equality), and a type switch (`switch (v := x.(type)) { case T {...} default {...} }`) with first-match-wins flow-narrowed case binding
 - Interface-to-interface assertion (`x.(I)` and `case SomeIface` in a type switch) backed by the `_iface.assert_to` runtime helper and per-typedesc lazy itab caches; the structured `__typedesc_<T>` / `__typedesc_cache_<T>` / `__iface_desc_<I>` records (with FNV-1a name/sig hashes, canonical non-receiver signature text, and a shape-derived receiver-shape match) are home-package-emitted and resolved cross-package by relocation; `x.(any)` allocates a 2-slot itab preserving the `[typedesc, shape]` invariant
 - Coercion-time interface satisfaction uses the full shape-word receiver-shape filter (distinguishing value / `*self` directions exactly), in lockstep with the runtime helper's derivation; the new `typedesc` / `typedesc_cache` / `iface_desc` bas directives serialize the records and bas enforces the typedesc/cache single-emitter pairing; `bdump` pretty-prints all three
 - Type-block methods: `type T <base> { ... }` declarations carrying instance methods (pointer receiver) and static methods (no receiver), called as `v.method(args)` / `T.method(args)` respectively; `struct { ... }` is a valid base (fields in the struct body, methods in the type block)

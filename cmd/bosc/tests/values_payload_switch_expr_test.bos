@@ -9,7 +9,7 @@ type evt values {
 
 fn main() {
 	e evt := evt.OPENED{ fd: 7, path: "x" }
-	n i64 := switch e {
+	n i64 := switch (e) {
 		case OPENED  e.fd
 		case CLOSED  0
 	}
@@ -17,7 +17,7 @@ fn main() {
 	string.puts("\n")
 
 	e2 evt := evt.CLOSED
-	msg []byte := switch e2 {
+	msg []byte := switch (e2) {
 		case OPENED  "open"
 		case CLOSED  "shut"
 	}

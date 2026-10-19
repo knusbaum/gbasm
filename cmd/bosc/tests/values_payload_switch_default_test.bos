@@ -10,7 +10,7 @@ type file_info values {
 
 fn main() {
 	e file_info := file_info.SOCKET{ fd: 5, addr: "localhost" }
-	switch e {
+	switch (e) {
 		case FILE_INFO { string.puts("fileinfo\n") }
 		default        { string.puts("other\n") }
 	}

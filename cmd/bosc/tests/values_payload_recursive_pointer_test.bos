@@ -9,7 +9,7 @@ type tree values {
 
 fn main() {
 	t tree := tree.LEAF{ v: 42 }
-	switch t {
+	switch (t) {
 		case LEAF { string.puti(t.v); string.puts("\n") }
 		case NODE { string.puts("node\n") }
 	}

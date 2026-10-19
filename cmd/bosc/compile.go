@@ -9077,7 +9077,7 @@ func compileInterfaceAssert(of io.Writer, c *Context, ast *TypeAssert, dest spot
 	return dest
 }
 
-// compileTypeSwitch lowers `switch (v x.(type)) { case T {...} ... }`. Each
+// compileTypeSwitch lowers `switch (v := x.(type)) { case T {...} ... }`. Each
 // case is tested top-down; the first match binds `v` to the case's type
 // (narrowed inside the case body) and runs the body. `default` runs if no
 // compileValuesConstruct builds a payload-variant value in `dest`: the case
@@ -9123,12 +9123,12 @@ func compileValuesConstruct(of io.Writer, c *Context, ast *ValuesConstruct, dest
 	return dest
 }
 
-// compileVariantSwitch lowers `switch e { case VARIANT { ... } ... }`: read the
+// compileVariantSwitch lowers `switch (e) { case VARIANT { ... } ... }`: read the
 // scrutinee's tag and branch to the matching case. Exhaustive over the closed
 // variant set (or a `default`). Phase 2: dispatch + exhaustiveness; per-case
 // narrowing / field access are wired in a following step.
 func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch, dest spot) spot {
-	// Expression form (`y := switch e { case A e.x ... }`): a non-empty dest
+	// Expression form (`y := switch (e) { case A e.x ... }`): a non-empty dest
 	// means each case body's value is written into it; compiling every body
 	// into the one typed dest enforces that they agree. A statement switch
 	// passes nullspot down (block bodies ignore it).
@@ -9174,7 +9174,7 @@ func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch, dest spo
 	}
 	path, hasPath := FlowPathForExpr(ast.Scrutinee)
 	if scrutType.HasOwned() && !hasPath {
-		CompileErrorF(ast.Scrutinee, "Owned temporary in switch head requires a head binding: use `switch x := expr`")
+		CompileErrorF(ast.Scrutinee, "Owned temporary in switch head requires a head binding: use `switch (x := expr)`")
 	}
 	var ownership *variantSwitchFlow
 	if scrutType.HasOwned() && hasPath {

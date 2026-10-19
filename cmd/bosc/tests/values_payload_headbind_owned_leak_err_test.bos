@@ -13,7 +13,7 @@ fn mk() owned conn {
 }
 
 fn main() {
-	switch x := mk() {
+	switch (x := mk()) {
 		case OPEN { string.puts("open\n") }
 		case CLOSED { string.puts("closed\n") }
 	}

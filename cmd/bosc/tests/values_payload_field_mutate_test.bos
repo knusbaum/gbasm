@@ -10,7 +10,7 @@ type file_info values {
 
 fn main() {
 	var e file_info := file_info.FILE_INFO{ fd: 3, path: "x" }
-	switch e {
+	switch (e) {
 		case FILE_INFO {
 			e.fd = 99
 			string.puti(e.fd)

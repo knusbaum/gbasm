@@ -8,7 +8,7 @@ type conn values {
 fn main() {
 	x owned i64 := 5
 	var e owned conn := conn.OPEN{ fd: x }
-	switch e {
+	switch (e) {
 		case OPEN {
 			dispose(e)
 			f owned i64 := e.fd

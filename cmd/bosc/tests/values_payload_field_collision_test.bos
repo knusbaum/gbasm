@@ -10,7 +10,7 @@ type msg values {
 }
 
 fn show(m msg) {
-	switch m {
+	switch (m) {
 		case INT  { string.puti(m.val); string.puts("\n") }
 		case TEXT { string.puts(m.val); string.puts("\n") }
 	}

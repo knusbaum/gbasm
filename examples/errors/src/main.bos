@@ -82,7 +82,7 @@ type cats values {
 	BLUE{claws bool},
 } {
 	format(self *cats, w io.writer) ?io.error {		
-		switch s := *self {
+		switch (s := *self) {
 			case RED {
 				_, err := fmt.printf(w, "Red cat with %d lives.", s.lives)
 				return err

@@ -73,11 +73,11 @@ const (
 	n_multibind             // multi-value destructuring bind: var a T1, const b T2 = expr
 	n_valuesdecl            // type TypeName values [(projections)] { cases } [{ methods }]
 	n_valuescase            // single case in a values decl: NAME[: e1, e2, ...]
-	n_variantswitch         // switch e { case VARIANT { body } ... [default { body }] }
+	n_variantswitch         // switch (e) { case VARIANT { body } ... [default { body }] }
 	n_variantcase           // one case in a variant switch: VARIANT { body } / default { body }
 	n_variadic_forward      // trailing `slice...` forwarding at a call site
 	n_typeassert            // x.(T) — runtime type assertion
-	n_typeswitch            // switch (v x.(type)) { case T {...} ... }
+	n_typeswitch            // switch (v := x.(type)) { case T {...} ... }
 	n_typecase              // single case in a type switch
 	n_from                  // `from(name, ...)` borrow clause on an interface return slot
 )
@@ -233,9 +233,8 @@ type Parser struct {
 	// inTypeSwitchHead suppresses `.(type)` being parsed as a type
 	// assertion while parsing the switched value in a type-switch head.
 	inTypeSwitchHead bool
-	// noStructLit suppresses `Name{...}` being folded into a struct literal
-	// while parsing a variant-switch scrutinee (`switch e { ... }`), where the
-	// trailing `{` opens the switch body, not a literal.
+	// noStructLit keeps a case label's following block from being parsed
+	// as a struct literal during speculative label parsing.
 	noStructLit bool
 }
 
@@ -1041,12 +1040,36 @@ func (p *Parser) parseFor() *Node {
 }
 
 // parseSwitch separates interface type-switch heads from ordinary/variant
-// switches. Their shared bare-head syntax is resolved using the head's type.
+// switches. All heads are parenthesized; .(type) identifies a type switch.
 func (p *Parser) parseSwitch() *Node {
-	sw := p.current() // tok_switch
+	var head []token
+	head = append(head, p.current())
 	p.advance()
-	isTypeSwitch := p.current().t == tok_lparen
-	p.pushback(sw)
+	if p.current().t != tok_lparen {
+		p.expect(tok_lparen)
+	}
+	depth := 0
+	isTypeSwitch := false
+	for {
+		t := p.current()
+		head = append(head, t)
+		if t.t == tok_lparen {
+			depth++
+		}
+		if t.t == tok_rparen {
+			depth--
+		}
+		if t.t == tok_type && depth == 2 {
+			isTypeSwitch = true
+		}
+		p.advance()
+		if depth == 0 || t.t == tok_none {
+			break
+		}
+	}
+	for i := len(head) - 1; i >= 0; i-- {
+		p.pushback(head[i])
+	}
 	if isTypeSwitch {
 		return p.parseTypeSwitch()
 	}
@@ -1054,12 +1077,12 @@ func (p *Parser) parseSwitch() *Node {
 }
 
 // parseVariantSwitch parses ordinary and variant switches. Type checking
-// distinguishes constant-expression cases from bare variant names. Suppressing
-// struct literals in the head leaves the trailing '{' to open the switch.
+// distinguishes constant-expression cases from bare variant names.
 func (p *Parser) parseVariantSwitch() *Node {
 	swpos := p.current().p
 	p.expect(tok_switch)
-	// Optional head-bind: `switch [var] x := expr { ... }` binds x (scoped to
+	p.expect(tok_lparen)
+	// Optional head-bind: `switch ([var] x := expr) { ... }` binds x (scoped to
 	// the switch) to the scrutinee value, so a temporary can be matched and
 	// its fields reached through x. sval carries the bound name; ival bit 0 =
 	// var (mutable).
@@ -1092,9 +1115,8 @@ func (p *Parser) parseVariantSwitch() *Node {
 			p.pushback(nameTok)
 		}
 	}
-	p.noStructLit = true
 	scrut := p.parseExpression()
-	p.noStructLit = false
+	p.expect(tok_rparen)
 	p.expect(tok_lcurly)
 	args := []*Node{scrut}
 	for p.current().t != tok_rcurly {
@@ -1176,7 +1198,7 @@ func (p *Parser) parseSwitchCase() (*Node, *Node) {
 	return label, p.parseExpression()
 }
 
-// parseTypeSwitch parses `switch (v x.(type)) { case T {...} ... default {...} }`.
+// parseTypeSwitch parses `switch (v := x.(type)) { case T {...} ... default {...} }`.
 // The head binds `v` to the switched value `x`, narrowed to each case's type.
 func (p *Parser) parseTypeSwitch() *Node {
 	swpos := p.current().p
@@ -1186,13 +1208,14 @@ func (p *Parser) parseTypeSwitch() *Node {
 	if bind.t != n_symbol {
 		panic(&interpreterError{fmt.Sprintf("Expected a binding name in type switch, but found %v", bind), bind.p})
 	}
+	p.expect(tok_decl)
 	p.inTypeSwitchHead = true
 	val := p.parseSubexpr()
 	p.inTypeSwitchHead = false
 	p.expect(tok_dot)
 	p.expect(tok_lparen)
 	if p.current().t != tok_type {
-		panic(&interpreterError{"expected `type` in `switch (v x.(type))`", p.current().p})
+		panic(&interpreterError{"expected `type` in `switch (v := x.(type))`", p.current().p})
 	}
 	p.advance()          // consume `type`
 	p.expect(tok_rparen) // close `(type)`

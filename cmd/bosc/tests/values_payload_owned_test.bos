@@ -13,7 +13,7 @@ type conn values {
 fn main() {
 	x owned i64 := 7
 	e owned conn := conn.OPEN{ fd: x }
-	switch e {
+	switch (e) {
 		case OPEN {
 			f owned i64 := e.fd
 			string.puts("open\n")

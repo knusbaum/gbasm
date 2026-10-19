@@ -7,7 +7,7 @@ type cats values {
 	BLUE{ claws bool }
 } {
 	describe(self *cats) i64 {
-		switch s := *self {
+		switch (s := *self) {
 			case RED  { return s.lives }
 			case BLUE { return 0 }
 		}

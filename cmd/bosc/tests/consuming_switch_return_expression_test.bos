@@ -6,7 +6,7 @@ fn make_result(ok bool) owned Result {
  return Result.ERR{code:1}
 }
 fn extract(ok bool) owned i64 {
- return switch r := make_result(ok) {
+ return switch (r := make_result(ok)) {
   case ERR {return owned(i64(9))}
   case FD r.fd
  }

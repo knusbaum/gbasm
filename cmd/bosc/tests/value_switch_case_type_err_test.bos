@@ -1,2 +1,2 @@
 package main
-fn main() { switch i64(1) { case true {} } }
+fn main() { switch (i64(1)) { case true {} } }

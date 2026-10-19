@@ -5,13 +5,13 @@ import "errors"
 
 fn main() {
 	e errors.evt := errors.evt.OPENED{ fd: 7, path: "cfg" }
-	switch e {
+	switch (e) {
 		case OPENED { string.puts("opened fd="); string.puti(e.fd); string.puts(" "); string.puts(e.path); string.puts("\n") }
 		case CLOSED { string.puts("closed\n") }
 		case IDLE   { string.puts("idle\n") }
 	}
 	c errors.evt := errors.evt.CLOSED{ code: 3 }
-	switch c {
+	switch (c) {
 		case OPENED { string.puts("opened\n") }
 		case CLOSED { string.puts("closed code="); string.puti(c.code); string.puts("\n") }
 		case IDLE   { string.puts("idle\n") }

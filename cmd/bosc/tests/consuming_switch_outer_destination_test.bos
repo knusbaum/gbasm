@@ -7,7 +7,7 @@ fn make_result(ok bool) owned Result {
 }
 fn use(ok bool) {
  var fd owned i64
- switch r:=make_result(ok) {case ERR {return} case FD {fd=r.fd}}
+ switch (r:=make_result(ok)) {case ERR {return} case FD {fd=r.fd}}
  string.puti(fd);string.puts("\n");dispose(fd)
 }
 fn main() {use(false);use(true)}

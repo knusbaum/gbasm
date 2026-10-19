@@ -9,7 +9,7 @@ type evt values {
 
 fn main() {
 	e evt := evt.OPENED{ fd: 5 }
-	n i64 := switch e {
+	n i64 := switch (e) {
 		case OPENED  e.fd
 		case CLOSED  "nope"
 	}

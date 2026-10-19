@@ -12,7 +12,7 @@ interface renderer {
 }
 
 fn classify(a any) i64 {
-	switch (v a.(type)) {
+	switch (v := a.(type)) {
 		case i64       { string.puts("int"); string.putc(10) }
 		case renderer  { string.puts(v.render()); string.putc(10) }
 		default        { string.puts("other"); string.putc(10) }

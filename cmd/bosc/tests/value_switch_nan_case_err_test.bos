@@ -1,2 +1,2 @@
 package main
-fn main() { switch f64(1) {case 0.0/0.0 {} default {}} }
+fn main() { switch (f64(1)) {case 0.0/0.0 {} default {}} }

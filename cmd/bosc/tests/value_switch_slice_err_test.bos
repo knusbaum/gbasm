@@ -1,2 +1,2 @@
 package main
-fn main() { switch "abc" { default {} } }
+fn main() { switch ("abc") { default {} } }

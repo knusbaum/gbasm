@@ -1,2 +1,2 @@
 package main
-fn main() { x := switch true { case true 10 } }
+fn main() { x := switch (true) { case true 10 } }

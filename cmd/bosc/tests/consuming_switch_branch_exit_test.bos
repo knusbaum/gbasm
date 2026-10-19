@@ -7,7 +7,7 @@ fn make_result(ok bool) owned Result {
 }
 fn use(ok bool) {
  for(var i:=0;i<2;i+=1) {
-  switch r:=make_result(ok) {
+  switch (r:=make_result(ok)) {
    case ERR {continue}
    case FD {drop(r.fd);continue}
   }

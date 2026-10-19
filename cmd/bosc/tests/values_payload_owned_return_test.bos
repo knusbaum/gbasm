@@ -11,7 +11,7 @@ fn empty() owned Result {return Result.EMPTY{}}
 fn main() {
  value owned i64 := 42
  r := make_result(value)
- switch r {
+ switch (r) {
   case VALUE {
    n owned i64 := r.value
    string.puti(n)

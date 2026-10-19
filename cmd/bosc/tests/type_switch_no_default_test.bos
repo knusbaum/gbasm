@@ -4,7 +4,7 @@ import "string"
 fn describe(x any) {
 	string.puti(0)
 	string.putc(10)
-	switch (v x.(type)) {
+	switch (v := x.(type)) {
 		case i64 { string.puti(v); string.putc(10) }
 	}
 	string.puti(1)

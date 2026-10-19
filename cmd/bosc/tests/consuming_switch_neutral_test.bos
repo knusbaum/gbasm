@@ -8,7 +8,7 @@ fn make_result(ok bool) owned Result {
 type V values {A{a owned i64};B{b owned i64};EMPTY{n i64}}
 fn main() {
  v owned V:=V.EMPTY{n:7}
- switch v {
+ switch (v) {
   case A {drop(v.a)}
   case B {drop(v.b)}
   case EMPTY {string.puti(v.n);string.puts("\n")}

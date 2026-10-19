@@ -1,2 +1,2 @@
 package main
-fn main() {p:=new(i64(10));q:=new(i64(20));flag:=false;r *mut i64 := switch flag {case true p case false q};free(p);_ = *r;free(q)}
+fn main() {p:=new(i64(10));q:=new(i64(20));flag:=false;r *mut i64 := switch (flag) {case true p case false q};free(p);_ = *r;free(q)}

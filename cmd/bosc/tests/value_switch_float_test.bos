@@ -2,11 +2,11 @@ package main
 import "string"
 fn main() {
  f f64 := 0.5
- switch f { case 1 / 2 { string.puts("half\n") } default { string.puts("wrong\n") } }
+ switch (f) { case 1 / 2 { string.puts("half\n") } default { string.puts("wrong\n") } }
  g f32 := 0.1 + 0.2
- switch g { case 0.1 + 0.2 { string.puts("f32\n") } default { string.puts("wrong\n") } }
+ switch (g) { case 0.1 + 0.2 { string.puts("f32\n") } default { string.puts("wrong\n") } }
  z f64 := -0.0
- switch z { case 0.0 { string.puts("zero\n") } default { string.puts("wrong\n") } }
+ switch (z) { case 0.0 { string.puts("zero\n") } default { string.puts("wrong\n") } }
  n f64 := 0.0 / 0.0
- switch n { case 1.0 { string.puts("wrong\n") } default { string.puts("nan\n") } }
+ switch (n) { case 1.0 { string.puts("wrong\n") } default { string.puts("nan\n") } }
 }

@@ -1,2 +1,2 @@
 package main
-fn main() { x := switch i64(1) { case 1 10 } }
+fn main() { x := switch (i64(1)) { case 1 10 } }

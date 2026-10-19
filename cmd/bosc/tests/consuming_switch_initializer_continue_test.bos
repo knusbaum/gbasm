@@ -1,0 +1,20 @@
+package main
+import "string"
+type Result values {ERR{code i64};FD{fd owned i64}}
+fn make_result(i i64) owned Result {
+ if(i == 1) {return Result.FD{fd:owned(i64(37))}}
+ return Result.ERR{code:i}
+}
+fn main() {
+ var attempts i64 := 0
+ for(var i i64 := 0; i < 3; i += 1) {
+  attempts += 1
+  // Bound the regression: a skipped increment must fail rather than hang.
+  if(attempts > 3) {string.puts("stuck\n");break}
+  fd := switch (r := make_result(i)) {
+   case ERR {string.puti(r.code);string.puts("\n");continue}
+   case FD r.fd
+  }
+  string.puti(fd);string.puts("\n");dispose(fd)
+ }
+}

@@ -13,7 +13,7 @@ fn bump(p *mut i64) {
 
 fn main() {
 	var e foo := foo.A{ x: 5 }
-	switch e {
+	switch (e) {
 		case A {
 			bump(&e.x)
 			string.puti(e.x)
