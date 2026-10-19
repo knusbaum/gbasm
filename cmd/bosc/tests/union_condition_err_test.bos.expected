@@ -1,0 +1,2 @@
+Compiling tests/union_condition_err_test.bos
+Fatal: Condition requires scalar, pointer, or interface operand, got i64 | bool

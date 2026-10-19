@@ -125,6 +125,18 @@ func recordStructReturnCallFieldFacts(c *Context, destBinding string, destType A
 // b.buf borrows local storage contributed nothing and the local escaped
 // through the call.
 func argAliasProvenance(c *Context, arg AST) flow.PointerExpr {
+	if injection, ok := arg.(*unionInjection); ok {
+		return argAliasProvenance(c, injection.Val)
+	}
+	if sym, ok := arg.(*Symbol); ok {
+		if t, ok := c.TypeForVar(sym.Name); ok && t.IsUnion() {
+			ptr := c.PointerFlow().GetPathPointer(VarFlowPath(sym.Name).Append(unionPayloadField).Key())
+			if ptr.KnownOrigin || ptr.KnownSlot {
+				return ptr
+			}
+		}
+	}
+
 	ap := pointerExprForAST(c, arg, "")
 	if ap.KnownOrigin {
 		return ap

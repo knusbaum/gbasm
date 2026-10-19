@@ -72,6 +72,7 @@ func aliasSet(c *Context, f *FuncDecl) [][]int {
 	if f == nil {
 		return nil
 	}
+	resolveFunctionUnions(c, f)
 	if f.AliasesComputed {
 		return f.ReturnAliases
 	}
@@ -350,6 +351,12 @@ func captureReturnAliases(c *Context, ret *Return) {
 // error; locals are rejected by the Return case's own escape checks;
 // globals/heap/unknown record nothing.
 func returnExprParamAliases(c *Context, f *FuncDecl, expr AST, slotType ASTType) []int {
+	if injection, ok := expr.(*unionInjection); ok {
+		vd, _ := unionLayout(c, injection.Type)
+		index := selectUnionAlternative(c, injection, injection.Type, injection.Val.ASTType(c))
+		return returnExprParamAliases(c, f, injection.Val, vd.Cases[index].Payload[0].Type)
+	}
+
 	var out []int
 	record := func(origin flow.Origin) {
 		for _, member := range c.PointerFlow().JoinMembers(origin) {
@@ -384,8 +391,10 @@ func returnExprParamAliases(c *Context, f *FuncDecl, expr AST, slotType ASTType)
 			// ownership checking separately retires the source binding.
 			resultType := c.ResolveUnderlying(slotType)
 			parameterType := c.ResolveUnderlying(f.Args[idx].Type)
-			transferred := resultType.IsSlice() && resultType.OwnedMask&1 != 0 &&
-				parameterType.OwnedMask&1 != 0
+			transferred := resultType.IsSlice() && resultType.OwnedMask&1 != 0 && parameterType.OwnedMask&1 != 0
+			if parameterType.IsUnion() && unionTransfersResource(parameterType) {
+				transferred = transferred || unionTransfersResource(resultType) || ((resultType.Indirection > 0 || resultType.IsSlice()) && resultType.OwnedMask&1 != 0)
+			}
 			if !borrowed && !transferred {
 				continue
 			}
@@ -407,8 +416,20 @@ func returnExprParamAliases(c *Context, f *FuncDecl, expr AST, slotType ASTType)
 	// aliases whatever the pointer borrows — the fat pointer's data word
 	// IS the borrowed pointer.
 	rt := c.ResolveUnderlying(slotType)
-	slotIsView := rt.Indirection > 0 || rt.IsSlice() || c.IsInterfaceType(rt)
+	slotIsView := rt.Indirection > 0 || rt.IsSlice() || c.IsInterfaceType(rt) || (rt.IsUnion() && unionHasBorrowedPayload(c, rt))
 
+	if rt.IsUnion() {
+		if sym, ok := expr.(*Symbol); ok {
+			for _, o := range c.PointerFlow().FieldOrigins(flow.Binding(sym.Name)) {
+				record(o)
+			}
+		}
+		if _, binding := expr.(*Symbol); !binding {
+			if ptr := pointerExprForAST(c, expr, ""); ptr.KnownOrigin {
+				record(ptr.Origin)
+			}
+		}
+	}
 	if slotIsView {
 		// A concrete VALUE coerced to an interface slot is value-backed: the fat
 		// pointer's data word holds a COPY of the value (a MOVE, when the source

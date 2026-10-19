@@ -1,0 +1,14 @@
+package main
+type Box struct {buf owned []mut byte}
+fn borrow(b *Box) []byte {return b.buf}
+fn touch(v *mut Box | bool) {
+ switch(v){case *mut Box {v.buf[0]=1} case bool {}}
+}
+fn main(){
+ b := new(Box{buf:make([]mut byte,1)})
+ y:=borrow(b)
+ touch(b)
+ _ = y[0]
+ free(b.buf)
+ free(b)
+}

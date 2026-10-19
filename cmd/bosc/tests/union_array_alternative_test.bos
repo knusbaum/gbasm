@@ -1,0 +1,9 @@
+package main
+import "string"
+fn get() [2]i64 | bool {return [i64(37),i64(38)]}
+fn main(){
+ switch(v:=get()){
+  case [2]i64 {string.puti(v[0]);string.puts("\n")}
+  case bool {}
+ }
+}

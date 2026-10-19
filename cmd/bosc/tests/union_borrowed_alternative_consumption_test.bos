@@ -1,0 +1,12 @@
+package main
+import "string"
+fn wrap(p *i64) *i64 | owned bool {return p}
+fn consume(v *i64 | owned bool) {
+ switch(v){case *i64 {string.puti(*v);string.puts("\n")} case owned bool {dispose(v)}}
+}
+fn main(){
+ p:=new(i64(37))
+ consume(wrap(p))
+ string.puti(*p);string.puts("\n")
+ free(p)
+}

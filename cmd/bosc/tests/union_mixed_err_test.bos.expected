@@ -1,0 +1,2 @@
+Compiling tests/union_mixed_err_test.bos
+Fatal: Switch cases for "v" must either all consume their owned payloads or all preserve them

@@ -1,0 +1,2 @@
+Compiling tests/union_ambiguous_err_test.bos
+Fatal: Ambiguous union injection of <intlit> into i32 | i64; use an explicit conversion or typed binding

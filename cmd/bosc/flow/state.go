@@ -797,3 +797,23 @@ func (s *State) CheckStructFieldEscapeLocal(name Binding) (escaped bool, field s
 	}
 	return false, ""
 }
+
+// CheckFieldPointerValidity checks the complete stored provenance of an
+// aggregate before that aggregate crosses a value boundary. Keep loan
+// snapshots intact: checking only raw origins would miss mutable-call expiry.
+func (s *State) CheckFieldPointerValidity(name Binding) (bool, string) {
+	prefix := string(name) + "."
+	var keys []string
+	for key := range s.fieldPointers {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if ok, reason := s.CheckDerefValidity(s.fieldPointers[key]); !ok {
+			return false, reason
+		}
+	}
+	return true, ""
+}

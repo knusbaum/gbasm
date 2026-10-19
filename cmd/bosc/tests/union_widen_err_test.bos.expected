@@ -1,0 +1,2 @@
+Compiling tests/union_widen_err_test.bos
+Fatal: Cannot implicitly widen or convert union i64 | bool to f64 | i64 | bool

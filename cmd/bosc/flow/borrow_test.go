@@ -100,3 +100,20 @@ func TestBorrowBackingReplacement(t *testing.T) {
 		t.Fatal(why)
 	}
 }
+
+func TestStoredFieldLoanValidity(t *testing.T) {
+	s := NewState()
+	owner := s.NewOwnedOrigin("source")
+	view := s.BorrowView(owner, "stored")
+	s.SetPathPointer("result.payload", view)
+	if ok, reason := s.CheckFieldPointerValidity("result"); !ok {
+		t.Fatal(reason)
+	}
+	s.InvalidateBorrows([]PointerExpr{owner})
+	if ok, _ := s.CheckFieldPointerValidity("result"); ok {
+		t.Fatal("stored field lost its expired loan snapshot")
+	}
+	if ok, reason := s.CheckFieldPointerValidity("other"); !ok {
+		t.Fatal(reason)
+	}
+}

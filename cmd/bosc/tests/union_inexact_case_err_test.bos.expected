@@ -1,0 +1,2 @@
+Compiling tests/union_inexact_case_err_test.bos
+Fatal: *i64 is not an exact alternative of union bool | owned *mut i64

@@ -1,0 +1,14 @@
+package main
+import "string"
+fn create(ok bool) owned *mut i64 | bool {
+ if(ok) {return new(i64(37))}
+ return false
+}
+fn use(ok bool) {
+ p := switch (v:=create(ok)) {
+  case bool {string.puts("failed\n");return}
+  case owned *mut i64 v
+ }
+ string.puti(*p);string.puts("\n");free(p)
+}
+fn main() {use(false);use(true)}

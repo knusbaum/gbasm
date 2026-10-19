@@ -502,8 +502,7 @@ File IO lives in the `io` package, built on the raw syscall wrappers in `sys`. T
 | Function/Method | Signature | Description |
 |------|------|------|
 | `io.O_RDONLY`, `O_WRONLY`, `O_RDWR`, `O_CREAT`, `O_EXCL`, `O_TRUNC`, `O_APPEND`, `O_NONBLOCK`, `O_CLOEXEC` | `i64` | File-mode flag constants matching Linux `<fcntl.h>`. Combine with bitwise `|`. |
-| `io.open` | `(path []byte, flags i64, mode i64) owned open_result` | Returns `FD{fd owned FD}` on success or `ERR{err error}` on failure. Extract the descriptor through a consuming switch, or destroy an unused result. |
-| `io.open_result.destroy` | `(r owned open_result) void` | Closes a successful result; consumes either variant. |
+| `io.open` | `(path []byte, flags i64, mode i64) owned FD \| error` | Returns an owned descriptor on success or an error on failure. Extract the descriptor through an exhaustive typed switch. |
 | `io.FD.read` | `(fd *FD, buf []mut byte) i64, ?error` | Read up to `len(buf)` bytes. Returns `(n, err)` — `n=0` on EOF; `err=nil` on success. |
 | `io.FD.write` | `(fd *FD, buf []byte) i64, ?error` | Write `buf`. Returns `(n, err)`; short writes with `err=nil` are not errors. |
 | `io.FD.close` | `(fd *owned FD) ?error` | Close the fd and consume the owned obligation. Returns `nil` on success or an error. |
@@ -2249,6 +2248,131 @@ A change to add `values` touches the compiler layers in order:
 
 ---
 
+## Anonymous union types
+
+`T | U` is a value containing exactly one of the listed payload types. Unions
+are supported as function results, parameters, and initialized local bindings.
+They express exclusive outcomes without requiring a named `values` wrapper:
+
+```boson
+fn choose(ok bool) owned *mut i64 | bool {
+    if (ok) { return new(i64(37)) }
+    return false
+}
+
+fn use(ok bool) {
+    p := switch (v := choose(ok)) {
+        case bool { return }
+        case owned *mut i64 v
+    }
+    free(p)
+}
+```
+
+Union containers have no direct equality, ordering, or truth test; select a
+payload before applying its operations. There is no special success/error
+designation or propagation operator. Use
+multiple returns when both a value and an error can be meaningful, such as a
+byte count alongside a partial-write failure. The runtime's `io.open` returns
+`owned io.FD | io.error`, so failure creates no descriptor obligation.
+
+### Identity and construction
+
+Alternatives are a flat, unordered set: `T | U` equals `U | T`, and
+`T | (U | V)` equals `T | U | V`. Aliases preserve that structural identity;
+`type Result T | U` does not create a distinct nominal wrapper or method set.
+Named payload types retain their normal nominal identities.
+
+Duplicate alternatives are rejected, including alternatives that differ only
+in ownership, mutability, or nullability at any level. For example, neither
+`*T | owned *T` nor `*T | ?*T` is valid. A nullable individual alternative such
+as `?*T | bool` remains legal where that payload type supports nullability.
+
+Returning, assigning, or passing a payload into a union selects an exact type
+match first. If there is no exact match, exactly one alternative must accept
+it through existing implicit conversions. Multiple compatible alternatives are
+an error; use an explicit conversion to a payload type or a typed intermediate
+binding. For example, `i64(1)` selects `i64` from `i32 | i64`, whereas the
+untyped literal `1` is ambiguous. A concrete type is compatible with an
+interface alternative only when it satisfies that interface.
+
+An existing union can be passed or returned unchanged when the destination
+has the same canonical type. Implicit widening from `T | U` to `T | U | V`
+is not supported. Union construction has no separate cast syntax; a typed
+initialized local supplies a context when needed:
+
+```boson
+x T | U := obtain()
+var y T | U := obtain()
+```
+
+Every union local requires an initializer. There is no default alternative.
+Fields, global union storage, arrays/slices of unions, and nominal union
+wrappers with methods are not supported. Arrays, slices, function pointers,
+and structs can themselves be alternatives where their ordinary types are
+supported. The program entry point cannot return a union.
+
+### Switching and ownership
+
+A union switch uses exact type cases, including all ownership and mutability
+qualifiers. The binding denotes the payload itself inside each case. Selecting
+an interface alternative leaves it an interface value; `.(type)` remains the
+separate mechanism for inspecting an interface's dynamic concrete type.
+
+Union switches have no `default`. Expression and consuming switches must cover
+every alternative explicitly. Inspecting statement switches may omit cases.
+Cases do not fall through, and returning/breaking/continuing arms contribute no
+expression result. Other continuing arms must yield compatible result types.
+A declared union result, parameter, or local supplies a union context to switch
+expression arms, which can inject their payloads independently. An inferred
+switch does not invent a union merely because its arms have different types.
+
+The active payload supplies the union's ownership obligations, without an
+outer `owned` qualifier on the union. Inspection preserves those obligations;
+consumption must transfer or discharge all active obligations. Mixed consuming
+and preserving paths, partial consumption, and use after consumption are
+rejected under the existing ADT rules. Alternatives without owned obligations
+are neutral. Moving a resource through a union preserves its allocation identity
+so existing borrows remain subject to invalidation when that resource is freed.
+
+The union container is non-addressable. `&value` before narrowing,
+`*(T | U)`, `[](T | U)`, `owned (T | U)`, and `?(T | U)` are rejected.
+After selecting an alternative, its payload is addressable:
+
+```boson
+switch (v := obtain_resource()) {
+    case owned FD {
+        inspect(&v)
+        v.close()
+    }
+    case error { report(v) }
+}
+```
+
+`&v` addresses the selected payload, not the tag-plus-payload container.
+Existing mutability, lifetime, and borrow-invalidation rules apply. Narrowing
+cannot grant permissions absent from the payload's declared type. An address
+into a switch-local payload cannot outlive its storage.
+
+### Grammar and representation
+
+`|` joins complete alternative types; prefix qualifiers belong to their own
+alternative. A function type's return clause absorbs `|`: `fn() T | U` is a
+function returning a union, while `(fn() T) | U` is a union with a function
+alternative. Commas separate multiple results: `T | error, U` has two result
+slots, the first a union. Parentheses flatten union grouping and do not permit
+qualifiers or indirection on a union container.
+
+Representation and tag dispatch reuse payload-bearing `values`: an inline tag
+and storage for the largest alternative, with no boxing or allocation inherent
+in the union. Tags follow a deterministic length-prefixed structural encoding
+of fully qualified alternative types, including qualifiers. Source ordering
+and import aliases do not affect tag assignment. Signatures serialize the
+structural type across package boundaries. The original encoding design is
+recorded in [the union proposal](docs/implemented/PROPOSAL_union_types.md#canonical-encoding).
+
+---
+
 ## The `any` interface, variadics, and type assertion
 
 ### The `any` interface
@@ -3382,7 +3506,7 @@ The runtime lives at `runtime/<pkg>/*.bs` under `BOSON_HOME` and is shared by ev
 | `_init`    | `init_linux.bs` | Process entry (`start`) calling `main.main`. Bounds-check trap (`index_oob`). |
 | `_heap`    | `heap.bos` | The Boson memory allocator: `alloc`, `free` (the targets of `alloc`/`new`/`free`), plus mallinfo-style introspection. Three tiers over 4MiB chunks carved from 1GiB reserves. |
 | `string`   | `string.bs`, `puts_linux.bs` | String formatting and stdout primitives: `puts`, `puti`, `putb`, `putc`, `exit`, plus internal `strlen`, `itoa`, `uitoa`. File IO is no longer here; see `sys` and `io`. |
-| `io`       | `io.bos` | Typed file IO: `type FD i64` with `read`/`write`/`close` methods; `fn open([]byte, i64, i64) owned open_result`; `STDIN`/`STDOUT`/`STDERR` globals; `reader`/`writer` interfaces; `fn copy(writer, reader) ?error`. Built on `sys`. |
+| `io`       | `io.bos` | Typed file IO: `type FD i64` with `read`/`write`/`close` methods; `fn open([]byte, i64, i64) owned FD \| error`; `STDIN`/`STDOUT`/`STDERR` globals; `reader`/`writer` interfaces; `fn copy(writer, reader) ?error`. Built on `sys`. |
 | `pair`     | `pair.bos` | Minimal cross-package struct used only by tests. |
 | `builtin`  | `builtin.bos` | Auto-imported into every package. Currently holds the `error` interface and acts as the home for documentation of compiler intrinsics. |
 
@@ -3448,6 +3572,7 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Variadic parameters (`name ...T`, last only): desugared to a `[]T` slice built on the caller's stack with per-element coercion, explicit `slice...` forwarding, and borrow-checked non-escaping callee slice
 - Alias-aware consumed struct fields, replacement recovery, field reads and call/copy/return guards, with known branch alternatives retained.
 - Invalidation of derived `from(X)` borrows across opaque mutable calls, with fresh-loan recovery, same-call argument validation, interface/alias support, backing-allocation dependencies, and conservative branch joins.
+- Anonymous union results, parameters, and initialized locals; canonical unordered alternative identity, exact-first injection, exact typed switches, and ownership-aware payload extraction using ADT machinery.
 - Ordinary value switches with constant cases and `==` comparison semantics, no fallthrough, single head evaluation, duplicate-case checking, exhaustive expression results, and shared branch tracking with variant switches.
 - Concrete-type assertion (`x.(T)` → `multiretu{T, bool}`, bound via the two-value declaration form) lowering to an inline two-compare check (typedesc identity + exact shape-word equality), and a type switch (`switch (v := x.(type)) { case T {...} default {...} }`) with first-match-wins flow-narrowed case binding
 - Interface-to-interface assertion (`x.(I)` and `case SomeIface` in a type switch) backed by the `_iface.assert_to` runtime helper and per-typedesc lazy itab caches; the structured `__typedesc_<T>` / `__typedesc_cache_<T>` / `__iface_desc_<I>` records (with FNV-1a name/sig hashes, canonical non-receiver signature text, and a shape-derived receiver-shape match) are home-package-emitted and resolved cross-package by relocation; `x.(any)` allocates a 2-slot itab preserving the `[typedesc, shape]` invariant

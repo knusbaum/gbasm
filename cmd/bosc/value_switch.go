@@ -395,6 +395,10 @@ func compileSwitchConstant(of io.Writer, c *Context, v *switchConstant, dest spo
 // switchResultOrigin uses the same origin union as ordinary branch joins.
 // A local in any result arm must keep the whole expression escape-restricted.
 func switchResultOrigin(c *Context, s *VariantSwitch, name string) flow.PointerExpr {
+	if s.Scrutinee.ASTType(c).IsUnion() {
+		return switchResultOrigin(c, lowerUnionSwitch(c, s), name)
+	}
+
 	var joined flow.PointerExpr
 	path, hasPath := FlowPathForExpr(s.Scrutinee)
 	vd, isVariant := c.ValuesDeclForName(s.Scrutinee.ASTType(c).Name)
@@ -436,17 +440,22 @@ func boundSwitchContext(c *Context, s *BoundSwitch) *Context {
 	sc := c.SubContext()
 	t := switchConcreteType(s.Decl.Init.ASTType(c))
 	sc.BindVar(s.Decl, s.Decl.Name, t, s.Decl.IsConst)
-	sc.PointerFlow().AssignPointer(flow.Binding(s.Decl.Name), pointerExprForAST(c, s.Decl.Init, s.Decl.Name))
+	if t.IsUnion() {
+		recordUnionPayloadProvenance(sc, s.Decl.Name, t, s.Decl.Init)
+	} else {
+		sc.PointerFlow().AssignPointer(flow.Binding(s.Decl.Name), pointerExprForAST(c, s.Decl.Init, s.Decl.Name))
+	}
 	return sc
 }
 
-func compileSwitchResult(of io.Writer, c *Context, body AST, dest spot) {
+func compileSwitchResult(of io.Writer, c *Context, body AST, dest spot, returning bool) {
 	if !fallsThrough(body) {
 		value := compileTop(of, c, body, nullspot)
 		value.free(of)
 		return
 	}
 	if !dest.empty() {
+		body = prepareUnionExpression(c, body, dest.t, returning)
 		t := switchConcreteType(body.ASTType(c))
 		if t.Same(voidASTType()) {
 			CompileErrorF(body, "Expression switch case must yield a value or exit")
@@ -560,7 +569,7 @@ func compileValueSwitch(of io.Writer, c *Context, s *VariantSwitch, dest spot) s
 			c.RestoreFlowSnapshot(remaining)
 			narrow(nonNullOnMatch)
 		}
-		compileSwitchResult(of, c, cs.Body, dest)
+		compileSwitchResult(of, c, cs.Body, dest, s.ReturnContext)
 		if fallsThrough(cs.Body) {
 			after = append(after, c.FlowSnapshot())
 		}
@@ -569,7 +578,7 @@ func compileValueSwitch(of io.Writer, c *Context, s *VariantSwitch, dest spot) s
 	}
 	c.RestoreFlowSnapshot(remaining)
 	if s.Default != nil {
-		compileSwitchResult(of, c, s.Default, dest)
+		compileSwitchResult(of, c, s.Default, dest, s.ReturnContext)
 		if fallsThrough(s.Default) {
 			after = append(after, c.FlowSnapshot())
 		}

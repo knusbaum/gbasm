@@ -1,0 +1,3 @@
+package main
+fn get() i64|bool{return false}
+fn main(){v:=get();if(v){}}

@@ -1,0 +1,8 @@
+package main
+type Box struct {buf []byte}
+fn wrap(buf []byte) Box | bool {return Box{buf:buf}}
+fn main(){
+ p:=make([]mut byte,1)
+ r:=wrap(p)
+ switch(r){case Box {free(p);_ = r.buf[0]} case bool {free(p)}}
+}

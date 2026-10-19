@@ -1,0 +1,2 @@
+Compiling tests/union_resource_identity_freed_err_test.bos
+Fatal: cannot dereference pointer to "p": the allocation was freed

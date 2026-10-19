@@ -1,0 +1,18 @@
+package main
+import "string"
+fn read(v i64 | bool) i64 {
+ return switch(v) {case i64 v case bool 0}
+}
+type Reader i64 {
+ read(r Reader, v bool | i64) i64 {_ = r; return read(v)}
+}
+fn main() {
+ f := &read
+ r := Reader(0)
+ string.puti(f(i64(37)));string.puts("\n")
+ string.puti(f(false));string.puts("\n")
+ v := switch(true) {case true i64(38) case false i64(39)}
+ u bool | i64 := v
+ string.puti(r.read(u));string.puts("\n")
+ string.puti(r.read(false));string.puts("\n")
+}

@@ -96,6 +96,16 @@ func (c *Context) sourceTypeByName(name string) (ASTType, bool) {
 }
 
 func (s *sourceScope) qualifyType(t *ASTType) error {
+	if t.IsUnion() {
+		for i := range t.Union {
+			if err := s.qualifyType(&t.Union[i]); err != nil {
+				return err
+			}
+		}
+		normalizeUnion(t)
+		return nil
+	}
+
 	var err error
 	if t.Name != "" {
 		t.Name, err = s.typeName(t.Name)

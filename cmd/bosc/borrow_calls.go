@@ -13,6 +13,15 @@ func borrowCallSite(call *Funcall, destination string) string {
 // An interface value carries the mutation capabilities of its methods even
 // when passed by value; its data pointer can grant mutable access to X.
 func paramGrantsMutation(c *Context, t ASTType) bool {
+	if t.IsUnion() {
+		for _, a := range t.Union {
+			if paramGrantsMutation(c, a) {
+				return true
+			}
+		}
+		return false
+	}
+
 	if t.HasOwned() {
 		return false
 	}
@@ -82,6 +91,9 @@ func mutationAuthority(c *Context, arg AST) flow.PointerExpr {
 }
 
 func argumentBorrow(c *Context, arg AST, param ASTType) flow.PointerExpr {
+	if param.IsUnion() && unionHasBorrowedPayload(c, param) {
+		return argAliasProvenance(c, arg)
+	}
 	if param.HasOwned() {
 		return flow.PointerExpr{}
 	}

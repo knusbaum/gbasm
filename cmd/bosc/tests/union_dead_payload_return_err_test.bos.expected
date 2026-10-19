@@ -1,0 +1,2 @@
+Compiling tests/union_dead_payload_return_err_test.bos
+Fatal: cannot dereference pointer to "p": the allocation was freed

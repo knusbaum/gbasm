@@ -11,8 +11,8 @@ import "string"
 
 fn main() {
 	f := switch (r := io.open("/dev/null", io.O_RDONLY, 0)) {
-		case ERR { string.puts("open failed\n"); return }
-		case FD r.fd
+		case io.error { string.puts("open failed\n"); return }
+		case owned io.FD r
 	}
 	err := io.copy(&io.STDOUT, &f)
 	if (err == nil) {

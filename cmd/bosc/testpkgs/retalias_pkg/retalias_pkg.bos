@@ -39,3 +39,15 @@ pub fn make_holder(s []byte) borrowing_holder {
 pub interface viewer {
 	bytes(self *self) []byte from(self)
 }
+
+// Union fixtures exercise canonical tags and structural signature metadata.
+pub type union_resource struct {n i64}
+pub type union_alias bool | owned *mut union_resource
+pub fn union_create(ok bool) union_alias {
+    if(ok) {return new(union_resource{n:37})}
+    return false
+}
+pub fn union_forward(v owned *mut union_resource | bool) bool | owned *mut union_resource {
+    return v
+}
+pub fn union_borrow(s []byte) bool | []byte {return s}

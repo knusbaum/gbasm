@@ -1,0 +1,2 @@
+Compiling tests/union_wrapper_err_test.bos
+Parse Error: Union containers cannot have indirection or qualifiers

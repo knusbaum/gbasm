@@ -1,0 +1,4 @@
+package main
+fn wrap(p *i64) *i64|bool{return p}
+fn bad() *i64|bool {p:=new(i64(1));v:=wrap(p);free(p);return v}
+fn main(){}

@@ -1,0 +1,15 @@
+package main
+import "string"
+interface Consumer {consume(c self, v owned *mut i64 | bool) i64}
+type C i64 {
+ consume(c C,v owned *mut i64 | bool) i64 {
+  _ = c
+  switch(v){case owned *mut i64 {n:=*v;free(v);return n} case bool {return 0}}
+ }
+}
+fn main(){
+ c Consumer:=C(0)
+ p:=new(i64(37))
+ string.puti(c.consume(p));string.puts("\n")
+ string.puti(c.consume(false));string.puts("\n")
+}

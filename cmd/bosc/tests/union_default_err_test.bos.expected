@@ -1,0 +1,2 @@
+Compiling tests/union_default_err_test.bos
+Fatal: Union switches do not support default; name each alternative explicitly

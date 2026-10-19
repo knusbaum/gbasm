@@ -1,0 +1,11 @@
+package main
+import "string"
+fn forward(v owned *mut i64 | bool) bool | owned *mut i64 {return switch(v){case bool false case owned *mut i64 v}}
+fn main(){
+ p:=new(i64(37))
+ view *i64:=p
+ r owned *mut i64 | bool := p
+ q:=switch(v:=forward(r)){case bool {return} case owned *mut i64 v}
+ string.puti(*view);string.puts("\n")
+ free(q)
+}

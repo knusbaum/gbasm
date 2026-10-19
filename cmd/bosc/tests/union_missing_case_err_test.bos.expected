@@ -1,0 +1,2 @@
+Compiling tests/union_missing_case_err_test.bos
+Fatal: Consuming union switch must cover every alternative

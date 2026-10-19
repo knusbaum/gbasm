@@ -1,0 +1,2 @@
+Compiling tests/union_compare_err_test.bos
+Fatal: unions are not comparable with ==; write an explicit equality function

@@ -1,0 +1,2 @@
+Compiling tests/union_address_err_test.bos
+Fatal: Union containers are not addressable; switch to select a payload first

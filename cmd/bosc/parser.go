@@ -439,7 +439,7 @@ func (p *Parser) parseTok() *Node {
 // "no return type, infer void."
 func isTypeStart(t toktype) bool {
 	switch t {
-	case tok_ident, tok_fn, tok_star, tok_lsquare, tok_question, tok_owned, tok_mut, tok_struct:
+	case tok_ident, tok_fn, tok_star, tok_lsquare, tok_question, tok_owned, tok_mut, tok_struct, tok_lparen:
 		return true
 	}
 	return false
@@ -455,8 +455,23 @@ func isTypeStart(t toktype) bool {
 // specified in §3.3 and enforced by ptrWrap / sliceWrap / arrayWrap below.
 func (p *Parser) parseTypeName() *Node {
 	pos := p.current().p
-	at := p.parseTypeExpr(false, false)
+	at := p.parseUnionType(false, false)
 	return &Node{t: n_typename, p: pos, sval: "<prebuilt>", prebuilt: &at}
+}
+
+// parseUnionType joins complete prefix types. Function-type return clauses
+// recurse through parseTypeName and therefore absorb their own union separators.
+func (p *Parser) parseUnionType(refOperand, arrayElem bool) ASTType {
+	first := p.parseTypeExpr(refOperand, arrayElem)
+	if p.current().t != tok_pipe {
+		return first
+	}
+	alternatives := []ASTType{first}
+	for p.current().t == tok_pipe {
+		p.advance()
+		alternatives = append(alternatives, p.parseTypeExpr(refOperand, arrayElem))
+	}
+	return unionType(alternatives, first.p)
 }
 
 // parseTypeExpr folds one prefix type into an ASTType. refOperand is true when
@@ -525,12 +540,15 @@ qualsDone:
 		// Grouping. Prefix rarely needs it, but `*(...)` etc. stays legal so
 		// serialized forms and hand-written types can parenthesize freely.
 		p.advance()
-		t = p.parseTypeExpr(refOperand, arrayElem)
+		t = p.parseUnionType(refOperand, arrayElem)
 		p.expect(tok_rparen)
 	default:
 		t = p.parseTypeBaseAt()
 	}
 
+	if t.IsUnion() && (qOwned || qMut || qNil) {
+		rejectUnionWrapper(t, t.p)
+	}
 	// Apply this level's leading qualifiers at bit 0 of the level just built.
 	if qOwned {
 		t.OwnedMask |= 1
@@ -586,6 +604,7 @@ func (p *Parser) parseTypeBaseAt() ASTType {
 // preserved untouched — a pointer to a slice/array keeps that shape and gains an
 // indirection on top.
 func ptrWrap(e ASTType) ASTType {
+	rejectUnionWrapper(e, e.p)
 	e.MutMask <<= 1
 	e.OwnedMask <<= 1
 	e.NilMask <<= 1
@@ -598,6 +617,7 @@ func ptrWrap(e ASTType) ASTType {
 // mutability at the slice's bit 1 — and the element keeps its structure with
 // those bits cleared.
 func sliceWrap(e ASTType) ASTType {
+	rejectUnionWrapper(e, e.p)
 	slice := ASTType{
 		MutMask:   e.MutMask << 1,
 		OwnedMask: e.OwnedMask << 1,
@@ -613,6 +633,7 @@ func sliceWrap(e ASTType) ASTType {
 // storage, so element and array share a single qualifier level — `[N]owned T`
 // and `owned [N]T` collapse to the same encoding.
 func arrayWrap(e ASTType, n int) ASTType {
+	rejectUnionWrapper(e, e.p)
 	arr := ASTType{
 		ArraySize: n,
 		MutMask:   e.MutMask,
@@ -653,6 +674,9 @@ func (p *Parser) parseAnonStructTypeNode() *Node {
 			p.advance()
 		}
 		ftypeNode := p.parseTypeName()
+		if !isMultiRetu && unionContains(mkTypename(ftypeNode)) {
+			ParseErrorF(ftypeNode, "Union fields and composite union storage are not supported")
+		}
 		fieldNodes = append(fieldNodes, &Node{t: n_stfield, p: fieldpos, sval: fname.sval, args: []*Node{ftypeNode}})
 	}
 	p.expect(tok_rcurly)
@@ -1150,6 +1174,23 @@ func (p *Parser) parseVariantSwitch() *Node {
 // names also allow expression bodies, so `case A (x)` and `case A -x` must keep
 // their existing meaning rather than becoming a call or subtraction label.
 func (p *Parser) parseSwitchCase() (*Node, *Node) {
+	if p.current().t == tok_lparen {
+		open := p.current()
+		p.advance()
+		kind := p.current().t
+		p.pushback(open)
+		if kind == tok_fn || kind == tok_owned || kind == tok_star || kind == tok_question || kind == tok_lsquare {
+			label := p.parseTypeName()
+			return label, p.parseExpression()
+		}
+	}
+
+	switch p.current().t {
+	case tok_owned, tok_question, tok_star, tok_lsquare, tok_fn:
+		label := p.parseTypeName()
+		return label, p.parseExpression()
+	}
+
 	savedCurr := p.current()
 	savedPushed := append([]token(nil), p.pushed...)
 	var fetched []token

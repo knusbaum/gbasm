@@ -1,0 +1,8 @@
+package main
+fn wrap(p *i64) *i64 | bool {return p}
+fn main() {
+ p:=new(i64(37))
+ v:=wrap(p)
+ free(p)
+ switch(v){case *i64 {_ = *v} case bool {}}
+}

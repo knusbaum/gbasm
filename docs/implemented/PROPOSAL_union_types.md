@@ -2,6 +2,7 @@
 
 ## History
 
+- 2026-10-18 — Implemented the initial union feature, including canonical identity, typed switches, ownership/provenance tracking, and cross-package metadata; moved to `docs/implemented/`. Full Go, assembler, and language checks passed.
 - 2026-10-18 — Settled exact-first injection, identical-union forwarding, initial return/parameter/initialized-local scope, type precedence, and alias identity; deferred widening, composite storage, and nominal wrappers.
 
 - 2026-10-18 — Recorded flat unordered identity, canonical tag ordering, exact cases without default, qualifier restrictions, non-addressable union containers, and addressable narrowed payloads; retained only unresolved choices as open questions.
@@ -80,9 +81,9 @@ The following decisions were settled in discussion:
     design. Start with exact matching and evaluate sugar through actual use.
 
 The sections below describe how these decisions fit existing Boson semantics.
-The language decisions below are agreed; remaining work is compiler integration
-and validation (§11). All union examples describe proposed syntax, not an
-implemented feature.
+The language decisions below record the accepted design. The initial feature
+is implemented; the canonical current specification is in `DESIGN.md`. Section
+11 records the implementation obligations established by this proposal.
 
 ## 3. Function signatures and return construction
 
@@ -571,7 +572,7 @@ for this implementation.
 - [Payload-bearing values and variant-switch proposal](../implemented/PROPOSAL_adts_and_switch.md),
   for the original representation and narrowing rationale. It is a historical
   design; current consuming-switch behavior is documented in `DESIGN.md`.
-- [Nullable value types proposal](PROPOSAL_nullable_value_types.md), for the
+- [Nullable value types proposal](../proposed/PROPOSAL_nullable_value_types.md), for the
   related proposal to represent absence for types without a spare bit pattern.
   Anonymous unions in this proposal are not nullable; qualifying individual
   alternatives remains subject to existing nullable-type rules.

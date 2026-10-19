@@ -1,0 +1,2 @@
+Compiling tests/union_field_err_test.bos
+Parse Error: Union fields and composite union storage are not supported

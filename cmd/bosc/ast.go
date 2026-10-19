@@ -218,6 +218,9 @@ func NewContext() *Context {
 // the codegen sites that ask "is this name addressing memory" can't
 // drift apart.
 func typeIsMemoryBacked(c *Context, t ASTType) bool {
+	if t.IsUnion() {
+		return true
+	}
 	if t.Indirection > 0 {
 		return false
 	}
@@ -437,6 +440,12 @@ func (c *Context) checkPackageNameCollision(p position, name, excludeKind string
 }
 
 func (c *Context) DefineStruct(name string, s *StructDecl) {
+	for _, f := range s.Fields {
+		if unionContains(resolveUnionAliases(c, f.Type)) {
+			panic(&interpreterError{msg: "Union fields and composite union storage are not supported", p: s.p})
+		}
+	}
+
 	if es, ok := c.structs[name]; ok {
 		if es != s {
 			panic(&interpreterError{msg: fmt.Sprintf("Struct %q already defined", name), p: s.p})
@@ -448,6 +457,11 @@ func (c *Context) DefineStruct(name string, s *StructDecl) {
 }
 
 func (c *Context) DefineFunc(name string, f *FuncDecl) {
+	f.Return = resolveUnionAliases(c, f.Return)
+	for i := range f.Args {
+		f.Args[i].Type = resolveUnionAliases(c, f.Args[i].Type)
+	}
+
 	if ef, ok := c.funcs[name]; ok {
 		if ef != f {
 			panic(&interpreterError{msg: fmt.Sprintf("Function %q already defined", name), p: f.p})
@@ -884,6 +898,9 @@ func (c *Context) TypeByName(name string) (ASTType, bool) {
 		return ASTType{Name: "bool"}, true
 	}
 	if t, ok := c.TypeAliasFor(name); ok {
+		if t.IsUnion() {
+			return t, true
+		}
 		return ASTType{Name: name, Signed: t.Signed}, true
 	}
 	// Values types are named types too: they need to surface here so
@@ -1000,6 +1017,7 @@ func (c *Context) TypeForVar(name string) (ASTType, bool) {
 		return ASTType{}, false
 	}
 	if t, ok := c.bindings[name]; ok {
+		t = resolveUnionAliases(c, t)
 		// A nullable pointer (`*?`) or nullable interface (`?T`) narrowed to
 		// non-null by flow reads as its non-nullable form.
 		if t.NilMask&1 != 0 && c.NullFact(VarFlowPath(name)) == NullKnownNonNull &&
@@ -1518,6 +1536,14 @@ func (c *Context) Import(importKey, path string) error {
 // in the producer .bo, rewrites it as "pkgname.LeafName". Built-in
 // names and already-qualified names (containing a dot) are left alone.
 func qualifyImportedTypeFull(t *ASTType, pkgname string, structs map[string]*gbasm.StructShape, aliases map[string]*gbasm.TypeAliasShape, ifaces map[string]*gbasm.InterfaceShape, values map[string]*gbasm.ValuesShape) {
+	if t.IsUnion() {
+		for i := range t.Union {
+			qualifyImportedTypeFull(&t.Union[i], pkgname, structs, aliases, ifaces, values)
+		}
+		normalizeUnion(t)
+		return
+	}
+
 	if t.Element != nil {
 		qualifyImportedTypeFull(t.Element, pkgname, structs, aliases, ifaces, values)
 		return
@@ -1637,6 +1663,7 @@ func (c *Context) WriteStrings(of io.Writer) {
 // ASTType is not suitable as a Go map key; if you need that, hash the
 // String() form or intern types.
 type ASTType struct {
+	Union       []ASTType // non-nil: flat unordered anonymous union alternatives
 	Name        string    // scalar/pointee-leaf name (for shapes 3 and 4); "" for anonymous struct
 	Indirection int       // pointer depth (for shapes 3 and 4)
 	ArraySize   int       // element count (for shape 2); 0 otherwise
@@ -1738,6 +1765,9 @@ func alignUp(n, a int) int {
 // See DESIGN.md § The Boson ABI (BABI-0) / Alignment. Scalars align to their
 // own width, aggregates to the strictest alignment among their members.
 func (t *ASTType) Alignment(c *Context) int {
+	if t.IsUnion() {
+		return PTR_SIZE
+	}
 	if t.FuncSig != nil || t.Indirection > 0 {
 		return PTR_SIZE
 	}
@@ -1820,6 +1850,10 @@ func fieldLayout(c *Context, fields []Binding) (offsets []int, size int, align i
 // For instance, arrays and structs are held in registers
 // as pointers.
 func (t *ASTType) Size(c *Context) int {
+	if t.IsUnion() {
+		d, _ := unionLayout(c, *t)
+		return d.TagType.Size(c) + d.PayloadMaxSize(c)
+	}
 	// Function-pointer types are pointer-sized regardless of signature.
 	if t.FuncSig != nil {
 		return PTR_SIZE
@@ -1875,6 +1909,13 @@ func (t *ASTType) Size(c *Context) int {
 	}
 	// Anonymous struct: same natural-alignment layout as a named one.
 	if t.AnonFields != nil {
+		if !t.MultiReturn {
+			for _, f := range t.AnonFields {
+				if unionContains(resolveUnionAliases(c, f.Type)) {
+					panic(&interpreterError{msg: "Union fields and composite union storage are not supported", p: t.p})
+				}
+			}
+		}
 		_, size, _ := fieldLayout(c, t.AnonFields)
 		return size
 	}
@@ -1887,6 +1928,9 @@ func (t *ASTType) Size(c *Context) int {
 }
 
 func (t ASTType) SameExact(t2 ASTType) bool {
+	if t.IsUnion() || t2.IsUnion() {
+		return unionTypesEqual(t, t2, false)
+	}
 	// Signed is not included: types with different signedness already have
 	// different names (i64 vs u64, i8 vs u8, etc.), so Name alone distinguishes
 	// them. Excluding Signed avoids false mismatches when aliases are created
@@ -1946,6 +1990,9 @@ func (t ASTType) Same(t2 ASTType) bool {
 // SameRepr reports whether two types have the same runtime representation.
 // It ignores ownership and mutability, which are compile-time qualifiers.
 func (t ASTType) SameRepr(t2 ASTType) bool {
+	if t.IsUnion() || t2.IsUnion() {
+		return unionTypesEqual(t, t2, false)
+	}
 	if t.Name != t2.Name ||
 		t.Indirection != t2.Indirection ||
 		t.ArraySize != t2.ArraySize {
@@ -1977,6 +2024,11 @@ func (t ASTType) SameRepr(t2 ASTType) bool {
 
 // HasOwned reports whether the type carries any ownership obligation.
 func (t ASTType) HasOwned() bool {
+	for _, a := range t.Union {
+		if a.HasOwned() {
+			return true
+		}
+	}
 	if t.OwnedMask != 0 {
 		return true
 	}
@@ -2000,6 +2052,9 @@ func (t ASTType) HasOwned() bool {
 }
 
 func (t ASTType) ZeroInitializable(c *Context) bool {
+	if t.IsUnion() {
+		return false
+	}
 	if t.Indirection > 0 {
 		return t.NilMask&1 != 0
 	}
@@ -2046,6 +2101,9 @@ func (t ASTType) ZeroInitializable(c *Context) bool {
 
 // SameOwned reports whether two types carry the same ownership shape.
 func (t ASTType) SameOwned(t2 ASTType) bool {
+	if t.IsUnion() || t2.IsUnion() {
+		return unionTypesEqual(t, t2, false)
+	}
 	if t.Name != t2.Name ||
 		t.Indirection != t2.Indirection ||
 		t.ArraySize != t2.ArraySize ||
@@ -2092,6 +2150,10 @@ func (t ASTType) SameOwned(t2 ASTType) bool {
 // StripOwned returns a copy of the type with all owned bits cleared.
 // Used when passing an owned value to a non-owned parameter (plain borrow).
 func (t ASTType) StripOwned() ASTType {
+	// A union cannot become a borrowed container by dropping payload qualifiers.
+	if t.IsUnion() {
+		return t
+	}
 	t.OwnedMask = 0
 	if t.Element != nil {
 		elem := t.Element.StripOwned()
@@ -2117,6 +2179,9 @@ func (t ASTType) StripOwned() ASTType {
 }
 
 func (dst ASTType) NilCompatible(src ASTType) bool {
+	if dst.IsUnion() || src.IsUnion() {
+		return unionTypesEqual(dst, src, false)
+	}
 	if dst.Name != src.Name ||
 		dst.Indirection != src.Indirection ||
 		dst.ArraySize != src.ArraySize {
@@ -2151,6 +2216,9 @@ func (dst ASTType) NilCompatible(src ASTType) bool {
 // (*mut T) is acceptable where a less-permissive one (*T) is expected; the
 // reverse is not allowed. Owned bits are ignored by the callers that strip them.
 func (dst ASTType) MutCompatible(src ASTType) bool {
+	if dst.IsUnion() || src.IsUnion() {
+		return unionTypesEqual(dst, src, false)
+	}
 	if dst.Name != src.Name ||
 		dst.Indirection != src.Indirection ||
 		dst.ArraySize != src.ArraySize {
@@ -2188,6 +2256,9 @@ func (dst ASTType) OwnedCompatible(src ASTType) bool {
 // destinations, borrowing owned values into unowned destinations, and dropping
 // write-through mutability.
 func (dst ASTType) Accepts(src ASTType) bool {
+	if dst.IsUnion() || src.IsUnion() {
+		return unionTypesEqual(dst, src, false)
+	}
 	if src.Same(intlitASTType()) {
 		return true
 	}
@@ -2251,6 +2322,17 @@ const (
 // before the values check could see it. Centralizing the rule here
 // closes the family of bypasses by construction.
 func coerceType(c *Context, dst, src ASTType) (effective ASTType, reason coerceReason) {
+	if dst.IsUnion() {
+		if src.IsUnion() && unionContextNode(c, dst, false) == unionContextNode(c, src, false) {
+			return dst, coerceOK
+		}
+		selectUnionAlternative(c, &Symbol{p: dst.p}, dst, src)
+		return dst, coerceOK
+	}
+	if src.IsUnion() {
+		return ASTType{}, coerceTypeMismatch
+	}
+
 	if src.Same(intlitASTType()) {
 		if c != nil {
 			if _, ok := c.ValuesDeclForName(dst.Name); ok {
@@ -2316,6 +2398,17 @@ func (t ASTType) String() string {
 // is true when this level is the operand of a `*` or `[]` (the only place a
 // leading `mut` is legal). owned/? are legal at any level and always render.
 func (t ASTType) stringRef(refOperand bool) string {
+	if t.IsUnion() {
+		parts := make([]string, len(t.Union))
+		for i, a := range t.Union {
+			parts[i] = a.String()
+			if a.FuncSig != nil {
+				parts[i] = "(" + parts[i] + ")"
+			}
+		}
+		return strings.Join(parts, " | ")
+	}
+
 	var sb strings.Builder
 	// Leading (bit-0) qualifiers for THIS level. For a pointer these are the
 	// pointer's own owned/nullable/mut and precede the '*' (`owned ?*T`); for a
@@ -2365,8 +2458,9 @@ func (t ASTType) stringRef(refOperand bool) string {
 		} else {
 			sb.WriteString("[]")
 			elem := *t.Element
-			elem.OwnedMask |= (t.OwnedMask >> 1) & 1
-			elem.MutMask |= (t.MutMask >> 1) & 1
+			elem.OwnedMask |= t.OwnedMask >> 1
+			elem.MutMask |= t.MutMask >> 1
+			elem.NilMask |= t.NilMask >> 1
 			sb.WriteString(elem.stringRef(true))
 		}
 		return sb.String()
@@ -2911,6 +3005,12 @@ func isBareTypeNameExpr(c *Context, a AST) bool {
 }
 
 func (f *Funcall) ASTType(c *Context) ASTType {
+	if payload, ok := f.Callee.(*Dot); ok && payload.Member == unionPayloadField {
+		if t := payload.ASTType(c); t.FuncSig != nil {
+			return resolveUnionAliases(c, t.FuncSig.Return)
+		}
+	}
+
 	pkg, name := f.PkgAndName()
 	if f.isBareCall("new") {
 		if len(f.Args) != 1 {
@@ -2920,6 +3020,7 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 			CompileErrorF(f.Args[0], "new(T) is not implemented yet; use alloc(T) for zero-initializable types or new(expr)")
 		}
 		t := f.Args[0].ASTType(c)
+		rejectUnionWrapper(t, f.Pos())
 		t.Indirection++
 		t.MutMask <<= 1
 		t.OwnedMask <<= 1
@@ -2972,7 +3073,7 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 		}
 	}
 	if decl, _, ok := f.directCallee(c); ok {
-		return decl.Return
+		return resolveUnionAliases(c, decl.Return)
 	}
 	// (expr).method(args) — receiver is an expression, not a named variable.
 	if recv := f.ReceiverExpr(); recv != nil {
@@ -2983,13 +3084,13 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 			if decl, ok := c.InterfaceForName(rt.StripOwned().Name); ok {
 				for _, m := range decl.Methods {
 					if m.Name == name {
-						return m.Return
+						return resolveUnionAliases(c, m.Return)
 					}
 				}
 			}
 		}
 		if method, mok := c.MethodForType(rt.Name, name); mok {
-			return method.Return
+			return resolveUnionAliases(c, method.Return)
 		}
 		panic(&interpreterError{
 			msg: fmt.Sprintf("no method %q on type %s", name, rt.Name),
@@ -3012,14 +3113,14 @@ func (f *Funcall) ASTType(c *Context) ASTType {
 				if ifaceDecl, iok := c.InterfaceForName(vt.Name); iok {
 					for _, isig := range ifaceDecl.Methods {
 						if isig.Name == name {
-							return isig.Return
+							return resolveUnionAliases(c, isig.Return)
 						}
 					}
 				}
 			}
 			// Concrete type method call: look up by qualified name.
 			if method, mok := c.MethodForType(vt.Name, name); mok {
-				return method.Return
+				return resolveUnionAliases(c, method.Return)
 			}
 			if sdecl, sok := c.StructDeclForName(vt.Name); sok {
 				_, mtype := sdecl.ByteOffset(c, name)
@@ -3168,6 +3269,12 @@ type Address struct {
 }
 
 func (a *Address) ASTType(c *Context) ASTType {
+	if a.Var != "" {
+		if t, ok := c.TypeForVar(a.Var); ok && t.IsUnion() {
+			CompileErrorF(a, "Union containers are not addressable; switch to select a payload first")
+		}
+	}
+
 	if name, ok := a.NamedTarget(); ok {
 		// Function address: &someFn yields a function-pointer type
 		// (fn(args) ret) — pointer-sized value carrying the signature
@@ -3282,9 +3389,10 @@ type StructField struct {
 }
 
 type StructLiteral struct {
-	Type   ASTType
-	Fields []StructField
-	p      position
+	returnContext bool // synthesized return tuple; union slots retain return ownership checks
+	Type          ASTType
+	Fields        []StructField
+	p             position
 }
 
 func (s *StructLiteral) ASTType(c *Context) ASTType {
@@ -3478,6 +3586,9 @@ type Op2 struct {
 // silently become pointer-identity as fields evolve), so the operator is
 // rejected in favor of an explicit equality function.
 func aggregateKindName(c *Context, t ASTType) (string, bool) {
+	if t.IsUnion() {
+		return "union", true
+	}
 	if t.Indirection > 0 || t.FuncSig != nil {
 		return "", false
 	}
@@ -3923,6 +4034,7 @@ type OwnedPromotion struct {
 
 func (o *OwnedPromotion) ASTType(c *Context) ASTType {
 	t := o.Val.ASTType(c)
+	rejectUnionWrapper(t, o.Pos())
 	// owned() is an unconditional ownership *assertion* keyed to the
 	// destination: it adopts whatever owned mask the LHS demands (all levels at
 	// once), which is why it is the escape hatch. When a destination context is
@@ -4261,6 +4373,7 @@ func (s *TypeSwitch) Pos() position            { return s.p }
 // `file_info.FILE_INFO{ fd: 3, path: "config" }`. A variant is a struct; codegen
 // writes the case tag followed by the payload struct at offset TagType.Size.
 type ValuesConstruct struct {
+	FromUnion  bool    // synthesized union injection; payload borrows are tracked as result provenance
 	ValuesType ASTType // the values type (e.g. file_info)
 	Decl       *ValuesDecl
 	Case       *ValuesCase
@@ -4275,11 +4388,14 @@ func (v *ValuesConstruct) Pos() position            { return v.p }
 // VariantSwitch represents a bare-head switch. Values types dispatch by tag
 // with case narrowing; ordinary comparable heads dispatch by constant equality.
 type VariantSwitch struct {
-	Exhaustive bool // established by inline switch checking before body merging
-	Scrutinee  AST
-	Cases      []*VariantCase
-	Default    AST // nil if no default/`_` case
-	p          position
+	ResultType    *ASTType // declared union context for expression arms
+	ReturnContext bool     // union result arms retain return ownership checks
+	UnionType     *ASTType // source-facing union type when lowered through ADT machinery
+	Exhaustive    bool     // established by inline switch checking before body merging
+	Scrutinee     AST
+	Cases         []*VariantCase
+	Default       AST // nil if no default/`_` case
+	p             position
 }
 
 // valuesDecl validates the switch head before inspecting case bodies.
@@ -4298,6 +4414,9 @@ func (s *VariantSwitch) valuesDecl(c *Context) (*ValuesDecl, ASTType) {
 // Expression types come from reachable value-producing arms. An arm that
 // returns, breaks, or continues contributes no value to this expression.
 func (s *VariantSwitch) ASTType(c *Context) ASTType {
+	if s.ResultType != nil {
+		return *s.ResultType
+	}
 	if c == nil {
 		for _, cs := range s.Cases {
 			if fallsThrough(cs.Body) {
@@ -4307,6 +4426,9 @@ func (s *VariantSwitch) ASTType(c *Context) ASTType {
 		return voidASTType()
 	}
 	head := s.Scrutinee.ASTType(c)
+	if head.IsUnion() {
+		return lowerUnionSwitch(c, s).ASTType(c)
+	}
 	vd, variant := c.ValuesDeclForName(head.Name)
 	if !variant || head.Indirection != 0 {
 		return s.valueASTType(c)
@@ -4337,7 +4459,8 @@ func (s *VariantSwitch) Pos() position { return s.p }
 
 // VariantCase is one `case VARIANT { body }` arm of a VariantSwitch.
 type VariantCase struct {
-	Label AST // constant expression for ordinary value switches
+	Type  *ASTType // exact union alternative selector, when prefix type syntax is used
+	Label AST      // constant expression for ordinary value switches
 	Name  string
 	Body  AST
 	p     position
@@ -4374,7 +4497,8 @@ type Alloc struct {
 }
 
 func (a *Alloc) ASTType(c *Context) ASTType {
-	t := a.Type
+	t := resolveUnionAliases(c, a.Type)
+	rejectUnionWrapper(t, a.Pos())
 	t.Indirection++
 	t.MutMask <<= 1
 	t.OwnedMask <<= 1
@@ -4969,10 +5093,16 @@ func (n *Node) toASTTop(c *Context) AST {
 				vs.Default = body
 			} else {
 				label := AST(&Symbol{Name: cn.sval, p: cn.p})
+				var ct *ASTType
 				if len(cn.args) > 1 {
-					label = cn.args[1].toASTTop(NewContext())
+					if cn.args[1].t == n_typename {
+						t := mkTypename(cn.args[1])
+						ct = &t
+					} else {
+						label = cn.args[1].toASTTop(NewContext())
+					}
 				}
-				vs.Cases = append(vs.Cases, &VariantCase{Name: cn.sval, Label: label, Body: body, p: cn.p})
+				vs.Cases = append(vs.Cases, &VariantCase{Name: cn.sval, Type: ct, Label: label, Body: body, p: cn.p})
 			}
 		}
 		if n.sval != "" {

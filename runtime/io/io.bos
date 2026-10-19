@@ -1,9 +1,9 @@
 // Package io provides typed file IO primitives for Linux.
 //
 // The central type is FD — a kernel file descriptor — with read, write,
-// and close methods. open returns an owned open_result: FD carries a
-// descriptor that must be closed exactly once, and ERR carries an error
-// without a descriptor. STDIN, STDOUT, and STDERR are non-owning globals.
+// and close methods. open returns owned FD | error: a successful
+// descriptor must be closed exactly once, while an error carries no
+// descriptor. STDIN, STDOUT, and STDERR are non-owning globals.
 //
 // read and write return (n, err), with nil on success. open uses exclusive
 // result variants so a failed acquisition creates no descriptor obligation.
@@ -266,24 +266,6 @@ pub interface writer {
 	write(w *self, buf []byte) i64, ?error
 }
 
-// open_result is the outcome of opening a file. FD owns a valid descriptor;
-// ERR contains an error and has no descriptor to dispose or close.
-//
-// Extract the descriptor with a consuming switch, or call destroy to close
-// an unneeded successful result. A consuming switch discharges the wrapper.
-pub type open_result values {
-	ERR{err error}
-	FD{fd owned FD}
-} {
-	// destroy closes a successful result and consumes either result variant.
-	destroy(r owned open_result) {
-		switch (r) {
-			case ERR {}
-			case FD { r.fd.close() }
-		}
-	}
-}
-
 // open opens the file at path with the given open(2) flags and mode.
 //
 // path is an ordinary Boson byte slice — open copies it into an internal
@@ -296,25 +278,25 @@ pub type open_result values {
 // mode is the permission bits applied when O_CREAT creates a new file
 // (e.g. 0o644 = 420).
 //
-// Returns open_result.FD on success, containing an owned descriptor, or
-// open_result.ERR on failure, containing an errno-backed error. The error
-// variant carries no descriptor and requires no dummy descriptor cleanup.
+// Returns an owned FD on success or an errno-backed error on failure.
+// The error alternative carries no descriptor and requires no dummy
+// descriptor cleanup.
 // Paths longer than 4095 bytes return io_err.ENAMETOOLONG.
 //
 // Unpack with an expression switch (the error branch must exit):
 //
 // ```boson
 // fd := switch (r := io.open(path, io.O_RDONLY, 0)) {
-//     case ERR { report(r.err); return }
-//     case FD r.fd
+//     case io.error { report(r); return }
+//     case owned io.FD r
 // }
 // fd.close()
 // ```
-pub fn open(path []byte, flags i64, mode i64) owned open_result {
+pub fn open(path []byte, flags i64, mode i64) owned FD | error {
 	var buf [4096]byte
 	n i64 := len(path)
 	if (n >= 4096) {
-		return open_result.ERR{err: io_err.ENAMETOOLONG}
+		return io_err.ENAMETOOLONG
 	}
 	var i i64
 	for (i = 0; i < n; i = i + 1) {
@@ -325,12 +307,12 @@ pub fn open(path []byte, flags i64, mode i64) owned open_result {
 	if (raw < 0) {
 		e := ?io_err(-raw)
 		if (e) {
-			return open_result.ERR{err: e}
+			return e
 		} else {
-			return open_result.ERR{err: io_err.UNKNOWN}
+			return io_err.UNKNOWN
 		}
 	}
-	return open_result.FD{fd: owned(FD(raw))}
+	return owned(FD(raw))
 }
 
 // copy reads from src and writes to dst until src returns EOF. It uses a

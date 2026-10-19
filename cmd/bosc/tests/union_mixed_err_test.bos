@@ -1,0 +1,3 @@
+package main
+fn get() owned i64 | owned bool {return owned(i64(1))}
+fn main(){v:=get();switch(v){case owned i64 {} case owned bool {dispose(v)}};dispose(v)}

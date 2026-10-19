@@ -1352,6 +1352,23 @@ func pointeeFieldKey(c *Context, path FlowPath) (string, bool) {
 }
 
 func readProvenancePath(c *Context, a AST) flow.PointerExpr {
+	if d, ok := a.(*Dot); ok && d.Member == unionPayloadField {
+		if _, ok := d.Val.(*unionView); ok {
+			if p, ok := FlowPathForExpr(d); ok {
+				if ptr := c.PointerFlow().GetPathPointer(p.Key()); ptr.KnownOrigin || ptr.KnownSlot {
+					return ptr
+				}
+			}
+			t := d.ASTType(c)
+			if t.HasOwned() && (t.Indirection > 0 || t.IsSlice()) {
+				return c.PointerFlow().UnknownPointer()
+			}
+			if t.Indirection > 0 || t.IsSlice() || c.IsInterfaceType(t) {
+				return c.PointerFlow().UnknownPointer()
+			}
+		}
+	}
+
 	path, ok := ProvenancePathForExpr(a)
 	if !ok || path.Fields == "" {
 		return c.PointerFlow().UnknownPointer()
@@ -1381,6 +1398,14 @@ func readProvenancePath(c *Context, a AST) flow.PointerExpr {
 	}
 	if existing := c.PointerFlow().GetPathPointer(lookupKey); existing.KnownOrigin {
 		return existing
+	}
+	if strings.HasPrefix(path.Fields, unionPayloadField+".") {
+		t := a.ASTType(c)
+		if t.Indirection > 0 || t.IsSlice() || c.IsInterfaceType(t) {
+			if summary := c.PointerFlow().GetPathPointer(VarFlowPath(path.Root).Append(unionPayloadField).Key()); summary.KnownOrigin || summary.KnownSlot {
+				return summary
+			}
+		}
 	}
 	if ft, ok := walkLeafType(c, rootT, path.Fields); ok && (ft.Indirection > 0 || ft.IsSlice() || c.IsInterfaceType(ft)) {
 		parent := lookupKey
@@ -1465,6 +1490,8 @@ func readAliasesOwnedStorage(c *Context, rootType ASTType, fields string) bool {
 func rootSymbolName(expr AST) (string, bool) {
 	for {
 		switch v := expr.(type) {
+		case *unionView:
+			expr = v.Val
 		case *Symbol:
 			return v.Name, true
 		case *Dot:
@@ -1499,7 +1526,16 @@ func isDirectStructFieldTarget(c *Context, target AST) (binding string, field st
 
 func updateFieldPointerFactsForAssignment(c *Context, target AST, targetIsSymbol bool, targetSym *Symbol, dstt ASTType, val AST) {
 	if targetIsSymbol && dstt.Indirection == 0 {
+		if dstt.IsUnion() {
+			if sym, ok := val.(*Symbol); ok && sym.Name == targetSym.Name {
+				return
+			}
+		}
 		c.PointerFlow().ForgetFieldPointers(flow.Binding(targetSym.Name))
+		if dstt.IsUnion() {
+			recordUnionPayloadProvenance(c, targetSym.Name, dstt, val)
+			return
+		}
 		if sym, ok := val.(*Symbol); ok && !c.IsGlobalBinding(sym.Name) {
 			c.PointerFlow().CopyFieldPointers(flow.Binding(sym.Name), flow.Binding(targetSym.Name))
 		} else if sl, ok := val.(*StructLiteral); ok {
@@ -1930,6 +1966,8 @@ func mutabilityReliedRoot(c *Context, a AST) string {
 // address — it does not consult or carry this property.
 func lvalueIsWritable(c *Context, a AST) (bool, string) {
 	switch v := a.(type) {
+	case *unionView:
+		return lvalueIsWritable(c, v.Val)
 	case *Symbol:
 		if c.IsConst(v.Name) {
 			return false, fmt.Sprintf("Cannot assign to immutable binding %q", v.Name)
@@ -2028,6 +2066,10 @@ func lvalueIsWritable(c *Context, a AST) (bool, string) {
 // Multi-level indirection (`(**pp)[:]`) stops one hop short here; that awaits
 // the storage→tracking-state model.
 func lvalueStorageOrigin(c *Context, e AST, assignedName string) flow.PointerExpr {
+	if v, ok := e.(*unionView); ok {
+		return lvalueStorageOrigin(c, v.Val, assignedName)
+	}
+
 	// If e is itself a slice or a pointer, its storage sits at the far end of
 	// that indirection — the backing a slice points at, or a pointer's pointee.
 	// Follow e's OWN provenance (readProvenancePath / the field-pointer facts),
@@ -2098,6 +2140,10 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 
 func pointerExprForASTRaw(c *Context, a AST, assignedName string) flow.PointerExpr {
 	switch ast := a.(type) {
+	case *unionView:
+		return pointerExprForAST(c, ast.Val, assignedName)
+	case *unionInjection:
+		return pointerExprForAST(c, ast.Val, assignedName)
 	case *VariantSwitch:
 		return switchResultOrigin(c, ast, assignedName)
 	case *BoundSwitch:
@@ -2425,6 +2471,15 @@ func targetMayOverwriteOwnedStorage(c *Context, target AST) bool {
 }
 
 func updatePointerFlowForAssignment(c *Context, target AST, dst ASTType, val AST) {
+	if dst.IsUnion() {
+		if sym, ok := target.(*Symbol); ok {
+			old := c.PointerFlow().Pointer(flow.Binding(sym.Name))
+			c.PointerFlow().InvalidateBorrows([]flow.PointerExpr{old})
+			c.PointerFlow().AssignPointer(flow.Binding(sym.Name), c.PointerFlow().NewLocalOrigin(flow.Binding(sym.Name)))
+		}
+		return
+	}
+
 	if ptr, ok := pointerSlotTargetForDeref(c, target); ok && dst.Indirection > 0 {
 		src := pointerExprForAST(c, val, string(ptr.SlotTarget))
 		c.PointerFlow().StorePointerThrough(ptr, src)
@@ -2717,13 +2772,16 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 		seen[f.Name] = true
 
 		off, declaredType := def.ByteOffset(c, f.Name)
-		if declaredType.Name == "" && declaredType.Element == nil && declaredType.FuncSig == nil && declaredType.AnonFields == nil {
+		if declaredType.Name == "" && declaredType.Element == nil && declaredType.FuncSig == nil && declaredType.AnonFields == nil && !declaredType.IsUnion() {
 			CompileErrorF(a, "No such struct member %q in struct %v", f.Name, lit.Type)
 		}
 		fieldType := fieldTypeForBase(ctxType, declaredType)
+		f.Val = prepareUnionExpression(c, f.Val, fieldType, lit.returnContext)
 		prepareSliceOwnership(c, f.Val, fieldType)
 		srcType := f.Val.ASTType(c)
-		checkBorrowedPointerDoesNotEscape(c, f.Val, fmt.Sprintf("field %v.%s", lit.Type, f.Name))
+		if con, ok := a.(*ValuesConstruct); !ok || !con.FromUnion {
+			checkBorrowedPointerDoesNotEscape(c, f.Val, fmt.Sprintf("field %v.%s", lit.Type, f.Name))
+		}
 		checkAddressOfOwnedForDest(c, f.Val, fieldType)
 		// Interface field: route through the interface coercion path so
 		// a concrete value gets a fat pointer into the field's storage.
@@ -3359,6 +3417,10 @@ func materializePointerValue(of io.Writer, c *Context, s spot) spot {
 // types memcpy(dest, &src).
 func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 	switch ast := a.(type) {
+	case *unionView:
+		result := compileLval(of, c, ast.Val, dest)
+		result.t = ast.Type
+		return result
 	case *Symbol:
 		t := ast.ASTType(c)
 		s := spot{ref: ast.Name, t: t, nameIsAddress: c.NameIsAddress(ast.Name)}
@@ -3651,7 +3713,14 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 		if a.Type.Indirection > 0 && !a.Type.HasOwned() {
 			c.SetBorrowedBinding(a.Name, true)
 		}
-		if a.Type.OwnedMask&1 != 0 && (a.Type.Indirection > 0 || a.Type.IsSlice()) {
+		if a.Type.IsUnion() {
+			key := VarFlowPath(a.Name).Append(unionPayloadField).Key()
+			if unionHasBorrowedPayload(c, a.Type) {
+				c.PointerFlow().SetPathPointer(key, c.PointerFlow().NewBorrowedOrigin(flow.Binding(key)))
+			} else if unionTransfersResource(a.Type) {
+				c.PointerFlow().SetPathPointer(key, c.PointerFlow().NewOwnedOrigin(flow.Binding(key)))
+			}
+		} else if a.Type.OwnedMask&1 != 0 && (a.Type.Indirection > 0 || a.Type.IsSlice()) {
 			c.PointerFlow().AssignPointer(flow.Binding(a.Name), c.PointerFlow().NewOwnedOrigin(flow.Binding(a.Name)))
 		} else if a.Type.Indirection > 0 {
 			c.PointerFlow().AssignPointer(flow.Binding(a.Name), c.PointerFlow().NewObject(flow.Binding(a.Name)))
@@ -3705,11 +3774,14 @@ func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string)
 	compileTop(of, c, ast.Body, nullspot)
 	if fallsThrough(ast.Body) {
 		checkBorrowedFieldsRestored(c, ast)
+		// Terminal returns checked every visible obligation on their own
+		// paths. A switch with no surviving branch restores a pre-switch
+		// snapshot for unreachable code, not a real function-exit state.
+		for _, name := range c.UnconsumedOwned() {
+			errUnconsumedOwned(c, ast, name)
+		}
 	}
 	c.reportUnused() // parameters live in the function context, not the body block
-	for _, name := range c.UnconsumedOwned() {
-		errUnconsumedOwned(c, ast, name)
-	}
 	zeroMainReturn := func() {
 		note(of, "\n\t// default return 0 from main\n")
 		rax := regSpot(of, "rax")
@@ -3830,6 +3902,39 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	}
 
 	switch ast := a.(type) {
+	case *unionDispose:
+		t := ast.Val.ASTType(c)
+		if !t.HasOwned() {
+			CompileErrorF(ast, "dispose: selected union payload %s has no owned obligation", t)
+		}
+		root, ok := FlowPathForExpr(ast.Val)
+		if !ok {
+			CompileErrorF(ast, "dispose requires a tracked union payload")
+		}
+		c.markUsed(root.Root)
+		if c.IsMoved(root.Root) || c.OwnedFieldConsumed(root) {
+			CompileErrorF(ast, "dispose: selected union payload was already moved")
+		}
+		if t.Indirection > 0 || t.IsSlice() {
+			ptr := pointerExprForAST(c, ast.Val, "")
+			if ptr.KnownOrigin {
+				c.PointerFlow().InvalidateOrigin(ptr.Origin, flow.TargetDead)
+			}
+		}
+		// Like dispose(binding), this is an explicit assertion that may
+		// abandon a partially consumed aggregate. It consumes the wrapper.
+		c.MoveConsume(root.Root)
+		return nullspot
+	case *unionView:
+		result := compileTop(of, c, ast.Val, nullspot)
+		result.t = ast.Type
+		if !dest.empty() {
+			move(of, c, dest, result)
+			return dest
+		}
+		return result
+	case *unionInjection:
+		return compileUnionInjection(of, c, ast, dest)
 	case *BoundSwitch:
 		return compileBoundSwitch(of, c, ast, dest)
 	case *switchHead:
@@ -3867,11 +3972,18 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		return s
 	case *TypeAliasDecl:
+		ast.Underlying = resolveUnionAliases(c, ast.Underlying)
 		// Emit typealias directive so bas can carry it into the .bo.
 		fmt.Fprintf(of, "%stypealias %s %s\n", pubPrefix(ast.IsPub), ast.Name, ast.Underlying)
+		if ast.Underlying.IsUnion() {
+			return nullspot
+		}
 		emitTypedescFor(of, c, ast.IsPub, ast.Name)
 		return nullspot
 	case *TypeWithMethodsDecl:
+		if resolveUnionAliases(c, ast.Underlying).IsUnion() {
+			CompileErrorF(ast, "Union aliases cannot declare methods; switch on alternatives")
+		}
 		// Emit typealias directive with method names for cross-package import.
 		fmt.Fprintf(of, "%stypealias %s %s", pubPrefix(ast.IsPub), ast.Name, ast.Underlying)
 		for _, m := range ast.Methods {
@@ -4043,6 +4155,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		return nullspot
 	case *VarDecl:
+		ast.Type = resolveUnionAliases(c, ast.Type)
 		if ast.Init != nil {
 			checkAggregateValueCopy(c, ast.Init)
 		}
@@ -4157,6 +4270,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				emitNullableValuesDefaults(of, c, ast.Type, s.ref)
 			}
 		}
+		if ast.Type.IsUnion() && ast.Init == nil {
+			CompileErrorF(ast, "Union declarations require an initializer")
+		}
+		ast.Init = prepareUnionExpression(c, ast.Init, ast.Type, false)
 		if ast.Init != nil {
 			// (The bare struct literal's type was threaded above, before the
 			// multi-return ASTType query.)
@@ -4295,7 +4412,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			ownedValueDestNoTransfer := ownedValueDest && (srcIsBindingRebind || srcIsOwnedFieldMove)
 			pexpr := pointerExprForAST(c, ast.Init, ast.Name)
-			if !ownedValueDestNoTransfer && (pexpr.KnownOrigin || pexpr.KnownSlot) {
+			if !ast.Type.IsUnion() && !ownedValueDestNoTransfer && (pexpr.KnownOrigin || pexpr.KnownSlot) {
 				checkedAssignPointer(c, flow.Binding(ast.Name), pexpr, a)
 			}
 			// Propagate field pointer facts on struct copy.
@@ -4307,6 +4424,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// field facts so a later `return b` rejects a local arg via
 			// CheckStructFieldEscapeLocal exactly as the direct assignment does.
 			recordStructReturnCallFieldFacts(c, ast.Name, dstt, ast.Init)
+			if dstt.IsUnion() {
+				recordUnionPayloadProvenance(c, ast.Name, dstt, ast.Init)
+			}
 			// `h := new(holder{p: &s.x})`: record the heap pointee's field
 			// provenance at h's path so reading h.p (= (*h).p) carries the
 			// borrow's origin and dispose-of-source invalidation fires (#10
@@ -4523,6 +4643,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		srcSpot.free(of)
 		return nullspot
 	case *FuncDecl:
+		resolveFunctionUnions(c, ast)
+		if ast.Name == "main" && c.Pkgname() == "main" && ast.Return.IsUnion() {
+			CompileErrorF(ast, "main must return void or i64, not a union")
+		}
 		// Function bodies share the root tracker, but their lifetime facts
 		// must not escape into later functions (which may reuse names).
 		savedFlow := c.PointerFlow().Clone()
@@ -4609,6 +4733,15 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	case *AlignOf:
 		return compileTypeConstant(of, c, ast, int64(ast.Type.Alignment(c)), dest)
 	case *Funcall:
+		if payload, ok := ast.Callee.(*Dot); ok && payload.Member == unionPayloadField {
+			if t := payload.ASTType(c); t.FuncSig != nil {
+				source := compileTop(of, c, payload, nullspot)
+				result := compileIndirectCall(of, c, a, ast, source.ref, t.FuncSig, dest)
+				source.free(of)
+				return result
+			}
+		}
+
 		pkg, fname := ast.PkgAndName()
 		if ast.isBareCall("new") {
 			return compileNewBuiltin(of, c, a, ast, dest)
@@ -4857,6 +4990,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// Field access on a narrowed values value (`e.fd` inside a matched
 		// switch case): read the payload field at tagSize + payload offset.
 		if mtype, voff, ok := narrowedValuesField(c, ast); ok {
+			if ast.Member == unionPayloadField && (mtype.Indirection > 0 || mtype.IsSlice() || c.IsInterfaceType(mtype)) {
+				checkReadable(c, ast)
+			}
 			base := compileTop(of, c, ast.Val, nullspot)
 			if dest.empty() {
 				dest = newSpot(of, c, c.Temp(), mtype)
@@ -5375,6 +5511,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			// inside the branch that proved its previous value non-null.
 			dstt = declared
 		}
+		ast.Val = prepareUnionExpression(c, ast.Val, dstt, false)
 		// Mutability gate: walk the lval path and reject any link that
 		// blocks the write. Covers const-bound roots, non-mut pointer
 		// auto-deref through Dot/Index, and explicit *p through a *T.
@@ -5864,6 +6001,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return dest
 	case *Return:
 		retType := c.ReturnType()
+		ast.Val = prepareUnionExpression(c, ast.Val, retType, true)
 		if ast.Val == nil {
 			// Bare `return` — valid in void functions or as an early exit.
 			if !retType.Same(voidASTType()) {
@@ -5878,6 +6016,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			return nullspot
 		}
 		if sl, ok := ast.Val.(*StructLiteral); ok {
+			sl.returnContext = true
 			fillAnonymousLiteralIfNeeded(sl, retType)
 		}
 		if op, ok := ast.Val.(*OwnedPromotion); ok {
@@ -6150,6 +6289,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return nullspot
 	case *Symbol:
 		c.markUsed(ast.Name)
+		if t, ok := c.TypeForVar(ast.Name); ok && t.IsUnion() {
+			if _, narrowed := c.VariantNarrow(ast.Name); !narrowed {
+				if ok, reason := c.PointerFlow().CheckFieldPointerValidity(flow.Binding(ast.Name)); !ok {
+					CompileErrorF(ast, "%s", reason)
+				}
+			}
+		}
 		if c.IsMoved(ast.Name) {
 			CompileErrorF(a, "Use of \"%s\" after it was moved", ast.Name)
 		}
@@ -6588,6 +6734,8 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) ([]string, int
 	for i := 0; i < len(f.Args); i++ {
 		arg := f.Args[i]
 		param := d.Args[i].Type
+		arg = prepareUnionExpression(c, arg, param, false)
+		f.Args[i] = arg
 		if sl, ok := arg.(*StructLiteral); ok {
 			fillAnonymousLiteralIfNeeded(sl, param)
 		}
@@ -7069,6 +7217,10 @@ func log2PowerOf2(n int) (int, bool) {
 }
 
 func compileCast(of io.Writer, c *Context, src AST, destType ASTType, dest spot) spot {
+	if destType.IsUnion() {
+		CompileErrorF(src, "Union injection requires a return, assignment, or argument context; use a typed binding")
+	}
+
 	if dest.empty() {
 		dest = newSpot(of, c, c.Temp(), destType)
 	}
@@ -8304,6 +8456,8 @@ func methodReceiverArg(c *Context, call *Funcall, recv AST, t ASTType, wantsPoin
 
 func addressableMethodReceiver(c *Context, e AST) bool {
 	switch e := e.(type) {
+	case *unionView:
+		return addressableMethodReceiver(c, e.Val)
 	case *Symbol:
 		_, ok := c.TypeForVar(e.Name)
 		return ok
@@ -8497,6 +8651,8 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 	argBorrows[0] = argumentBorrow(c, recv, receiverParam)
 	for i, arg := range callNode.Args {
 		param := userParams[i].Type
+		arg = prepareUnionExpression(c, arg, param, false)
+		callNode.Args[i] = arg
 		argt := arg.ASTType(c)
 		argIdx := i + 1 // rsi=1, rdx=2, ...
 		if argIdx > 5 {
@@ -9133,6 +9289,12 @@ func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch, dest spo
 	// into the one typed dest enforces that they agree. A statement switch
 	// passes nullspot down (block bodies ignore it).
 	headType := ast.Scrutinee.ASTType(c)
+	if headType.IsUnion() {
+		lowered := lowerUnionSwitch(c, ast)
+		result := compileVariantSwitch(of, c, lowered, dest)
+		ast.Exhaustive = lowered.Exhaustive
+		return result
+	}
 	if _, ok := c.ValuesDeclForName(headType.Name); !ok || headType.Indirection != 0 {
 		return compileValueSwitch(of, c, ast, dest)
 	}
@@ -9227,7 +9389,7 @@ func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch, dest spo
 			arm = &variantSwitchArm{flow: ownership, variants: variants, loopDepth: contextLoopDepth(c)}
 			c.variantArms = append(append([]*variantSwitchArm(nil), previousArms...), arm)
 		}
-		compileSwitchResult(of, c, body, dest)
+		compileSwitchResult(of, c, body, dest, ast.ReturnContext)
 		c.variantArms = previousArms
 		if fallsThrough(body) {
 			if arm != nil {
@@ -9254,6 +9416,9 @@ func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch, dest spo
 	}
 	if ownership != nil && ownership.mode == variantConsume {
 		if !exhaustive {
+			if ast.UnionType != nil {
+				CompileErrorF(ast, "Consuming union switch must cover every alternative")
+			}
 			CompileErrorF(ast, "Consuming switch on %s must cover every variant or have a consuming default", scrutType)
 		}
 		for i, snapshot := range afterSnaps {

@@ -1,0 +1,3 @@
+package main
+type Box struct {value i64|bool}
+fn main(){}

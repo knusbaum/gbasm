@@ -1,0 +1,6 @@
+package main
+fn escape() *mut i64 | bool {
+ var x i64:=1
+ return &x
+}
+fn main() {}

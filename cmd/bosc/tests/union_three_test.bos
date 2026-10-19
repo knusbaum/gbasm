@@ -1,0 +1,19 @@
+package main
+import "string"
+type Result bool | i64 | f64
+type Alias Result
+fn get(n i64) Alias {
+ if(n==0){return false}
+ if(n==1){return i64(37)}
+ return f64(2)
+}
+fn main() {
+ for(var i:=0;i<3;i+=1) {
+  v Result := get(i)
+  switch (v) {
+   case i64 {string.puti(v);string.puts("\n")}
+   case bool {string.puts("bool\n")}
+   case f64 {string.puts("float\n")}
+  }
+ }
+}

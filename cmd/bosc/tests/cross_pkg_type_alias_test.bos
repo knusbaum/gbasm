@@ -12,8 +12,8 @@ import "string"
 fn main() i64 {
 	// Write to /dev/null through a FD — result discarded, proves type works.
 	var null owned io.FD := switch (r := io.open("/dev/null", io.O_WRONLY, 0)) {
-		case ERR { return 1 }
-		case FD r.fd
+		case io.error { return 1 }
+		case owned io.FD r
 	}
 	null.write("this goes nowhere\n")
 	null.close()

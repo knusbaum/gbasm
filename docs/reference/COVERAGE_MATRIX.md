@@ -2,6 +2,9 @@
 
 ## History
 
+- 2026-10-18 — Audited union declaration, return, and argument tests; added indirect-call and ordinary-method argument coverage.
+
+- 2026-10-18 — Added anonymous-union injection, canonical package identity, and payload ownership/provenance equivalence classes.
 - 2026-07-19 — Filed under `docs/reference/` in the docs reorganization.
 
 This is a **living process doc**, not a one-time matrix. Test coverage of the
@@ -287,6 +290,10 @@ audit watches.
 | CL-ADDR | `&`-of-projection mutability (`&x.f`, `&arr[i]`) | `&value-field` of mutable vs immutable container; `&pointer-field` | `Address.ASTType` projection branch ~2755 (vs named ~2710) | value-field vs pointer-field; container mut (**under-implemented → #7**) |
 | CL-EQ | `==`/`!=` lowering | struct `==` (must reject) | comparison lowering / type check | aggregate vs scalar/pointer |
 | **CL-OBLIG** | **obligation handling that forks owned vs non-owned** (caller call-result, VarDecl, return) | a **mixed** value: owned aggregate **with** a borrowed field | `recordStructCallResultAtPath` / owned-result VarDecl fork | **the owned branch dropping an orthogonal fact** (borrow alias, null) — forked → `#18`. Test the co-occurrence, not each obligation alone |
+| CL-UNION-INJECT | scalar, interface, function, array, and owned-resource alternative injection | `union_scalar`, `union_interface_selection`, `union_function_alternative`, `union_array_alternative`, `union_io_result`, `union_argument_paths` | `union_compile.go`: `selectUnionAlternative` / `compileUnionInjection` | exact identity vs contextual conversion; register vs memory payload |
+| CL-UNION-IDENTITY | reordered/flattened union signatures, aliases, and import qualification | `union_types_test.go`, `union_three`, `union_cross_package` | `union_types.go`: canonical encoding; `package.go` qualification | local vs imported names; qualifiers; function-return precedence |
+| CL-UNION-FLOW | inspection, consuming extraction, payload addresses, branch exits, and stored borrow validity | `union_inspect`, `union_owned`, `union_payload_address`, `union_continue`, `union_borrow_lifetime_err`, `union_mut_call_borrow_err` | typed-case lowering into `compileVariantSwitch`; `CheckFieldPointerValidity` | container storage vs payload resource identity; scalar vs nested payload |
+| CL-UNION-TRANSFER | owning resources forwarded through union parameters/results while prior borrows survive until resource destruction | `union_resource_identity`, `union_resource_identity_freed_err`, `union_borrowed_alternative_consumption` | return-alias engine; `recordUnionPayloadProvenance` | ownership and provenance must both survive a transfer; borrowed alternative in potentially owning union |
 
 Inner sweep per cell (parameters, not separate cells): type kind {struct,
 array-of-scalar, array-of-struct, slice-of-scalar, slice-of-struct}; **size

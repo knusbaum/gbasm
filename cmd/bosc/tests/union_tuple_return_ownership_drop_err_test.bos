@@ -1,0 +1,3 @@
+package main
+fn bad() *mut i64 | bool, i64 {return new(i64(1)), 1}
+fn main(){}

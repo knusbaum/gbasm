@@ -1,0 +1,10 @@
+package main
+import "string"
+fn number() i64 {return 37}
+fn get() (fn() i64) | bool {return &number}
+fn main(){
+ switch(v:=get()){
+  case (fn() i64) {string.puti(v());string.puts("\n")}
+  case bool {}
+ }
+}

@@ -1,0 +1,2 @@
+Compiling tests/union_duplicate_err_test.bos
+Parse Error: Union alternatives *i64 and owned *i64 differ only in ownership, mutability, or nullability (or are duplicates)

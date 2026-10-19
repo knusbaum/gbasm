@@ -1,0 +1,2 @@
+Compiling tests/union_return_ownership_drop_err_test.bos
+Fatal: Cannot return owned *mut i64 as non-owned union alternative *mut i64

@@ -1,0 +1,2 @@
+Compiling tests/union_uninitialized_err_test.bos
+Fatal: Union declarations require an initializer

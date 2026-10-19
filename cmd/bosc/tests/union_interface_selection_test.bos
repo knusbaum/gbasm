@@ -1,0 +1,17 @@
+package main
+import "string"
+interface A {a(v self) i64}
+interface B {b(v self) i64}
+type X i64 {a(v X) i64 {return i64(v)}}
+fn exact() X | A {return X(37)}
+fn compatible() A | B {return X(38)}
+fn main(){
+ switch(v:=exact()){
+  case X {string.puti(i64(v));string.puts("\n")}
+  case A {string.puts("wrong\n")}
+ }
+ switch(v:=compatible()){
+  case A {string.puti(v.a());string.puts("\n")}
+  case B {string.puts("wrong\n")}
+ }
+}

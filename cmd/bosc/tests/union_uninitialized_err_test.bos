@@ -1,0 +1,2 @@
+package main
+fn main(){var v i64|bool;_ = v}

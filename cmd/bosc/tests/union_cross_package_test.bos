@@ -1,0 +1,17 @@
+package main
+import "retalias_pkg"
+import "string"
+fn use(ok bool) {
+ p:=switch(v:=retalias_pkg.union_forward(retalias_pkg.union_create(ok))) {
+  case bool {string.puts("failed\n");return}
+  case owned *mut retalias_pkg.union_resource v
+ }
+ string.puti(p.n);string.puts("\n");free(p)
+}
+fn main() {
+ use(false);use(true)
+ switch(v:=retalias_pkg.union_borrow("borrowed")) {
+  case bool {}
+  case []byte {string.puts(v);string.puts("\n")}
+ }
+}

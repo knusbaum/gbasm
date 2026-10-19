@@ -32,8 +32,8 @@ fn main() i64 {
 	// Owned FD opened against /dev/null, borrowed into io.reader.
 	// /dev/null returns EOF (0 bytes) on read.
 	var null owned io.FD := switch (r := io.open("/dev/null", io.O_RDONLY, 0)) {
-		case ERR { return 1 }
-		case FD r.fd
+		case io.error { return 1 }
+		case owned io.FD r
 	}
 	var buf [8]byte
 	n i64 := readbyte(&null, buf[:])

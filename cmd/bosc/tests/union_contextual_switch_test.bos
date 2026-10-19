@@ -1,0 +1,10 @@
+package main
+import "string"
+fn get(ok bool) i64 | bool {return switch(ok){case true i64(37) case false false}}
+fn show(v i64 | bool){switch(v){case i64 {string.puti(v);string.puts("\n")} case bool {string.puts("bool\n")}}}
+fn main(){
+ show(get(true));show(get(false))
+ v i64 | bool:=switch(true){case true i64(38) case false false}
+ show(v)
+ show(switch(false){case true i64(39) case false false})
+}

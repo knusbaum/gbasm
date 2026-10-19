@@ -1,0 +1,2 @@
+Compiling tests/union_owned_reuse_err_test.bos
+Fatal: Use of "v" after it was moved

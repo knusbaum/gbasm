@@ -1,0 +1,4 @@
+package main
+fn f() i64|bool{return false}
+fn g() i64|bool|f64{return f()}
+fn main(){}

@@ -1,0 +1,9 @@
+package main
+import "string"
+fn main() {
+ var v i64 | bool := false
+ v = i64(37)
+ switch(v){case i64 {string.puti(v);string.puts("\n")} case bool {}}
+ v = true
+ switch(v){case i64 {} case bool {if(v){string.puts("true\n")}}}
+}

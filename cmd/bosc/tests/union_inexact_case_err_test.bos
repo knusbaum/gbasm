@@ -1,0 +1,3 @@
+package main
+fn get() owned *mut i64|bool{return false}
+fn main(){switch(v:=get()){case *i64 {} case bool {}}}

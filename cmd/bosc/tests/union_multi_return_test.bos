@@ -1,0 +1,8 @@
+package main
+import "string"
+fn pair() i64 | bool, i64 {return false, 37}
+fn main() {
+ v,n:=pair()
+ switch(v){case i64 {} case bool {string.puts("bool\n")}}
+ string.puti(n);string.puts("\n")
+}

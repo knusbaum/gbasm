@@ -1,0 +1,11 @@
+package main
+import "string"
+fn create() owned i64 | bool {return owned(i64(37))}
+fn inspect(p *i64) {string.puti(*p);string.puts("\n")}
+fn drop(p *owned i64) {dispose(p)}
+fn main() {
+ switch (v:=create()) {
+  case bool {}
+  case owned i64 {inspect(&v);drop(&v)}
+ }
+}

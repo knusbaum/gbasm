@@ -1,0 +1,15 @@
+package main
+import "string"
+fn choose(ok bool) i64 | bool {
+ if(ok) {return i64(37)}
+ return false
+}
+fn forward(v bool | i64) i64 | bool {return v}
+fn main() {
+ for(var i i64:=0;i<2;i+=1) {
+  switch (v:=forward(choose(i==0))) {
+   case i64 {string.puti(v);string.puts("\n")}
+   case bool {if(!v) {string.puts("false\n")}}
+  }
+ }
+}

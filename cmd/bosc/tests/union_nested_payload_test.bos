@@ -1,0 +1,10 @@
+package main
+import "string"
+type Box struct {p owned *mut i64}
+fn create() owned Box | bool {return owned(Box{p:new(i64(37))})}
+fn main(){
+ switch(v:=create()){
+  case bool {}
+  case owned Box {string.puti(*v.p);string.puts("\n");free(v.p);dispose(v)}
+ }
+}

@@ -59,6 +59,8 @@ func FlowPathFromKey(key string) FlowPath {
 
 func FlowPathForExpr(a AST) (FlowPath, bool) {
 	switch ast := a.(type) {
+	case *unionView:
+		return FlowPathForExpr(ast.Val)
 	case *Symbol:
 		return VarFlowPath(ast.Name), true
 	case *Dot:
@@ -85,6 +87,8 @@ func FlowPathForExpr(a AST) (FlowPath, bool) {
 // approximation requirement.
 func ProvenancePathForExpr(a AST) (FlowPath, bool) {
 	switch ast := a.(type) {
+	case *unionView:
+		return ProvenancePathForExpr(ast.Val)
 	case *Symbol:
 		return VarFlowPath(ast.Name), true
 	case *Dot:

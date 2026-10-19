@@ -1,0 +1,15 @@
+package main
+import "string"
+fn get(n i64) owned i64 | bool {
+ if(n==1){return owned(i64(37))}
+ return false
+}
+fn main(){
+ var attempts:=0
+ for(var i:=0;i<3;i+=1){
+  attempts+=1
+  if(attempts>3){string.puts("stuck\n");break}
+  n:=switch(v:=get(i)){case bool {continue} case owned i64 v}
+  string.puti(n);string.puts("\n");dispose(n)
+ }
+}

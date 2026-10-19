@@ -108,12 +108,12 @@ fn main(args [][]byte) i64 {
 		}
 
 		fd := switch (r := io.open(ops[i], io.O_RDONLY, 0o660)) {
-			case ERR {
-				fmt.printf(&io.STDERR, "While opening %s: %v\n", &ops[i], r.err)
+			case io.error {
+				fmt.printf(&io.STDERR, "While opening %s: %v\n", &ops[i], r)
 				ret = 1
 				continue
 			}
-			case FD r.fd
+			case owned io.FD r
 		}
 		err := io.copy(&io.STDOUT, &fd)
 		if(err != nil) {

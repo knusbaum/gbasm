@@ -25,6 +25,11 @@ type relocSpec struct {
 // from the single-line string-literal form to the block form whenever the
 // payload carries one or more relocations.
 func emitGlobalVarDecl(of io.Writer, c *Context, a AST, ast *VarDecl) {
+	ast.Type = resolveUnionAliases(c, ast.Type)
+	if ast.Type.IsUnion() {
+		CompileErrorF(a, "Union global storage is not supported; use an initialized local")
+	}
+
 	// Owned at file scope has no place to discharge the obligation —
 	// a global never goes out of scope, and any dispose() inside a
 	// function isn't visible elsewhere. Reject regardless of whether

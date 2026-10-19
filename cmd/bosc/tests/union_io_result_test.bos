@@ -1,0 +1,21 @@
+package main
+import "io"
+import "string"
+fn acquire(path []byte) owned io.FD | io.error {
+ switch (r:=io.open(path,io.O_RDONLY,0)) {
+  case io.error {return r}
+  case owned io.FD {return r}
+ }
+}
+fn use(path []byte) {
+ fd := switch (v:=acquire(path)) {
+  case io.error {string.puts("failed\n");return}
+  case owned io.FD v
+ }
+ var buf [1]byte
+ _,err:=fd.read(buf[:])
+ if(err!=nil){string.puts("read failed\n")}
+ fd.close()
+ string.puts("closed\n")
+}
+fn main() {use("/dev/null/child");use("/dev/null")}

@@ -1,0 +1,7 @@
+package main
+type Box struct {n i64}
+fn main(){
+ p:=new(Box{n:37})
+ r *mut Box | bool:=p
+ switch(r){case *mut Box {free(p);_ = r.n} case bool {free(p)}}
+}
