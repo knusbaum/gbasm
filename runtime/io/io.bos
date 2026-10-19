@@ -254,7 +254,7 @@ pub type FD i64 {
 // failure. The return type is the builtin error interface so a single
 // reader can wrap diverse underlying error types.
 pub interface reader {
-	read(r *self, buf []mut byte) i64, ?error
+	read(r *mut self, buf []mut byte) i64, ?error
 }
 
 // writer is the interface satisfied by any value with a write method of
@@ -263,7 +263,7 @@ pub interface reader {
 // on failure (coerced to error). A short write (n < len(buf), err ==
 // io_err.OK) must be retried by the caller.
 pub interface writer {
-	write(w *self, buf []byte) i64, ?error
+	write(w *mut self, buf []byte) i64, ?error
 }
 
 // open opens the file at path with the given open(2) flags and mode.
@@ -365,4 +365,59 @@ pub interface built_error {
 	//message(e *mut self) []byte from(e)
 	format(e *self, w writer) ?error
 	destroy(e owned *self)
+}
+
+fn slice_copy(dst []mut byte, src []byte) i64 {
+	var n := 0
+	for(var i := 0; i < len(dst) && i < len(src); i+=1) {
+		dst[i] = src[i]
+		n+=1
+	}
+	return n
+}
+
+pub type buffered_writer struct {
+	w writer
+	pos i64
+	buf owned [4096]byte
+} {
+	new(w writer) owned *mut buffered_writer {
+		return new(buffered_writer{w: w})
+	}
+	flush(w *mut buffered_writer) i64, ?error {
+		if(w.pos == 0) { return 0, nil }
+		n, err := w.w.write(w.buf[:w.pos])
+		// Retain the unwritten suffix even when the underlying writer fails.
+		for(var i := n; i < w.pos; i+=1) {
+			w.buf[i-n] = w.buf[i]
+		}
+		w.pos -= n
+		if(err) { return n, err }
+		if(w.pos != 0) { return n, io_err.EIO }
+		return n, nil
+	}
+	write(w *mut buffered_writer, var buf []byte) i64, ?error {
+		var rn := 0
+
+		for(;len(buf) > 0;) {
+			n := slice_copy(w.buf[w.pos:], buf)
+			w.pos+=n
+			rn += n
+			if(n == len(buf)) {
+				return rn, nil
+			}
+			// we didn't copy the whole buffer
+			buf = buf[n:]
+			_, err := w.flush()
+			if (err) {
+				return rn, err
+			}
+		}
+		return rn, nil
+	}
+	close(w owned *mut buffered_writer) ?error {
+		_, err := w.flush()
+		free(w)
+		return err
+	}
 }

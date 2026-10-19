@@ -1,0 +1,28 @@
+package main
+import "io"
+import "fmt"
+import "string"
+
+type Buffer struct {buf owned []mut byte} {
+ write(b *mut Buffer,a []byte) i64, ?io.error {
+  if(len(a)>0){b.buf[0]=a[0]}
+  return len(a),nil
+ }
+}
+type Text struct {buf []byte} {
+ string(t *Text) []byte {return t.buf}
+}
+fn f(w io.writer,a []byte){w.write(a)}
+fn render(w io.writer,a any){
+ s ?fmt.stringer:=a.(fmt.stringer)
+ if(s){f(w,s.string())}
+}
+fn main(){
+ b:=new(Buffer{buf:make([]mut byte,1)})
+ text:=Text{buf:"x"}
+ render(b,&text)
+ string.puti(i64(b.buf[0]));string.puts("\n")
+ fmt.printf(b,"%v",&text)
+ string.puti(i64(b.buf[0]));string.puts("\n")
+ free(b.buf);free(b)
+}

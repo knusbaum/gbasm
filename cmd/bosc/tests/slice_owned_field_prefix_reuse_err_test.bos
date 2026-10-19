@@ -1,0 +1,8 @@
+package main
+type Box struct {buf owned []mut byte}
+fn main(){
+ b:=new(Box{buf:make([]mut byte,8)})
+ out owned []mut byte:=b.buf[:2]
+ _ = len(b.buf)
+ free(out);free(b)
+}

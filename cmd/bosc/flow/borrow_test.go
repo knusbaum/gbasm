@@ -117,3 +117,30 @@ func TestStoredFieldLoanValidity(t *testing.T) {
 		t.Fatal(reason)
 	}
 }
+
+func TestBorrowMutationRequiresTrackedDependency(t *testing.T) {
+	s := NewState()
+	owner := s.NewOwnedOrigin("buffer")
+	other := s.NewBorrowedOrigin("other_parameter")
+	known := s.BorrowView(owner, "buffer_view")
+	unrelated := s.BorrowView(other, "other_view")
+	opaque := s.BorrowView(s.UnknownPointer(), "opaque_view", s.UnknownPointer())
+	partial := s.BorrowView(s.UnknownPointer(), "partial_view", owner)
+	s.InvalidateBorrows([]PointerExpr{s.UnknownPointer()})
+	for _, p := range []PointerExpr{known, unrelated, opaque, partial} {
+		if ok, why := s.CheckDerefValidity(p); !ok {
+			t.Fatalf("unknown authority invalidated unrelated view: %s", why)
+		}
+	}
+	s.InvalidateBorrows([]PointerExpr{owner})
+	for _, p := range []PointerExpr{known, partial} {
+		if ok, _ := s.CheckDerefValidity(p); ok {
+			t.Fatal("tracked dependency survived mutation")
+		}
+	}
+	for _, p := range []PointerExpr{unrelated, opaque} {
+		if ok, why := s.CheckDerefValidity(p); !ok {
+			t.Fatalf("unrelated view invalidated: %s", why)
+		}
+	}
+}

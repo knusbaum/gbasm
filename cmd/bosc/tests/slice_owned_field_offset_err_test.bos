@@ -1,0 +1,4 @@
+package main
+type Box struct {buf owned []mut byte}
+fn trim(b *mut Box){b.buf=b.buf[1:]}
+fn main(){}

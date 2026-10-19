@@ -1,0 +1,16 @@
+package main
+import "string"
+type Inner struct {data [4]byte}
+type Box struct {inner Inner}
+fn set(a []mut byte) {a[0]=37}
+fn by_ref(b *mut Box) {set(b.inner.data[1:])}
+fn by_array(a *mut [4]byte) {set((*a)[2:])}
+fn main() {
+ var b := Box{}
+ by_ref(&b)
+ by_array(&b.inner.data)
+ set(b.inner.data[3:])
+ string.puti(i64(b.inner.data[1]));string.puts("\n")
+ string.puti(i64(b.inner.data[2]));string.puts("\n")
+ string.puti(i64(b.inner.data[3]));string.puts("\n")
+}

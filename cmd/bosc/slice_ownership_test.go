@@ -9,6 +9,25 @@ func TestSliceOwnershipTransfers(t *testing.T) {
 	tests := []struct {
 		name, body, wantErr string
 	}{
+
+		{name: "field self assignment", body: `type B struct{buf owned []mut byte}
+ fn trim(b *mut B,n i64){b.buf=b.buf[:n]}`},
+		{name: "owned value field return", body: `type B struct{buf owned []mut byte}
+ fn build() owned []mut byte{
+  b owned B:=B{buf:make([]mut byte,8)}
+  out owned []mut byte:=b.buf[:3]
+  dispose(b)
+  return out
+ }`},
+		{name: "field argument with restoration", body: `type B struct{buf owned []mut byte}
+ fn take(s owned []mut byte){free(s)}
+ fn use(b *mut B){take(b.buf[:2]);b.buf=make([]mut byte,8)}`},
+		{name: "readonly field prefix", body: `type B struct{buf owned []mut byte}
+ fn bad(b *B) owned []byte{return b.buf[:2]}`, wantErr: "zero-offset prefix"},
+		{name: "borrowed field restoration required", body: `type B struct{buf owned []mut byte}
+ fn bad(b *mut B) owned []mut byte{return b.buf[:2]}`, wantErr: "borrowed owned field"},
+		{name: "element-owned field prefix", body: `type B struct{buf owned []owned i64}
+ fn bad(b *mut B){b.buf=b.buf[:2]}`, wantErr: "element-owned slice"},
 		{name: "direct return", body: `fn build() owned []byte { s := make([]mut byte, 8); return s }`},
 		{name: "prefix return", body: `fn build() owned []byte { s := make([]mut byte, 8); return s[:3] }`},
 		{name: "explicit zero", body: `fn build() owned []byte { s := make([]mut byte, 8); return s[0:3] }`},

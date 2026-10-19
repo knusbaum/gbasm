@@ -1,0 +1,2 @@
+Compiling tests/slice_array_field_moved_err_test.bos
+Fatal: Use of "b.data" after it was moved

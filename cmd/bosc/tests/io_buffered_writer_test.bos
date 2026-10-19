@@ -1,0 +1,54 @@
+package main
+import "io"
+import "string"
+type Sink struct {data [20000]byte, pos i64, limit i64, fail bool} {
+ write(s *mut Sink, b []byte) i64, ?io.error {
+  var n := len(b)
+  if(n>s.limit){n=s.limit}
+  for(var i:=0;i<n;i+=1){s.data[s.pos+i]=b[i]}
+  s.pos+=n
+  if(s.fail){return n,io.io_err.EIO}
+  return n,nil
+ }
+}
+fn show(n i64){string.puti(n);string.puts("\n")}
+fn main(){
+ s:=new(Sink{limit:20000})
+ w:=io.buffered_writer.new(s)
+ data:=make([]mut byte,10000)
+ for(var i:=0;i<len(data);i+=1){data[i]=byte(i%251)}
+ n,_:=w.write(data[:3000]);show(n)
+ n2,_:=w.write(data[3000:]);show(n2)
+ w.flush()
+ show(s.pos)
+ var bad:=0
+ for(var i:=0;i<len(data);i+=1){if(s.data[i]!=data[i]){bad+=1}}
+ show(bad)
+ w.close();free(data);free(s)
+
+ short:=new(Sink{limit:2})
+ b:=io.buffered_writer.new(short)
+ b.write("abcdef")
+ k,err:=b.flush();show(k);show(b.pos)
+ if(err){show(1)}else{show(0)}
+ short.limit=100
+ b.flush();show(short.pos);show(i64(short.data[5]))
+ b.close();free(short)
+
+ failing:=new(Sink{limit:2,fail:true})
+ c:=io.buffered_writer.new(failing)
+ c.write("abcdef")
+ k2,err2:=c.flush();show(k2);show(c.pos)
+ if(err2){show(1)}else{show(0)}
+ failing.fail=false;failing.limit=100
+ c.flush();show(failing.pos);show(i64(failing.data[5]))
+ c.close();free(failing)
+
+ blocked:=new(Sink{limit:0})
+ d:=io.buffered_writer.new(blocked)
+ d.write("abc")
+ z,err3:=d.flush();show(z);show(d.pos)
+ if(err3){show(1)}else{show(0)}
+ blocked.limit=100
+ d.close();show(blocked.pos);free(blocked)
+}

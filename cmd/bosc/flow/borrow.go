@@ -73,22 +73,20 @@ func (s *State) OriginName(origin Origin) string {
 }
 
 // InvalidateBorrows treats all mutable authorities in one call together. An
-// authority itself remains usable; views derived through it do not. Unknown
-// authorities conservatively affect every outstanding view. Field allocation
-// origins are followed so direct reads of owned slice/pointer fields expire too.
+// authority itself remains usable; views derived through it do not. Only
+// shared tracked sources establish overlap; unknown provenance alone does not.
+// Field allocation origins are followed so owned-field views expire too.
 func (s *State) InvalidateBorrows(authorities []PointerExpr) {
 	if len(authorities) == 0 {
 		return
 	}
 	for _, arg := range authorities {
 		targets := make(map[Origin]bool)
-		unknown := !arg.KnownOrigin
 		if arg.KnownOrigin {
 			for _, root := range s.mutationSources(arg.Origin) {
-				if root == Unknown {
-					unknown = true
+				if root != Unknown {
+					targets[root] = true
 				}
-				targets[root] = true
 			}
 		}
 		// Follow pointee field facts transitively, including nested allocations.
@@ -103,7 +101,7 @@ func (s *State) InvalidateBorrows(authorities []PointerExpr) {
 					continue
 				}
 				for _, root := range s.mutationSources(ptr.Origin) {
-					if !targets[root] {
+					if root != Unknown && !targets[root] {
 						targets[root] = true
 						changed = true
 					}
@@ -114,9 +112,9 @@ func (s *State) InvalidateBorrows(authorities []PointerExpr) {
 			if arg.KnownOrigin && borrow == arg.Origin {
 				continue
 			}
-			matches := unknown
+			matches := false
 			for _, root := range s.mutationSources(borrow) {
-				matches = matches || targets[root] || root == Unknown
+				matches = matches || (root != Unknown && targets[root])
 			}
 			if matches {
 				info := s.origins[borrow]

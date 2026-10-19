@@ -32,12 +32,12 @@ func prepareSliceOwnership(c *Context, value AST, destination ASTType) {
 		if sourceType.IsSlice() && sourceType.OwnedMask&2 != 0 {
 			CompileErrorF(value, "Cannot transfer an element-owned slice through slicing; move the whole slice instead")
 		}
-		slice.transferOwner = ""
+		slice.transferOwner = nil
 		owner := prefixSliceOwner(c, slice)
-		if owner == "" {
+		if owner == nil {
 			CompileErrorF(value, "Cannot transfer slice backing ownership: source must be an owned slice or a zero-offset prefix of an owner")
 		}
-		checkOwnedSourceAvailable(c, &Symbol{Name: owner, p: value.Pos()})
+		checkOwnedSourceAvailable(c, owner)
 		slice.transferOwner = owner
 		return
 	}
@@ -50,20 +50,25 @@ func prepareSliceOwnership(c *Context, value AST, destination ASTType) {
 // Only syntactically traceable prefixes can transfer: a borrowed binding has
 // no obligation, and its origin alone cannot prove its data pointer is still
 // the owner's base. Nested prefixes must each preserve the starting pointer.
-func prefixSliceOwner(c *Context, value AST) string {
+func prefixSliceOwner(c *Context, value AST) AST {
 	switch v := value.(type) {
 	case *SliceOp:
 		if v.Lower != nil {
 			lo, constant := EvalConst(c, v.Lower)
 			if !constant || lo.Sign() != 0 {
-				return ""
+				return nil
 			}
 		}
 		return prefixSliceOwner(c, v.Val)
 	case *Symbol:
 		t := c.ResolveUnderlying(v.ASTType(c))
 		if t.IsSlice() && t.OwnedMask&1 != 0 {
-			return v.Name
+			return v
+		}
+	case *Dot:
+		t := c.ResolveUnderlying(v.ASTType(c))
+		if t.IsSlice() && t.OwnedMask&1 != 0 {
+			return v
 		}
 	case *Deref:
 		// A slice of an array reached through an owning pointer keeps the
@@ -72,11 +77,11 @@ func prefixSliceOwner(c *Context, value AST) string {
 			t := c.ResolveUnderlying(owner.ASTType(c))
 			array := v.ASTType(c)
 			if t.Indirection == 1 && t.OwnedMask == 1 && array.IsArray() {
-				return owner.Name
+				return owner
 			}
 		}
 	}
-	return ""
+	return nil
 }
 
 // Empty slice literals acquire their whole type, including ownership and

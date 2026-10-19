@@ -934,6 +934,13 @@ borrowed binding cannot supply ownership, even if it happens to reference a
 prefix of an owner. An owning pointer to an array can transfer its obligation
 through `(*owner)[:n]`; an ordinary local array cannot.
 
+An owned slice field can also supply a prefix transfer when its obligation is
+accessible through an owned aggregate or a mutable reference. Assigning a prefix
+back to the same field (`b.buf = b.buf[:n]`) transfers and restores that field's
+obligation while preserving the backing pointer and capacity. Extracting it into
+a different owner leaves the field moved out, just like moving the whole field;
+a mutable borrower must restore it before returning.
+
 Slices with owned elements must be moved whole rather than transferred through
 slicing, so shortening cannot abandon element obligations. Checked prefix
 transfer preserves an existing obligation; it does not implicitly promote a
@@ -1098,8 +1105,11 @@ b.destroy()
 The rule applies to concrete methods, direct and indirect functions, interface
 method receivers, and interface arguments that grant mutable receiver access.
 Read-only calls preserve loans. Calls through aliases use the same source
-identity. Unknown mutation targets conservatively invalidate outstanding views;
-known unrelated objects do not. A mutation on any reachable branch invalidates
+identity. Invalidation follows tracked source and backing-allocation dependencies;
+unknown provenance is not evidence that independent parameters alias. Unrelated
+views remain valid. The caller checks overlapping mutable access and derived
+borrowed arguments before entering a callee, so `f(w, w.some_borrow())` is
+rejected even when `f` accepts its writer and slice as independent parameters. A mutation on any reachable branch invalidates
 a view at the join. Borrow copies and views stored in fields retain that state.
 A result borrowing from multiple arguments depends on all of them.
 
@@ -2697,7 +2707,7 @@ Walks the AST and emits `.bs` assembly text. Key responsibilities:
 - **Function calls**: Arguments are evaluated into temporaries, then moved into the ABI argument registers before `call`. The emitted `call` is always fully qualified (`pkg.fname`); for in-package calls the current package's name is prepended. Function-defined-in-source signatures are emitted as `type fn(arg-types) ret` directives so cross-package import works for Boson-defined packages, not just hand-written bas runtime packages.
 - **Address-of**: For `&x` where `x` is a named variable, the assembler `volatile x` directive is emitted (suppressed for memory-backed names where it's already true) to mark `x` as memory-resident, then `lea`. For `&arr[i]` and `&s.field` at runtime, the compiler delegates to the lvalue-walk machinery which already produces an address-bearing spot. For a function-scope `&"literal"`, a static slice header is synthesized once per distinct literal and the address `lea`'d. Any other `&literal` at runtime is an error; those forms are only valid in static-init.
 - **Struct access**: Field offsets are computed at compile time. Pointer-to-struct access auto-dereferences. For a small inner struct accessed via dot (e.g. `outer.middle.field`), the inner Dot returns a pointer to the struct rather than copying its bytes, so subsequent Dot/Index walks land on the right address.
-- **Slices**: A slice is two words (pointer and length) — there is **no** capacity word; a slice knows only the region `[ptr, ptr + len*element_size)`. Indexing bounds-checks against the length word and computes `base + index * element_size`. Slice operations adjust both pointer and length, and bounds-check the operation itself: `s[lo:hi]` requires `0 <= lo <= hi <= N`, where `N` is the *operand's own length* — `len(s)` (the length word) when slicing a slice, the declared size when slicing a fixed array. A present `hi` is checked against `N`, a present `lo` against `hi`. Because a slice carries no capacity, re-slicing can never extend past `len` (unlike Go, where `hi` may reach `cap`): the length word is the only valid region the slice can prove, so it is the only safe upper bound. For a fixed array `len == N == cap`, so the distinction is invisible there.
+- **Slices**: A slice is three words: pointer, length, and capacity. Indexing checks against length. Explicit slicing `s[lo:hi]` requires `0 <= lo <= hi <= cap(s)`; it may expose more of the existing backing allocation than the current logical length. An omitted `hi` defaults to `len(s)`, so `s[lo:]` still requires `lo <= len(s)`. The result has length `hi - lo`, capacity `cap(s) - lo`, and its pointer advances by `lo * element_size`. For a fixed array both length and capacity are its declared size. Reslicing allocates no storage; extending an owning prefix retains the same backing obligation.
 - **Bounds checking**: Array/slice *indexing* and slice *operations* (`s[lo:hi]`) both emit a compare and a conditional call to `_init.index_oob` when out of range. The runtime compares are unsigned, so a negative index or bound (enormous as `u64`) also traps. A *constant* index past a fixed array's size is caught earlier, at compile time; a constant *negative* index currently still traps at runtime rather than at compile time (it is decidable at compile time and is a candidate to hoist into an earlier phase).
 - **Casts**: Type casts (`FD(x)`, `i64(fd)`) generate sign-extend, zero-extend, or truncating moves as appropriate. Widening 32→64 unsigned uses the synthetic `MOVZX r64, r/m32` form (translated by bas); widening 32→64 signed uses `MOVSXD`; narrowing uses partial-of-alloc syntax (`mov dest src:N`).
 - **Multiplication / division**: 64-bit signed multiplication uses the two-operand `IMUL r64, r/m64` form, avoiding any `inreg` on user variables. Sub-64-bit signed multiplication and all unsigned multiplication/division route through fresh rax-pinned temps so the `inreg` constraints fall on temporaries, not on user-declared variables (which may be `volatile`).

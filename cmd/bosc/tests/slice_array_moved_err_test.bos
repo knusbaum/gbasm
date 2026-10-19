@@ -1,0 +1,8 @@
+package main
+import "string"
+fn main(){
+ a owned [3]i64 := [10,20,30]
+ dispose(a)
+ s:=a[:]
+ string.puti(len(s))
+}

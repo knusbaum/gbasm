@@ -4671,9 +4671,9 @@ type SliceOp struct {
 	Val   AST
 	Lower AST
 	Upper AST
-	// Set by destination checking, never by ordinary slicing. The named
-	// owner supplies the backing obligation for a prefix-slice transfer.
-	transferOwner string
+	// Set by destination checking, never by ordinary slicing. The binding
+	// or field supplies the backing obligation for a prefix-slice transfer.
+	transferOwner AST
 }
 
 // isLvalueMutable reports whether the lvalue expression a refers to writable
@@ -4714,7 +4714,7 @@ func (s *SliceOp) ASTType(c *Context) ASTType {
 		// Reslicing normally borrows. Destination checking can select a
 		// checked prefix transfer without changing the element qualifiers.
 		t.OwnedMask &^= 1
-		if s.transferOwner != "" {
+		if s.transferOwner != nil {
 			t.OwnedMask |= 1
 		}
 		return t
@@ -4731,7 +4731,7 @@ func (s *SliceOp) ASTType(c *Context) ASTType {
 		// SliceOp case), so disposing the array invalidates this view.
 		t.ArraySize = 0
 		t.OwnedMask &^= 1
-		if s.transferOwner != "" {
+		if s.transferOwner != nil {
 			t.OwnedMask |= 1
 		}
 		if isLvalueMutable(c, s.Val) {

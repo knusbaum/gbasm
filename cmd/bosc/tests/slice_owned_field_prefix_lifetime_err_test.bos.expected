@@ -1,0 +1,2 @@
+Compiling tests/slice_owned_field_prefix_lifetime_err_test.bos
+Fatal: cannot dereference pointer to "b.buf": the allocation was freed

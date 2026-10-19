@@ -1,0 +1,11 @@
+package main
+import "string"
+type Box struct {data owned [4]byte}
+fn take(a owned [4]byte){dispose(a)}
+fn main(){
+ b:=new(Box{})
+ take(b.data)
+ s:=b.data[:]
+ string.puti(len(s))
+ free(b)
+}

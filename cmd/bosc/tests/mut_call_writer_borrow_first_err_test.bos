@@ -1,0 +1,14 @@
+package main
+import "io"
+
+type Buffer struct {buf owned []mut byte} {
+ some_borrow(b *Buffer) []byte {return b.buf[:]}
+ write(b *mut Buffer, a []byte) i64, ?io.error {_ = b;return len(a),nil}
+}
+fn f(a []byte,w io.writer){w.write(a)}
+fn main(){
+ b:=new(Buffer{buf:make([]mut byte,1)})
+ w io.writer:=b
+ f(b.some_borrow(),w)
+ free(b.buf);free(b)
+}

@@ -1,0 +1,16 @@
+package main
+import "io"
+interface Borrower {some_borrow(b *self) []byte from(b)}
+type Buffer struct {buf owned []mut byte} {
+ some_borrow(b *Buffer) []byte {return b.buf[:]}
+ write(b *mut Buffer,a []byte) i64, ?io.error {_ = b;return len(a),nil}
+}
+fn f(w io.writer,a []byte){w.write(a)}
+fn main(){
+ b:=new(Buffer{buf:make([]mut byte,1)})
+ w io.writer:=b
+ erased any:=b
+ source ?Borrower:=erased.(Borrower)
+ if(source){f(w,source.some_borrow())}
+ free(b.buf);free(b)
+}

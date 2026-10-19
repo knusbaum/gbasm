@@ -85,21 +85,36 @@ fn main(args [][]byte) i64 {
 	}
 
 	ops := p.operands()
+	bw := io.buffered_writer.new(&io.STDOUT)
+	var out := modifier{w: bw, line: 1, lineStart: true}
 	if (len(ops) == 0) {
 		// no args (just the program name). Copy stdin.
-		err := io.copy(&io.STDOUT, &io.STDIN)
+		err := io.copy(&out, &io.STDIN)
 		if(err != nil) {
 			fmt.printf(&io.STDERR, "Error: %v\n", err)
 			p.destroy()
+			bw.close()
 			return 1
 		}
 		p.destroy()
-		return 0
+		var ret := 0
+		err2 := out.finish()
+		if (err2) {
+			fmt.printf(&io.STDERR, "Error: %v\n", err2)
+			ret = 1
+		}
+		err3 := bw.close()
+		if (err3) {
+			fmt.printf(&io.STDERR, "Error: %v\n", err3)
+			ret = 1
+		}
+		return ret
 	}
 	var ret := 0
 	for(var i i64 := 0; i < len(ops); i += 1) {
-		if (scmp(ops[i], "-") == 0) {
-			err := io.copy(&io.STDOUT, &io.STDIN)
+		//if (scmp(ops[i], "-") == 0) {
+		if (ops[i][0] == '-') {
+			err := io.copy(&out, &io.STDIN)
 			if(err != nil) {
 				fmt.printf(&io.STDERR, "Error: %v\n", err)
 				ret = 1
@@ -115,7 +130,7 @@ fn main(args [][]byte) i64 {
 			}
 			case owned io.FD r
 		}
-		err := io.copy(&io.STDOUT, &fd)
+		err := io.copy(&out, &fd)
 		if(err != nil) {
 			fmt.printf(&io.STDERR, "Error: %v\n", err)
 			fd.close()
@@ -125,5 +140,163 @@ fn main(args [][]byte) i64 {
 		fd.close()
 	}
 	p.destroy()
+	err2 := out.finish()
+	if (err2) {
+		fmt.printf(&io.STDERR, "Error: %v\n", err2)
+		ret = 1
+	}
+	err3 := bw.close()
+	if (err3) {
+		fmt.printf(&io.STDERR, "Error: %v\n", err3)
+		ret = 1
+	}
 	return ret
+}
+
+// A single output filter preserves line state across chunks and operands.
+// The downstream buffered_writer handles buffering and full writes; this
+// type owns no storage.
+type modifier struct {
+	w *mut io.buffered_writer
+	line i64
+	lineStart bool
+	blankSeen bool
+	pendingCR bool
+} {
+	number_line(m *mut modifier) ?io.error {
+		var digits [32]byte
+		var pos := 31
+		digits[pos] = 9
+		var n := m.line
+		for (;;) {
+			pos -= 1
+			digits[pos] = byte(48 + n % 10)
+			n /= 10
+			if (n == 0) {
+				break
+			}
+		}
+		for (; pos > 25; ) {
+			pos -= 1
+			digits[pos] = 32
+		}
+		_, err := m.w.write(digits[pos:])
+		if (err) {
+			return err
+		}
+		m.line += 1
+		return nil
+	}
+	write(m *mut modifier, buf []byte) i64, ?io.error {
+		if (!conf.number && !conf.numberNonBlank && !conf.squeezeBlank && !conf.showEnds && !conf.showTabs && !conf.showNonprinting) {
+			n, err := m.w.write(buf)
+			return n, err
+		}
+		for (var i := 0; i < len(buf); i += 1) {
+			ch := buf[i]
+			// With -E alone, CR is special only immediately before LF. Delay
+			// that one byte so CRLF works even across writes or file boundaries.
+			if (m.pendingCR) {
+				var cr [1]byte
+				cr[0] = 13
+				if (ch == 10) {
+					_, err := m.w.write("^M")
+					if (err) { return i, err }
+				} else {
+					_, err := m.w.write(cr[:])
+					if (err) { return i, err }
+				}
+				m.pendingCR = false
+			}
+			if (ch == 10) {
+				if (m.lineStart) {
+					if (conf.squeezeBlank && m.blankSeen) {
+						continue
+					}
+					m.blankSeen = true
+					if (conf.number && !conf.numberNonBlank) {
+						err := m.number_line()
+						if (err) {
+							return i, err
+						}
+					}
+				} else {
+					m.blankSeen = false
+				}
+				if (conf.showEnds) {
+					_, err := m.w.write("$")
+					if (err) {
+						return i, err
+					}
+				}
+				_, err := m.w.write("\n")
+				if (err) {
+					return i, err
+				}
+				m.lineStart = true
+				continue
+			}
+			if (m.lineStart) {
+				if (conf.number || conf.numberNonBlank) {
+					err := m.number_line()
+					if (err) {
+						return i, err
+					}
+				}
+				m.lineStart = false
+			}
+			if (ch == 13 && conf.showEnds && !conf.showNonprinting) {
+				m.pendingCR = true
+				continue
+			}
+			var encoded [4]byte
+			var count := 0
+			var c := i64(ch)
+			if (ch == 9 && conf.showTabs) {
+				encoded[0] = 94
+				encoded[1] = 73
+				count = 2
+			} else if (conf.showNonprinting && ch != 9) {
+				// M- means the high bit was set. Render the remaining seven bits
+				// normally: 0x80 -> M-^@, 0xa0 -> M- , 0xff -> M-^?.
+				if (c >= 128) {
+					encoded[0] = 77
+					encoded[1] = 45
+					count = 2
+					c -= 128
+				}
+				if (c < 32) {
+					encoded[count] = 94
+					count += 1
+					c += 64
+				} else if (c == 127) {
+					encoded[count] = 94
+					count += 1
+					c = 63
+				}
+				encoded[count] = byte(c)
+				count += 1
+			} else {
+				encoded[0] = ch
+				count = 1
+			}
+			_, err := m.w.write(encoded[:count])
+			if (err) {
+				return i, err
+			}
+		}
+		return len(buf), nil
+	}
+	finish(m *mut modifier) ?io.error {
+		if (m.pendingCR) {
+			var cr [1]byte
+			cr[0] = 13
+			_, err := m.w.write(cr[:])
+			if (err) {
+				return err
+			}
+			m.pendingCR = false
+		}
+		return nil
+	}
 }

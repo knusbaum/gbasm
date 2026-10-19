@@ -1,0 +1,2 @@
+Compiling tests/slice_array_moved_err_test.bos
+Fatal: Use of "a" after it was moved

@@ -2,15 +2,12 @@ package main
 
 import "fmt"
 
-// Re-slicing an actual slice (not a fixed array) past its length must
-// trap. Exercises the slice-operand length branch (mov length [s+8]),
-// distinct from the fixed-array size branch the other tests hit. Also
-// pins the no-capacity semantic: s views nums[1:3] (len 2); even though
-// nums[3] exists in the backing array, s cannot re-slice to reach it.
+// Re-slicing an actual slice past its retained capacity must trap.
+// nums[1:3] has length 2 and capacity 3; hi 4 exceeds the backing region.
 fn main() {
 	nums [4]i64 := [10, 20, 30, 40]
 	s []i64 := nums[1:3]
-	hi i64 := 3
+	hi i64 := 4
 	fmt.print("before\n")
 	bad []i64 := s[0:hi]
 	fmt.print("after len=%d\n", len(bad))

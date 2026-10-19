@@ -1,0 +1,8 @@
+package main
+import "string"
+fn main(){
+ s:=make([]mut byte,1,4)
+ string.puts("before\n")
+ _ = s[1]
+ free(s)
+}

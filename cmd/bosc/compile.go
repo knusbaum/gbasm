@@ -2251,6 +2251,14 @@ func pointerExprForASTRaw(c *Context, a AST, assignedName string) flow.PointerEx
 		// slice (`s[:]`) sources rooted at their bindings, all by composition
 		// rather than per-shape handling.
 		return lvalueStorageOrigin(c, ast.Val, assignedName)
+	case *TypeAssert:
+		// An interface assertion changes the vtable, not the backing object.
+		// Preserve its origin so erasing and reasserting an interface cannot
+		// hide an overlap between a mutable argument and a derived view.
+		if c.IsInterfaceType(ast.T) {
+			return argAliasProvenance(c, ast.Val)
+		}
+		return c.PointerFlow().UnknownPointer()
 	case *UnsafeCast:
 		// The result has no provenance the checker can know: the address came
 		// from an integer, or from a pointer whose pointee type it no longer
@@ -2722,9 +2730,8 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 	}
 	switch v := val.(type) {
 	case *SliceOp:
-		if v.transferOwner != "" {
-			checkOwnedSourceAvailable(c, &Symbol{Name: v.transferOwner, p: v.Pos()})
-			c.MoveTransfer(v.transferOwner)
+		if v.transferOwner != nil {
+			markMovedIfOwnedSource(of, c, v.transferOwner.ASTType(c), v.transferOwner)
 		}
 	case *Symbol:
 		checkOwnedSourceAvailable(c, val)
@@ -5464,7 +5471,32 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return dest
 	case *SliceOp:
 		// TODO: dest optimization
-		v := compileTop(of, c, ast.Val, nullspot)
+		// Array slices must refer to the original storage, rather than an
+		// rvalue copy of an array field. Slice headers themselves are values.
+		sourceType := ast.Val.ASTType(c)
+		var v spot
+		arrayAddress := false
+		if sourceType.IsArray() && addressableMethodReceiver(c, ast.Val) {
+			if root, ok := rootSymbolName(ast.Val); ok {
+				c.markUsed(root)
+				if c.IsMoved(root) {
+					CompileErrorF(ast.Val, "Use of %q after it was moved", root)
+				}
+			}
+			if path, ok := FlowPathForExpr(ast.Val); ok && c.OwnedFieldConsumed(path) {
+				CompileErrorF(ast.Val, "Use of %q after it was moved", path.Key())
+			}
+			checkReadable(c, ast.Val)
+			v = compileLval(of, c, ast.Val, nullspot)
+			arrayAddress = v.t.Indirection > sourceType.Indirection
+			if !arrayAddress {
+				v = valueAddress(of, c, v.ref, sourceType)
+				arrayAddress = true
+			}
+			v.t = sourceType
+		} else {
+			v = compileTop(of, c, ast.Val, nullspot)
+		}
 		if !v.t.IsSliceOrArray() {
 			panic("Somehow slicing a non-array, non-slice")
 		}
@@ -5497,11 +5529,14 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			addrt := baset
 			addrt.Indirection++
 			addr = newSpot(of, c, c.Temp(), addrt)
-			fmt.Fprintf(of, "\tlea %s [%s+0]\n", addr.ref, v.ref)
+			if arrayAddress {
+				fmt.Fprintf(of, "\tmov %s %s\n", addr.ref, v.ref)
+			} else {
+				fmt.Fprintf(of, "\tlea %s [%s+0]\n", addr.ref, v.ref)
+			}
 		}
 
-		// Backing length: the default high bound when `hi` is omitted, and
-		// the reference for the high-bound check below.
+		// Logical length supplies the default high bound when `hi` is omitted.
 		length := newSpot(of, c, c.Temp(), numASTType())
 		if v.t.IsSlice() {
 			fmt.Fprintf(of, "\tmov %s %s\n", length.ref, sliceHdrLen(v.ref))
@@ -5523,16 +5558,16 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		var upper spot
 		if ast.Upper != nil {
 			upper = compileTop(of, c, ast.Upper, nullspot)
-			// Bounds: hi must not exceed the backing length. The compare is
+			// Bounds: explicit hi may grow up to backing capacity. The compare is
 			// unsigned (jbe), so a negative hi — enormous as u64 — also
 			// traps. cmp/jbe must stay adjacent: bas does not model EFLAGS,
 			// so nothing may materialize an operand between them (the trap's
 			// mov/call come after the branch, on the failing path only, and
 			// _init.index_oob exits without returning).
 			hiok := c.Label("slice_hi_ok")
-			fmt.Fprintf(of, "\tcmp %s %s\n", upper.ref, length.ref)
+			fmt.Fprintf(of, "\tcmp %s %s\n", upper.ref, capacity.ref)
 			fmt.Fprintf(of, "\tjbe %s\n", hiok)
-			emitIndexOOBTrap(of, upper.ref, false, length.ref)
+			emitIndexOOBTrap(of, upper.ref, false, capacity.ref)
 			fmt.Fprintf(of, "\tlabel %s\n", hiok)
 		} else {
 			upper = length

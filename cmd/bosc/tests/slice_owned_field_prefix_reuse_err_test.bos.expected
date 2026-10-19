@@ -1,0 +1,2 @@
+Compiling tests/slice_owned_field_prefix_reuse_err_test.bos
+Fatal: Use of "b.buf" after it was moved

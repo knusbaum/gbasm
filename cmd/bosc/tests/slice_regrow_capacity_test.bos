@@ -1,0 +1,18 @@
+package main
+import "string"
+type Box struct{buf owned []mut byte}
+fn main(){
+ b:=new(Box{buf:make([]mut byte,4,8)})
+ b.buf[0]=37
+ b.buf=b.buf[:0]
+ b.buf=b.buf[:cap(b.buf)]
+ string.puti(len(b.buf));string.puts("\n")
+ string.puti(i64(b.buf[0]));string.puts("\n")
+ free(b.buf);free(b)
+ a [4]i64:=[10,20,30,40]
+ s:=a[1:3]
+ t:=s[:cap(s)]
+ string.puti(t[2]);string.puts("\n")
+ u:=s[:]
+ string.puti(len(u));string.puts("\n")
+}

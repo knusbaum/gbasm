@@ -2,6 +2,16 @@
 
 ## History
 
+- 2026-10-19 — Added coreutils cat transformation tests with golden output, all-byte GNU-oracle comparisons, cross-read/operand state, and final flush failures.
+
+- 2026-10-19 — Added array-field slice storage and move-rejection checks, plus buffered-writer byte-count, content, partial-error, and zero-progress regression tests.
+
+- 2026-10-19 — Corrected explicit reslice upper bounds to retained capacity; covered regrowth from zero length, offset views, and length-based indexing.
+
+- 2026-10-19 — Added owned-field prefix-slice transfers, self-reassignment, extraction lifetime checks, and mutable-borrow restoration coverage.
+
+- 2026-10-19 — Added caller-side writer/borrow overlap rejection and unrelated-parameter acceptance; mutable invalidation requires tracked dependencies rather than unknown-provenance aliasing.
+
 - 2026-10-18 — Added nullable primitive/struct storage, presence narrowing, explicit returns, ownership transfer, and lifetime coverage.
 
 - 2026-10-18 — Audited union declaration, return, and argument tests; added indirect-call and ordinary-method argument coverage.
@@ -292,6 +302,8 @@ audit watches.
 | CL-ADDR | `&`-of-projection mutability (`&x.f`, `&arr[i]`) | `&value-field` of mutable vs immutable container; `&pointer-field` | `Address.ASTType` projection branch ~2755 (vs named ~2710) | value-field vs pointer-field; container mut (**under-implemented → #7**) |
 | CL-EQ | `==`/`!=` lowering | struct `==` (must reject) | comparison lowering / type check | aggregate vs scalar/pointer |
 | **CL-OBLIG** | **obligation handling that forks owned vs non-owned** (caller call-result, VarDecl, return) | a **mixed** value: owned aggregate **with** a borrowed field | `recordStructCallResultAtPath` / owned-result VarDecl fork | **the owned branch dropping an orthogonal fact** (borrow alias, null) — forked → `#18`. Test the co-occurrence, not each obligation alone |
+| CL-SLICE-FIELD-PREFIX | zero-offset slice transfers from owned fields and assignment back into the source slot | `slice_owned_field_prefix`, `slice_owned_field_prefix_reuse_err`, `slice_owned_field_prefix_lifetime_err`, `slice_owned_field_offset_err`, `TestSliceOwnershipTransfers` | `slice_ownership.go`, `markMovedIfOwnedSource` | binding vs field source; local owner vs mutable/read-only borrow; transfer vs offset; consumed source vs restored field |
+| CL-MUTABLE-CALL-ARGS | mutation invalidates only dependent argument loans; caller rejects overlap before independent callee parameters are bound | `mut_call_writer_borrow_argument_err`, `mut_call_writer_asserted_borrow_argument_err`, `mut_call_writer_unrelated_borrow`, `TestBorrowMutationRequiresTrackedDependency` | `borrow_calls.go`, `flow/borrow.go`, interface-assertion provenance | same source through interface aliases vs unrelated roots; opaque origins vs known dependencies |
 | CL-NULLABLE-VALUE | tagged primitive/struct optionals: injection, payload projection, presence tests, and ownership | `nullable_value`, `nullable_value_storage`, `nullable_value_owned`, `nullable_value_widths`, `nullable_value_mutation`, `nullable_value_global_array`, `nullable_value_cross_package`, `nullable_value_switch`, `nullable_value_*_err` | `nullable_value.go`, `truth.go`, null-flow and return-alias machinery | existing pointer/interface/values representations vs tagged values; present zero vs nil; borrowed payload vs owning container |
 | CL-UNION-INJECT | scalar, interface, function, array, and owned-resource alternative injection | `union_scalar`, `union_interface_selection`, `union_function_alternative`, `union_array_alternative`, `union_io_result`, `union_argument_paths` | `union_compile.go`: `selectUnionAlternative` / `compileUnionInjection` | exact identity vs contextual conversion; register vs memory payload |
 | CL-UNION-IDENTITY | reordered/flattened union signatures, aliases, and import qualification | `union_types_test.go`, `union_three`, `union_cross_package` | `union_types.go`: canonical encoding; `package.go` qualification | local vs imported names; qualifiers; function-return precedence |
