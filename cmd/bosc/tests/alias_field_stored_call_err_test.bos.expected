@@ -1,0 +1,2 @@
+Compiling tests/alias_field_stored_call_err_test.bos
+Fatal: Cannot pass "h.p" while owned field "h.p.buf" is moved out; only dispose/free are allowed on a partially-consumed aggregate — consume or re-initialize "h.p.buf" first

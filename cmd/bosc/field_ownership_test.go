@@ -58,7 +58,7 @@ fn expand(b *mut Builder) { take(b.buf); b.buf = make([]mut byte, 16) }`},
 		{name: "alias cannot hide consumption", body: `fn bad(b *mut Builder) {
  alias := b
  free(alias.buf)
-}`, want: `aliased`},
+}`, want: `borrowed owned field "b.buf" is moved out`},
 		{name: "move out then restore", body: `fn expand(b *mut Builder) {
  old := b.buf
  b.buf = old

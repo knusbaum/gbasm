@@ -1,0 +1,12 @@
+package main
+import "fmt"
+fn main() {
+ var empty []byte
+ absent ?*[]byte := nil
+ present ?*[]byte := &empty
+ elements := make([]?*byte, 0)
+ fmt.print("%d %d\n", len(empty), len(elements))
+ if (absent == nil) { fmt.print("absent\n") }
+ if (present != nil) { fmt.print("%d\n", len(*present)) }
+ free(elements)
+}

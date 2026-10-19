@@ -1,0 +1,10 @@
+package main
+import "fmt"
+fn main() {
+ b:=fmt.StringBuilder.new()
+ alias *mut fmt.StringBuilder := b
+ view:=b.borrow()
+ alias.expand(1024)
+ _ = len(view)
+ b.destroy()
+}

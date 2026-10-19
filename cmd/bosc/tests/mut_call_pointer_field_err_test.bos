@@ -1,0 +1,4 @@
+package main
+type Box struct {p owned *mut i64}
+fn touch(b *mut Box) {_ = *b.p}
+fn main() {b:=new(Box{p:new(i64(2))});v *mut i64 := b.p;touch(b);_ = *v;free(b.p);free(b)}

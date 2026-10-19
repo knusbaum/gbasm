@@ -10,6 +10,7 @@ func prepareSliceOwnership(c *Context, value AST, destination ASTType) {
 		return
 	}
 	dst := c.ResolveUnderlying(destination)
+	prepareEmptySliceLiterals(c, value, destination)
 	if literal, ok := value.(*StructLiteral); ok && dst.MultiReturn {
 		for _, field := range literal.Fields {
 			slot := slotIndexFromFieldName(field.Name)
@@ -76,4 +77,56 @@ func prefixSliceOwner(c *Context, value AST) string {
 		}
 	}
 	return ""
+}
+
+// Empty slice literals acquire their whole type, including ownership and
+// element mutability, from the destination. No backing allocation is needed.
+func prepareEmptySliceLiterals(c *Context, value AST, destination ASTType) {
+	dst := c.ResolveUnderlying(destination)
+	switch literal := value.(type) {
+	case *ArrayLiteral:
+		if len(literal.Elements) == 0 {
+			if dst.Indirection != 0 || !dst.IsSlice() {
+				CompileErrorF(value, "empty slice literal requires a slice destination, got %s", destination)
+			}
+			t := destination
+			literal.emptySliceType = &t
+		} else if dst.Indirection == 0 && dst.IsArray() {
+			for _, element := range literal.Elements {
+				prepareEmptySliceLiterals(c, element, *dst.Element)
+			}
+		}
+	case *StructLiteral:
+		if dst.MultiReturn {
+			return
+		} // handled by the tuple-slot path above
+		fillAnonymousLiteralIfNeeded(literal, destination)
+		if def, ok := structDeclForType(c, dst); ok {
+			for _, field := range literal.Fields {
+				for _, declared := range def.Fields {
+					if field.Name == declared.Name {
+						prepareEmptySliceLiterals(c, field.Val, fieldTypeForBase(dst, declared.Type))
+						break
+					}
+				}
+			}
+		}
+	case *VariantSwitch:
+		for _, cs := range literal.Cases {
+			prepareSliceOwnership(c, cs.Body, destination)
+		}
+		if literal.Default != nil {
+			prepareSliceOwnership(c, literal.Default, destination)
+		}
+	case *BoundSwitch:
+		sc := c.SubContext()
+		sc.BindVar(literal.Decl, literal.Decl.Name, switchConcreteType(literal.Decl.Init.ASTType(c)), literal.Decl.IsConst)
+		prepareEmptySliceLiterals(sc, literal.Switch, destination)
+	case *Funcall:
+		if literal.isBareCall("new") && len(literal.Args) == 1 && dst.Indirection > 0 {
+			prepareEmptySliceLiterals(c, literal.Args[0], pointeeType(dst))
+		}
+	case *OwnedPromotion:
+		prepareEmptySliceLiterals(c, literal.Val, destination)
+	}
 }

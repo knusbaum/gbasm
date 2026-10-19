@@ -1,0 +1,2 @@
+Compiling tests/inferred_array_nil_err_test.bos
+Fatal: cannot infer array element type from <nil>

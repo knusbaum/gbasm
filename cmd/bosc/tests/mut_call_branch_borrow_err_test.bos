@@ -1,0 +1,10 @@
+package main
+import "fmt"
+fn f(flag bool) {
+ b:=fmt.StringBuilder.new()
+ view:=b.borrow()
+ if(flag) {b.expand(1024)}
+ _ = len(view)
+ b.destroy()
+}
+fn main() {f(false)}

@@ -1,0 +1,8 @@
+package main
+type Buffer struct {buf owned []mut byte} {
+ borrow(b *Buffer) []byte {return b.buf[:]}
+ touch(b *mut Buffer) {_ = len(b.buf)}
+}
+fn change(b *mut Buffer) i64 {b.touch();return 0}
+fn use(v []byte,n i64) {_ = len(v)+n}
+fn main() {b:=new(Buffer{buf:make([]mut byte,1)});use(b.borrow(),change(b));free(b.buf);free(b)}

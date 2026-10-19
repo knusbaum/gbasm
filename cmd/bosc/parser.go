@@ -225,10 +225,11 @@ func (t nodetype) String() string {
 }
 
 type Parser struct {
-	l      *lexer
-	curr   *token
-	pushed []token // look-ahead stack for pushback (top = last element)
-	fname  string
+	l         *lexer
+	curr      *token
+	pushed    []token    // look-ahead stack for pushback (top = last element)
+	lookahead []*[]token // lexer tokens fetched during speculative parses
+	fname     string
 	// inTypeSwitchHead suppresses `.(type)` being parsed as a type
 	// assertion while parsing the switched value in a type-switch head.
 	inTypeSwitchHead bool
@@ -319,6 +320,9 @@ func (p *Parser) current() token {
 			next, err := p.l.Next()
 			if err != nil {
 				panic(err)
+			}
+			for _, capture := range p.lookahead {
+				*capture = append(*capture, next)
 			}
 			p.curr = &next
 		}
@@ -472,6 +476,7 @@ func (p *Parser) parseTypeExpr(refOperand bool, arrayElem bool) ASTType {
 	// Leading qualifiers for THIS level. They bind right and land at bit 0 of
 	// whatever this level turns out to be.
 	var qOwned, qMut, qNil bool
+	var nilPos position
 	for {
 		switch p.current().t {
 		case tok_owned:
@@ -490,6 +495,7 @@ func (p *Parser) parseTypeExpr(refOperand bool, arrayElem bool) ASTType {
 			p.advance()
 		case tok_question:
 			qNil = true
+			nilPos = p.current().p
 			p.advance()
 		default:
 			goto qualsDone
@@ -534,6 +540,9 @@ qualsDone:
 		t.MutMask |= 1
 	}
 	if qNil {
+		if t.Indirection == 0 && t.IsSlice() {
+			panic(&interpreterError{"slices cannot be nullable; use an empty slice or a nullable pointer to a slice (?*[]T)", nilPos})
+		}
 		t.NilMask |= 1
 	}
 	return t
@@ -704,14 +713,26 @@ func (p *Parser) parseValue() *Node {
 	// is what's called when we need a new value, not when we're chaining
 	// off an existing one.
 	if p.current().t == tok_lsquare {
-		// Distinguish a slice-type CAST `[]T(e)` from an array literal
-		// `[e1, e2, ...]`. Empty leading brackets `[]` are never an array
-		// literal (those always have elements), so `[]T(...)` is the prefix
-		// spelling of the old `T[](e)` projection cast.
+		// Empty brackets are a slice literal unless followed by a type,
+		// preserving projection casts such as []byte(value).
 		lb := p.current()
 		p.advance()
-		emptyBrackets := p.current().t == tok_rsquare
-		p.pushback(lb) // restore the '['
+		emptyBrackets := false
+		if p.current().t == tok_rsquare {
+			rb := p.current()
+			p.advance()
+			switch p.current().t {
+			case tok_ident, tok_star, tok_owned, tok_mut, tok_question, tok_fn, tok_struct, tok_lparen:
+				emptyBrackets = true
+			case tok_lsquare:
+				next := p.current()
+				p.advance()
+				emptyBrackets = p.current().t == tok_rsquare || p.current().t == tok_number
+				p.pushback(next)
+			}
+			p.pushback(rb)
+		}
+		p.pushback(lb)
 		if emptyBrackets {
 			tnNode := p.parseTypeName()
 			p.expect(tok_lparen)
@@ -1019,9 +1040,8 @@ func (p *Parser) parseFor() *Node {
 	return &Node{t: n_for, p: forpos, args: args}
 }
 
-// parseSwitch dispatches between the two switch modes: the `any` type-switch
-// (`switch (v x.(type)) { ... }`, a parenthesized head) and the variant switch
-// over an ADT (`switch e { case VARIANT { ... } }`, a bare scrutinee).
+// parseSwitch separates interface type-switch heads from ordinary/variant
+// switches. Their shared bare-head syntax is resolved using the head's type.
 func (p *Parser) parseSwitch() *Node {
 	sw := p.current() // tok_switch
 	p.advance()
@@ -1033,10 +1053,9 @@ func (p *Parser) parseSwitch() *Node {
 	return p.parseVariantSwitch()
 }
 
-// parseVariantSwitch parses `switch <scrutinee> { case VARIANT { body } ...
-// [default { body }] }`. The scrutinee is any expression yielding an ADT;
-// struct-literal folding is suppressed while it is parsed so the trailing `{`
-// opens the switch body.
+// parseVariantSwitch parses ordinary and variant switches. Type checking
+// distinguishes constant-expression cases from bare variant names. Suppressing
+// struct literals in the head leaves the trailing '{' to open the switch.
 func (p *Parser) parseVariantSwitch() *Node {
 	swpos := p.current().p
 	p.expect(tok_switch)
@@ -1086,13 +1105,12 @@ func (p *Parser) parseVariantSwitch() *Node {
 		if p.current().t == tok_case {
 			casepos := p.current().p
 			p.advance()
-			nameTok := p.current()
-			if nameTok.t != tok_ident {
-				panic(&interpreterError{fmt.Sprintf("Expected a variant name after `case`, but found %s", nameTok.t), nameTok.p})
+			label, body := p.parseSwitchCase()
+			name := ""
+			if label.t == n_symbol {
+				name = label.sval
 			}
-			p.advance()
-			body := p.parseExpression()
-			args = append(args, &Node{t: n_variantcase, p: casepos, ival: 0, sval: nameTok.sval, args: []*Node{body}})
+			args = append(args, &Node{t: n_variantcase, p: casepos, sval: name, args: []*Node{body, label}})
 		} else if p.current().t == tok_default {
 			casepos := p.current().p
 			p.advance()
@@ -1104,6 +1122,58 @@ func (p *Parser) parseVariantSwitch() *Node {
 	}
 	p.expect(tok_rcurly)
 	return &Node{t: n_variantswitch, p: swpos, sval: headBind, ival: headVar, args: args}
+}
+
+// parseSwitchCase reads a constant expression followed by a body. Bare variant
+// names also allow expression bodies, so `case A (x)` and `case A -x` must keep
+// their existing meaning rather than becoming a call or subtraction label.
+func (p *Parser) parseSwitchCase() (*Node, *Node) {
+	savedCurr := p.current()
+	savedPushed := append([]token(nil), p.pushed...)
+	var fetched []token
+	p.lookahead = append(p.lookahead, &fetched)
+	oldNoStructLit := p.noStructLit
+	p.noStructLit = true
+	var label *Node
+	var ambiguous bool
+	func() {
+		defer func() {
+			if err := recover(); err != nil {
+				if _, ok := err.(*interpreterError); !ok {
+					panic(err)
+				}
+				ambiguous = true
+			}
+		}()
+		label = p.parseBoolOr()
+	}()
+	p.noStructLit = oldNoStructLit
+	p.lookahead = p.lookahead[:len(p.lookahead)-1]
+	switch p.current().t {
+	case tok_case, tok_default, tok_rcurly, tok_semicolon:
+		ambiguous = true
+	}
+	if ambiguous {
+		// Rewind only the parser: the lexer already supplied fetched tokens.
+		// An atomic label leaves unary and parenthesized expressions to the body.
+		p.curr = &savedCurr
+		p.pushed = nil
+		for i := len(fetched) - 1; i >= 0; i-- {
+			p.pushed = append(p.pushed, fetched[i])
+		}
+		p.pushed = append(p.pushed, savedPushed...)
+		if p.current().t == tok_ident {
+			label = &Node{t: n_symbol, p: p.current().p, sval: p.current().sval}
+			p.advance()
+		} else if p.current().t == tok_number || p.current().t == tok_float || p.current().t == tok_byte || p.current().t == tok_true || p.current().t == tok_false || p.current().t == tok_str {
+			label = p.parseTok()
+		} else {
+			p.noStructLit = true
+			label = p.parseParens()
+			p.noStructLit = oldNoStructLit
+		}
+	}
+	return label, p.parseExpression()
 }
 
 // parseTypeSwitch parses `switch (v x.(type)) { case T {...} ... default {...} }`.

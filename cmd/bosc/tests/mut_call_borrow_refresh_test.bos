@@ -1,0 +1,23 @@
+package main
+import "fmt"
+import "io"
+fn inspect(b *fmt.StringBuilder) i64 { return len(b.borrow()) }
+fn main() {
+ b:=fmt.StringBuilder.new()
+ b.str("abc")
+ old:=b.borrow()
+ _ = inspect(b)
+ fmt.print("%d\n",len(old))
+ other:=fmt.StringBuilder.new()
+ other.expand(1024)
+ fmt.print("%d\n",len(old))
+ b.expand(1024)
+ b.str("d")
+ fresh:=b.borrow()
+ fmt.print("%d\n",len(fresh))
+ var again []byte := b.borrow()
+ b.expand(2048)
+ again = b.borrow()
+ fmt.printf(&io.STDOUT,"%d\n",len(again))
+ b.destroy();other.destroy()
+}

@@ -68,9 +68,11 @@ checks belong in those code paths, not in a phase that doesn't exist.
 | `lexer.go` | Tokenizer. Performs Go-style automatic `;` insertion (DESIGN.md §Statements). Records `position{fname,lineoff,linecharoff}` on every token. |
 | `parser.go` | Recursive-descent. `parseAddSub` / `parseUnary` / `parseSubexpr` / `parsePostfix` for expression precedence. `parsePostfix` handles `.member`, `[i]`, `[lo:hi]`, `(args)`, `{fields}` uniformly. |
 | `ast.go` | AST node definitions, `ASTType` (with `MutMask`/`OwnedMask` bitfields, plus a `p` position for diagnostics), `Context` (name resolution + flow facts + import state, including interface declarations and per-type method tables), `ToAST` for converting parse nodes to typed AST. |
+| `borrow_calls.go`, `flow/borrow.go` | Mutable-call loan invalidation, return-borrow snapshots, argument validation, and backing-allocation dependencies. Allocation identity and derived-loan validity are separate. |
 | `checker.go` | `CheckerState`, `FlowSnapshot`, `FlowPath`. Flow-sensitive facts: nullability, owned-field consumption, borrowed bindings, moves. |
 | `flow/state.go` | Pointer-flow / alias state used by the checker. `Origin`, `PointerExpr`, `Invalidation`, `Merge`, per-field pointer facts (`SetFieldPointer`/`GetFieldPointer`/`CopyFieldPointers`), and `AliasesOf` for re-init checks. |
 | `compile.go` | The big one (~3000 lines). Lowers each AST node to `.bs`. `compileTop` is the dispatch on AST type. `spot{ref, t, nameIsAddress}` is the codegen handle for a value/location. |
+| `value_switch.go`, `variant_switch_flow.go` | Constant-case switches and folding, head bindings, result typing, branch merges, and inferred ADT consumption with automatic wrapper discharge at arm exits. |
 | `globals.go` | `emitGlobalVarDecl` and `encodeStaticInit` for file-scope vars with compile-time-constant initializers. Anonymous globals (`__static_N`) and `relocSpec` live here. |
 | `errctx.go` | `fatalCtx` + `printErrorContext` — five-line source snippet around an `interpreterError`'s position, with a caret arrow (red on TTY, plain otherwise). Always use `fatalCtx` for errors carrying positions. |
 | `lexer_test.go`, `parser_test.go`, `checker_test.go` | Go unit tests for the front end. |
@@ -204,6 +206,10 @@ only deletes them on a clean pass.
 
 ### Testing gotchas
 
+- **Do not overlap separate bosc test runs.** The suite and targeted tests
+  rebuild shared `cmd/bosc/*.bo` fixtures. Running them concurrently can
+  truncate an object while another test reads it, producing unrelated EOF
+  diagnostics. Use one `mmk -j N test` invocation for parallelism.
 - **The toolchain rebuilds itself — no manual `make all` before a suite.** The
   `cmd/bosc` and `cmd/bas` mmkfiles declare `bosc`/`bas`/`bld` as *phony*
   targets, so every `mmk` invocation re-runs `go build` (a no-op under Go's

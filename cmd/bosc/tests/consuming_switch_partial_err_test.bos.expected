@@ -1,0 +1,2 @@
+Compiling tests/consuming_switch_partial_err_test.bos
+Fatal: Switch case A partially consumes "v"; consume all owned payload fields or restore them

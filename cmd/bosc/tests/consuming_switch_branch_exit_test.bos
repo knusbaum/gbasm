@@ -1,0 +1,18 @@
+package main
+import "string"
+type Result values {ERR{code i64};FD{fd owned i64}}
+fn make_result(ok bool) owned Result {
+ if(ok) {return Result.FD{fd:owned(i64(37))}}
+ return Result.ERR{code:1}
+}
+fn use(ok bool) {
+ for(var i:=0;i<2;i+=1) {
+  switch r:=make_result(ok) {
+   case ERR {continue}
+   case FD {drop(r.fd);continue}
+  }
+ }
+}
+fn main() {use(false);use(true);string.puts("ok\n")}
+
+fn drop(x owned i64) {dispose(x)}

@@ -1,0 +1,2 @@
+Compiling tests/alias_field_call_err_test.bos
+Fatal: Cannot pass "y" while owned field "y.buf" is moved out; only dispose/free are allowed on a partially-consumed aggregate — consume or re-initialize "y.buf" first

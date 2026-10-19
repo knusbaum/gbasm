@@ -1,0 +1,2 @@
+Compiling tests/mut_call_field_borrow_err_test.bos
+Fatal: borrow from "b.buf" is no longer valid after a mutable call; borrow again after the call

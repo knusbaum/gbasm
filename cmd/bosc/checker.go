@@ -67,6 +67,8 @@ func FlowPathForExpr(a AST) (FlowPath, bool) {
 			return FlowPath{}, false
 		}
 		return base.Append(ast.Member), true
+	case *Deref:
+		return FlowPathForExpr(ast.Val)
 	case *NonNullAssert:
 		return FlowPathForExpr(ast.Val)
 	default:
@@ -97,6 +99,8 @@ func ProvenancePathForExpr(a AST) (FlowPath, bool) {
 			return FlowPath{}, false
 		}
 		return base.Append("[]"), true
+	case *Deref:
+		return ProvenancePathForExpr(ast.Val)
 	case *NonNullAssert:
 		return ProvenancePathForExpr(ast.Val)
 	default:
@@ -396,6 +400,34 @@ func (c *Context) RestoreOwnedBindings(snap map[string]bool) {
 	}
 }
 
+func (c *Context) InvalidateOwnedFieldFactsByPointerInvalidation(inv flow.Invalidation) {
+	for ctx := c; ctx != nil; ctx = ctx.parent {
+		for key := range ctx.checker.ownedFieldFacts {
+			path := FlowPathFromKey(key)
+			// Non-null slots cannot be read or passed while consumed, so an
+			// opaque write cannot establish restoration. Nullable slots can
+			// safely cross calls as nil and may acquire a new obligation.
+			rootType, known := c.DeclaredTypeForVar(path.Root)
+			ft, fieldKnown := walkLeafType(c, rootType, path.Fields)
+			if !known || !fieldKnown || ft.NilMask&1 == 0 {
+				continue
+			}
+			// Bindings that are not pointer-typed and whose address was
+			// never taken cannot be reached through any external pointer
+			// write, so invalidation through an unknown pointer cannot
+			// affect their fields.
+			if rootType, ok := c.DeclaredTypeForVar(path.Root); ok &&
+				rootType.Indirection == 0 && !c.AddressTaken(path.Root) {
+				continue
+			}
+			root := c.PointerFlow().Pointer(flow.Binding(path.Root))
+			if inv.Unknown || !root.KnownOrigin || inv.Origins[c.PointerFlow().AllocationOrigin(root.Origin)] || inv.Origins[flow.Origin(path.Key())] {
+				delete(ctx.checker.ownedFieldFacts, key)
+			}
+		}
+	}
+}
+
 func (c *Context) NullFactsSnapshot() map[FlowPath]NullState {
 	snap := make(map[FlowPath]NullState)
 	for ctx := c; ctx != nil; ctx = ctx.parent {
@@ -561,13 +593,14 @@ func (c *Context) SetOwnedFieldConsumed(path FlowPath, consumed bool) {
 }
 
 func (c *Context) OwnedFieldConsumed(path FlowPath) bool {
-	path = c.ownedFieldPath(path)
-	for ctx := c; ctx != nil; ctx = ctx.parent {
-		if consumed, ok := ctx.checker.ownedFieldFacts[path.Key()]; ok {
-			return consumed
-		}
-		if _, ok := ctx.bindings[path.Root]; ok {
-			return false
+	for _, resolved := range c.ownedFieldPaths(path) {
+		for ctx := c; ctx != nil; ctx = ctx.parent {
+			if consumed := ctx.checker.ownedFieldFacts[resolved.Key()]; consumed {
+				return true
+			}
+			if _, ok := ctx.bindings[resolved.Root]; ok {
+				break
+			}
 		}
 	}
 	return false
@@ -608,29 +641,6 @@ func (c *Context) InvalidateFlowFacts(path FlowPath) {
 			}
 		}
 		return
-	}
-}
-
-func (c *Context) InvalidateOwnedFieldFactsByPointerInvalidation(inv flow.Invalidation) {
-	for ctx := c; ctx != nil; ctx = ctx.parent {
-		for key := range ctx.checker.ownedFieldFacts {
-			path := FlowPathFromKey(key)
-			if c.borrowedAggregateRoot(path.Root) {
-				continue
-			}
-			// Bindings that are not pointer-typed and whose address was
-			// never taken cannot be reached through any external pointer
-			// write, so invalidation through an unknown pointer cannot
-			// affect their fields.
-			if rootType, ok := c.DeclaredTypeForVar(path.Root); ok &&
-				rootType.Indirection == 0 && !c.AddressTaken(path.Root) {
-				continue
-			}
-			root := c.PointerFlow().Pointer(flow.Binding(path.Root))
-			if inv.Unknown || !root.KnownOrigin || inv.Origins[root.Origin] {
-				delete(ctx.checker.ownedFieldFacts, key)
-			}
-		}
 	}
 }
 
@@ -698,13 +708,7 @@ func (c *Context) HasLiveOwnedAlias(target string) bool {
 	return false
 }
 
-// HasLiveAlias reports whether any live binding aliases target's storage,
-// counting borrow-shaped (`*T`) aliases too. Unlike HasLiveOwnedAlias —
-// which only matters for re-init safety, where a borrow harmlessly observes
-// the new value — a plain `*T` view of an aggregate can still *read a field*,
-// so a non-null owned field must not be moved out while such a view is live
-// (the moved-out slot is zeroed and the non-null field type carries no nil
-// check, so the alias read would crash).
+// HasLiveAlias includes both storage aliases and derived lifetime dependencies.
 func (c *Context) HasLiveAlias(target string) bool {
 	return len(c.PointerFlow().AliasesOf(flow.Binding(target))) > 0
 }

@@ -1,0 +1,2 @@
+Compiling tests/value_switch_field_partial_err_test.bos
+Fatal: Owned field "b.p" is consumed on one branch but not the other

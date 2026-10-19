@@ -1,0 +1,2 @@
+package main
+fn main() { x := switch true { case true 10 } }

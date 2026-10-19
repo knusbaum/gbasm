@@ -30,6 +30,7 @@ const (
 	TargetMoved
 	TargetDead
 	TargetUnknown
+	TargetMutated // a derived view predates an opaque mutable call
 )
 
 type OriginKind int
@@ -51,8 +52,9 @@ const (
 )
 
 type originInfo struct {
-	kind     OriginKind
-	validity TargetValidity
+	kind           OriginKind
+	validity       TargetValidity
+	mutationSource Origin
 }
 
 type State struct {
@@ -66,15 +68,20 @@ type State struct {
 	// fresh join origin (registered as OriginBorrowed — it outlives the frame
 	// like any borrow) represents the union, and JoinMembers expands it back
 	// to its members for return-alias inference so both params are recorded.
-	joinOrigins map[Origin][]Origin
+	joinOrigins        map[Origin][]Origin
+	borrowSources      map[Origin]Origin
+	borrowDependencies map[Origin][]Origin
+	borrowEpoch        uint64
 }
 
 func NewState() *State {
 	return &State{
-		pointers:      make(map[Binding]PointerExpr),
-		origins:       make(map[Origin]originInfo),
-		fieldPointers: make(map[string]PointerExpr),
-		joinOrigins:   make(map[Origin][]Origin),
+		pointers:           make(map[Binding]PointerExpr),
+		origins:            make(map[Origin]originInfo),
+		fieldPointers:      make(map[string]PointerExpr),
+		joinOrigins:        make(map[Origin][]Origin),
+		borrowSources:      make(map[Origin]Origin),
+		borrowDependencies: make(map[Origin][]Origin),
 	}
 }
 
@@ -83,6 +90,11 @@ func (s *State) Clone() *State {
 		return NewState()
 	}
 	out := NewState()
+	out.borrowEpoch = s.borrowEpoch
+	for borrow, source := range s.borrowSources {
+		out.borrowSources[borrow] = source
+		out.borrowDependencies[borrow] = s.borrowDependencies[borrow]
+	}
 	for name, ptr := range s.pointers {
 		out.pointers[name] = ptr
 	}
@@ -109,6 +121,10 @@ func (s *State) JoinMembers(o Origin) []Origin {
 		return []Origin{o}
 	}
 	members, ok := s.joinOrigins[o]
+	if source, borrow := s.borrowSources[o]; borrow {
+		members = []Origin{source}
+		ok = true
+	}
 	if !ok {
 		return []Origin{o}
 	}
@@ -116,6 +132,10 @@ func (s *State) JoinMembers(o Origin) []Origin {
 	var out []Origin
 	var walk func(x Origin)
 	walk = func(x Origin) {
+		if source, borrow := s.borrowSources[x]; borrow {
+			walk(source)
+			return
+		}
 		if sub, isJoin := s.joinOrigins[x]; isJoin {
 			for _, m := range sub {
 				walk(m)
@@ -186,6 +206,18 @@ func Merge(a, b *State) *State {
 			}
 		}
 	}
+	for _, branch := range []*State{a, b} {
+		if branch == nil {
+			continue
+		}
+		if branch.borrowEpoch > out.borrowEpoch {
+			out.borrowEpoch = branch.borrowEpoch
+		}
+		for borrow, source := range branch.borrowSources {
+			out.borrowSources[borrow] = source
+			out.borrowDependencies[borrow] = branch.borrowDependencies[borrow]
+		}
+	}
 	seen := make(map[Binding]bool)
 	if a != nil {
 		for name := range a.pointers {
@@ -231,11 +263,15 @@ func mergeOriginInfo(a, b originInfo) originInfo {
 	if a.kind != b.kind {
 		kind = OriginUnknown
 	}
-	return originInfo{kind: kind, validity: mergeValidity(a.validity, b.validity)}
+	cause := a.mutationSource
+	if cause == "" {
+		cause = b.mutationSource
+	}
+	return originInfo{kind: kind, validity: mergeValidity(a.validity, b.validity), mutationSource: cause}
 }
 
 func mergeValidity(a, b TargetValidity) TargetValidity {
-	order := []TargetValidity{TargetDead, TargetMoved, TargetUnknown, TargetLive}
+	order := []TargetValidity{TargetDead, TargetMoved, TargetMutated, TargetUnknown, TargetLive}
 	for _, v := range order {
 		if a == v || b == v {
 			return v
@@ -260,55 +296,24 @@ func mergePointerExprPlain(a, b PointerExpr) PointerExpr {
 	return out
 }
 
-// mergePointerExpr merges a top-level binding's pointer facts across a
-// branch join, unioning escape-restricted taint rather than collapsing to
-// unknown-and-safe when the two branches differ. This mirrors the proven
-// mergeFieldPointerExpr precedent for struct fields, with one correction:
-// preference is *most-restrictive*, not first-escape-restricted-wins. A
-// local origin from either branch must surface (so a return/escape of the
-// merged binding is rejected); only when neither side is local do borrowed
-// origins combine. Two *different* borrowed origins synthesize a join
-// origin that records the union for return-alias inference.
+// mergePointerExpr retains all known allocation alternatives, including
+// unrestricted owned storage: field consumption through any alternative matters.
+// With an unknown branch, escape-restricted facts remain conservative.
 func (s *State) mergePointerExpr(a, b PointerExpr) PointerExpr {
-	aLocal := a.KnownOrigin && s.OriginKindOf(a.Origin) == OriginLocal
-	bLocal := b.KnownOrigin && s.OriginKindOf(b.Origin) == OriginLocal
-	// Most-restrictive first: a local in either branch wins, so the merged
-	// binding stays local-tainted and a later return/escape is rejected.
-	if aLocal {
+	if a.KnownOrigin && b.KnownOrigin && a.Origin != b.Origin {
+		return s.JoinOrigins(a, b)
+	}
+	if s.IsEscapeRestricted(a.Origin) {
 		return a
 	}
-	if bLocal {
-		return b
-	}
-	aRestricted := a.KnownOrigin && s.IsEscapeRestricted(a.Origin)
-	bRestricted := b.KnownOrigin && s.IsEscapeRestricted(b.Origin)
-	switch {
-	case aRestricted && bRestricted:
-		if a.Origin == b.Origin {
-			return mergePointerExprPlain(a, b)
-		}
-		// Two different borrowed origins: synthesize a join origin carrying
-		// both. The single-Origin PointerExpr cannot hold the union, so the
-		// join origin (registered OriginBorrowed) stands for it and is
-		// expanded by JoinMembers during inference so both params record.
-		jo := s.newJoinOrigin(a.Origin, b.Origin)
-		return PointerExpr{Origin: jo, KnownOrigin: true}
-	case aRestricted:
-		return a
-	case bRestricted:
+	if s.IsEscapeRestricted(b.Origin) {
 		return b
 	}
 	return mergePointerExprPlain(a, b)
 }
 
-// JoinOrigins unions two known-origin pointer facts into a single fact,
-// applying the same most-restrictive precedence as the branch merges: a
-// local origin in either position surfaces (so an escape of the joined
-// fact is rejected), otherwise two distinct escape-restricted origins
-// synthesize a join origin carrying both (expanded by JoinMembers during
-// inference). Identical origins and the all-clean case collapse to one.
-// Used by struct-by-value-call field-provenance recording, where several
-// arguments may flow into one returned struct.
+// JoinOrigins retains each possible allocation identity. A join inherits the
+// strictest lifetime restriction of its members without discarding other slots.
 func (s *State) JoinOrigins(a, b PointerExpr) PointerExpr {
 	if !a.KnownOrigin {
 		return b
@@ -319,14 +324,7 @@ func (s *State) JoinOrigins(a, b PointerExpr) PointerExpr {
 	if a.Origin == b.Origin {
 		return a
 	}
-	if s.OriginKindOf(a.Origin) == OriginLocal {
-		return a
-	}
-	if s.OriginKindOf(b.Origin) == OriginLocal {
-		return b
-	}
-	jo := s.newJoinOrigin(a.Origin, b.Origin)
-	return PointerExpr{Origin: jo, KnownOrigin: true}
+	return PointerExpr{Origin: s.newJoinOrigin(a.Origin, b.Origin), KnownOrigin: true}
 }
 
 // newJoinOrigin returns (creating if needed) a synthetic borrowed origin
@@ -337,7 +335,7 @@ func (s *State) newJoinOrigin(a, b Origin) Origin {
 	var members []Origin
 	add := make(map[Origin]bool)
 	for _, o := range []Origin{a, b} {
-		for _, m := range s.JoinMembers(o) {
+		for _, m := range s.validityMembers(o) {
 			if !add[m] {
 				add[m] = true
 				members = append(members, m)
@@ -353,51 +351,24 @@ func (s *State) newJoinOrigin(a, b Origin) Origin {
 	}
 	jo := Origin(sb.String())
 	s.joinOrigins[jo] = members
-	// A join of borrowed origins is itself borrowed: it outlives the frame
-	// (every member does) but must not escape — escape gates reject it like
-	// any other OriginBorrowed.
-	s.origins[jo] = originInfo{kind: OriginBorrowed, validity: TargetLive}
+	// Preserve lifetime restrictions while retaining every allocation member.
+	kind := OriginOwned
+	for _, member := range members {
+		mk := s.OriginKindOf(member)
+		if mk == OriginLocal {
+			kind = OriginLocal
+			break
+		}
+		if mk != OriginOwned {
+			kind = OriginBorrowed
+		}
+	}
+	s.origins[jo] = originInfo{kind: kind, validity: TargetLive}
 	return jo
 }
 
 func (s *State) mergeFieldPointerExpr(a, b PointerExpr) PointerExpr {
-	// Most-restrictive first: a local origin from EITHER branch must surface
-	// so a struct returned by value with a branch-local field is rejected.
-	// (The prior first-escape-restricted-wins order let a borrowed field in
-	// one branch mask a local field in the other, an order-dependent escape
-	// of local storage — the same hole fixed in mergePointerExpr.)
-	//
-	// Borrowed/borrowed union: two DIFFERENT borrowed origins synthesize a
-	// join origin carrying both, identical to mergePointerExpr's top-level
-	// path. The UNION is the only sound direction here: ReturnAliases tells
-	// the caller which params to keep live for the returned struct, so
-	// over-recording is conservative (caller keeps an extra param live) but
-	// under-recording drops a param the return still borrows — a
-	// use-after-free if the caller frees it. Dropping one of two merged
-	// borrowed fields would do exactly that, so we record both.
-	aLocal := a.KnownOrigin && s.OriginKindOf(a.Origin) == OriginLocal
-	bLocal := b.KnownOrigin && s.OriginKindOf(b.Origin) == OriginLocal
-	if aLocal {
-		return a
-	}
-	if bLocal {
-		return b
-	}
-	aRestricted := a.KnownOrigin && s.IsEscapeRestricted(a.Origin)
-	bRestricted := b.KnownOrigin && s.IsEscapeRestricted(b.Origin)
-	switch {
-	case aRestricted && bRestricted:
-		if a.Origin == b.Origin {
-			return mergePointerExprPlain(a, b)
-		}
-		jo := s.newJoinOrigin(a.Origin, b.Origin)
-		return PointerExpr{Origin: jo, KnownOrigin: true}
-	case aRestricted:
-		return a
-	case bRestricted:
-		return b
-	}
-	return mergePointerExprPlain(a, b)
+	return s.mergePointerExpr(a, b)
 }
 
 func (s *State) DeclarePointer(name Binding) {
@@ -436,8 +407,15 @@ func (s *State) AliasesOf(target Binding) []Binding {
 		return nil
 	}
 	matches := func(ptr PointerExpr) bool {
-		return (ptr.KnownOrigin && ptr.Origin == Origin(target)) ||
-			(ptr.KnownSlot && ptr.SlotTarget == target)
+		if ptr.KnownOrigin {
+			members := s.JoinMembers(ptr.Origin)
+			for _, origin := range members {
+				if origin == Origin(target) {
+					return true
+				}
+			}
+		}
+		return ptr.KnownSlot && ptr.SlotTarget == target
 	}
 	var out []Binding
 	for name, ptr := range s.pointers {
@@ -490,18 +468,22 @@ func (s *State) StorePointerThrough(ptr PointerExpr, src PointerExpr) Invalidati
 }
 
 func (s *State) WriteThroughPointer(ptr PointerExpr) Invalidation {
-	return invalidationForPointer(ptr)
+	return s.invalidationForPointer(ptr)
 }
 
 func (s *State) MutBorrowCall(arg PointerExpr) Invalidation {
-	return invalidationForPointer(arg)
+	return s.invalidationForPointer(arg)
 }
 
-func invalidationForPointer(ptr PointerExpr) Invalidation {
+func (s *State) invalidationForPointer(ptr PointerExpr) Invalidation {
 	if !ptr.KnownOrigin || ptr.Origin == Unknown {
 		return Invalidation{Unknown: true}
 	}
-	return Invalidation{Origins: map[Origin]bool{ptr.Origin: true}}
+	origins := make(map[Origin]bool)
+	for _, member := range s.JoinMembers(ptr.Origin) {
+		origins[member] = true
+	}
+	return Invalidation{Origins: origins}
 }
 
 func (s *State) NewLocalOrigin(name Binding) PointerExpr {
@@ -532,6 +514,23 @@ func (s *State) InvalidateOrigin(o Origin, v TargetValidity) {
 		info.validity = v
 		s.origins[o] = info
 	}
+	// Expire the snapshot itself as well as its source. Reinitializing a
+	// field later must never resurrect an old loan of the previous allocation.
+	for borrow := range s.borrowSources {
+		if borrow == o {
+			continue
+		}
+		for _, source := range s.mutationSources(borrow) {
+			if source == o {
+				info := s.origins[borrow]
+				info.validity = mergeValidity(info.validity, v)
+				info.mutationSource = o
+				s.origins[borrow] = info
+				break
+			}
+		}
+	}
+	s.borrowEpoch++
 }
 
 func (s *State) CheckDerefValidity(ptr PointerExpr) (ok bool, reason string) {
@@ -544,9 +543,38 @@ func (s *State) CheckDerefValidity(ptr PointerExpr) (ok bool, reason string) {
 	}
 	switch info.validity {
 	case TargetMoved:
-		return false, fmt.Sprintf("cannot dereference pointer to %q: the target was consumed", string(ptr.Origin))
+		return false, fmt.Sprintf("cannot dereference pointer to %q: the target was consumed", s.OriginName(ptr.Origin))
 	case TargetDead:
-		return false, fmt.Sprintf("cannot dereference pointer to %q: the allocation was freed", string(ptr.Origin))
+		source := ptr.Origin
+		if info.mutationSource != "" {
+			source = info.mutationSource
+		}
+		return false, fmt.Sprintf("cannot dereference pointer to %q: the allocation was freed", s.OriginName(source))
+	case TargetMutated:
+		source := ptr.Origin
+		if info.mutationSource != "" {
+			source = info.mutationSource
+		}
+		return false, fmt.Sprintf("borrow from %q is no longer valid after a mutable call; borrow again after the call", s.OriginName(source))
+	}
+	if source, borrow := s.borrowSources[ptr.Origin]; borrow {
+		if ok, reason := s.CheckDerefValidity(PointerExpr{Origin: source, KnownOrigin: true}); !ok {
+			return false, reason
+		}
+	}
+	for _, dependency := range s.borrowDependencies[ptr.Origin] {
+		if ok, reason := s.CheckDerefValidity(PointerExpr{Origin: dependency, KnownOrigin: true}); !ok {
+			return false, reason
+		}
+	}
+	// A switch/branch result can refer to any joined member. A dead or moved
+	// member makes the dereference unsafe even while the join itself is live.
+	if members, joined := s.joinOrigins[ptr.Origin]; joined {
+		for _, member := range members {
+			if ok, reason := s.CheckDerefValidity(PointerExpr{Origin: member, KnownOrigin: true}); !ok {
+				return false, reason
+			}
+		}
 	}
 	return true, ""
 }

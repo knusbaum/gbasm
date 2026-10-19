@@ -1,0 +1,2 @@
+Compiling tests/consuming_switch_discard_result_err_test.bos
+Fatal: Cannot discard an owned switch result; bind or consume it

@@ -111,6 +111,13 @@ func ResolveSelector(c *Context, expr AST) ResolvedObject {
 	case *Symbol:
 		return resolveRoot(c, e.Name, e)
 	case *Dot:
+		// Narrowed variant payloads are runtime fields too. Preserve their
+		// type before continuing a chain such as result.payload.member.
+		if ft, _, ok := narrowedValuesField(c, e); ok {
+			path, _ := FlowPathForExpr(e.Val)
+			variant, _ := c.VariantNarrow(path.Key())
+			return ResolvedObject{Kind: ResolvedStructField, Name: e.Member, Type: ft, Expr: e, StructDecl: &StructDecl{Fields: variant.Payload}}
+		}
 		prev := ResolveSelector(c, e.Val)
 		return stepSelector(c, prev, e.Member, e)
 	default:

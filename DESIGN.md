@@ -132,6 +132,8 @@ Type modifiers are **prefix** and read left-to-right, each binding to the type o
 - `[]*byte` — a **slice of** `*byte`. The `[]` is outermost; the `*` binds to the element `byte`.
 - `*[]byte` — a **pointer to** a `[]byte` slice. The `*` is outermost. This is the type of `&s` where `s []byte`, and of a function-scope `&"literal"`, so `%s`-style code can name and dereference (`*p`) the pointer-to-slice a `...any` string argument produces.
 
+Slices themselves are not nullable: `?[]byte` is rejected. A zero-initialized `[]byte` is a valid empty slice. Use `?*[]byte` for a nullable pointer to a slice, or `[]?*byte` for a slice of nullable pointers.
+
 `mut`, `owned`, and `?` bind the same way: `[]mut byte` is a slice of mutable bytes, `?*byte` a nullable pointer, `*mut []byte` a pointer to a mutable slice, `[N]?*T` an array of nullable pointers. Arrays reverse when nested: `[1][8]byte` is one row of eight bytes. `ASTType.String()` emits exactly this canonical prefix form and `parseTypeName` is its inverse — the two round-trip byte-for-byte (`cmd/bosc/type_encoding_test.go`).
 
 ### Type aliases
@@ -296,6 +298,12 @@ f, err = io.open(path2, io.O_RDONLY, 0)             // err re-binds the existing
 A single-name bind to a multi-return function is rejected — the count of binds must match the count of returns.
 
 **Type inference.** When the type slot is omitted, the binding's type is inferred from the initializer. Untyped integer literals infer as `i64`; expressions whose type cannot be expressed as a value (a `void` call, the `nil` literal) are rejected with a directed error.
+
+`[e1, e2, ...]` is an array literal. In a local inferred declaration, `x := [0, 1, 2, 3]` produces `[4]i64`; untyped floating-point elements default to `f64`. Element type inference follows the first element, recursively for nested arrays, and every element must be compatible with that type. An inferred first element of `nil` is rejected. Explicitly typed fixed-array initializers provide the element type instead. Nonempty array literals can initialize slices at file scope, where static backing storage is emitted; local slice destinations are rejected.
+
+`[]` is an empty slice literal. It takes its element type, mutability, and ownership from a slice destination: `s []byte := []`, `s = []`, `return []` in a slice-returning function, slice arguments, and slice fields in struct literals. It emits a zeroed `{data, len, cap}` header without allocating backing storage. An owned empty slice can be freed normally. `x := []` is rejected because there is no element type to infer, and `[]` cannot initialize a scalar or fixed array. Projection casts such as `[]byte(value)` retain their existing meaning.
+
+Nonempty array literals used as expressions have backing storage in the current function's frame. A view such as `['a', 'b', 'c'][:]` can be used locally or passed as a borrow, but cannot escape through a return or longer-lived storage. String literals, by contrast, have static backing storage.
 
 ```
 var p := alloc(i64)            // owned *mut i64
@@ -546,7 +554,7 @@ type point struct { x i64, y i64, z i64 }
 var p point := point{ x: 10, y: 20, z: 30 }
 ```
 
-Struct literals are context-typed. Omitted fields are zero-initialized only if the field's type is zero-initializable. Non-null pointer fields are not zero-initializable and must be provided explicitly.
+Struct literals are context-typed. Omitted fields are initialized to their default on every construction, including when stack storage is reused. This is permitted only if the field's type is zero-initializable. Non-null pointer fields are not zero-initializable and must be provided explicitly.
 
 **Bare struct literals.** A `{ field: val, ... }` form without a leading type name is legal at any site where the destination shape is known: return statements, typed `:=` and `var` initializers, assignments to a struct-typed lvalue, and function arguments whose parameter type is a struct. The literal takes the destination's struct shape. Using a bare literal where no shape is in scope (e.g. as an unbound expression) is a compile error.
 
@@ -939,7 +947,7 @@ fn ok(b owned *owned mut box) {
 }
 ```
 
-The compiler tracks pointer aliases by origin. A pointer created by `new` or `alloc` and assigned to local `p` has origin `p`; aliases copied from it share that origin. Writes through unknown pointers, globals, conflicting branch merges, or opaque `*mut` calls are conservative and invalidate every owned-field fact that could depend on pointer precision.
+The compiler tracks pointer aliases by origin. A pointer created by `new` or `alloc` and assigned to local `p` has origin `p`; aliases copied from it share that origin. Writes through unknown pointers, globals, or opaque `*mut` calls conservatively invalidate consumed facts for nullable fields that may acquire a new obligation. Non-null consumed facts persist until an explicit tracked reinitialization; opaque calls cannot establish restoration. Known branch alternatives retain their allocation identities.
 
 Pointer-to-pointer aliases are tracked as aliases to pointer slots:
 
@@ -985,6 +993,62 @@ These rules are required by the ownership model:
 
 The mutable-address rule is what address-taking of owned bindings enforces (see [The address-of operator](#the-address-of-operator)). `&x` itself carries the source's owned bits — whether the result acts as a borrow or as a move is determined by the destination type, the same way it is for value-typed `owned T` bindings. `*slot = other` is foreclosed by rejecting any `*mut` view of an owner slot, not by stripping ownership from the pointer expression.
 
+#### Borrows across mutable calls
+
+A borrowed result described by `from(X)` (explicitly on an interface, or inferred
+from a function body) is valid only until opaque mutable access may change X's
+storage. Passing a non-owning `*mut X` invalidates existing derived views, even if
+the particular implementation happens not to reallocate on that invocation.
+This is a rule about the capabilities in the signature, not an effect summary.
+The object X remains usable, as do ordinary aliases pointing at X itself; new
+borrows obtained after the call are valid.
+
+```
+b := fmt.StringBuilder.new()
+b.str("abc")
+var view []byte := b.borrow()
+b.expand(1024)
+// use(view)                 // rejected: the old backing may have been freed
+view = b.borrow()            // fresh view of the current backing
+use(view)
+b.destroy()
+```
+
+The rule applies to concrete methods, direct and indirect functions, interface
+method receivers, and interface arguments that grant mutable receiver access.
+Read-only calls preserve loans. Calls through aliases use the same source
+identity. Unknown mutation targets conservatively invalidate outstanding views;
+known unrelated objects do not. A mutation on any reachable branch invalidates
+a view at the join. Borrow copies and views stored in fields retain that state.
+A result borrowing from multiple arguments depends on all of them.
+
+Arguments are checked after evaluation and mutation invalidation: passing X
+mutably together with a view of X to the same call is rejected, as is evaluating
+a later argument that invalidates an earlier borrowed argument. For example,
+`b.str(b.borrow())` is not safe in general because expansion may free the source
+before the copy. Use independently owned source storage when that is needed.
+
+The tracker keeps allocation lifetime separate from loan validity. A loan stores
+a snapshot of its source and backing-allocation dependencies. Mutable calls
+expire snapshots without freeing the owner. Fresh borrows use a new snapshot;
+copying an old borrow never refreshes it. Freeing a captured allocation also
+expires its loans, so reinitializing a field cannot resurrect views of its old
+backing. This adds no runtime checks or representation changes.
+
+Neither backing-storage views nor references to the aggregate prevent field
+consumption. Struct aliases share consumed-field state: after `free(x.buf)`,
+`y.buf` is unreadable when `y *mystruct := &x`, but other fields remain readable.
+After `x.buf` is reinitialized, `y.buf` reads the new buffer. A slice copied from
+the old buffer stays invalid. Local aliases can also be formed while a field is
+consumed, provided they do not read it before restoration.
+
+Consumption facts follow aliases stored in fields and every known alternative
+of a branch-merged pointer. Consuming or initializing an owned field through an
+alias with multiple possible target allocations is rejected: that write would
+leave different ownership states depending on the runtime pointer. A partially
+consumed aggregate cannot be copied, passed, or returned, including through its
+aliases, because the receiving scope cannot see the consumed-slot facts.
+
 #### Conservative current choices
 
 Some restrictions are not fundamental to ownership, but are the current shape of the implementation:
@@ -992,8 +1056,8 @@ Some restrictions are not fundamental to ownership, but are the current shape of
 - Mutable calls are treated as opaque unless the compiler is analyzing the write directly. A function taking `*mut T` may only write non-owned fields, but without an effect summary the caller must assume owned-field facts may be invalidated.
 - Unknown aliases collapse precision. Globals, unresolved pointer origins, conflicting branch merges, and values that cross boundaries the flow model does not understand all force conservative invalidation.
 - Stacked ownership cannot be partially moved. Consuming only the outer `owned *` or only the inner `owned T` would require the source binding's type/state to change.
-- Non-null owned fields cannot be moved out of an aggregate. There is no valid placeholder to leave behind, so the compiler cannot represent the aggregate as still borrowable or freeable after the move.
-- Stacked values and non-null aggregates have no explicit "partially consumed but still in scope" type. Nullable owned fields use `nil` as the representable consumed state; non-null fields do not have that escape hatch.
+- Non-null owned fields can be temporarily consumed within a function. The aggregate cannot cross a call or return boundary until those fields are restored; disposal/free remains permitted once all obligations are discharged.
+- Partially consumed aggregates have no separate user-visible type. Their consumed slots are tracked locally through aliases; nullable fields can additionally represent consumption as `nil` across call boundaries.
 - Borrow checking is call-local and non-escaping, not a full lifetime/provenance system. It prevents simple stored borrowed pointers, but it is not intended to prove every memory-safety property.
 
 These choices are deliberately conservative. They reject some programs that could be safe with a richer model, but they preserve the invariants above without requiring typestate, interprocedural effect summaries, or full region/lifetime analysis.
@@ -1060,7 +1124,7 @@ A mutable borrow must restore every consumed non-nullable owned field before any
 
 A **non-null owned field** — whether a pointer (`owned *T`), a scalar (`owned i64`, `owned FD`), or a struct value (`owned T`) — may be moved out of an owned aggregate, so an aggregate holding owned resources can be destructed field by field (see [`PROPOSAL_owned_field_move.md`](docs/implemented/PROPOSAL_owned_field_move.md)). Moving a field out copies its value to the destination and records the field's obligation as consumed — just like moving a local `owned` binding. As defense-in-depth a register-sized slot is scrubbed to zero on move-out; a memory-backed struct-value field's bits are left in place (a wider store the scrub does not attempt), since correctness rests on the consumed-field tracking and the alias/escape gates, not on the scrub. The rules:
 
-- Moving the field out leaves the aggregate **inconsistent** (the field has no nil placeholder; the slot is zeroed and the non-null type carries no nil check). While inconsistent, the aggregate may not **escape its scope** — it can't be passed to a function, returned, moved to another binding, or aliased (`&f` / `var x := f`) — because the local consistency fact can't cross those boundaries. Only the shape-blind intrinsics `dispose` and `free` may consume it. Reading a moved-out field is a use-after-move error.
+- Moving the field out leaves the aggregate **inconsistent** (the field has no nil placeholder; the slot is zeroed and the non-null type carries no nil check). While inconsistent, the aggregate may not **escape its scope** — it can't be passed to a function, returned, or copied to another value binding — because the receiving scope cannot see its consumed slots. Local reference aliases remain permitted and share those slots' consumed state. Only the shape-blind intrinsics `dispose` and `free` may consume it. Reading a moved-out field is a use-after-move error.
 - **Re-initialization** restores consistency: assigning to a moved-out field (`f.a = new(...)`) is legal and marks it live again; once no non-null owned field is consumed, the aggregate may escape normally. Assigning to a *live* owned field is still rejected (it would leak its current value):
 
 ```
@@ -1317,7 +1381,7 @@ but never persisted into storage that outlives their source.
 
 The current system verifies ownership cleanup along compiler-visible ownership paths. Non-escaping borrows are what make that meaningful: a function taking `*T` is not allowed to stash the pointer and observe freed storage later.
 
-Within a function, mutable borrows interact with owned-field facts through pointer-flow analysis. The compiler tracks which local pointer bindings share an origin and invalidates owned-field facts when a mutable write or opaque `*mut` call may have changed owned storage through an alias.
+Within a function, struct aliases share consumed-field facts through pointer-flow analysis. A field read through any alias fails while that slot is consumed and succeeds after explicit replacement. Opaque writes invalidate nullable-field cleanup facts because a callee may safely observe nil and install a new resource; they cannot prove restoration of a consumed non-null field.
 
 Read-only borrows preserve facts:
 
@@ -1643,6 +1707,7 @@ Field separators inside a struct body may be `,`, a newline (the lexer inserts `
 
 - Instance methods take their receiver as the first parameter. The parameter name is arbitrary; `self` is conventional. Most methods use a pointer receiver (`*T`, `*mut T`, `owned *owned T`); small register-resident types — including `values` types and `i64`-sized type aliases that want value-backed interface satisfaction — may instead use a **value receiver** (`name(e T)`). The call-site dispatch rule (below) consults the declared receiver shape and either takes the address or copies the value.
 - The receiver may carry ownership qualifiers: `*T` (borrow), `*mut T` (mutable borrow), `owned *owned T` (consuming — takes ownership of the pointed-to value).
+- Pointer receiver calls implicitly take the address of addressable value receivers, including struct fields, narrowed variant payload fields, and array/slice elements. A temporary value such as `make_value().method()` cannot satisfy a pointer receiver. Consuming a field through its address marks that field consumed without clearing the storage before the callee reads it.
 - **Static methods** take *no* receiver. They are namespaced under the type and called as `T.method(args)`. A static method has the same symbol shape (`pkg.T.method`) as an instance method; the only difference is that no receiver is implicit at the call site.
 - Methods are emitted as regular functions with three-part symbol names: `pkg.TypeName.method_name` (e.g. `mypkg.foo.compute`).
 - `type foo bar` without a block continues to work as before — a distinct named type with no attached methods.
@@ -2012,11 +2077,54 @@ e file_info := file_info.FILE_INFO{ fd: 3, path: "config.bos" }
 c file_info := file_info.CLOSED
 ```
 
-The **variant `switch`** is a second mode of `switch` (alongside the `any`
-type-switch): it dispatches on the tag and **narrows** the scrutinee to the
+### Ordinary value switches
+
+A switch over an ordinary comparable value selects the first matching constant
+case using the same equality rules as `==`. The head is evaluated exactly once;
+case bodies do not fall through into following cases. Cases may be scalar
+literals, constant arithmetic/bitwise/boolean expressions, numeric conversions,
+`size_of`/`align_of`, or tag-only values cases when comparing an interface.
+A `:=` binding is immutable but is still a runtime value, so it cannot be used
+as a constant case. Duplicate cases are rejected after conversion to the head's
+comparison type, including equivalent arithmetic and floating-point signed zero.
+NaN cannot be a case because it never compares equal with `==`.
+
+```
+switch code {
+    case i64('v') { verbose = true }
+    case i64('o') { output = parser.optarg }
+    case 256     { show_help() }
+    default      { handle_other(code) }
+}
+
+answer := switch n {
+    case 1 10
+    case 2 20
+    default 0
+}
+```
+
+Statement switches may omit `default`; an unmatched value then does nothing.
+Expression switches must produce a value on every path: they require `default`,
+except that a boolean switch covering both `true` and `false` is exhaustive
+without one. All result arms must agree on their type; untyped literal results
+default to `i64` or `f64` when inferring a switch expression's type. A head binding
+(`switch x := expr` or `switch var x := expr`) is scoped to the switch and works
+for statements and expressions.
+
+The usual ownership, borrowed-storage, nullability, and pointer-validity branch
+checks apply to every arm, including the unmatched path when present. Returning
+arms do not constrain the state merged for code after the switch. A nil case
+narrows a nullable head binding in that arm, and excludes nil in subsequent arms
+and `default`. Strings are slices in Boson: slices, arrays, and structs do not
+support `==`, so they cannot be ordinary switch heads.
+
+The **variant `switch`** is another mode of `switch` (alongside ordinary value
+switches and interface type switches): it dispatches on the tag and **narrows** the scrutinee to the
 matched variant inside each `case`, after which the variant's fields are in
-scope. It is **exhaustive** — every variant must be covered or a `default`
-present:
+scope. A consuming switch or an expression switch must cover every variant or have a
+`default`. An inspecting statement switch may omit cases; unmatched values are
+preserved:
 
 ```
 switch e {
@@ -2031,20 +2139,59 @@ only valid where the scrutinee is narrowed to a single variant (not in a
 `default`). Accessing a field name shared by several variants resolves to the
 narrowed variant's field (offset and type).
 
-**Ownership** reuses the existing machinery. An `owned` values value consumes its
-owned payload args at construction, and its owned payload fields can be moved out
-in a case (`f owned FD := e.fd`, reusing value-typed owned-field move) and the
-whole value discharged with `dispose(e)`. Owned consumption is all-or-nothing
-across the cases (as with `if`/`else`). The **tag cannot change while narrowed**:
-reassigning the whole scrutinee, or taking its address, inside its own case is
-rejected, and a scrutinee that already has a live alias is not narrowed — so
-`e.field` can never read the wrong payload.
+**Ownership** follows the final state of each reachable arm, including returns,
+breaks, and continues. A variant constructor returned from a function adopts its
+declared return type, including ownership, just as a struct literal does. An
+owned constructor consumes the owned arguments placed into its payload.
+
+Switching an owned ADT infers one of two operations:
+
+- **Inspect:** every active owned payload field remains live. A field consumed
+  and then reinitialized is live again, so temporary replacement is inspection.
+- **Consume:** every active owned payload field is transferred or consumed.
+  The compiler discharges the outer wrapper automatically. It cannot be used
+  afterward, and a further `dispose(wrapper)` is a use after move.
+
+Partial consumption and disagreement between consuming and inspecting arms are
+rejected. An arm with no owned payload fields is compatible with either mode.
+A consuming switch must be exhaustive. A borrowed scrutinee may only be
+inspected; it cannot transfer ownership of the caller's payload. Explicit
+`dispose` retains its assertion semantics and may abandon the entire wrapper.
+
+An expression arm yields a value with a bare expression. An arm that exits the
+enclosing function or loop contributes no result type. All arms that continue
+must yield compatible types; a block that falls through is not a value. For
+example, a result type with `ERR{err error}` and `FD{fd owned FD}` can be unpacked
+without an extraction method or manual wrapper cleanup:
+
+```
+fd := switch r := open(path, flags, mode) {
+    case ERR {
+        report(r.err)
+        return
+    }
+    case FD r.fd
+}
+// fd owns the descriptor here; r is out of scope and fully discharged.
+fd.close()
+```
+
+The destination does not acquire an ownership obligation until its initializer
+yields. An early exit in an initializer therefore does not owe cleanup of the
+unfinished destination. A zero-initializable owned scalar may also be declared
+without an initializer: it starts consumed, cannot be read, and can be assigned
+on every path that reaches its later use. Owned structs still require an
+initializer.
+
+The **tag cannot change while narrowed**: reassigning the whole scrutinee or
+taking its address inside its own case is rejected. A scrutinee with a live
+alias is not narrowed, so a field access cannot read the wrong payload.
 
 ### What is not in v1
 
 - The variant `switch` works as both a statement and an **expression**
-  (`y := switch e { case A e.x  case B 0 }`, where each case body is an
-  expression and all yield the same type). Payload variants cross package
+  (`y := switch e { case A e.x  case B 0 }`, with value-producing
+  arms agreeing on their type and exiting arms contributing no value). Payload variants cross package
   boundaries, and a head-bound scrutinee (`switch x := expr`,
   `switch var x := …`) is supported. Remaining follow-ons: or-patterns and
   guards.
@@ -2353,7 +2500,8 @@ Walks the AST and emits `.bs` assembly text. Key responsibilities:
 
 The compiler tracks per-binding move state in `Context.movedBindings`. Each `Funcall` whose parameter type contains `owned` marks the argument variable as moved. References to moved variables are compile errors.
 
-Pointer alias state is kept separately in `cmd/bosc/flow`. `Context` owns a flow state and snapshots it with other control-flow facts. The flow model records pointer origins (which local object a pointer aliases), pointer-slot targets (`&alias`), unknown pointers, branch merges, and invalidation results. `compile.go` converts AST expressions into flow operations such as pointer assignment, store-through-slot, direct mutable write, and opaque `*mut` call; owned-field facts remain in `Context` and are invalidated from the flow result.
+Pointer alias state is kept separately in `cmd/bosc/flow` (including derived-loan
+snapshots in `borrow.go`). `Context` owns a flow state and snapshots it with other control-flow facts. The flow model records pointer origins (which local object a pointer aliases), pointer-slot targets (`&alias`), unknown pointers, branch merges, and invalidation results. `compile.go` converts AST expressions into flow operations such as pointer assignment, store-through-slot, direct mutable write, and opaque `*mut` call; owned-field facts remain in `Context` and are invalidated from the flow result.
 
 For `if`/`else`: the compiler snapshots `movedBindings` before each branch, compiles them independently, and at the join point compares the two snapshots. Pre-existing owned variables consumed on one branch but not the other are an error.
 
@@ -3256,8 +3404,9 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Unused-binding enforcement: a binding (local or parameter) that is never read, address-taken, passed, or consumed is a compile error; checked per scope at scope exit and per function for parameters; unused subsumes never-reassigned when both apply
 - The discard `_`: a write-only, never-readable, repeatable binding target valid in declarations, assignments, destructuring slots, and parameters; the initializer/argument is still evaluated; discarding an owned value is rejected
 - File-scope variable declarations with compile-time-constant initializers — integer/byte literals, string-into-`byte[N]`, string-into-`[]byte` (slice with relocated pointer), struct literals composing all of the above, array literals (`[1, 2, 3]`) for fixed-array and slice destinations, `&someGlobal`, `&SomeStruct{...}` (anonymous globals), `&globalArr[N]` (pointer-into-array via relocation addend)
-- Array literals at runtime as initializers for fixed-array locals; slice destinations rejected with a directed error (lifetime issue)
+- Array literals with inferred integer/float element types, nested initialization, and function-local expression backing tracked against escapes; context-typed empty slice literals (`[]`) without backing allocation. Nonempty local array literals cannot directly initialize slice destinations.
 - Full nested `*mut T` write-through mutability with implicit coercion
+- Consuming variant switches inferred from final payload ownership state, automatic wrapper discharge on fallthrough and early exits, and expression switches with exiting arms.
 - Full `owned T` ownership type system: move semantics, `dispose()`, `owned()` promotion, owned struct fields, owned-field move tracking, if/else branch analysis, loop backedge/exit checks, and scope-exit checks
 - Re-initialization of a moved `var owned` binding via assignment (including struct-literal RHS), gated by a pointer-flow check that rejects when a live owned alias still references the binding's storage
 - Address-of of an owned binding (`&x`) preserves owned bits; whether the result borrows or moves is decided by the destination type (`*T` borrows, `*owned T` moves; `*mut`-shaped views of the owner slot remain rejected)
@@ -3266,6 +3415,9 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 - Interfaces: structural satisfaction at coercion sites, fat-pointer representation (data + vtable, 16 bytes), automatic vtable emission per `(base, shape, I)` coercion, indirect dispatch through the vtable, and `owned I` / `I` interface qualifiers. The vtable carries a `[typedesc_ptr, shape_word, method_0..N]` layout: slot 0 is the single per-base-type `__typedesc_<base>` symbol (built-in scalar typedescs emitted by `builtin`), slot 1 is a canonical 64-bit shape word encoding the source's pointer/mut/slice/array shape, methods follow at slot 2+
 - The `any` built-in empty interface (zero methods, satisfied by every concrete type, available without import); used as a coercion target and as the element type of an untyped variadic
 - Variadic parameters (`name ...T`, last only): desugared to a `[]T` slice built on the caller's stack with per-element coercion, explicit `slice...` forwarding, and borrow-checked non-escaping callee slice
+- Alias-aware consumed struct fields, replacement recovery, field reads and call/copy/return guards, with known branch alternatives retained.
+- Invalidation of derived `from(X)` borrows across opaque mutable calls, with fresh-loan recovery, same-call argument validation, interface/alias support, backing-allocation dependencies, and conservative branch joins.
+- Ordinary value switches with constant cases and `==` comparison semantics, no fallthrough, single head evaluation, duplicate-case checking, exhaustive expression results, and shared branch tracking with variant switches.
 - Concrete-type assertion (`x.(T)` → `multiretu{T, bool}`, bound via the two-value declaration form) lowering to an inline two-compare check (typedesc identity + exact shape-word equality), and a type switch (`switch (v x.(type)) { case T {...} default {...} }`) with first-match-wins flow-narrowed case binding
 - Interface-to-interface assertion (`x.(I)` and `case SomeIface` in a type switch) backed by the `_iface.assert_to` runtime helper and per-typedesc lazy itab caches; the structured `__typedesc_<T>` / `__typedesc_cache_<T>` / `__iface_desc_<I>` records (with FNV-1a name/sig hashes, canonical non-receiver signature text, and a shape-derived receiver-shape match) are home-package-emitted and resolved cross-package by relocation; `x.(any)` allocates a 2-slot itab preserving the `[typedesc, shape]` invariant
 - Coercion-time interface satisfaction uses the full shape-word receiver-shape filter (distinguishing value / `*self` directions exactly), in lockstep with the runtime helper's derivation; the new `typedesc` / `typedesc_cache` / `iface_desc` bas directives serialize the records and bas enforces the typedesc/cache single-emitter pairing; `bdump` pretty-prints all three

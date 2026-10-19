@@ -1,0 +1,2 @@
+Compiling tests/empty_slice_infer_err_test.bos
+Fatal: cannot infer empty slice element type; specify a slice type

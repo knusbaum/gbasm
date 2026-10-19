@@ -1,0 +1,2 @@
+Compiling tests/value_switch_call_err_test.bos
+Fatal: Switch case must be a compile-time constant

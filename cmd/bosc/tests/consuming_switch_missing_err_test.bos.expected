@@ -1,0 +1,2 @@
+Compiling tests/consuming_switch_missing_err_test.bos
+Fatal: Consuming switch on owned V must cover every variant or have a consuming default

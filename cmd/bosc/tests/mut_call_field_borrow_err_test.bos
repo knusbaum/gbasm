@@ -1,0 +1,10 @@
+package main
+type Buffer struct {buf owned []mut byte}
+fn touch(b *mut Buffer) { _ = len(b.buf) }
+fn main() {
+ b:=new(Buffer{buf:make([]mut byte,1)})
+ view []byte := b.buf
+ touch(b)
+ _ = len(view)
+ free(b.buf);free(b)
+}

@@ -1,7 +1,7 @@
 package main
 
-// A value owned field may not be moved out of an aggregate while a live alias
-// of that aggregate exists — the alias could read the moved-out slot.
+// Moving an owned field is allowed with aliases, but passing the inconsistent
+// aggregate through an alias must fail before the callee can read that field.
 type foo struct {
 	x owned i64
 }

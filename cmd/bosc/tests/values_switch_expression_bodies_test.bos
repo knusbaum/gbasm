@@ -1,0 +1,19 @@
+package main
+import "string"
+
+type choice values { A; B }
+
+fn main() {
+ t choice := choice.A
+ n i64 := 9
+ ptr := &n
+ a i64 := switch t { case A (n) case B (n) }
+ b i64 := switch t { case A -n case B n }
+ c i64 := switch t { case A *ptr case B 0 }
+ string.puti(a)
+ string.puts("\n")
+ string.puti(b)
+ string.puts("\n")
+ string.puti(c)
+ string.puts("\n")
+}

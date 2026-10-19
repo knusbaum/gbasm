@@ -1,0 +1,15 @@
+package main
+import "string"
+type Handle i64 {
+ get(h *Handle) i64 {return i64(*h)}
+ destroy(h *owned Handle) {string.puti(i64(*h));string.puts("\n");dispose(h)}
+}
+type Result values {OPEN{h owned Handle}; EMPTY}
+fn main() {
+ r owned Result := Result.OPEN{h:owned(Handle(37))}
+ switch r {
+  case OPEN {r.h.destroy();r.h.destroy()}
+  case EMPTY {}
+ }
+ dispose(r)
+}

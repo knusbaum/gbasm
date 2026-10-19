@@ -2,7 +2,7 @@ package main
 
 type conn values {
 	OPEN{ fd owned i64 }
-	CLOSED
+	CLOSED{ other owned i64 }
 }
 
 fn main() {

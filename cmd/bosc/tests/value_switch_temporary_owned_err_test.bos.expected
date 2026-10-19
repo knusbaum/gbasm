@@ -1,0 +1,2 @@
+Compiling tests/value_switch_temporary_owned_err_test.bos
+Fatal: Owned temporary in switch head requires a head binding: use `switch x := expr`

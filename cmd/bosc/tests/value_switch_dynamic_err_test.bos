@@ -1,0 +1,2 @@
+package main
+fn main() { n i64 := 1; switch n { case n {} } }

@@ -1,0 +1,2 @@
+Compiling tests/method_field_owned_receiver_twice_err_test.bos
+Fatal: Use of "r.h" after it was moved

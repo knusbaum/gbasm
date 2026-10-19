@@ -1,0 +1,2 @@
+Compiling tests/mut_call_multi_source_err_test.bos
+Fatal: borrow from "b" is no longer valid after a mutable call; borrow again after the call

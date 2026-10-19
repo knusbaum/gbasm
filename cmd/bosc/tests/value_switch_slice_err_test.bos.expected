@@ -1,0 +1,2 @@
+Compiling tests/value_switch_slice_err_test.bos
+Fatal: slices are not comparable with ==; write an explicit equality function

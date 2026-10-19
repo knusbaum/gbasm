@@ -10,8 +10,9 @@ type file_info values {
 
 fn main() {
 	e file_info := file_info.CLOSED
-	switch e {
-		case FILE_INFO { string.puts("f\n") }
-		case CLOSED    { string.puts("c\n") }
+	n := switch e {
+		case FILE_INFO 1
+		case CLOSED 0
 	}
+	string.puti(n)
 }

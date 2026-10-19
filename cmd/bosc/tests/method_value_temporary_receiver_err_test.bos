@@ -1,0 +1,9 @@
+package main
+import "string"
+type Handle i64 {
+ get(h *Handle) i64 {return i64(*h)}
+ destroy(h *owned Handle) {string.puti(i64(*h));string.puts("\n");dispose(h)}
+}
+type Result values {OPEN{h owned Handle}; EMPTY}
+fn handle() Handle {return Handle(12)}
+fn main() {_ = handle().get()}

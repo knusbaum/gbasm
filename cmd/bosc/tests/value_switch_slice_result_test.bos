@@ -1,0 +1,11 @@
+package main
+import "string"
+fn choose(flag bool) []byte {
+ return switch flag {case true [] case false "abc"}
+}
+fn main() {
+ a:=choose(true)
+ b:=choose(false)
+ string.puti(len(a));string.puts("\n")
+ string.puti(len(b));string.puts("\n")
+}

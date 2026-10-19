@@ -1,0 +1,11 @@
+package main
+type Box struct {buf owned []mut byte}
+type Holder struct {p *Box}
+fn inspect(b *Box) i64 {return len(b.buf)}
+fn main() {
+ var x owned Box := Box{buf:make([]mut byte,1)}
+ h := Holder{p:&x}
+ free(x.buf)
+ _ = inspect(h.p)
+ dispose(x)
+}

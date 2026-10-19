@@ -1,0 +1,9 @@
+package main
+type V values {A{a owned i64;b owned i64}}
+fn main() {
+ v owned V:=V.A{a:owned(i64(1)),b:owned(i64(2))}
+ switch v {case A {drop(v.a)}}
+ dispose(v)
+}
+
+fn drop(x owned i64) {dispose(x)}

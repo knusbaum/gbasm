@@ -1,0 +1,14 @@
+package main
+type Buffer struct { buf owned []mut byte } {
+ borrow(b *Buffer) []byte { return b.buf[:] }
+ touch(b *mut Buffer) { _ = len(b.buf) }
+}
+interface Mutable { touch(b *mut self) }
+fn main() {
+ b:=new(Buffer{buf:make([]mut byte,1)})
+ m Mutable := b
+ view:=b.borrow()
+ m.touch()
+ _ = len(view)
+ free(b.buf);free(b)
+}

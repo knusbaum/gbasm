@@ -1,0 +1,9 @@
+package main
+import "string"
+type code values { A; B }
+fn main() {
+ v any := code.A
+ switch v { case code.A {string.puts("A\n")} case code.B {string.puts("wrong\n")} default {string.puts("wrong\n")} }
+ w any := i64(1)
+ switch w { case i32(1) {string.puts("wrong\n")} case i64(1) {string.puts("int\n")} default {string.puts("wrong\n")} }
+}

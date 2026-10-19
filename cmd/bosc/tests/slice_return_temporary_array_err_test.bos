@@ -1,0 +1,6 @@
+package main
+fn bad() []byte {
+ x := ['a', 'b', 'c'][:]
+ return x
+}
+fn main() {}

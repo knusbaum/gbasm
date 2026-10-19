@@ -1,0 +1,9 @@
+package main
+import "fmt"
+fn main() {
+ b:=fmt.StringBuilder.new()
+ b.str("abc")
+ view:=b.borrow()
+ b.str(view)
+ b.destroy()
+}

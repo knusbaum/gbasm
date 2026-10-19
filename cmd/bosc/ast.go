@@ -122,6 +122,7 @@ type Context struct {
 	// value is narrowed to inside a switch case body. Consulted by field
 	// access (`e.fd`). Set on a per-case SubContext; reads walk parents.
 	variantNarrow map[string]*ValuesCase
+	variantArms   []*variantSwitchArm
 	// maps type alias names to their attached methods.
 	typeMethods map[string][]*FuncDecl
 
@@ -373,6 +374,7 @@ func (c *Context) SubContext() *Context {
 	sc := NewContext()
 	sc.parent = c
 	sc.checker = NewCheckerState(c.checker)
+	sc.variantArms = c.variantArms
 	return sc
 }
 
@@ -3223,9 +3225,11 @@ func (a *Address) ASTType(c *Context) ASTType {
 		switch a.Lit.(type) {
 		case *Dot, *Index:
 			if t.Indirection == 0 {
+				t = ptrWrap(t)
 				if writable, _ := lvalueIsWritable(c, a.Lit); writable {
 					t.MutMask |= 1 << 1
 				}
+				return t
 			}
 		}
 		t.Indirection += 1
@@ -3340,31 +3344,55 @@ func (s *StructLiteral) Pos() position {
 	return s.p
 }
 
-// ArrayLiteral is `[e1, e2, …, eN]` at value-start position. Element
+// ArrayLiteral is `[e1, e2, …, eN]` at value-start position, or the
+// context-typed empty slice literal `[]`. Nonempty literals' element
 // types and length are intrinsic to the literal; element-to-destination
 // coercion happens at the encoding / move site (following the same
 // pattern as <intlit>). ASTType reports the inferred element type from
 // the first element and the literal's length, so type-check sites can
 // reason about it like any other array.
 type ArrayLiteral struct {
-	Elements []AST
-	p        position
+	emptySliceType *ASTType // contextual type for the empty [] slice literal
+	storageOrigin  string   // frame-local backing storage for nonempty expression literals
+	Elements       []AST
+	p              position
 }
 
 func (al *ArrayLiteral) ASTType(c *Context) ASTType {
-	var elemT ASTType
-	if len(al.Elements) > 0 {
-		elemT = al.Elements[0].ASTType(c)
-	} else {
-		// Empty literal: defer the element type entirely to the
-		// destination context. <intlit> acts as the polymorphic
-		// placeholder per existing precedent.
-		elemT = intlitASTType()
+	if len(al.Elements) == 0 {
+		if al.emptySliceType == nil {
+			CompileErrorF(al, "empty slice literal requires a slice type from context")
+		}
+		return *al.emptySliceType
 	}
+	elemT := al.Elements[0].ASTType(c)
 	return ASTType{
 		Element:   &elemT,
 		ArraySize: len(al.Elements),
 	}
+}
+
+// An inferred array needs concrete element storage before allocation. Keep
+// ASTType's pending literal types for explicitly typed destination contexts.
+func inferArrayLiteralType(c *Context, al *ArrayLiteral) ASTType {
+	if len(al.Elements) == 0 {
+		CompileErrorF(al, "cannot infer empty slice element type; specify a slice type")
+	}
+	t := al.ASTType(c)
+	if nested, ok := al.Elements[0].(*ArrayLiteral); ok {
+		element := inferArrayLiteralType(c, nested)
+		t.Element = &element
+	} else {
+		switch t.Element.Name {
+		case "<intlit>":
+			*t.Element = numASTType()
+		case "<floatlit>":
+			*t.Element = ASTType{Name: "f64"}
+		case "<nil>", "void":
+			CompileErrorF(al, "cannot infer array element type from %s", t.Element.Name)
+		}
+	}
+	return t
 }
 
 func (al *ArrayLiteral) Note() string {
@@ -3803,6 +3831,31 @@ func rewriteContinuesForStep(a AST, step AST) AST {
 			out.Else = rewriteContinuesForStep(ast.Else, step)
 		}
 		return &out
+	case *VariantSwitch:
+		out := *ast
+		out.Cases = make([]*VariantCase, len(ast.Cases))
+		for i, cs := range ast.Cases {
+			copy := *cs
+			copy.Body = rewriteContinuesForStep(cs.Body, step)
+			out.Cases[i] = &copy
+		}
+		if ast.Default != nil {
+			out.Default = rewriteContinuesForStep(ast.Default, step)
+		}
+		return &out
+	case *BoundSwitch:
+		out := *ast
+		out.Switch = rewriteContinuesForStep(ast.Switch, step).(*VariantSwitch)
+		return &out
+	case *TypeSwitch:
+		out := *ast
+		out.Cases = make([]*TypeCase, len(ast.Cases))
+		for i, cs := range ast.Cases {
+			copy := *cs
+			copy.Body = rewriteContinuesForStep(cs.Body, step).(*Block)
+			out.Cases[i] = &copy
+		}
+		return &out
 	case *Loop:
 		return a
 	default:
@@ -4199,68 +4252,75 @@ func (v *ValuesConstruct) ASTType(*Context) ASTType { return v.ValuesType }
 func (v *ValuesConstruct) Note() string             { return "values construct" }
 func (v *ValuesConstruct) Pos() position            { return v.p }
 
-// VariantSwitch dispatches on an ADT's tag, narrowing the scrutinee to the
-// matched variant inside each case body (PROPOSAL_adts_and_switch.md §5).
+// VariantSwitch represents a bare-head switch. Values types dispatch by tag
+// with case narrowing; ordinary comparable heads dispatch by constant equality.
 type VariantSwitch struct {
-	Scrutinee AST
-	Cases     []*VariantCase
-	Default   AST // nil if no default/`_` case
-	p         position
+	Exhaustive bool // established by inline switch checking before body merging
+	Scrutinee  AST
+	Cases      []*VariantCase
+	Default    AST // nil if no default/`_` case
+	p          position
 }
 
-// ASTType is void for a statement switch (case bodies are blocks) and the
-// common case-body type for an expression switch (`y := switch e { case A e.x
-// ... }`). Because a case body may reference the narrowed variant's fields, the
-// first case's variant narrowing is set (and restored) around the type query;
-// codegen verifies all cases agree.
+// valuesDecl validates the switch head before inspecting case bodies.
+func (s *VariantSwitch) valuesDecl(c *Context) (*ValuesDecl, ASTType) {
+	t := s.Scrutinee.ASTType(c)
+	if isNullableValues(c, t) {
+		CompileErrorF(s.Scrutinee, "Cannot switch on nullable values type %s; check for nil first", t)
+	}
+	vd, ok := c.ValuesDeclForName(t.Name)
+	if !ok {
+		CompileErrorF(s.Scrutinee, "Variant switch requires a values type, got %s", t)
+	}
+	return vd, t
+}
+
+// Expression types come from reachable value-producing arms. An arm that
+// returns, breaks, or continues contributes no value to this expression.
 func (s *VariantSwitch) ASTType(c *Context) ASTType {
-	var body AST
-	switch {
-	case len(s.Cases) > 0:
-		body = s.Cases[0].Body
-	case s.Default != nil:
-		return s.Default.ASTType(c)
-	default:
+	if c == nil {
+		for _, cs := range s.Cases {
+			if fallsThrough(cs.Body) {
+				return cs.Body.ASTType(c)
+			}
+		}
 		return voidASTType()
 	}
-	if c == nil {
-		return body.ASTType(c)
+	head := s.Scrutinee.ASTType(c)
+	vd, variant := c.ValuesDeclForName(head.Name)
+	if !variant || head.Indirection != 0 {
+		return s.valueASTType(c)
 	}
-	scrutType := s.Scrutinee.ASTType(c)
-	vd, ok := c.ValuesDeclForName(scrutType.Name)
-	if !ok {
-		return body.ASTType(c)
-	}
-	var vc *ValuesCase
-	for i := range vd.Cases {
-		if vd.Cases[i].Name == s.Cases[0].Name {
-			vc = &vd.Cases[i]
-			break
+	s.valuesDecl(c)
+	for _, cs := range s.Cases {
+		if !fallsThrough(cs.Body) {
+			continue
 		}
+		sc := c.SubContext()
+		if p, ok := FlowPathForExpr(s.Scrutinee); ok {
+			for i := range vd.Cases {
+				if vd.Cases[i].Name == cs.Name {
+					sc.SetVariantNarrow(p.Key(), &vd.Cases[i])
+					break
+				}
+			}
+		}
+		return switchConcreteType(cs.Body.ASTType(sc))
 	}
-	fp, ok := FlowPathForExpr(s.Scrutinee)
-	if vc == nil || !ok {
-		return body.ASTType(c)
+	if s.Default != nil && fallsThrough(s.Default) {
+		return switchConcreteType(s.Default.ASTType(c))
 	}
-	key := fp.Key()
-	prev, had := c.variantNarrow[key]
-	c.SetVariantNarrow(key, vc)
-	t := body.ASTType(c)
-	if had {
-		c.variantNarrow[key] = prev
-	} else {
-		delete(c.variantNarrow, key)
-	}
-	return t
+	return voidASTType()
 }
 func (s *VariantSwitch) Note() string  { return "switch (variant) {...}" }
 func (s *VariantSwitch) Pos() position { return s.p }
 
 // VariantCase is one `case VARIANT { body }` arm of a VariantSwitch.
 type VariantCase struct {
-	Name string
-	Body AST
-	p    position
+	Label AST // constant expression for ordinary value switches
+	Name  string
+	Body  AST
+	p     position
 }
 
 // PreboundSpot wraps an already-compiled value handle so it can be threaded
@@ -4888,17 +4948,19 @@ func (n *Node) toASTTop(c *Context) AST {
 				}
 				vs.Default = body
 			} else {
-				vs.Cases = append(vs.Cases, &VariantCase{Name: cn.sval, Body: body, p: cn.p})
+				label := AST(&Symbol{Name: cn.sval, p: cn.p})
+				if len(cn.args) > 1 {
+					label = cn.args[1].toASTTop(NewContext())
+				}
+				vs.Cases = append(vs.Cases, &VariantCase{Name: cn.sval, Label: label, Body: body, p: cn.p})
 			}
 		}
 		if n.sval != "" {
-			// Head-bind: desugar `switch x := expr { ... }` to
-			// `{ x := expr; switch x { ... } }` — reuses VarDecl type
-			// inference and Block scoping (which enforces that an owned x is
-			// discharged before the switch's scope exits).
+			// Keep the binding scoped to the switch, preserving its result when
+			// used as an expression and checking owned obligations at exit.
 			vs.Scrutinee = &Symbol{Name: n.sval, p: n.p}
 			decl := &VarDecl{Name: n.sval, Type: ASTType{Name: "<infer>"}, IsConst: n.ival&1 == 0, Init: scrut, p: n.p}
-			return &Block{Body: []AST{decl, vs}, p: n.p}
+			return &BoundSwitch{Decl: decl, Switch: vs, p: n.p}
 		}
 		return vs
 	case n_address:

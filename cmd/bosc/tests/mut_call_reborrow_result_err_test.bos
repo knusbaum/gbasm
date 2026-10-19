@@ -1,0 +1,10 @@
+package main
+import "fmt"
+fn main() {
+ b:=fmt.StringBuilder.new()
+ original:=b.borrow()
+ copy:=original
+ b.expand(1024)
+ _ = len(copy)
+ b.destroy()
+}

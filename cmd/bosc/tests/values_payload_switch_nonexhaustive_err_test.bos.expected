@@ -1,2 +1,2 @@
 Compiling tests/values_payload_switch_nonexhaustive_err_test.bos
-Fatal: non-exhaustive switch on file_info: missing case(s) SOCKET; cover them or add a `default`
+Fatal: Expression switch requires exhaustive variant coverage

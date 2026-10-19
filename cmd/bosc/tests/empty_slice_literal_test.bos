@@ -1,0 +1,27 @@
+package main
+import "fmt"
+var global []i64 := []
+type holder struct { data []byte }
+fn empty_bytes() []byte { return [] }
+fn empty_holder() holder { return holder{data: []} }
+fn empty_owned() owned []mut byte { return [] }
+fn count(s []i64) i64 { return len(s) }
+fn take_owned(s owned []mut byte) { free(s) }
+fn variadic(xs ...[]byte) i64 { return len(xs) }
+fn main() {
+ b []byte := []
+ var s []byte := "x"
+ s = []
+ h := holder{data: []}
+ arr [2][]i64 := [[], []]
+ o owned []mut byte := []
+ r := empty_owned()
+ fmt.print("%d %d %d %d\n", len(b), cap(b), len(s), len(empty_bytes()))
+ fmt.print("%d %d %d %d\n", len(global), len(h.data), count([]), len(arr[1]))
+ fmt.print("%d\n", len(empty_holder().data))
+ fmt.print("%d %d %d %d\n", len(o), cap(o), len(r), cap(r))
+ take_owned([])
+ fmt.print("%d\n", variadic([]))
+ free(o)
+ free(r)
+}

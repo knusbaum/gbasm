@@ -1,0 +1,14 @@
+package main
+type Buffer struct {buf owned []mut byte} {
+ borrow(b *Buffer) []byte {return b.buf[:]}
+ touch(b *mut Buffer) {_ = len(b.buf)}
+}
+fn pick(a *Buffer,b *Buffer,flag bool) []byte {if(flag) {return a.borrow()};return b.borrow()}
+fn main() {
+ a:=new(Buffer{buf:make([]mut byte,1)})
+ b:=new(Buffer{buf:make([]mut byte,1)})
+ v:=pick(a,b,true)
+ b.touch()
+ _ = len(v)
+ free(a.buf);free(a);free(b.buf);free(b)
+}

@@ -1,0 +1,2 @@
+Compiling tests/empty_slice_scalar_err_test.bos
+Fatal: empty slice literal requires a slice destination, got i64

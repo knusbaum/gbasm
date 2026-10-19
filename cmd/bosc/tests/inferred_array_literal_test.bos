@@ -1,0 +1,12 @@
+package main
+import "fmt"
+fn integers(a [4]i64) i64 { return a[0] + a[1] + a[2] + a[3] }
+fn floats(a [2]f64) bool { return a[0] == 1.5 && a[1] == 2.5 }
+fn main() {
+ x := [0, 1, 2, 3]
+ fmt.print("%d %d\n", len(x), integers(x))
+ f := [1.5, 2.5]
+ fmt.print("%v\n", floats(f))
+ nested := [[1, 2], [3, 4]]
+ fmt.print("%d %d\n", nested[0][1], nested[1][0])
+}

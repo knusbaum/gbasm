@@ -1,0 +1,12 @@
+package main
+import "fmt"
+type Box struct {buf owned []mut byte; n i64}
+fn main() {
+ var x owned Box := Box{buf:make([]mut byte,1)}
+ y *Box := &x
+ free(x.buf)
+ copy Box := *y
+ _ = len(copy.buf)
+ free(x.buf)
+ dispose(x)
+}

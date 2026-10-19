@@ -1,0 +1,13 @@
+package main
+import "fmt"
+type Box struct {p owned *mut i64}
+fn main() {
+ p := new(i64(3))
+ var x owned Box := Box{p:p}
+ y *Box := &x
+ free(x.p)
+ x.p = new(i64(9))
+ fmt.print("%d\n",*y.p)
+ free(x.p)
+ dispose(x)
+}

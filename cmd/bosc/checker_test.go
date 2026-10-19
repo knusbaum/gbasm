@@ -251,28 +251,24 @@ func TestCheckerStateMergeHelpers(t *testing.T) {
 	}
 }
 
-func TestCheckerStatePointerInvalidation(t *testing.T) {
+func TestCheckerStateFieldConsumptionThroughAliases(t *testing.T) {
 	c := NewContext()
-	c.BindVar(&Symbol{Name: "a"}, "a", ASTType{Name: "box", Indirection: 1}, false)
-	c.BindVar(&Symbol{Name: "b"}, "b", ASTType{Name: "box", Indirection: 1}, false)
-	c.PointerFlow().AssignPointer("a", c.PointerFlow().NewObject("a"))
-	c.PointerFlow().AssignPointer("b", c.PointerFlow().NewObject("b"))
-	c.SetOwnedFieldConsumed(VarFlowPath("a").Append("child"), true)
-	c.SetOwnedFieldConsumed(VarFlowPath("b").Append("child"), true)
-
-	inv := c.PointerFlow().WriteThroughPointer(c.PointerFlow().Pointer("a"))
-	c.InvalidateOwnedFieldFactsByPointerInvalidation(inv)
-
-	if c.OwnedFieldConsumed(VarFlowPath("a").Append("child")) {
-		t.Fatal("write through a should invalidate a.child")
+	c.BindVar(&Symbol{Name: "owner"}, "owner", ASTType{Name: "box", OwnedMask: 1}, true)
+	c.BindVar(&Symbol{Name: "alias"}, "alias", ASTType{Name: "box", Indirection: 1}, false)
+	c.PointerFlow().AssignPointer("alias", c.PointerFlow().NewObject("owner"))
+	field := VarFlowPath("owner").Append("child")
+	aliasField := VarFlowPath("alias").Append("child")
+	c.SetOwnedFieldConsumed(field, true)
+	if !c.OwnedFieldConsumed(aliasField) {
+		t.Fatal("alias lost consumed-field state")
 	}
-	if !c.OwnedFieldConsumed(VarFlowPath("b").Append("child")) {
-		t.Fatal("write through a should not invalidate independent b.child")
+	c.SetOwnedFieldConsumed(aliasField, false)
+	if c.OwnedFieldConsumed(field) {
+		t.Fatal("replacement through alias did not restore field")
 	}
-
-	c.InvalidateOwnedFieldFactsByPointerInvalidation(c.PointerFlow().WriteThroughPointer(c.PointerFlow().UnknownPointer()))
-	if c.OwnedFieldConsumed(VarFlowPath("b").Append("child")) {
-		t.Fatal("unknown pointer write should invalidate b.child")
+	c.SetOwnedFieldConsumed(aliasField, true)
+	if !c.OwnedFieldConsumed(field) {
+		t.Fatal("consumption through alias did not reach owner")
 	}
 }
 

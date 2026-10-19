@@ -1,0 +1,2 @@
+Compiling tests/nullable_slice_nested_err_test.bos
+Parse Error: slices cannot be nullable; use an empty slice or a nullable pointer to a slice (?*[]T)

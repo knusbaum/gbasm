@@ -1,0 +1,2 @@
+Compiling tests/switch_values_call_case_err_test.bos
+Fatal: Variant switch cases must use bare variant names, not value expressions

@@ -1,0 +1,4 @@
+package main
+type Result values {VALUE{value owned i64}}
+fn bad(value i64) owned Result {return Result.VALUE{value:value}}
+fn main() {}

@@ -1,0 +1,2 @@
+Compiling tests/consuming_switch_reuse_err_test.bos
+Fatal: dispose: "r" was already moved

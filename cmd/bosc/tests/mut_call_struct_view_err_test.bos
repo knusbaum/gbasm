@@ -1,0 +1,8 @@
+package main
+type Buffer struct {buf owned []mut byte} {
+ borrow(b *Buffer) []byte {return b.buf[:]}
+ touch(b *mut Buffer) {_ = len(b.buf)}
+}
+type View struct {bytes []byte}
+fn extract(b *Buffer) View {return View{bytes:b.borrow()}}
+fn main() {b:=new(Buffer{buf:make([]mut byte,1)});v:=extract(b);b.touch();_ = len(v.bytes);free(b.buf);free(b)}

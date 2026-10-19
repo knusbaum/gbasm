@@ -1,0 +1,2 @@
+Compiling tests/value_switch_owned_partial_err_test.bos
+Fatal: Owned binding "x" is consumed on some switch cases but not others

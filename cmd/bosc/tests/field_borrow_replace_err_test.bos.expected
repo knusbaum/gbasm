@@ -1,0 +1,2 @@
+Compiling tests/field_borrow_replace_err_test.bos
+Fatal: cannot dereference pointer to "x.buf": the allocation was freed

@@ -1,0 +1,15 @@
+package main
+import "fmt"
+type Box struct {buf owned []mut byte; n i64}
+fn main() {
+ x := new(Box{buf:make([]mut byte,1),n:7})
+ y *mut Box := x
+ free(y.buf)
+ x.buf = make([]mut byte,2)
+ fmt.print("%d\n",len(y.buf))
+ free(x.buf)
+ y.buf = make([]mut byte,3)
+ fmt.print("%d\n",len(x.buf))
+ free(x.buf)
+ free(x)
+}

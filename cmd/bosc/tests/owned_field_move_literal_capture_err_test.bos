@@ -2,8 +2,8 @@ package main
 
 import "fmt"
 
-// Capturing an inconsistent aggregate into a struct-literal field forms an
-// alias that could read the moved-out field; must be rejected.
+// Aliases stored in a struct retain consumed-field state; reading through
+// the stored pointer is rejected until the field is restored.
 type foo struct {
 	a owned *mut i64
 }

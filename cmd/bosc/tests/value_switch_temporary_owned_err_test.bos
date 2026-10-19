@@ -1,0 +1,2 @@
+package main
+fn main() {switch new(i64(10)) {default {}}}

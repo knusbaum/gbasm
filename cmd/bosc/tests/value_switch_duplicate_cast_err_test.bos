@@ -1,0 +1,2 @@
+package main
+fn main() { switch i64(65) { case i64('A') {} case 65 {} } }

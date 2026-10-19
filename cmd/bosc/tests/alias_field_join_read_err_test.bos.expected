@@ -1,0 +1,2 @@
+Compiling tests/alias_field_join_read_err_test.bos
+Fatal: Use of "y.buf" after it was moved

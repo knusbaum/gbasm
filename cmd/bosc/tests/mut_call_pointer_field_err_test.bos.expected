@@ -1,0 +1,2 @@
+Compiling tests/mut_call_pointer_field_err_test.bos
+Fatal: borrow from "b.p" is no longer valid after a mutable call; borrow again after the call

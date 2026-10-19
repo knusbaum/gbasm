@@ -1,0 +1,2 @@
+Compiling tests/method_value_temporary_receiver_err_test.bos
+Fatal: cannot call method on non-addressable expression receiver (type Handle)

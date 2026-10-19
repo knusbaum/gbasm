@@ -1,0 +1,11 @@
+package main
+import "string"
+type Result values {ERR{code i64};FD{fd owned i64}}
+fn make_result(ok bool) owned Result {
+ if(ok) {return Result.FD{fd:owned(i64(37))}}
+ return Result.ERR{code:1}
+}
+fn main() {
+ x:=switch r:=make_result(true) {case FD r.fd case ERR {string.puts("error\n")}}
+ dispose(x)
+}

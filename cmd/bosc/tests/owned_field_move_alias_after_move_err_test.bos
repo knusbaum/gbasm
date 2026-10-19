@@ -2,8 +2,8 @@ package main
 
 import "fmt"
 
-// The alias is formed AFTER the field is moved out. Forming it must still be
-// rejected — otherwise the alias reads the zeroed non-null field and crashes.
+// Local alias creation is allowed after a move; reading its consumed field
+// is rejected until that field is restored.
 type foo struct {
 	a owned *mut i64
 }

@@ -1,0 +1,14 @@
+package main
+type Buffer struct {buf owned []mut byte; other owned []mut byte} {
+ borrow(b *Buffer) []byte {return b.buf}
+}
+fn main() {
+ x := new(Buffer{buf:make([]mut byte,1),other:make([]mut byte,1)})
+ y := x.borrow()
+ _ = y[0]
+ free(x.buf)
+ x.buf = make([]mut byte,2)
+ fresh := x.borrow()
+ _ = fresh[0]
+ free(x.buf); free(x.other); free(x)
+}

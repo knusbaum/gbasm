@@ -1,0 +1,8 @@
+package main
+import "fmt"
+type record struct { number i64; pointer ?*i64; text []byte; tiny byte }
+fn main() {
+ value i64 := 10
+ records := [record{number: 99, pointer: &value, text: "old", tiny: 7}, record{}]
+ fmt.print("%d %v %d %d\n", records[1].number, records[1].pointer == nil, len(records[1].text), records[1].tiny)
+}

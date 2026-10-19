@@ -371,6 +371,13 @@ func encodeInterfaceAddressBytes(c *Context, dstt ASTType, a *Address) ([]byte, 
 //     AddAnonGlobal; the header's ptr slot relocates to it, and the
 //     length is encoded inline.
 func encodeArrayLiteralBytes(c *Context, dstt ASTType, lit *ArrayLiteral) ([]byte, []relocSpec, error) {
+	if len(lit.Elements) == 0 {
+		u := c.ResolveUnderlying(dstt)
+		if u.Indirection != 0 || !u.IsSlice() {
+			return nil, nil, fmt.Errorf("empty slice literal requires a slice destination, got %s", dstt)
+		}
+		return make([]byte, sliceHeaderBytes), nil, nil
+	}
 	if dstt.Element == nil {
 		return nil, nil, fmt.Errorf("array literal cannot initialize non-array type %s", dstt)
 	}

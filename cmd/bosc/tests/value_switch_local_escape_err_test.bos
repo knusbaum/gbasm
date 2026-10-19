@@ -1,0 +1,6 @@
+package main
+fn f(flag bool,p *i64) *i64 {
+ x i64 := 10
+ return switch flag { case true &x case false p }
+}
+fn main() {}

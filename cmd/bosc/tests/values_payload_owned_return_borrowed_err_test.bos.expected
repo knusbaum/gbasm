@@ -1,0 +1,2 @@
+Compiling tests/values_payload_owned_return_borrowed_err_test.bos
+Fatal: For field owned struct{value:owned i64}.value, expected type owned i64 but got i64

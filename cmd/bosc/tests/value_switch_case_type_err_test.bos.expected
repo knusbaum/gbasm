@@ -1,0 +1,2 @@
+Compiling tests/value_switch_case_type_err_test.bos
+Fatal: Switch case has type bool, expected i64

@@ -1,0 +1,11 @@
+package main
+import "fmt"
+fn touch(b *mut fmt.StringBuilder) {b.expand(1024)}
+fn main() {
+ b:=fmt.StringBuilder.new()
+ view:=b.borrow()
+ f:=&touch
+ f(b)
+ _ = len(view)
+ b.destroy()
+}

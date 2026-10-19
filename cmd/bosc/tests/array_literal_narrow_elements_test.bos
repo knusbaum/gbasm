@@ -1,0 +1,12 @@
+package main
+import "fmt"
+import "string"
+fn main() {
+ chars := ['a', 'b', 'c']
+ string.puts(chars[:])
+ string.puts(['d', 'e', '\n'][:])
+ narrow [2]u16 := [u16(258), u16(513)]
+ signed [2]i32 := [i32(-10), i32(20)]
+ flags := [true, false]
+ fmt.print("%d %d %d %d %v %v\n", narrow[0], narrow[1], signed[0], signed[1], flags[0], flags[1])
+}

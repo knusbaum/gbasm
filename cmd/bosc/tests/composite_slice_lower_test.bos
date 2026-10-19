@@ -1,0 +1,12 @@
+package main
+import "fmt"
+type triple struct { a byte; b byte; c byte }
+fn main() {
+ strings := ["first", "second", "third"]
+ slice := strings[1:3]
+ tail := slice[1:]
+ fmt.print("%s %d %d %s\n", &slice[0], len(slice), cap(slice), &tail[0])
+ triples := [triple{a: 1, b: 2, c: 3}, triple{a: 4, b: 5, c: 6}]
+ three := triples[1:]
+ fmt.print("%d %d %d %d\n", three[0].a, three[0].b, three[0].c, cap(three))
+}

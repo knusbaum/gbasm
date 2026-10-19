@@ -1,0 +1,2 @@
+Compiling tests/consuming_switch_missing_value_err_test.bos
+Fatal: Expression switch case must yield a value or exit

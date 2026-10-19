@@ -1,0 +1,25 @@
+package main
+import "string"
+type Result values {
+ VALUE{value owned i64}
+ EMPTY
+}
+fn make_result(value owned i64) owned Result {
+ return Result.VALUE{value:value}
+}
+fn empty() owned Result {return Result.EMPTY{}}
+fn main() {
+ value owned i64 := 42
+ r := make_result(value)
+ switch r {
+  case VALUE {
+   n owned i64 := r.value
+   string.puti(n)
+   string.puts("\n")
+   dispose(n)
+  }
+  case EMPTY {}
+ }
+ e := empty()
+ dispose(e)
+}

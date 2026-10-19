@@ -1,0 +1,24 @@
+package main
+import "string"
+type Handle i64 {
+ get(h *Handle) i64 {return i64(*h)}
+ inc(h *mut Handle) {*h = Handle(i64(*h)+1)}
+ destroy(h *owned Handle) {string.puti(i64(*h));string.puts("\n");dispose(h)}
+}
+type Result values {OPEN{h owned Handle}; EMPTY}
+fn main() {
+ r owned Result := Result.OPEN{h:owned(Handle(37))}
+ switch r {
+  case OPEN {
+   string.puti(r.h.get());string.puts("\n")
+   r.h.destroy()
+  }
+  case EMPTY {}
+ }
+ var b struct{h Handle} := {h:Handle(5)}
+ b.h.inc()
+ string.puti(b.h.get());string.puts("\n")
+ var items [2]Handle := [Handle(1),Handle(2)]
+ items[1].inc()
+ string.puti(items[1].get());string.puts("\n")
+}

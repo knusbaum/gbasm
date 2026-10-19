@@ -245,6 +245,9 @@ func recordMultiReturnSlotProvenance(c *Context, dest string, destType ASTType, 
 		clear()
 		return
 	}
+	if !destType.HasOwned() {
+		merged = c.PointerFlow().BorrowView(merged, borrowCallSite(call, dest))
+	}
 	rt := c.ResolveUnderlying(destType)
 	if rt.Indirection > 0 || rt.IsSlice() {
 		c.PointerFlow().AssignPointer(flow.Binding(dest), merged)
@@ -305,6 +308,7 @@ func recordStructCallResultAtPath(c *Context, destPath string, destType ASTType,
 		merged = c.PointerFlow().JoinOrigins(merged, ap)
 	}
 	if merged.KnownOrigin {
+		merged = c.PointerFlow().BorrowView(merged, borrowCallSite(call, key))
 		c.PointerFlow().SetPathPointer(key, merged)
 	}
 }
@@ -339,6 +343,7 @@ func resolveCalleeForAlias(ic *Context, call *Funcall) (*FuncDecl, []AST) {
 		}
 		if method, ok := ic.MethodForType(rt.Name, fname); ok {
 			args := make([]AST, 0, 1+len(call.Args))
+			recv = methodReceiverArg(ic, call, recv, rt, len(method.Args) > 0 && method.Args[0].Type.Indirection > 0)
 			args = append(args, recv)
 			args = append(args, call.Args...)
 			return method, args

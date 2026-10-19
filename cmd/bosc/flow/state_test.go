@@ -226,14 +226,14 @@ func TestMergeKeepsEscapeRestrictedIndexedFieldPointer(t *testing.T) {
 	}
 }
 
-func TestUnknownBranchMerge(t *testing.T) {
+func TestKnownBranchMerge(t *testing.T) {
 	a := NewState()
 	a.AssignPointer("p", a.NewObject("a"))
 	b := NewState()
 	b.AssignPointer("p", b.NewObject("b"))
 
 	merged := Merge(a, b)
-	requireUnknownInvalidation(t, merged.WriteThroughPointer(merged.Pointer("p")))
+	requireInvalidates(t, merged.WriteThroughPointer(merged.Pointer("p")), "a", "b")
 }
 
 func TestStableBranchMerge(t *testing.T) {
@@ -369,5 +369,21 @@ func TestMergeLiveAndMovedPicksMoved(t *testing.T) {
 	merged := Merge(a, b)
 	if ok, _ := merged.CheckDerefValidity(pa); ok {
 		t.Fatalf("merge should preserve TargetMoved over TargetLive")
+	}
+}
+
+func TestJoinedOriginDerefValidity(t *testing.T) {
+	for _, validity := range []TargetValidity{TargetDead, TargetMoved} {
+		s := NewState()
+		p := s.NewOwnedOrigin("p")
+		q := s.NewOwnedOrigin("q")
+		joined := s.JoinOrigins(p, q)
+		if ok, reason := s.CheckDerefValidity(joined); !ok {
+			t.Fatalf("live join: %s", reason)
+		}
+		s.InvalidateOrigin(p.Origin, validity)
+		if ok, _ := s.CheckDerefValidity(joined); ok {
+			t.Fatalf("join accepted invalid member (%v)", validity)
+		}
 	}
 }

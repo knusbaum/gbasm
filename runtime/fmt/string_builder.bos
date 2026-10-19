@@ -93,6 +93,10 @@ pub type StringBuilder struct {
 		return after - before, nil
 	}
 
+	// borrow returns a view without copying. Use it before passing the builder
+	// to a mutable method such as write, str, or expand, or before destroy.
+	// A mutable call invalidates existing views even when it does not grow.
+	// Call borrow again afterward for a fresh view of the current contents.
 	borrow(b *StringBuilder) []byte {
 		return b.buf[:b.pos]
 	}

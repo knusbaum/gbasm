@@ -1,0 +1,38 @@
+package main
+import "string"
+var calls i64
+fn once() i64 { calls += 1; return 65 }
+fn integer(n i64) i64 {
+ return switch n {
+  case i64('A') 10
+  case 1 + 1 20
+  case -1 30
+  default 40
+ }
+}
+fn main() {
+ count i64 := 64
+ shifted := i64(1) << count
+ switch shifted {case i64(1)<<64 {string.puts("shift\n")} default {string.puts("wrong\n")}}
+ switch once() {
+  case i64('A') { string.puts("A\n") }
+  case 256 { string.puts("wrong\n") }
+ }
+ string.puti(calls); string.puts("\n")
+ string.puti(integer(65)); string.puts("\n")
+ string.puti(integer(2)); string.puts("\n")
+ string.puti(integer(-1)); string.puts("\n")
+ string.puti(integer(100)); string.puts("\n")
+ b byte := 'z'
+ switch b { case 'a' { string.puts("wrong\n") } case 'z' { string.puts("byte\n") } }
+ u u64 := 18446744073709551615
+ switch u { case 18446744073709551615 { string.puts("unsigned\n") } }
+ flag := true
+ x := switch flag { case true 17 case false 23 }
+ string.puti(x); string.puts("\n")
+ y := switch n := i64(2) { case 2 (n + 5) default 0 }
+ string.puti(y); string.puts("\n")
+ var unchanged i64 := 7
+ switch i64(9) { case 1 { unchanged = 10 } }
+ string.puti(unchanged); string.puts("\n")
+}

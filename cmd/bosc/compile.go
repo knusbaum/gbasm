@@ -150,6 +150,15 @@ func evalFloatConst(c *Context, a AST, narrow bool) (float64, bool) {
 		return f
 	}
 	switch ast := a.(type) {
+	case *switchConstant:
+		if ast.Int != nil {
+			f, _ := new(big.Float).SetInt(ast.Int).Float64()
+			return round(f), true
+		}
+		if isFloatType(c, ast.Type) || ast.Type.Same(floatlitASTType()) {
+			return round(ast.Float), true
+		}
+		return 0, false
 	case *Literal:
 		switch v := ast.Val.(type) {
 		case float64:
@@ -313,6 +322,11 @@ func (s *spot) empty() bool {
 // a single mov; for memory-backed elements (struct values, multi-byte
 // arrays), we lea the element's address and memcpy into place.
 func compileArrayLiteralInto(of io.Writer, c *Context, a AST, dest spot, lit *ArrayLiteral) {
+	if len(lit.Elements) == 0 {
+		prepareSliceOwnership(c, lit, dest.t)
+		emitSliceHeaderStore(of, dest.ref, "0", "0", "0")
+		return
+	}
 	if !dest.t.IsArray() {
 		if dest.t.IsSlice() {
 			CompileErrorF(a, "array literal as slice initializer is only valid at file scope; use a fixed array (T[N]) here")
@@ -325,11 +339,8 @@ func compileArrayLiteralInto(of io.Writer, c *Context, a AST, dest spot, lit *Ar
 	elemT := *dest.t.Element
 	elemSize := elemT.Size(c)
 	for i, e := range lit.Elements {
-		// Capturing a whole inconsistent aggregate into an array element
-		// forms an alias that could read its moved-out field.
-		if name := aggregateBindingName(e); name != "" {
-			checkAggregateNotAliasedWhileInconsistent(c, name, e)
-		}
+		checkAggregateValueCopy(c, e)
+		prepareSliceOwnership(c, e, elemT)
 		// Every element flows into a slot of type elemT. Route through
 		// coerceType so the closed-symbolic-set rule covers array
 		// initializers — pre-unification this site had no check at all,
@@ -340,6 +351,13 @@ func compileArrayLiteralInto(of io.Writer, c *Context, a AST, dest spot, lit *Ar
 				"Array element %d: expected type %v but got %v", i, elemT, e.ASTType(c))
 		}
 		off := i * elemSize
+		if nested, ok := e.(*ArrayLiteral); ok {
+			addr := newSpot(of, c, c.Temp(), ASTType{Name: "uintptr"})
+			fmt.Fprintf(of, "\tlea %s [%s+%d]\n", addr.ref, dest.ref, off)
+			compileArrayLiteralInto(of, c, e, spot{ref: addr.ref, t: elemT, nameIsAddress: true}, nested)
+			addr.free(of)
+			continue
+		}
 		if typeIsMemoryBacked(c, elemT) {
 			// Multi-word element (struct value, fixed array, etc.):
 			// compile the element to its own bytes-allocated spot,
@@ -373,8 +391,13 @@ func compileArrayLiteralInto(of io.Writer, c *Context, a AST, dest spot, lit *Ar
 				fmt.Fprintf(of, "\t%s [%s+%d] %s\n", floatMovOp(c, elemT), dest.ref, off, val.ref)
 			} else {
 				// Source comes back at its own width (often 64-bit for integer
-				// literals), so select the low N bits with `val.ref:bits`.
-				fmt.Fprintf(of, "\tmov [%s+%d] %s:%d\n", dest.ref, off, val.ref, elemSize*8)
+				// literals). Only select a partial when the source is wider;
+				// an already narrow register such as BL is the whole operand.
+				source := val.ref
+				if val.t.Size(c) > elemSize {
+					source = fmt.Sprintf("%s:%d", source, elemSize*8)
+				}
+				fmt.Fprintf(of, "\tmov [%s+%d] %s\n", dest.ref, off, source)
 			}
 			val.free(of)
 		}
@@ -758,6 +781,18 @@ func fallsThrough(a AST) bool {
 		return true
 	case *IfStmt:
 		return ast.Else == nil || fallsThrough(ast.Then) || fallsThrough(ast.Else)
+	case *BoundSwitch:
+		return fallsThrough(ast.Switch)
+	case *VariantSwitch:
+		if !ast.Exhaustive {
+			return true
+		}
+		for _, cs := range ast.Cases {
+			if fallsThrough(cs.Body) {
+				return true
+			}
+		}
+		return ast.Default != nil && fallsThrough(ast.Default)
 	case *Loop:
 		return true
 	default:
@@ -962,6 +997,9 @@ func checkOwnedSourceAvailable(c *Context, val AST) {
 		fieldType := v.ASTType(c)
 		if canAccessFieldObligations(baseType) && fieldType.HasOwned() {
 			path, tracked := FlowPathForExpr(val)
+			if tracked && len(c.ownedFieldPaths(path)) != 1 {
+				CompileErrorF(val, "Cannot consume owned field through an alias that may refer to multiple allocations")
+			}
 			if !tracked {
 				CompileErrorF(val, "Cannot consume owned field %s through an untracked expression; bind the receiver first", v.Member)
 			}
@@ -981,24 +1019,14 @@ func checkOwnedSourceAvailable(c *Context, val AST) {
 				// an owned struct value (`owned child`) — may be moved out.
 				CompileErrorF(val, "Cannot move owned field %s out of an owned aggregate", v.Member)
 			}
-			// Moving a non-null owned field out leaves its slot with stale
-			// bits and no nil check on the field's type. A live alias of the
-			// aggregate could read that slot and crash, so refuse to
-			// partially-consume an aliased aggregate. (Nullable fields are
-			// exempt: the alias would read nil and must narrow.)
-			if fieldType.NilMask&1 == 0 {
-				if path, ok := FlowPathForExpr(val); ok {
-					root := c.ownedFieldPath(path).Root
-					if c.HasLiveAlias(root) {
-						CompileErrorF(val, "Cannot move owned field %s out of \"%s\" while it is aliased; the alias could read the moved-out field", v.Member, root)
-					}
-				}
-			}
+			// Existing aliases share the field-consumption facts. Moving a
+			// field invalidates reads through every alias until replacement;
+			// the aliases themselves still point at the live aggregate.
 			// A non-null owned field (pointer, scalar, or struct value) MAY be
 			// moved out. Doing so marks the field consumed (and scrubs a
 			// register-sized slot, see the *Dot case in
 			// markMovedIfOwnedSource), leaving the aggregate in an inconsistent
-			// state that the escape gate (checkAggregateMayEscape) prevents
+			// state that the escape gate (checkAggregateExprMayEscape) prevents
 			// from crossing a scope boundary. Nullable fields already worked
 			// this way with nil as the placeholder.
 			if path, ok := FlowPathForExpr(val); ok && c.OwnedFieldConsumed(path) {
@@ -1012,65 +1040,31 @@ func checkOwnedSourceAvailable(c *Context, val AST) {
 // aggregate rooted at `path` (declared type `t`) that has been moved out
 // (consumed). Such an aggregate is "inconsistent": the moved-out field has no
 // nil placeholder, and the local consumption fact cannot cross a scope
-// boundary, so the aggregate must not escape (see checkAggregateMayEscape). A
+// boundary, so the aggregate must not escape (see checkAggregateExprMayEscape). A
 // consumed *nullable* field does not count — nil is a safe, representable
 // state that keeps the aggregate passable.
 func inconsistentOwnedField(c *Context, path FlowPath, t ASTType) (string, bool) {
 	if _, ok := structDeclForType(c, t); !ok {
 		return "", false
 	}
-	path = c.ownedFieldPath(path)
-	prefix := path.Key() + "."
-	var consumed []string
-	for p, moved := range c.OwnedFieldFactsSnapshot() {
-		if moved && strings.HasPrefix(p.Key(), prefix) {
-			consumed = append(consumed, strings.TrimPrefix(p.Key(), prefix))
+	paths := c.ownedFieldPaths(path)
+	for _, path := range paths {
+		prefix := path.Key() + "."
+		var consumed []string
+		for p, moved := range c.OwnedFieldFactsSnapshot() {
+			if moved && strings.HasPrefix(p.Key(), prefix) {
+				consumed = append(consumed, strings.TrimPrefix(p.Key(), prefix))
+			}
 		}
-	}
-	sort.Strings(consumed)
-	for _, fields := range consumed {
-		ft, ok := walkLeafType(c, t, fields)
-		if ok && ft.HasOwned() && ft.NilMask&1 == 0 {
-			return fields, true
+		sort.Strings(consumed)
+		for _, fields := range consumed {
+			ft, ok := walkLeafType(c, t, fields)
+			if ok && ft.HasOwned() && ft.NilMask&1 == 0 {
+				return fields, true
+			}
 		}
 	}
 	return "", false
-}
-
-// checkAggregateMayEscape rejects letting an owned aggregate binding leave the
-// current function scope (verb: "pass", "return", "move") while it has a
-// moved-out non-null owned field. The receiving scope cannot see the local
-// consistency facts, so it would observe a field that looks live but is
-// zeroed. Only the shape-blind intrinsics dispose/free may consume such an
-// aggregate, and those are lowered on separate paths that never reach here.
-func checkAggregateMayEscape(c *Context, name string, errNode AST, verb string) {
-	declared, ok := c.DeclaredTypeForVar(name)
-	if !ok {
-		return
-	}
-	if field, bad := inconsistentOwnedField(c, VarFlowPath(name), declared); bad {
-		CompileErrorF(errNode,
-			"Cannot %s \"%s\" while owned field \"%s.%s\" is moved out; only dispose/free are allowed on a partially-consumed aggregate — consume or re-initialize \"%s.%s\" first",
-			verb, name, name, field, name, field)
-	}
-}
-
-// checkAggregateNotAliasedWhileInconsistent rejects forming a new alias of an
-// aggregate (taking `&f`, or copying a pointer-to-aggregate into another
-// binding) while it has a moved-out non-null owned field. The alias would
-// outlive the local consistency fact and could read the zeroed slot — the
-// symmetric counterpart of the move-while-aliased check, covering an alias
-// formed *after* the move rather than before it.
-func checkAggregateNotAliasedWhileInconsistent(c *Context, name string, errNode AST) {
-	declared, ok := c.DeclaredTypeForVar(name)
-	if !ok {
-		return
-	}
-	if field, bad := inconsistentOwnedField(c, VarFlowPath(name), declared); bad {
-		CompileErrorF(errNode,
-			"Cannot alias \"%s\" while owned field \"%s.%s\" is moved out; the alias could read the moved-out field",
-			name, name, field)
-	}
 }
 
 // assertOwnerAdoptsLiveOrigin enforces the cross-cutting invariant behind the
@@ -1100,23 +1094,20 @@ func assertOwnerAdoptsLiveOrigin(c *Context, dst flow.Binding, src flow.PointerE
 	}
 }
 
-// checkedAssignPointer records dst as an alias of src in the pointer-flow
-// state, first rejecting the alias if src's origin/slot is an inconsistent
-// aggregate (one with a moved-out non-null owned field). Gating at the
-// recording point covers any binding-alias that funnels through here —
-// `var x = f`, `var x = &f` — without a per-syntax gate. It no-ops for
-// non-aggregate sources (the inconsistency predicate returns false). Other
-// alias forms that do not reach a clean AssignPointer (assignment `x = f`,
-// struct/array-literal capture) keep their own syntactic gates.
+// checkedAssignPointer retains allocation provenance for local aliases. Field
+// consumption is checked at reads and scope boundaries rather than alias creation.
 func checkedAssignPointer(c *Context, dst flow.Binding, src flow.PointerExpr, errNode AST) {
-	name := ""
-	if src.KnownOrigin {
-		name = string(src.Origin)
-	} else if src.KnownSlot {
-		name = string(src.SlotTarget)
-	}
-	if name != "" {
-		checkAggregateNotAliasedWhileInconsistent(c, name, errNode)
+	if t, ok := c.TypeForVar(string(dst)); ok {
+		var value AST
+		switch at := errNode.(type) {
+		case *VarDecl:
+			value = at.Init
+		case *Assignment:
+			value = at.Val
+		}
+		if value != nil {
+			src = copiedBorrow(c, t, value, "view:"+string(dst), src)
+		}
 	}
 	assertOwnerAdoptsLiveOrigin(c, dst, src)
 	c.PointerFlow().AssignPointer(dst, src)
@@ -1182,7 +1173,7 @@ func checkLocalOriginDoesNotEscape(c *Context, a AST, what string) {
 		return
 	}
 	if c.PointerFlow().OriginKindOf(ptr.Origin) == flow.OriginLocal {
-		CompileErrorF(a, "Pointer to local variable %q escapes via %s", string(ptr.Origin), what)
+		CompileErrorF(a, "Pointer to local variable %q escapes via %s", c.PointerFlow().OriginName(ptr.Origin), what)
 	}
 }
 
@@ -1228,11 +1219,10 @@ func checkSliceEscapeLocalOnly(c *Context, a AST, what string) {
 // Recurses into nested struct literals so
 // `var b Outer = Outer{inner: Inner{buf: s}}` stores at "b.inner.buf".
 //
-// Critically per-field, not blanket: a struct literal only writes the
-// fields it lists, so the fact model must match. `o.inner = Inner{}`
-// (empty literal) clears nothing — codegen leaves the prior bytes in
-// place, and the prior facts must stay too, or returning `o` becomes
-// unsoundly accepted while the borrowed slice still sits in `o.inner.buf`.
+// Explicit field provenance is replaced independently. Omitted fields now
+// receive defaults in codegen; this tracker conservatively retains their old
+// facts until default writes are modeled here too. That may reject a safe
+// partial reinitialization, but cannot drop a live borrow from another field.
 func recordStructLiteralFieldFacts(c *Context, base FlowPath, lit *StructLiteral) {
 	for _, f := range lit.Fields {
 		if f.Val == nil {
@@ -1249,7 +1239,13 @@ func recordStructLiteralFieldFacts(c *Context, base FlowPath, lit *StructLiteral
 		}
 		ft := f.Val.ASTType(c)
 		if ft.Indirection > 0 || ft.IsSlice() {
-			c.PointerFlow().SetPathPointer(fieldPath.Key(), pointerExprForAST(c, f.Val, ""))
+			destination := ft
+			if def, ok := structDeclForType(c, lit.Type); ok {
+				_, destination = def.ByteOffset(c, f.Name)
+			}
+			ptr := pointerExprForAST(c, f.Val, "")
+			ptr = copiedBorrow(c, destination, f.Val, fieldPath.Key(), ptr)
+			c.PointerFlow().SetPathPointer(fieldPath.Key(), ptr)
 			continue
 		}
 		// Struct-typed field sourced from a non-literal: the field value
@@ -1352,7 +1348,7 @@ func pointeeFieldKey(c *Context, path FlowPath) (string, bool) {
 	if !link.KnownOrigin {
 		return "", false
 	}
-	return FlowPath{Root: string(link.Origin), Fields: path.Fields}.Key(), true
+	return FlowPath{Root: string(c.PointerFlow().AllocationOrigin(link.Origin)), Fields: path.Fields}.Key(), true
 }
 
 func readProvenancePath(c *Context, a AST) flow.PointerExpr {
@@ -1386,7 +1382,21 @@ func readProvenancePath(c *Context, a AST) flow.PointerExpr {
 	if existing := c.PointerFlow().GetPathPointer(lookupKey); existing.KnownOrigin {
 		return existing
 	}
-	if rootT.Indirection > 0 {
+	if ft, ok := walkLeafType(c, rootT, path.Fields); ok && (ft.Indirection > 0 || ft.IsSlice() || c.IsInterfaceType(ft)) {
+		parent := lookupKey
+		for {
+			dot := strings.LastIndexByte(parent, '.')
+			if dot < 0 {
+				break
+			}
+			parent = parent[:dot]
+			sentinel := c.PointerFlow().GetPathPointer(parent + "." + structReturnAliasFieldKey)
+			if sentinel.KnownOrigin {
+				return sentinel
+			}
+		}
+	}
+	{
 		// Materialize a distinct origin for a declared owned field on first
 		// access, including through a read-only view. This works for nested
 		// pointer fields without eagerly expanding recursive struct types.
@@ -1395,6 +1405,8 @@ func readProvenancePath(c *Context, a AST) flow.PointerExpr {
 			c.PointerFlow().SetPathPointer(lookupKey, ptr)
 			return ptr
 		}
+	}
+	if rootT.Indirection > 0 {
 		return c.PointerFlow().UnknownPointer()
 	}
 	// Reading the VALUE of an owned member copies storage that belongs to the
@@ -1523,7 +1535,7 @@ func updateFieldPointerFactsForAssignment(c *Context, target AST, targetIsSymbol
 			// when read through another (`h2.p = &s.x` then `*h.p`).
 			if key, ok := pointeeFieldKey(c, path); ok {
 				c.PointerFlow().ForgetFieldPointersUnder(key)
-				c.PointerFlow().SetPathPointer(key, pointerExprForAST(c, val, ""))
+				c.PointerFlow().SetPathPointer(key, copiedBorrow(c, dstt, val, key, pointerExprForAST(c, val, "")))
 			}
 		}
 		return
@@ -1544,7 +1556,7 @@ func updateFieldPointerFactsForAssignment(c *Context, target AST, targetIsSymbol
 	switch {
 	case dstt.Indirection > 0 || dstt.IsSlice():
 		c.PointerFlow().ForgetFieldPointersUnder(path.Key())
-		c.PointerFlow().SetPathPointer(path.Key(), pointerExprForAST(c, val, ""))
+		c.PointerFlow().SetPathPointer(path.Key(), copiedBorrow(c, dstt, val, path.Key(), pointerExprForAST(c, val, "")))
 	default:
 		if sl, ok := val.(*StructLiteral); ok {
 			recordStructLiteralFieldFacts(c, path, sl)
@@ -2029,6 +2041,13 @@ func lvalueStorageOrigin(c *Context, e AST, assignedName string) flow.PointerExp
 		return pointerExprForAST(c, e, assignedName)
 	}
 	switch ast := e.(type) {
+	case *ArrayLiteral:
+		// Nonempty expression literals have temporary storage in this
+		// frame, just like named local arrays. Slices must retain that root.
+		if ast.storageOrigin == "" {
+			ast.storageOrigin = c.Temp()
+		}
+		return c.PointerFlow().NewLocalOrigin(flow.Binding(ast.storageOrigin))
 	case *Deref:
 		return pointerExprForAST(c, ast.Val, assignedName)
 	case *Index:
@@ -2079,6 +2098,12 @@ func pointerExprForAST(c *Context, a AST, assignedName string) flow.PointerExpr 
 
 func pointerExprForASTRaw(c *Context, a AST, assignedName string) flow.PointerExpr {
 	switch ast := a.(type) {
+	case *VariantSwitch:
+		return switchResultOrigin(c, ast, assignedName)
+	case *BoundSwitch:
+		sc := boundSwitchContext(c, ast)
+		defer sc.ForgetPointerBindings()
+		return switchResultOrigin(sc, ast.Switch, assignedName)
 	case *Symbol:
 		if c.IsGlobalBinding(ast.Name) {
 			return c.PointerFlow().UnknownPointer()
@@ -2214,7 +2239,11 @@ func funcallResultOrigin(c *Context, call *Funcall, assignedName string) (flow.P
 	if callee == nil {
 		return flow.PointerExpr{}, false
 	}
-	return resultOriginFromSlot0(c, aliasSet(c, callee), args, assignedName)
+	ptr, ok := resultOriginFromSlot0(c, aliasSet(c, callee), args, assignedName)
+	if ok && !call.ASTType(c).HasOwned() {
+		ptr = returnedBorrow(c, call, assignedName, ptr, aliasSet(c, callee)[0], args)
+	}
+	return ptr, ok
 }
 
 // resultOriginFromSlot0 synthesizes a call result's PointerExpr from return
@@ -2327,7 +2356,11 @@ func interfaceCallResultOrigin(c *Context, call *Funcall, assignedName string) (
 		return flow.PointerExpr{}, false
 	}
 	args := append([]AST{recv}, call.Args...)
-	return resultOriginFromSlot0(c, msig.ReturnAliases, args, assignedName)
+	ptr, ok := resultOriginFromSlot0(c, msig.ReturnAliases, args, assignedName)
+	if ok && !msig.Return.HasOwned() {
+		ptr = returnedBorrow(c, call, assignedName, ptr, msig.ReturnAliases[0], args)
+	}
+	return ptr, ok
 }
 
 // resolveInterfaceCallForAlias recognizes the one supported interface-call
@@ -2412,6 +2445,7 @@ func updatePointerFlowForAssignment(c *Context, target AST, dst ASTType, val AST
 	// When the source has no link (UnknownPointer), assigning still clears
 	// any stale link the destination held from a prior owned source.
 	src := pointerExprForAST(c, val, sym.Name)
+	src = copiedBorrow(c, dst, val, "assignment:"+sym.Name, src)
 	assertOwnerAdoptsLiveOrigin(c, flow.Binding(sym.Name), src)
 	c.PointerFlow().AssignPointer(flow.Binding(sym.Name), src)
 }
@@ -2545,6 +2579,9 @@ func checkOwnedTargetNotDropped(c *Context, a AST, targetIsSymbol bool, targetSy
 		if dot, ok := assignment.Target.(*Dot); ok {
 			if canAccessFieldObligations(dot.Val.ASTType(c)) {
 				path, tracked := FlowPathForExpr(dot)
+				if tracked && len(c.ownedFieldPaths(path)) != 1 {
+					CompileErrorF(a, "Cannot initialize owned field through an alias that may refer to multiple allocations")
+				}
 				if !tracked || !c.OwnedFieldConsumed(path) {
 					name := dot.Member
 					if tracked {
@@ -2625,6 +2662,13 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 		if v.Var != "" {
 			checkOwnedSourceAvailable(c, &Symbol{Name: v.Var, p: v.p})
 			c.MoveTransfer(v.Var)
+		} else if field, ok := v.Lit.(*Dot); ok {
+			if expected.OwnedMask&2 != 0 {
+				checkOwnedSourceAvailable(c, field)
+				if path, tracked := FlowPathForExpr(field); tracked {
+					c.SetOwnedFieldConsumed(path, true)
+				}
+			}
 		}
 	case *Deref:
 		ptype := v.Val.ASTType(c)
@@ -2666,6 +2710,7 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 
 	seen := make(map[string]bool)
 	for _, f := range lit.Fields {
+		checkAggregateValueCopy(c, f.Val)
 		if seen[f.Name] {
 			CompileErrorF(a, "Duplicate field %q in struct literal %v", f.Name, lit.Type)
 		}
@@ -2678,12 +2723,6 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 		fieldType := fieldTypeForBase(ctxType, declaredType)
 		prepareSliceOwnership(c, f.Val, fieldType)
 		srcType := f.Val.ASTType(c)
-		// Capturing a whole inconsistent aggregate into a struct field (as a
-		// bare pointer `f` or `&f`) forms an alias that could read its
-		// moved-out field.
-		if name := aggregateBindingName(f.Val); name != "" {
-			checkAggregateNotAliasedWhileInconsistent(c, name, f.Val)
-		}
 		checkBorrowedPointerDoesNotEscape(c, f.Val, fmt.Sprintf("field %v.%s", lit.Type, f.Name))
 		checkAddressOfOwnedForDest(c, f.Val, fieldType)
 		// Interface field: route through the interface coercion path so
@@ -2776,8 +2815,18 @@ func compileStructLiteralInto(of io.Writer, c *Context, a AST, lit *StructLitera
 			if !ft.ZeroInitializable(c) {
 				CompileErrorF(a, "Missing non-zero-initializable field %v.%s in struct literal", lit.Type, field.Name)
 			}
+			// Local literal temporaries may reuse old stack storage. Missing
+			// fields need their defaults on every construction, not just when
+			// the destination happens to come from a zeroed allocation.
+			off, _ := def.ByteOffset(c, field.Name)
+			bytes := ft.Size(c)
+			for i := 0; i < bytes/8; i++ {
+				fmt.Fprintf(of, "\tmov qword[%s+%d] 0\n", dest.ref, off+i*8)
+			}
+			for i := bytes / 8 * 8; i < bytes; i++ {
+				fmt.Fprintf(of, "\tmov byte[%s+%d] 0\n", dest.ref, off+i)
+			}
 			if len(nullableValuesOffsets(c, ft, 0)) != 0 {
-				off, _ := def.ByteOffset(c, field.Name)
 				addr := newSpot(of, c, c.Temp(), numASTType())
 				fmt.Fprintf(of, "\tlea %s [%s+%d]\n", addr.ref, dest.ref, off)
 				emitNullableValuesDefaults(of, c, ft, addr.ref)
@@ -3069,6 +3118,7 @@ func newBuiltinTypeForDest(c *Context, ast *Funcall, dst ASTType) (ASTType, bool
 }
 
 func compileValueIntoAddress(of io.Writer, c *Context, a AST, val AST, addr spot, pointee ASTType) {
+	checkAggregateValueCopy(c, val)
 	if sl, ok := val.(*StructLiteral); ok && sameIgnoringOwned(pointee, sl.Type) {
 		compileStructLiteralInto(of, c, a, sl, spot{ref: addr.ref, t: pointee, nameIsAddress: true}, pointee)
 		return
@@ -3519,6 +3569,7 @@ func compileLval(of io.Writer, c *Context, a AST, dest spot) spot {
 // does NOT emit the `function`/`type`/`retaliases` preamble (the caller
 // owns that) and does NOT itself compute the alias summary.
 func compileFunctionBody(of io.Writer, c *Context, ast *FuncDecl, retlab string) {
+	c.variantArms = nil
 	// Collect any memBacked-by-value params that need a prologue
 	// spill: argi puts the arg in a (sub-)register, but the body
 	// addresses fields via [name+offset] which requires a memory
@@ -3779,6 +3830,16 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 	}
 
 	switch ast := a.(type) {
+	case *BoundSwitch:
+		return compileBoundSwitch(of, c, ast, dest)
+	case *switchHead:
+		if dest.empty() {
+			dest = newSpot(of, c, c.Temp(), ast.S.t)
+		}
+		move(of, c, dest, ast.S)
+		return dest
+	case *switchConstant:
+		return compileSwitchConstant(of, c, ast, dest)
 	case *PreboundSpot:
 		return ast.S
 	case *reverseProjectionSearch:
@@ -3982,6 +4043,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		return nullspot
 	case *VarDecl:
+		if ast.Init != nil {
+			checkAggregateValueCopy(c, ast.Init)
+		}
 		if isDiscard(ast.Name) {
 			// `_ := expr` — evaluate the initializer for its effects and
 			// reads, but bind nothing. The value is thrown away.
@@ -4016,7 +4080,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if c.parent == nil {
 				CompileErrorF(a, "type inference not supported for file-scope variables")
 			}
-			inferred := ast.Init.ASTType(c)
+			var inferred ASTType
+			if literal, ok := ast.Init.(*ArrayLiteral); ok {
+				inferred = inferArrayLiteralType(c, literal)
+			} else {
+				inferred = ast.Init.ASTType(c)
+			}
 			switch inferred.Name {
 			case "<intlit>":
 				inferred = numASTType()
@@ -4053,6 +4122,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 		}
 		c.BindVar(a, ast.Name, ast.Type, ast.IsConst)
+		// The destination does not own a value until its initializer yields.
+		// Early-returning switch arms must not owe an unfinished local.
+		if ast.Init != nil && ast.Type.HasOwned() {
+			c.checker.movedBindings[ast.Name] = true
+			defer c.Unmove(ast.Name)
+		}
 		if !ast.IsConst {
 			c.recordMutCandidate(ast.Name, ast.Pos())
 		}
@@ -4144,7 +4219,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			// Compile the initializer. Same-type / intlit go directly into s;
 			// coerced cases go via a temp.
-			if srct.Same(dstt) || srct.Same(intlitASTType()) || srct.Same(floatlitASTType()) || srct.Name == "<nil>" {
+			_, plainSwitch := ast.Init.(*VariantSwitch)
+			_, boundSwitch := ast.Init.(*BoundSwitch)
+			if plainSwitch || boundSwitch || srct.Same(dstt) || srct.Same(intlitASTType()) || srct.Same(floatlitASTType()) || srct.Name == "<nil>" {
 				val := compileTop(of, c, ast.Init, s)
 				if !val.same(&s) {
 					move(of, c, s, val)
@@ -4797,6 +4874,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			base.free(of)
 			return dest
 		}
+		if t := ast.ASTType(c); t.Indirection > 0 || t.IsSlice() || c.IsInterfaceType(t) {
+			checkReadable(c, ast)
+		}
+
 		l := compileTop(of, c, ast.Val, nullspot)
 		orig := l
 		l = materializePointerValue(of, c, l)
@@ -4927,9 +5008,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if _, narrowed := c.VariantNarrow(VarFlowPath(name).Key()); narrowed {
 				CompileErrorF(ast, "cannot take the address of %q inside its own switch case (a write through it could change the matched variant)", name)
 			}
-			// Taking the address of an inconsistent aggregate would create an
-			// alias that could read its moved-out non-null field.
-			checkAggregateNotAliasedWhileInconsistent(c, name, ast)
 			// `&x` of a `var` yields *mut; converting x to immutable would
 			// yield *T and could break a write-through consumer. Keep x var.
 			c.markMutRelied(name)
@@ -4955,6 +5033,12 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			}
 			switch ast.Lit.(type) {
 			case *Index, *Dot:
+				if path, ok := FlowPathForExpr(ast.Lit); ok && c.OwnedFieldConsumed(path) {
+					t := ast.Lit.ASTType(c)
+					if t.NilMask&1 == 0 {
+						CompileErrorF(ast.Lit, "Use of %q after it was moved", path.Key())
+					}
+				}
 				// `&x.f` / `&x[i]` of a `var` root yields a *mut view; keep
 				// the root var so converting it can't strip write-through.
 				// Taking the address of a field/element is also a use of the
@@ -5008,7 +5092,10 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			ptr := c.PointerFlow().Pointer(flow.Binding(name))
 			if ptr.KnownOrigin {
 				if origin := string(ptr.Origin); origin != "" {
-					if ok, _ := c.PointerFlow().CheckDerefValidity(ptr); !ok {
+					if ok, reason := c.PointerFlow().CheckDerefValidity(ptr); !ok {
+						if c.PointerFlow().IsBorrow(ptr) {
+							CompileErrorF(a, "%s", reason)
+						}
 						if origin == name {
 							CompileErrorF(a, "cannot take address of \"%s\": it was consumed", name)
 						} else {
@@ -5222,9 +5309,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 
 		if ast.Lower != nil {
 			lower := compileTop(of, c, ast.Lower, nullspot)
-			if baset.Size(c) > 8 {
-				panic("Slicing for types > 8 bytes not implemented.")
-			}
 			// Bounds: lo must not exceed hi (upper still holds hi here,
 			// before the sub below). A negative lo or lo>hi both trap via
 			// the same unsigned compare. cmp/jbe kept adjacent as above.
@@ -5233,7 +5317,18 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			fmt.Fprintf(of, "\tjbe %s\n", look)
 			emitIndexOOBTrap(of, lower.ref, false, upper.ref)
 			fmt.Fprintf(of, "\tlabel %s\n", look)
-			fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", addr.ref, addr.ref, lower.ref, baset.Size(c))
+			if sibScaleOK(baset.Size(c)) {
+				fmt.Fprintf(of, "\tlea %s [%s+%s*%d]\n", addr.ref, addr.ref, lower.ref, baset.Size(c))
+			} else {
+				offset := newSpot(of, c, c.Temp(), numASTType())
+				scale := newSpot(of, c, c.Temp(), numASTType())
+				fmt.Fprintf(of, "\tmov %s %s\n", offset.ref, lower.ref)
+				fmt.Fprintf(of, "\tmov %s %d\n", scale.ref, baset.Size(c))
+				fmt.Fprintf(of, "\timul %s %s\n", offset.ref, scale.ref)
+				fmt.Fprintf(of, "\tadd %s %s\n", addr.ref, offset.ref)
+				scale.free(of)
+				offset.free(of)
+			}
 			fmt.Fprintf(of, "\tsub %s %s\n", upper.ref, lower.ref)
 			fmt.Fprintf(of, "\tsub %s %s\n", capacity.ref, lower.ref)
 			lower.free(of)
@@ -5244,6 +5339,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		return newslice
 
 	case *Assignment:
+		checkAggregateValueCopy(c, ast.Val)
 		if sym, ok := ast.Target.(*Symbol); ok && isDiscard(sym.Name) {
 			// `_ = expr` — evaluate and discard, binding nothing.
 			vt := ast.Val.ASTType(c)
@@ -5264,12 +5360,6 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if _, narrowed := c.VariantNarrow(VarFlowPath(sym.Name).Key()); narrowed {
 				CompileErrorF(a, "cannot reassign %q inside its own switch case (it is narrowed to a variant here); reassigning the matched value is not yet supported", sym.Name)
 			}
-		}
-		// Copying a whole inconsistent aggregate (`alias = f` / `alias = &f`)
-		// forms a second handle that could read the moved-out field. Field
-		// RHS (`x = f.a`) is a move, handled separately and not gated here.
-		if name := aggregateBindingName(ast.Val); name != "" {
-			checkAggregateNotAliasedWhileInconsistent(c, name, a)
 		}
 		dstt := ast.Target.ASTType(c)
 		targetSym, targetIsSymbol := ast.Target.(*Symbol)
@@ -5424,9 +5514,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			emitInterfaceFatPtr(of, c, a, dstt, srct, ast.Val, lv.ref, destBinding)
 			checkOwnedTargetNotDropped(c, a, targetIsSymbol, targetSym, dstt)
 			markMovedIfOwnedSource(of, c, dstt, ast.Val)
-			invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 			if path, ok := FlowPathForExpr(ast.Target); ok {
 				c.InvalidateFlowFacts(path)
+				invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 				updateNullFactForAssignment(c, path, dstt, ast.Val, srct)
 			}
 			updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
@@ -5449,9 +5539,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if targetIsSymbol && dstt.HasOwned() {
 				c.Unmove(targetSym.Name)
 			}
-			invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 			if path, ok := FlowPathForExpr(ast.Target); ok {
 				c.InvalidateFlowFacts(path)
+				invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 				updateNullFactForAssignment(c, path, dstt, ast.Val, srct)
 			}
 			updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
@@ -5468,9 +5558,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if al, ok := ast.Val.(*ArrayLiteral); ok && dstt.IsArray() {
 			compileArrayLiteralInto(of, c, a, spot{ref: lv.ref, t: dstt, nameIsAddress: true}, al)
 			checkOwnedTargetNotDropped(c, a, targetIsSymbol, targetSym, dstt)
-			invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 			if path, ok := FlowPathForExpr(ast.Target); ok {
 				c.InvalidateFlowFacts(path)
+				invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 			}
 			return nullspot
 		}
@@ -5492,9 +5582,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if targetIsSymbol && dstt.HasOwned() {
 				c.Unmove(targetSym.Name)
 			}
-			invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 			if path, ok := FlowPathForExpr(ast.Target); ok {
 				c.InvalidateFlowFacts(path)
+				invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 				updateNullFactForAssignment(c, path, dstt, ast.Val, srct)
 			}
 			updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
@@ -5530,9 +5620,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if targetIsSymbol && dstt.HasOwned() {
 				c.Unmove(targetSym.Name)
 			}
-			invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 			if path, ok := FlowPathForExpr(ast.Target); ok {
 				c.InvalidateFlowFacts(path)
+				invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 				updateNullFactForAssignment(c, path, dstt, ast.Val, srct)
 			}
 			updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
@@ -5558,9 +5648,9 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if targetIsSymbol && dstt.HasOwned() {
 			c.Unmove(targetSym.Name)
 		}
-		invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 		if path, ok := FlowPathForExpr(ast.Target); ok {
 			c.InvalidateFlowFacts(path)
+			invalidateOwnedFieldFactsForMutableTarget(c, ast.Target)
 			updateNullFactForAssignment(c, path, dstt, ast.Val, srct)
 		}
 		updateBorrowedBindingForAssignment(c, ast.Target, dstt, ast.Val)
@@ -5779,6 +5869,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if !retType.Same(voidASTType()) {
 				CompileErrorF(a, "bare return in non-void function (return type is %s)", retType)
 			}
+			settleVariantSwitchExits(c, a, true)
 			checkBorrowedFieldsRestored(c, a)
 			for _, name := range c.UnconsumedOwnedVisible() {
 				errUnconsumedOwned(c, a, name)
@@ -5803,9 +5894,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		// A partially-consumed aggregate cannot be returned: the caller's
 		// scope cannot see the local consistency facts.
-		if name := aggregateBindingName(ast.Val); name != "" {
-			checkAggregateMayEscape(c, name, ast, "return")
-		}
+		checkAggregateExprMayEscape(c, ast.Val, "return")
 		// Resolve through type aliases so `type myptr *T` followed by
 		// `return p` runs the same pointer-escape checks as a bare *T return.
 		if c.ResolveUnderlying(retType).Indirection > 0 {
@@ -5907,7 +5996,13 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		// local-reject then only catches locals arriving through a call
 		// boundary, which the per-site checks cannot see.
 		captureReturnAliases(c, ast)
-		if sl, ok := ast.Val.(*StructLiteral); ok && sameIgnoringOwned(retType, sl.Type) {
+		if sl, ok := ast.Val.(*StructLiteral); ok && sameIgnoringOwned(retType, sl.ASTType(c)) {
+			valType = retType
+		}
+		// Variant constructors are destination-typed like struct literals.
+		// Without the return destination's ownership, owned payload fields
+		// would be borrowed instead of transferred into the returned value.
+		if variant, ok := ast.Val.(*ValuesConstruct); ok && sameIgnoringOwned(retType, variant.ValuesType) {
 			valType = retType
 		}
 		if valType.HasOwned() && !retType.HasOwned() {
@@ -5921,7 +6016,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if retType.OwnedMask == 0 {
 				ptr := pointerExprForAST(c, ast.Val, "")
 				if ptr.KnownOrigin && c.PointerFlow().OriginKindOf(ptr.Origin) == flow.OriginLocal {
-					CompileErrorF(ast.Val, "Pointer to local variable %q escapes via interface return", string(ptr.Origin))
+					CompileErrorF(ast.Val, "Pointer to local variable %q escapes via interface return", c.PointerFlow().OriginName(ptr.Origin))
 				}
 			}
 			s := newSpotWithReg(of, c, c.Temp(), retType, "rax")
@@ -5931,6 +6026,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if retType.HasOwned() {
 				markMovedIfOwnedSource(of, c, retType, ast.Val)
 			}
+			settleVariantSwitchExits(c, a, true)
 			checkBorrowedFieldsRestored(c, a)
 			for _, name := range c.UnconsumedOwnedVisible() {
 				errUnconsumedOwned(c, a, name)
@@ -5946,6 +6042,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 			if retType.HasOwned() {
 				markMovedIfOwnedSource(of, c, retType, ast.Val)
 			}
+			settleVariantSwitchExits(c, a, true)
 			checkBorrowedFieldsRestored(c, a)
 			for _, name := range c.UnconsumedOwnedVisible() {
 				errUnconsumedOwned(c, a, name)
@@ -6005,6 +6102,7 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		if retType.HasOwned() {
 			markMovedIfOwnedSource(of, c, retType, ast.Val)
 		}
+		settleVariantSwitchExits(c, a, true)
 		checkBorrowedFieldsRestored(c, a)
 		for _, name := range c.UnconsumedOwnedVisible() {
 			errUnconsumedOwned(c, a, name)
@@ -6043,9 +6141,11 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 				v.free(of)
 			}
 		}
+		settleVariantSwitchExits(c, a, false)
 		c.Continue(a, of)
 		return nullspot
 	case *Break:
+		settleVariantSwitchExits(c, a, false)
 		c.Break(of)
 		return nullspot
 	case *Symbol:
@@ -6091,6 +6191,16 @@ func compileTop(of io.Writer, c *Context, a AST, dest spot) (spt spot) {
 		}
 		s.t = ast.ASTType(c)
 		return s
+	case *ArrayLiteral:
+		if dest.empty() {
+			if len(ast.Elements) == 0 {
+				dest = newSpot(of, c, c.Temp(), ast.ASTType(c))
+			} else {
+				dest = newSpot(of, c, c.Temp(), inferArrayLiteralType(c, ast))
+			}
+		}
+		compileArrayLiteralInto(of, c, a, dest, ast)
+		return dest
 	case *StructLiteral:
 		// A `Type.CASE{ ... }` literal is payload-variant construction, routed
 		// here because the values type isn't resolvable at ToAST time.
@@ -6474,6 +6584,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) ([]string, int
 	// because markMovedIfOwnedSource is not idempotent (a second call would
 	// observe the already-moved binding and spuriously error).
 	coercedToInterface := make([]bool, len(f.Args))
+	argBorrows := make([]flow.PointerExpr, len(f.Args))
 	for i := 0; i < len(f.Args); i++ {
 		arg := f.Args[i]
 		param := d.Args[i].Type
@@ -6489,9 +6600,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) ([]string, int
 		// borrow or owning — because the callee names the concrete shape and
 		// would observe the moved-out field. dispose/free are lowered on
 		// separate intrinsic paths and never reach here.
-		if name := aggregateBindingName(arg); name != "" {
-			checkAggregateMayEscape(c, name, arg, "pass")
-		}
+		checkAggregateExprMayEscape(c, arg, "pass")
 		checkAddressOfOwnedForDest(c, arg, param)
 		// Interface coercion at a call site: concrete pointer or small concrete value → fat pointer.
 		// destBinding is "" because the destination is the callee's parameter
@@ -6506,6 +6615,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) ([]string, int
 			}
 			coercedToInterface[i] = true
 			argspots = append(argspots, s)
+			argBorrows[i] = argumentBorrow(c, arg, param)
 			continue
 		}
 		effective, reason := coerceType(c, param, argt)
@@ -6536,6 +6646,7 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) ([]string, int
 			dest = a
 		}
 		argspots = append(argspots, dest)
+		argBorrows[i] = argumentBorrow(c, arg, param)
 	}
 	// Now that all argument values are compiled, mark any consumed owned variables.
 	// Args coerced to an interface parameter already had their owned source
@@ -6557,15 +6668,19 @@ func setupArgs(of io.Writer, c *Context, f *Funcall, d *FuncDecl) ([]string, int
 			}
 		}
 	}
-	// Apply pointer-flow invalidation for any non-owning mutable pointer
-	// parameters. This runs for direct and indirect calls alike: both go
-	// through setupArgs, and an indirect call carries the same alias risk
-	// as a direct one.
 	for i, arg := range f.Args {
 		if invalidatesOwnedFieldFactsParam(d.Args[i].Type) {
 			c.InvalidateOwnedFieldFactsByPointerInvalidation(c.PointerFlow().MutBorrowCall(pointerExprForAST(c, arg, "")))
 		}
 	}
+	// Opaque calls cannot establish that a consumed field was restored.
+	// Restoration is recorded only by an explicit tracked assignment.
+	for _, arg := range f.Args {
+		checkAggregateExprMayEscape(c, arg, "pass")
+	}
+	invalidateCallBorrows(c, f.Args, d.Args)
+	checkCallBorrows(c, f.Args, argBorrows)
+
 	for i := 0; i < len(f.Args); i++ {
 		note(of, "\t// Ensuring argument %d (%v) is in register %v for call.\n",
 			i, argspots[i].ref, order[i])
@@ -6735,6 +6850,11 @@ func mulDivRegs(bits int) (raxName, rdxName string) {
 // contains any non-literal sub-expressions.
 func EvalConst(c *Context, a AST) (*big.Int, bool) {
 	switch ast := a.(type) {
+	case *switchConstant:
+		if ast.Int != nil {
+			return new(big.Int).Set(ast.Int), true
+		}
+		return nil, false
 	case *Literal:
 		if v, ok := ast.Val.(uint64); ok {
 			return new(big.Int).SetUint64(v), true
@@ -8167,6 +8287,40 @@ func doOp2(of io.Writer, c *Context, o *Op2, dest spot) spot {
 	panic("Could not do op\n")
 }
 
+// Method calls use the same address-of operation as an explicit &field or
+// &element. Temporary value receivers remain non-addressable.
+func methodReceiverArg(c *Context, call *Funcall, recv AST, t ASTType, wantsPointer bool) AST {
+	if !wantsPointer || t.Indirection > 0 {
+		return recv
+	}
+	if deref, ok := recv.(*Deref); ok {
+		return deref.Val
+	}
+	if !addressableMethodReceiver(c, recv) {
+		CompileErrorF(call, "cannot call method on non-addressable expression receiver (type %s)", t)
+	}
+	return &Address{Lit: recv, p: recv.Pos()}
+}
+
+func addressableMethodReceiver(c *Context, e AST) bool {
+	switch e := e.(type) {
+	case *Symbol:
+		_, ok := c.TypeForVar(e.Name)
+		return ok
+	case *Dot:
+		if resolved := ResolveSelector(c, e); resolved.Kind == ResolvedRuntimeValue {
+			return true
+		}
+		return e.Val.ASTType(c).Indirection > 0 || addressableMethodReceiver(c, e.Val)
+	case *Index:
+		t := e.Val.ASTType(c)
+		return t.IsSlice() || t.Indirection > 0 || addressableMethodReceiver(c, e.Val)
+	case *Deref:
+		return true
+	}
+	return false
+}
+
 // compileConcreteMethodCall desugars v.method(args) into TypeName.method(receiver, args)
 // and delegates to compileTop. The receiver is passed by address when the method
 // declares a pointer receiver and by value when the method declares a value
@@ -8182,10 +8336,7 @@ func compileConcreteMethodCall(of io.Writer, c *Context, a AST, callNode *Funcal
 	wantsPointerReceiver := len(method.Args) > 0 && method.Args[0].Type.Indirection > 0
 	var receiver AST
 	if recv := callNode.ReceiverExpr(); recv != nil {
-		if wantsPointerReceiver && receiverType.Indirection == 0 {
-			CompileErrorF(callNode, "cannot call method on non-addressable expression receiver (type %s)", receiverType)
-		}
-		receiver = recv
+		receiver = methodReceiverArg(c, callNode, recv, receiverType, wantsPointerReceiver)
 	} else if receiverType.Indirection > 0 || !wantsPointerReceiver {
 		receiver = &Symbol{Name: callNode.PkgName(), p: callNode.p}
 	} else {
@@ -8230,6 +8381,10 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 	ifaceType ASTType, ifaceDecl *InterfaceDecl, dest spot, recv AST) spot {
 
 	mname := callNode.FName()
+	checkAggregateExprMayEscape(c, recv, "pass")
+	for _, arg := range callNode.Args {
+		checkAggregateExprMayEscape(c, arg, "pass")
+	}
 	// A nullable interface (`?T`) may be null — dispatching through it would
 	// deref a null vtable. Reject until it is narrowed to non-null (the type
 	// read strips the nullable bit inside `if (k != nil)`), mirroring the
@@ -8338,6 +8493,8 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 	// idempotent — a second pass would observe the already-moved binding and
 	// spuriously error). Parallels the ordinary-call path in setupArgs.
 	coercedToInterface := make([]bool, len(callNode.Args))
+	argBorrows := make([]flow.PointerExpr, len(callNode.Args)+1)
+	argBorrows[0] = argumentBorrow(c, recv, receiverParam)
 	for i, arg := range callNode.Args {
 		param := userParams[i].Type
 		argt := arg.ASTType(c)
@@ -8360,6 +8517,7 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 			}
 			coercedToInterface[i] = true
 			argspots = append(argspots, s)
+			argBorrows[i+1] = argumentBorrow(c, arg, param)
 			continue
 		}
 		effective, reason := coerceType(c, param, argt)
@@ -8386,6 +8544,7 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 			s = compiled
 		}
 		argspots = append(argspots, s)
+		argBorrows[i+1] = argumentBorrow(c, arg, param)
 	}
 
 	// Mark owned moves after all args are compiled. Args coerced to an
@@ -8403,6 +8562,13 @@ func compileInterfaceMethodCall(of io.Writer, c *Context, a AST, callNode *Funca
 		// Guarded above: a consuming method requires a named receiver.
 		c.MoveConsume(recvSym.Name)
 	}
+
+	allArgs := append([]AST{recv}, callNode.Args...)
+	for _, arg := range allArgs {
+		checkAggregateExprMayEscape(c, arg, "pass")
+	}
+	invalidateCallBorrows(c, allArgs, isig.Params)
+	checkCallBorrows(c, allArgs, argBorrows)
 
 	// Move user args into rsi, rdx, ...
 	for i, s := range argspots {
@@ -8513,6 +8679,7 @@ func desugarVariadicCall(of io.Writer, c *Context, a AST, ast *Funcall, decl *Fu
 		fmt.Fprintf(of, "\tbytes %s %d\n", backing, elemSize*nvar)
 		for i := 0; i < nvar; i++ {
 			arg := ast.Args[nfixed+i]
+			prepareSliceOwnership(c, arg, elemType)
 			argt := arg.ASTType(c)
 			// An untyped integer literal has no concrete size; materialize it
 			// as i64 (the default integer type) before coercing.
@@ -8965,20 +9132,20 @@ func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch, dest spo
 	// means each case body's value is written into it; compiling every body
 	// into the one typed dest enforces that they agree. A statement switch
 	// passes nullspot down (block bodies ignore it).
-	scrutType := ast.Scrutinee.ASTType(c)
-	if isNullableValues(c, scrutType) {
-		CompileErrorF(ast.Scrutinee, "Cannot switch on nullable values type %s; check for nil first", scrutType)
+	headType := ast.Scrutinee.ASTType(c)
+	if _, ok := c.ValuesDeclForName(headType.Name); !ok || headType.Indirection != 0 {
+		return compileValueSwitch(of, c, ast, dest)
 	}
-	vd, ok := c.ValuesDeclForName(scrutType.Name)
-	if !ok {
-		CompileErrorF(ast.Scrutinee, "switch scrutinee has type %s, which is not a values type", scrutType)
-	}
+	vd, scrutType := ast.valuesDecl(c)
 	byName := make(map[string]*ValuesCase, len(vd.Cases))
 	for i := range vd.Cases {
 		byName[vd.Cases[i].Name] = &vd.Cases[i]
 	}
 	seen := make(map[string]bool, len(ast.Cases))
 	for _, cs := range ast.Cases {
+		if cs.Name == "" {
+			panic(&interpreterError{"Variant switch cases must use bare variant names, not value expressions", cs.p})
+		}
 		if _, ok := byName[cs.Name]; !ok {
 			CompileErrorF(cs.Body, "%s is not a variant of values type %s", cs.Name, scrutType.Name)
 		}
@@ -8987,19 +9154,32 @@ func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch, dest spo
 		}
 		seen[cs.Name] = true
 	}
-	if ast.Default == nil {
-		var missing []string
-		for i := range vd.Cases {
-			if !seen[vd.Cases[i].Name] {
-				missing = append(missing, vd.Cases[i].Name)
-			}
-		}
-		if len(missing) > 0 {
-			CompileErrorF(ast, "non-exhaustive switch on %s: missing case(s) %s; cover them or add a `default`",
-				scrutType.Name, strings.Join(missing, ", "))
+	var uncovered []*ValuesCase
+	for i := range vd.Cases {
+		if !seen[vd.Cases[i].Name] {
+			uncovered = append(uncovered, &vd.Cases[i])
 		}
 	}
-
+	exhaustive := ast.Default != nil || len(uncovered) == 0
+	ast.Exhaustive = exhaustive
+	resultType := ast.ASTType(c)
+	if dest.empty() && resultType.HasOwned() {
+		CompileErrorF(ast, "Cannot discard an owned switch result; bind or consume it")
+	}
+	if dest.empty() && !resultType.Same(voidASTType()) {
+		dest = newSpot(of, c, c.Temp(), resultType)
+	}
+	if !dest.empty() && !exhaustive {
+		CompileErrorF(ast, "Expression switch requires exhaustive variant coverage")
+	}
+	path, hasPath := FlowPathForExpr(ast.Scrutinee)
+	if scrutType.HasOwned() && !hasPath {
+		CompileErrorF(ast.Scrutinee, "Owned temporary in switch head requires a head binding: use `switch x := expr`")
+	}
+	var ownership *variantSwitchFlow
+	if scrutType.HasOwned() && hasPath {
+		ownership = &variantSwitchFlow{path: path}
+	}
 	scrut := compileTop(of, c, ast.Scrutinee, nullspot)
 	tag := newSpot(of, c, c.Temp(), ASTType{Name: "i64", Signed: true})
 	want := newSpot(of, c, c.Temp(), ASTType{Name: "i64", Signed: true})
@@ -9037,12 +9217,26 @@ func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch, dest spo
 		if scrutKey != "" && vc != nil {
 			c.SetVariantNarrow(scrutKey, vc)
 		}
-		compileTop(of, c, body, dest)
+		previousArms := c.variantArms
+		var arm *variantSwitchArm
+		if ownership != nil {
+			variants := uncovered
+			if vc != nil {
+				variants = []*ValuesCase{vc}
+			}
+			arm = &variantSwitchArm{flow: ownership, variants: variants, loopDepth: contextLoopDepth(c)}
+			c.variantArms = append(append([]*variantSwitchArm(nil), previousArms...), arm)
+		}
+		compileSwitchResult(of, c, body, dest)
+		c.variantArms = previousArms
+		if fallsThrough(body) {
+			if arm != nil {
+				ownership.record(arm.state(c, body), body)
+			}
+			afterSnaps = append(afterSnaps, c.FlowSnapshot())
+		}
 		if scrutKey != "" {
 			delete(c.variantNarrow, scrutKey)
-		}
-		if fallsThrough(body) {
-			afterSnaps = append(afterSnaps, c.FlowSnapshot())
 		}
 	}
 	for _, cs := range ast.Cases {
@@ -9058,47 +9252,20 @@ func compileVariantSwitch(of io.Writer, c *Context, ast *VariantSwitch, dest spo
 	if ast.Default != nil {
 		compileCaseBody(ast.Default, nil)
 	}
-	// Merge the fall-through branches. Whole-owned-binding obligations must
-	// agree across all cases (H11 all-or-nothing). Owned *field* consumption
-	// may legitimately differ (move a payload out in one case, dispose the
-	// whole value after) — a field can't be accessed after the switch (the
-	// value is no longer narrowed), so we merge fields by UNION toward
-	// consumed: sound for the escape gate (a value with a maybe-moved field
-	// can't be passed on), and it does not block the destructor pattern the
-	// way the exact if/else field merge would.
-	if len(afterSnaps) > 0 {
-		ref := afterSnaps[0]
-		for _, s := range afterSnaps[1:] {
-			for name := range snapBefore.Owned {
-				if !c.SameObligationLiveAcross(ref, s, name) {
-					CompileErrorF(ast, "Owned binding %q is consumed on some switch cases but not others", name)
-				}
-			}
+	if ownership != nil && ownership.mode == variantConsume {
+		if !exhaustive {
+			CompileErrorF(ast, "Consuming switch on %s must cover every variant or have a consuming default", scrutType)
 		}
-		mergedFields := make(map[FlowPath]bool)
-		merged := FlowSnapshot{
-			Owned:    ref.Owned,
-			Null:     ref.Null,
-			Borrowed: ref.Borrowed,
-			Pointer:  ref.Pointer,
+		for i, snapshot := range afterSnaps {
+			c.RestoreFlowSnapshot(snapshot)
+			ownership.discharge(c)
+			afterSnaps[i] = c.FlowSnapshot()
 		}
-		for _, s := range afterSnaps {
-			for k, v := range s.OwnedFields {
-				if v {
-					mergedFields[k] = true
-				}
-			}
-		}
-		for _, s := range afterSnaps[1:] {
-			merged.Null = MergeNullFacts(merged.Null, s.Null)
-			merged.Borrowed = MergeBorrowedBindings(merged.Borrowed, s.Borrowed)
-			merged.Pointer = flow.Merge(merged.Pointer, s.Pointer)
-		}
-		merged.OwnedFields = mergedFields
-		c.RestoreFlowSnapshot(merged)
-	} else {
-		c.RestoreFlowSnapshot(snapBefore)
 	}
+	if !exhaustive {
+		afterSnaps = append(afterSnaps, snapBefore)
+	}
+	mergeSwitchFlows(c, ast, snapBefore, afterSnaps, true)
 	fmt.Fprintf(of, "\tlabel %s\n", end)
 	tag.free(of)
 	want.free(of)
