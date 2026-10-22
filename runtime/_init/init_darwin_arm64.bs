@@ -1,0 +1,70 @@
+package _init
+
+// dyld calls the entry using the C ABI: x0=argc, x1=argv. Construct Boson's
+// [][]byte headers on this frame, which lives until main returns to dyld.
+pub function start
+ prologue
+ mov x19 x0
+ mov x20 x1
+ mov x21 x0
+ add x21 x21
+ add x21 x19
+ // x21 = argc * 24, rounded to the stack's 16-byte alignment.
+ lsl x21, x21, #3
+ add x21, x21, #15
+ and x21, x21, #-16
+ sub sp, sp, x21
+ mov x22 sp
+ mov x23 x22
+ mov x24 x19
+label argv_loop
+ cmp x24 0
+ je argv_done
+ ldr x9, [x20], #8
+ mov x10 0
+label strlen_loop
+ ldrb w11, [x9, x10]
+ cmp x11 0
+ je strlen_done
+ add x10 x10 1
+ jmp strlen_loop
+label strlen_done
+ str x9, [x23]
+ str x10, [x23, #8]
+ str x10, [x23, #16]
+ add x23 x23 24
+ sub x24 x24 1
+ jmp argv_loop
+label argv_done
+ sub sp, sp, #32
+ str x22, [sp]
+ str x19, [sp, #8]
+ str x19, [sp, #16]
+ mov x0 sp
+ mov x8 0
+ call main.main
+ epilogue
+ mov x0 x8
+ ret
+
+pub function index_oob
+ prologue
+ sub sp, sp, #16
+ stp x0, x1, [sp]
+ lea x0 index_message
+ // Darwin passes variadic arguments on the stack.
+ bl _printf
+ mov x0 1
+ bl _exit
+ brk #0
+
+pub function nil_assert
+ prologue
+ lea x0 nil_message
+ bl _printf
+ mov x0 1
+ bl _exit
+ brk #0
+
+data index_message []byte "Fatal: Index Out Of Bounds: index[%lld] for object with length: %lld\n\0"
+data nil_message []byte "Fatal: non-null assertion failed\n\0"

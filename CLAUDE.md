@@ -16,7 +16,8 @@ file rather than the design doc.
 ## What this repo is
 
 A complete toolchain for the **Boson** language, written in Go,
-targeting x86-64 Linux and producing static ELF64 executables. The
+targeting x86-64 Linux (static ELF64, the default) and ARM64 macOS
+(Mach-O through Apple Command Line Tools). The
 pipeline is:
 
 ```
@@ -52,7 +53,8 @@ encoding, register allocation, and the object/ELF formats.
 | `elf64.go` | ELF64 writer (sections, symtab, .rela.text, LOAD segments). |
 | `linker.go` | `LinkExe`. Reachability-driven placement; resolves both code (32-bit PC-rel) and data (64-bit absolute) relocations. Entry point hardcoded to `_init.start`. |
 | `x86_64.xml` | The Intel instruction database. Don't edit by hand. |
-| `macho/` | Stub for future Mach-O support. Not currently wired up. |
+| `macho/` | `native.go` assembles ARM64 and links signed Darwin Mach-O via Apple tools. `macho.go` is the historical x86 writer. |
+| `target.go`, `internal/arm64/` | Shared target validation and ARM64 metaassembly expansion. |
 | `old/` | Pre-rewrite scratch code. Untouched by the live build; safe to ignore. |
 
 ### `cmd/bosc/` — the Boson compiler
@@ -150,6 +152,22 @@ rules from `boson.mmk`.
 ---
 
 ## Build and test workflow
+
+### Darwin ARM64
+
+Build the tools with `go build ./cmd/bosc`, `go build ./cmd/bas`, and
+`go build ./cmd/bld`. All three accept `-target=darwin/arm64`; omitted flags
+still select Linux/amd64 even on a Mac. For examples, set
+`BOSON_TARGET=darwin/arm64` when invoking `mmk`. Apple Command Line Tools are
+required by this target. See DESIGN.md's target section for the internal ABI,
+native payload format, syscall adaptation, and compiler backend boundary.
+
+`go test ./internal/arm64 ./macho` runs native integration and signing checks
+on Apple Silicon. `BOSON_ARM64_ALL_TESTS=1 go test ./internal/arm64` runs the
+positive compiler corpus against the native runtime. Set
+`BOSON_ARM64_TEST_ARTIFACTS=/absolute/temp/path` to retain native test artifacts.
+The playground sandbox runner is Linux-specific and currently prevents a bare
+`go test ./...` build on Darwin; this is independent of the compiler target.
 
 ### Building the toolchain
 

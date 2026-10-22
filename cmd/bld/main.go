@@ -10,6 +10,8 @@ import (
 )
 
 var out = flag.String("o", "b.out", "Write the linked executable to this file")
+var targetFlag = flag.String("target", "linux/amd64", "Target: linux/amd64 or darwin/arm64")
+
 var help = flag.Bool("h", false, "Print this help message.")
 
 func main() {
@@ -26,6 +28,10 @@ func main() {
 		os.Exit(1)
 	}
 
+	target, err := gbasm.ParseTarget(*targetFlag)
+	if err != nil {
+		log.Fatal(err)
+	}
 	var ofs []*gbasm.OFile
 	pkgs := make(map[string]*gbasm.OFile)
 	for i := 0; i < flag.NArg(); i++ {
@@ -43,7 +49,7 @@ func main() {
 		ofs = append(ofs, o)
 	}
 
-	err := gbasm.LinkExe(*out, gbasm.ELF, ofs)
+	err = gbasm.LinkTarget(*out, target, ofs)
 	if err != nil {
 		log.Fatalf("Failed to write exe: %s", err)
 	}

@@ -2,6 +2,8 @@
 
 ## History
 
+- 2026-10-22 — Added ARM64 native backend equivalence classes and executable-corpus verification.
+
 - 2026-10-19 — Added coreutils cat transformation tests with golden output, all-byte GNU-oracle comparisons, cross-read/operand state, and final flush failures.
 
 - 2026-10-19 — Added array-field slice storage and move-rejection checks, plus buffered-writer byte-count, content, partial-error, and zero-progress regression tests.
@@ -432,3 +434,29 @@ deref (~3750); slicing element types >8 (~4033).
   and held driver `cov_owned_aggregate_return_borrow_lost_err`. #18 is on the
   #10 build plan (`DESIGN_10_field_provenance.md` / TODO.md), fixed with the
   caller-side soundness batch.
+
+
+## Native ARM64 backend coverage
+
+The native runner in `internal/arm64/integration_test.go` builds the actual
+compiler, assembler and linker, assembles the shipped runtime, and executes
+compiler fixtures. The compact default set covers the classes below;
+`BOSON_ARM64_ALL_TESTS=1` extends it to every positive compiler fixture.
+
+| Backend invariant/class | Representative evidence |
+|---|---|
+| Shared metadata survives emission; binding names cannot become registers | `cmd/bosc/backend_test.go` |
+| Legacy target identity and native payload round-trip; mixed targets reject | `target_test.go` |
+| Named byte storage is an address, never a scalar spill target | `internal/arm64/assemble_test.go`, structs and interface receivers |
+| Subword arithmetic and sign extension preserve the declared width | `i8`, `i16`, `i32`, `compound_assign` |
+| Argument classes, stack spacing, alignment, and cleanup agree | `stack_args`, `float_abi` |
+| Floating-point unordered flags preserve language comparisons | `float_compare`, `fmt_float` |
+| Frames and aggregate parameters preserve caller storage | `iface_value_receiver_reads_field`, `iface_truthiness` |
+| Global symbols, page relocations, function addresses, and data pointers resolve | `global_var`, interface assertions, native Mach-O inspection |
+| Slice payloads and variadic capacity use the canonical layout | `empty_slice_literal`, `variadic_slice_elements` |
+| Darwin release preserves allocator zeroing guarantees | `heap_small`, `heap_release`, buffered writer |
+| Native machine bytes, Mach-O CPU/type, signature, and execution agree | `macho/native_test.go` |
+
+This verifies runtime behavior on Apple Silicon. It does not replace Linux
+integration execution; the amd64 backend retains its existing regression suite.
+The Linux-only playground sandbox runner is excluded from Darwin package builds.

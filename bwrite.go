@@ -596,6 +596,9 @@ func writeOFile(w io.Writer, o *OFile) error {
 	if err != nil {
 		return err
 	}
+	if o.ExeFormat == string(DarwinARM64) {
+		return writeString(w, string(o.NativeObject))
+	}
 	return nil
 }
 
@@ -640,17 +643,26 @@ func readOFile(r io.Reader) (*OFile, error) {
 	if err != nil {
 		return nil, err
 	}
+	var native []byte
+	if exeformat == string(DarwinARM64) {
+		image, err := readString(r)
+		if err != nil {
+			return nil, fmt.Errorf("reading native Mach-O: %w", err)
+		}
+		native = []byte(image)
+	}
 	return &OFile{
-		Pkgname:     pkgname,
-		ExeFormat:   exeformat,
-		Types:       types,
-		Data:        data,
-		Vars:        vars,
-		Funcs:       funcs,
-		Structs:     structs,
-		TypeAliases: typeAliases,
-		Interfaces:  interfaces,
-		Values:      values,
+		NativeObject: native,
+		Pkgname:      pkgname,
+		ExeFormat:    exeformat,
+		Types:        types,
+		Data:         data,
+		Vars:         vars,
+		Funcs:        funcs,
+		Structs:      structs,
+		TypeAliases:  typeAliases,
+		Interfaces:   interfaces,
+		Values:       values,
 	}, nil
 }
 

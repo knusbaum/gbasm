@@ -35,6 +35,15 @@ func main() {
 		fmt.Printf("\tFilename: %s\n", o.Filename)
 		fmt.Printf("\tPkgname: %s\n", o.Pkgname)
 		fmt.Printf("\tExeFormat: %s\n", o.ExeFormat)
+		target, err := o.Target()
+		if err != nil {
+			fmt.Printf("\tInvalid target: %s\n", err)
+		} else {
+			fmt.Printf("\tTarget: %s\n", target)
+		}
+		if len(o.NativeObject) > 0 {
+			dumpNative(o.NativeObject)
+		}
 		fmt.Printf("\tTypes:\n")
 		for v, t := range o.Types {
 			fmt.Printf("\t\t%s :: %s\n", v, t.Name)

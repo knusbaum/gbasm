@@ -5,12 +5,15 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"github.com/knusbaum/gbasm"
 	"log"
 	"os"
 	"strings"
 )
 
 var out = flag.String("o", "", "Write the linked executable to this file")
+var targetFlag = flag.String("target", "linux/amd64", "Target: linux/amd64 or darwin/arm64")
+
 var help = flag.Bool("h", false, "Print this help message.")
 var importcfg = flag.String("importcfg", "", "Path to importcfg file mapping package names to .bo paths")
 var listImports = flag.Bool("listimports", false, "Print all import paths from the input files (one per line) and exit. No compilation is performed.")
@@ -146,6 +149,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	target, err := gbasm.ParseTarget(*targetFlag)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	if *listImports {
 		runListImports()
 		return
@@ -164,17 +172,21 @@ func main() {
 	for _, name := range flag.Args() {
 		fmt.Printf("Compiling %s\n", name)
 	}
-	if err := compilePackageFiles(&assembly, flag.Args(), imports); err != nil {
+	if err := compilePackageFiles(&assembly, flag.Args(), imports, target); err != nil {
 		if stage, ok := err.(*packageCompileError); ok {
 			fatalCtx(stage.phase+": %v", stage.err)
 		}
 		fatalCtx("Fatal: %v", err)
 	}
+	var emitted bytes.Buffer
+	if err := backendFor(target).Emit(&emitted, assembly.Bytes()); err != nil {
+		log.Fatal(err)
+	}
 	name := *out
 	if name == "" {
 		name = strings.Fields(assembly.String())[1] + ".bs"
 	}
-	if err := os.WriteFile(name, assembly.Bytes(), 0755); err != nil {
+	if err := os.WriteFile(name, emitted.Bytes(), 0755); err != nil {
 		log.Fatalf("Failed to write %s: %v", name, err)
 	}
 }

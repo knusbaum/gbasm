@@ -2,7 +2,7 @@
 
 ## Overview
 
-gbasm is a complete toolchain for a custom language called **Boson**. It targets x86-64 Linux, producing native ELF64 executables. The entire toolchain is written in Go.
+gbasm is a complete toolchain for a custom language called **Boson**. It targets x86-64 Linux (ELF64) and ARM64 macOS (Mach-O). The toolchain is written in Go; the Darwin backend uses Apple Command Line Tools for native encoding and linking.
 
 The pipeline is:
 
@@ -13,12 +13,69 @@ Boson source (.bos)
     → bas (assembler)
     → Object files (.bo)
     → bld (linker)
-    → ELF64 executable
+    → ELF64 or Mach-O executable
 ```
 
 A separate build orchestrator (`mmk` with the `boson.mmk` library) drives the toolchain, computes the package dep graph, and handles incremental builds.
 
 Each pipeline stage produces an inspectable intermediate artifact, which makes the pipeline easy to debug. The `.bs` assembly files in particular serve as a readable window into what the compiler generates.
+
+### Target selection and Darwin ARM64
+
+`bosc`, `bas`, and `bld` accept `-target=linux/amd64|darwin/arm64`.
+The default stays `linux/amd64`, independently of the host. The build library
+accepts `BOSON_TARGET=darwin/arm64`; its source selection includes
+`*_darwin_arm64.bs` and excludes historical `*_linux.bs` files for that target.
+Target sidecars invalidate artifacts when switching targets. Compiler imports
+and the linker reject incompatible `.bo` targets before producing output.
+ARM compiler output carries a matching `target darwin/arm64` directive.
+
+The compiler selects an `assemblyBackend`: the amd64 implementation preserves
+existing textual output; the ARM implementation adapts the shared two-operand
+lowering stream to ARM registers, explicit shifts, and native return placement.
+This is an incremental backend seam, not a new optimizer or typed low-level IR.
+`internal/arm64` expands named locals, byte storage, argument binding, explicit
+register bindings, spills, frames, scalar operations, floating point, and
+control flow into native assembly. Scalar locals and byte storage have stable,
+zero-initialized stack slots. Address-valued byte allocations are never spilled
+into their own payload. Declarations preceding `prologue` initialize only after
+the callee frame exists. `epilogue` restores the frame even after dynamic stack
+allocation. Native ARM instructions and immediate operands are also accepted;
+plain native `ret` returns the value in `x0`.
+
+The Darwin Boson calling convention uses integer/pointer arguments in `x0–x5`,
+with further integer arguments in 16-byte stack slots, and an independently
+counted `s0–s7` / `d0–d7` floating argument sequence. Integer/pointer results
+return in `x0`; float results return in `s0` / `d0`. The compiler's intermediate
+return register is `x8`, explicitly bridged at calls and returns. Aggregates use
+the existing Boson by-value/by-address rules. `x19–x28`, `x29`, `x30`, and the
+low 64 bits of `v8–v15` are saved by `prologue`; the stack stays 16-byte aligned.
+The backend reserves `x14–x17` and `v16–v17` for expansion scratch and never uses
+Apple's reserved `x18`. This internal ABI is not the full Apple C ABI; runtime
+bridges explicitly adapt libSystem calls, including variadic stack arguments.
+
+Darwin `.bo` files retain all Boson declaration metadata and contain a native
+relocatable Mach-O payload, including its native symbol table and typed
+relocations. The existing serialized `ExeFormat` field records `darwin/arm64`;
+empty remains the legacy Linux/amd64 identity. Only Darwin records append a
+length-prefixed native payload after the existing metadata. `bdump` displays
+native sections and relocations. The platform linker lays out the executable,
+adds dyld/libSystem metadata, strips unreachable symbols, and signs it ad hoc.
+This path requires Apple Command Line Tools and produces dynamically linked
+Darwin executables; the Linux path keeps the existing Go encoder and ELF writer.
+
+Darwin startup receives C-style argc/argv from dyld and builds Boson's 24-byte
+slice headers. The syscall floor bridges the syscall operations exposed by
+`sys` to libSystem, translating open/mmap flags and Darwin errno values to the
+existing Boson numeric surface; unsupported syscall numbers return `-ENOSYS`.
+Linux-style `MADV_DONTNEED` is implemented by replacing the anonymous mapping
+at the same address, preserving the allocator's zero-on-reuse guarantee.
+
+Native verification runs with `go test ./internal/arm64 ./macho`; setting
+`BOSON_ARM64_ALL_TESTS=1` exercises the positive compiler corpus on Apple
+Silicon. The test harness adjusts stack-alignment probes to ARM's zero residue
+at entry. Implementation and build examples are recorded in
+[`PROPOSAL_darwin_arm64.md`](docs/implemented/PROPOSAL_darwin_arm64.md).
 
 ---
 
@@ -3605,6 +3662,8 @@ The assembler tests follow the same pattern but start from `.bs` files directly.
 ## Implementation Status
 
 **Implemented and tested:**
+
+- ARM64 macOS target: pluggable assembly emission, named-storage metaassembly, native Mach-O objects and executables through Apple tools, Darwin startup/libSystem runtime, target validation, and native compiler-corpus tests. Linux/amd64 remains the default.
 
 - Integer types (i8/i16/i32/i64, u8/u16/u32/u64, byte alias, bool)
 - Compile-time integer literal arithmetic (`<intlit>` type) with arbitrary precision

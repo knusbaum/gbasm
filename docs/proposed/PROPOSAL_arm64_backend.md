@@ -2,6 +2,8 @@
 
 ## History
 
+- 2026-10-22 — Darwin/ARM64 implemented through an incremental compiler backend and Apple native tools; see DESIGN.md and the Darwin implementation record. Linux/ARM64 and an independent ARM encoder remain outside that implementation.
+
 - 2026-07-19 — Filed under `docs/proposed/` in the docs reorganization. Earlier history predates this log.
 
 ## Summary

@@ -11,6 +11,7 @@
 # come from $source.
 #
 # Configuration (env vars):
+#   BOSON_TARGET    linux/amd64 (default) or darwin/arm64
 #   BOSON_HOME      root of the boson toolchain (defaults to dir of bosc)
 #   BOSC, BAS, BLD  paths to toolchain binaries
 #   BOSONPATH       colon-separated project package roots (default: .)
@@ -21,6 +22,7 @@
 # .bos and/or .bs files. The package's compiled artifact lives at
 # target/foo/bar.bo.
 
+BOSON_TARGET=${BOSON_TARGET:-linux/amd64}
 BOSC=${BOSC:-bosc}
 BAS=${BAS:-bas}
 BLD=${BLD:-bld}
@@ -50,9 +52,21 @@ resolve_pkg() {
 
 # pkg_sources <srcdir>: print all .bos and .bs files in the package's source
 # directory, sorted for reproducibility.
+# Platform-specific sources override the historical Linux assembly files.
+# Generic .bos/.bs files are shared; *_darwin_arm64 and *_linux[_amd64]
+# suffixes select the corresponding target.
 pkg_sources() {
-    local d=$1
-    ls "$d"/*.bos "$d"/*.bs 2>/dev/null | sort
+    local d=$1 src
+    for src in "$d"/*.bos "$d"/*.bs; do
+        [ -e "$src" ] || continue
+        case "$src" in
+            *_darwin_arm64.bos|*_darwin_arm64.bs)
+                [ "$BOSON_TARGET" = darwin/arm64 ] || continue ;;
+            *_linux.bos|*_linux.bs|*_linux_amd64.bos|*_linux_amd64.bs)
+                [ "$BOSON_TARGET" = linux/amd64 ] || continue ;;
+        esac
+        echo "$src"
+    done | sort
 }
 
 # pkg_import_targets <srcdir>: print target/<path>.bo for each import declared
@@ -60,14 +74,14 @@ pkg_sources() {
 pkg_import_targets() {
     local d=$1
     local bos
-    bos=$(ls "$d"/*.bos 2>/dev/null)
+    bos=$(pkg_sources "$d" | sed -n '/\.bos$/p')
     [ -z "$bos" ] && return 0
     # Capture stdout+stderr so a bosc failure is reported rather than masked
     # by the pipe to sed (which would otherwise succeed on empty input and
     # silently drop bosc's exit code).
     local out
-    if ! out=$($BOSC -listimports $bos 2>&1); then
-        echo "boson.mmk: $BOSC -listimports failed in $d:" >&2
+    if ! out=$($BOSC -target="$BOSON_TARGET" -listimports $bos 2>&1); then
+        echo "boson.mmk: $BOSC -target="$BOSON_TARGET" -listimports failed in $d:" >&2
         echo "$out" >&2
         exit 1
     fi
@@ -175,21 +189,20 @@ build_package() {
     local src bs
     local bos_files
     bos_files=()
-    for src in "$srcdir"/*.bos; do
-        [ -e "$src" ] || continue
-        bos_files+=("$src")
-    done
+    while IFS= read -r src; do
+        case "$src" in *.bos) bos_files+=("$src") ;; esac
+    done < <(pkg_sources "$srcdir")
     if [ "${#bos_files[@]}" -gt 0 ]; then
         bs="$workdir/package.bs"
-        $BOSC -importcfg="$cfg" -o "$bs" "${bos_files[@]}"
+        $BOSC -target="$BOSON_TARGET" -importcfg="$cfg" -o "$bs" "${bos_files[@]}"
         asm_files+=("$bs")
     fi
-    for src in "$srcdir"/*.bs; do
-        [ -e "$src" ] || continue
-        asm_files+=("$src")
-    done
+    while IFS= read -r src; do
+        case "$src" in *.bs) asm_files+=("$src") ;; esac
+    done < <(pkg_sources "$srcdir")
 
-    $BAS -o "$outbo" "${asm_files[@]}"
+    $BAS -target="$BOSON_TARGET" -o "$outbo" "${asm_files[@]}"
+    echo "$BOSON_TARGET" > "$outbo.target"
 
     rm -f $cfg
 }
@@ -199,7 +212,8 @@ build_package() {
 # pattern capture group; the source directory is found via BOSONPATH.
 
 deftype bos_pkg {
-    stat -c %.Y "$target" 2>/dev/null || return 1
+    [ "$(cat "$target.target" 2>/dev/null)" = "$BOSON_TARGET" ] || return 1
+    stat -c %.Y "$target" 2>/dev/null || stat -f %m "$target" 2>/dev/null || return 1
 }
 
 bos_pkg 'target/(.*)\.bo' : $(pkg_resolve_and_deps "$1") {
@@ -213,7 +227,7 @@ bos_pkg 'target/(.*)\.bo' : $(pkg_resolve_and_deps "$1") {
 }
 
 defbody bos_pkg clean {
-    rm -f "$target"
+    rm -f "$target" "$target.target"
     rm -rf "${target%.bo}.work"
 }
 
@@ -223,7 +237,8 @@ defbody bos_pkg clean {
 # together with the runtime init.
 
 deftype bos_exe source= {
-    stat -c %.Y "target/$target" 2>/dev/null || return 1
+    [ "$(cat "target/$target.target" 2>/dev/null)" = "$BOSON_TARGET" ] || return 1
+    stat -c %.Y "target/$target" 2>/dev/null || stat -f %m "target/$target" 2>/dev/null || return 1
 }
 
 defbody bos_exe : $(bos_exe_deps "$source") {
@@ -244,22 +259,20 @@ defbody bos_exe : $(bos_exe_deps "$source") {
 
     asm_files=()
     bos_files=()
-    for src in "$source"/*.bos; do
-        [ -e "$src" ] || continue
-        bos_files+=("$src")
-    done
+    while IFS= read -r src; do
+        case "$src" in *.bos) bos_files+=("$src") ;; esac
+    done < <(pkg_sources "$source")
     if [ "${#bos_files[@]}" -gt 0 ]; then
         bs="$workdir/package.bs"
-        $BOSC -importcfg="$cfg" -o "$bs" "${bos_files[@]}"
+        $BOSC -target="$BOSON_TARGET" -importcfg="$cfg" -o "$bs" "${bos_files[@]}"
         asm_files+=("$bs")
     fi
-    for src in "$source"/*.bs; do
-        [ -e "$src" ] || continue
-        asm_files+=("$src")
-    done
+    while IFS= read -r src; do
+        case "$src" in *.bs) asm_files+=("$src") ;; esac
+    done < <(pkg_sources "$source")
 
     mainbo="$workdir/main.bo"
-    $BAS -o "$mainbo" "${asm_files[@]}"
+    $BAS -target="$BOSON_TARGET" -o "$mainbo" "${asm_files[@]}"
 
     # Collect all package .bo files from the deps, de-duplicated. A package can
     # appear twice -- e.g. sys is both a hardcoded always-link dep (for _heap)
@@ -278,12 +291,13 @@ defbody bos_exe : $(bos_exe_deps "$source") {
         esac
     done
 
-    $BLD -o "$outexe" "${link_files[@]}"
+    $BLD -target="$BOSON_TARGET" -o "$outexe" "${link_files[@]}"
     chmod +x "$outexe"
+    echo "$BOSON_TARGET" > "$outexe.target"
 }
 
 defbody bos_exe clean {
-    rm -f "target/$target"
+    rm -f "target/$target" "target/$target.target"
     rm -rf "target/_exe_$target.work"
 }
 

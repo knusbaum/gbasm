@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/knusbaum/gbasm"
+	"github.com/knusbaum/gbasm/internal/arm64"
 )
 
 var jumps = []string{
@@ -316,6 +317,8 @@ func ParseIndirect(o *gbasm.OFile, f *gbasm.Function, s string) (indirect any, e
 }
 
 var out = flag.String("o", "", "Write the linked executable to this file")
+var targetFlag = flag.String("target", "linux/amd64", "Target: linux/amd64 or darwin/arm64")
+
 var help = flag.Bool("h", false, "Print this help message.")
 
 func main() {
@@ -342,6 +345,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	target, err := gbasm.ParseTarget(*targetFlag)
+	if err != nil {
+		panic(err)
+	}
+	bodies := make(map[string][]string)
 	var o *gbasm.OFile
 	for fi := 0; fi < flag.NArg(); fi++ {
 		fmt.Printf("Assembling %s\n", flag.Arg(fi))
@@ -377,6 +385,9 @@ func main() {
 						fmt.Printf("Failed to create ofile: %s\n", err)
 						os.Exit(1)
 					}
+					if target != gbasm.LinuxAMD64 {
+						o.ExeFormat = string(target)
+					}
 				} else {
 					if o.Pkgname != pkgname {
 						fmt.Printf("Creating package %s: file %s has package name %s.\n", o.Pkgname, flag.Arg(fi), pkgname)
@@ -387,6 +398,16 @@ func main() {
 			} else if o == nil {
 				fmt.Printf("Fatal: Need package declaration before anything else.")
 				os.Exit(1)
+			}
+			if strings.HasPrefix(line, "target ") {
+				declared, err := gbasm.ParseTarget(strings.TrimSpace(strings.TrimPrefix(line, "target ")))
+				if err != nil {
+					panic(err)
+				}
+				if declared != target {
+					panic(fmt.Sprintf("assembly target %s does not match -target=%s", declared, target))
+				}
+				continue
 			}
 			isPub := false
 			if strings.HasPrefix(line, "pub ") {
@@ -907,6 +928,9 @@ func main() {
 					os.Exit(1)
 				}
 				f.IsPub = isPub
+				if target == gbasm.DarwinARM64 {
+					bodies[f.Name] = nil
+				}
 				//locals = make(map[string]*gbasm.Ralloc)
 				continue
 			}
@@ -1092,6 +1116,10 @@ func main() {
 					f.ReturnAliases = append(f.ReturnAliases, nil)
 				}
 				f.ReturnAliases[slot] = params
+				continue
+			}
+			if target == gbasm.DarwinARM64 {
+				bodies[f.Name] = append(bodies[f.Name], line)
 				continue
 			}
 			if strings.HasPrefix(line, "local") {
@@ -1510,7 +1538,12 @@ func main() {
 		}
 	}
 
-	err := o.Output()
+	if target == gbasm.DarwinARM64 {
+		if err := arm64.Assemble(o, bodies); err != nil {
+			panic(err)
+		}
+	}
+	err = o.Output()
 	if err != nil {
 		fmt.Printf("Fatal: Failed to write object file: %s\n", err)
 		os.Exit(1)

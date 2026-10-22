@@ -1,0 +1,245 @@
+package _sys
+
+// Boson keeps its existing syscall-number surface; Darwin uses libSystem.
+pub function syscall0
+ type fn(i64) i64
+ prologue
+ mov x9 x0
+ call dispatch
+ epilogue
+ mov x0 x8
+ ret
+
+pub function syscall1
+ type fn(i64,i64) i64
+ prologue
+ mov x9 x0
+ mov x0 x1
+ call dispatch
+ epilogue
+ mov x0 x8
+ ret
+
+pub function syscall2
+ type fn(i64,i64,i64) i64
+ prologue
+ mov x9 x0
+ mov x0 x1
+ mov x1 x2
+ call dispatch
+ epilogue
+ mov x0 x8
+ ret
+
+pub function syscall3
+ type fn(i64,i64,i64,i64) i64
+ prologue
+ mov x9 x0
+ mov x0 x1
+ mov x1 x2
+ mov x2 x3
+ call dispatch
+ epilogue
+ mov x0 x8
+ ret
+
+pub function syscall4
+ type fn(i64,i64,i64,i64,i64) i64
+ prologue
+ mov x9 x0
+ mov x0 x1
+ mov x1 x2
+ mov x2 x3
+ mov x3 x4
+ call dispatch
+ epilogue
+ mov x0 x8
+ ret
+
+pub function syscall5
+ type fn(i64,i64,i64,i64,i64,i64) i64
+ prologue
+ mov x9 x0
+ mov x0 x1
+ mov x1 x2
+ mov x2 x3
+ mov x3 x4
+ mov x4 x5
+ call dispatch
+ epilogue
+ mov x0 x8
+ ret
+
+pub function syscall6
+ type fn(i64,i64,i64,i64,i64,i64,i64) i64
+ prologue
+ mov x9 x0
+ mov x0 x1
+ mov x1 x2
+ mov x2 x3
+ mov x3 x4
+ mov x4 x5
+ ldr x5, [x29, #16]
+ call dispatch
+ epilogue
+ mov x0 x8
+ ret
+
+function dispatch
+ prologue
+ cmp x9 0
+ je do_read
+ cmp x9 1
+ je do_write
+ cmp x9 2
+ je do_open
+ cmp x9 3
+ je do_close
+ cmp x9 9
+ je do_mmap
+ cmp x9 10
+ je do_mprotect
+ cmp x9 11
+ je do_munmap
+ cmp x9 28
+ je do_madvise
+ cmp x9 39
+ je do_getpid
+ cmp x9 60
+ je do_exit
+ mov x8 -38
+ jmp done
+label do_read
+ bl _read
+ mov x8 x0
+ cmp x8 -1
+ jne done
+ jmp syscall_error
+label do_write
+ bl _write
+ mov x8 x0
+ cmp x8 -1
+ jne done
+ jmp syscall_error
+label do_open
+ // Translate Linux open flags to Darwin fcntl.h values.
+ mov x12 x1
+ and x1, x1, #3
+ and x10, x12, #64
+ lsl x10, x10, #3
+ orr x1, x1, x10
+ and x10, x12, #128
+ lsl x10, x10, #4
+ orr x1, x1, x10
+ and x10, x12, #512
+ lsl x10, x10, #1
+ orr x1, x1, x10
+ and x10, x12, #1024
+ lsr x10, x10, #7
+ orr x1, x1, x10
+ and x10, x12, #2048
+ lsr x10, x10, #9
+ orr x1, x1, x10
+ and x10, x12, #524288
+ lsl x10, x10, #5
+ orr x1, x1, x10
+ str x2, [sp, #-16]!
+ bl _open
+ sxtw x0, w0
+ add sp, sp, #16
+ mov x8 x0
+ cmp x8 -1
+ jne done
+ jmp syscall_error
+label do_close
+ bl _close
+ sxtw x0, w0
+ mov x8 x0
+ cmp x8 -1
+ jne done
+ jmp syscall_error
+label do_mmap
+ // Translate Linux MAP_ANONYMOUS and MAP_NORESERVE.
+ and x10, x3, #0x20
+ lsl x10, x10, #7
+ and x11, x3, #0x4000
+ lsr x11, x11, #8
+ mov x12 0x4020
+ bic x3, x3, x12
+ orr x3, x3, x10
+ orr x3, x3, x11
+ bl _mmap
+ mov x8 x0
+ cmp x8 -1
+ jne done
+ jmp syscall_error
+label do_mprotect
+ bl _mprotect
+ sxtw x0, w0
+ mov x8 x0
+ cmp x8 -1
+ jne done
+ jmp syscall_error
+label do_munmap
+ bl _munmap
+ sxtw x0, w0
+ mov x8 x0
+ cmp x8 -1
+ jne done
+ jmp syscall_error
+label do_madvise
+ // Linux MADV_DONTNEED guarantees zero-filled pages on subsequent access.
+ // Darwin's advice does not. Replace the anonymous mapping at the same
+ // address so the allocator's purged/clean bookkeeping remains valid.
+ cmp x2 4
+ jne native_madvise
+ mov x19 x0
+ mov x2 3
+ mov x3 0x1012
+ mov x4 -1
+ mov x5 0
+ bl _mmap
+ mov x8 x0
+ cmp x8 -1
+ je syscall_error
+ mov x8 0
+ jmp done
+label native_madvise
+ bl _madvise
+ sxtw x0, w0
+ mov x8 x0
+ cmp x8 -1
+ jne done
+ jmp syscall_error
+label do_getpid
+ bl _getpid
+ sxtw x0, w0
+ mov x8 x0
+ cmp x8 -1
+ jne done
+ jmp syscall_error
+label do_exit
+ bl _exit
+ mov x8 x0
+ cmp x8 -1
+ jne done
+ jmp syscall_error
+label syscall_error
+ bl ___error
+ ldr w9, [x0]
+ cmp x9 106
+ ja unknown_errno
+ lea x10 errno_map
+ ldrb w9, [x10, x9]
+ neg x8 x9
+ jmp done
+label unknown_errno
+ mov x8 -38
+ jmp done
+label done
+ epilogue
+ mov x0 x8
+ ret
+
+// Darwin errno to the stable Linux-numbered Boson io error surface.
+data errno_map []byte "\x26\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x23\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20\x21\x22\x0b\x73\x72\x58\x59\x5a\x5b\x5c\x5d\x5e\x26\x60\x61\x62\x63\x64\x65\x66\x67\x68\x69\x6a\x6b\x6c\x6d\x6e\x6f\x28\x24\x70\x71\x27\x26\x57\x7a\x74\x42\x26\x26\x26\x26\x26\x25\x26\x26\x26\x26\x26\x26\x4b\x26\x26\x26\x26\x7d\x2b\x2a\x54\x26\x4a\x48\x3d\x43\x3f\x3c\x47\x3e\x5f\x26\x83\x82\x26"

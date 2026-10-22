@@ -101,10 +101,12 @@ type OFile struct {
 	Filename  string
 	Pkgname   string
 	ExeFormat string
-	Types     map[string]*TypeDescr
-	Data      map[string]*Var
-	Vars      map[string]*Var
-	Funcs     map[string]*Function
+	// NativeObject carries the relocatable Mach-O image for Darwin targets.
+	NativeObject []byte
+	Types        map[string]*TypeDescr
+	Data         map[string]*Var
+	Vars         map[string]*Var
+	Funcs        map[string]*Function
 	// Structs are Boson-level struct definitions exported by this
 	// package. Each StructShape stores the field names paired with
 	// their rendered type strings (parseable by bosc on import).

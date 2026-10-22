@@ -1,0 +1,15 @@
+package main
+
+import "fmt"
+
+fn show(xs ...[]byte) {
+ fmt.print("%d:%d\n", len(xs), cap(xs))
+ for (var i := 0; i < len(xs); i += 1) {
+  fmt.print("%d:%d\n", len(xs[i]), cap(xs[i]))
+ }
+}
+
+fn main() {
+ show("alpha", [], "beta")
+ show()
+}

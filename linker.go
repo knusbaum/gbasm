@@ -3,6 +3,7 @@ package gbasm
 import (
 	"bytes"
 	"fmt"
+	"github.com/knusbaum/gbasm/macho"
 	"log"
 	"strings"
 	//"github.com/knusbaum/gbasm/elf"
@@ -95,10 +96,25 @@ func padToAlign(buf *bytes.Buffer, size int) {
 	}
 }
 
+// LinkTarget links compatible objects for an explicit target.
+func LinkTarget(exename string, target Target, objects []*OFile) error {
+	if err := ValidateTarget(target, objects); err != nil {
+		return err
+	}
+	if target == DarwinARM64 {
+		images := make([][]byte, len(objects))
+		for i, o := range objects {
+			images[i] = o.NativeObject
+		}
+		return macho.LinkARM64(exename, images)
+	}
+	return LinkExe(exename, ELF, objects)
+}
+
 func LinkExe(exename string, p platform, os []*OFile) error {
 	switch p {
 	case MACHO:
-		panic("MACH NOT IMPLEMENTED.\n")
+		return LinkTarget(exename, DarwinARM64, os)
 	case ELF:
 		bin := Link(os, ENTRY_ADDR)
 

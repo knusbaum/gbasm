@@ -2794,7 +2794,7 @@ func markMovedIfOwnedSource(of io.Writer, c *Context, expected ASTType, val AST)
 				lv.free(of)
 			} else if !typeIsMemoryBacked(c, fieldType) {
 				lv := compileLval(of, c, val, nullspot)
-				fmt.Fprintf(of, "\tmov [%s] 0\n", lv.ref)
+				fmt.Fprintf(of, "\tmov qword[%s] 0\n", lv.ref)
 				lv.free(of)
 			}
 			if path, ok := FlowPathForExpr(val); ok {
@@ -8996,9 +8996,10 @@ func desugarVariadicCall(of io.Writer, c *Context, a AST, ast *Funcall, decl *Fu
 	if nvar == 0 {
 		// Empty slice: header with nil data and zero length.
 		hdr := c.Temp()
-		fmt.Fprintf(of, "\tbytes %s 16\n", hdr)
+		fmt.Fprintf(of, "\tbytes %s 24\n", hdr)
 		fmt.Fprintf(of, "\tmov qword[%s] 0\n", hdr)
 		fmt.Fprintf(of, "\tmov qword[%s+8] 0\n", hdr)
+		fmt.Fprintf(of, "\tmov qword[%s+16] 0\n", hdr)
 		sliceSpot = spot{ref: hdr, t: sliceType, nameIsAddress: true}
 	} else {
 		backing := c.Temp()
@@ -9066,9 +9067,15 @@ func desugarVariadicCall(of io.Writer, c *Context, a AST, ast *Funcall, decl *Fu
 				_ = effective
 				elemSpot := spot{ref: elemRef, t: elemType, nameIsAddress: typeIsMemoryBacked(c, elemType)}
 				if elemSpot.nameIsAddress {
+					// A memory-backed element needs an address, not a bracketed
+					// memory operand: move/memcpy add their own field offsets.
+					elemAddr := newSpot(of, c, c.Temp(), ASTType{Name: "uintptr"})
+					fmt.Fprintf(of, "\tlea %s %s\n", elemAddr.ref, elemRef)
+					elemSpot.ref = elemAddr.ref
 					val := compileTop(of, c, arg, nullspot)
 					move(of, c, elemSpot, val)
 					val.free(of)
+					elemAddr.free(of)
 				} else {
 					val := compileTop(of, c, arg, nullspot)
 					storeScalarToMem(of, c, elemRef, elemType, val)
@@ -9077,11 +9084,12 @@ func desugarVariadicCall(of io.Writer, c *Context, a AST, ast *Funcall, decl *Fu
 			}
 		}
 		hdr := c.Temp()
-		fmt.Fprintf(of, "\tbytes %s 16\n", hdr)
+		fmt.Fprintf(of, "\tbytes %s 24\n", hdr)
 		lt := newSpot(of, c, c.Temp(), ASTType{Name: "i64"})
 		fmt.Fprintf(of, "\tlea %s %s\n", lt.ref, backing)
 		fmt.Fprintf(of, "\tmov qword[%s] %s\n", hdr, lt.ref)
 		fmt.Fprintf(of, "\tmov qword[%s+8] %d\n", hdr, nvar)
+		fmt.Fprintf(of, "\tmov qword[%s+16] %d\n", hdr, nvar)
 		lt.free(of)
 		sliceSpot = spot{ref: hdr, t: sliceType, nameIsAddress: true}
 	}

@@ -227,7 +227,11 @@ func parsePackageSource(src packageSource) (*parsedSource, error) {
 
 // compilePackage registers every file's declarations before compiling any
 // body, emitting one package and one set of shared metadata for the invocation.
-func compilePackage(out io.Writer, sources []packageSource, imports map[string]string) (err error) {
+func compilePackage(out io.Writer, sources []packageSource, imports map[string]string, targets ...gbasm.Target) (err error) {
+	target := gbasm.LinuxAMD64
+	if len(targets) > 0 {
+		target = targets[0]
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			if e, ok := r.(*interpreterError); ok {
@@ -279,6 +283,9 @@ func compilePackage(out io.Writer, sources []packageSource, imports map[string]s
 		defer delete(loading, path)
 		obj, err := gbasm.ReadOFile(path)
 		if err != nil {
+			return "", err
+		}
+		if err := gbasm.ValidateTarget(target, []*gbasm.OFile{obj}); err != nil {
 			return "", err
 		}
 		for _, dep := range metadataDependencies(obj) {
@@ -377,7 +384,7 @@ func compilePackage(out io.Writer, sources []packageSource, imports map[string]s
 	return err
 }
 
-func compilePackageFiles(out io.Writer, names []string, imports map[string]string) error {
+func compilePackageFiles(out io.Writer, names []string, imports map[string]string, targets ...gbasm.Target) error {
 	var sources []packageSource
 	for _, name := range names {
 		data, err := os.ReadFile(name)
@@ -386,5 +393,5 @@ func compilePackageFiles(out io.Writer, names []string, imports map[string]strin
 		}
 		sources = append(sources, packageSource{name: name, reader: bytes.NewReader(data)})
 	}
-	return compilePackage(out, sources, imports)
+	return compilePackage(out, sources, imports, targets...)
 }
